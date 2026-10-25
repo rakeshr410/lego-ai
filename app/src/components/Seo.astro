@@ -1,0 +1,48 @@
+---
+// Search and share tags for every page (P2-10): canonical URL, robots, Open Graph, Twitter card and
+// JSON-LD. URLs are absolute against `site` (PUBLIC_ORIGIN at build time, astro.config.mjs).
+import { DEFAULT_OG_IMAGE, SITE_NAME, absoluteUrl, canonicalPath, jsonLdText } from '../lib/seo';
+import { publicPath } from '../lib/site-header';
+import { OG_LOCALE } from '../i18n';
+
+export interface Props {
+  title: string;
+  description?: string | null;
+  /** Keeps the page out of search results and the sitemap; it has no canonical URL. */
+  noindex?: boolean;
+  /** Open Graph type: `article` for topics, `website` for everything else. */
+  type?: 'website' | 'article';
+  /** ISO date-time of the last content change (articles). */
+  modified?: string | null;
+  /** JSON-LD objects (lib/seo.ts builders). */
+  jsonLd?: object[];
+  /** The URL path the page is served at, when it is built at another (a topic's Free variant). */
+  path?: string;
+}
+
+const { title, description, noindex, type = 'website', modified, jsonLd = [], path } = Astro.props;
+const site = Astro.site ?? Astro.url;
+// A prerendered variant (/v/pricing/in) is canonical at the route that serves it (/pricing); a
+// topic's Free variant names its topic's path.
+const url = absoluteUrl(canonicalPath(path ?? publicPath(Astro.url.pathname)), site);
+const image = absoluteUrl(DEFAULT_OG_IMAGE.path, site);
+---
+
+{noindex ? <meta name="robots" content="noindex" /> : <link rel="canonical" href={url} />}
+<meta property="og:site_name" content={SITE_NAME} />
+<meta property="og:type" content={type} />
+<meta property="og:title" content={title} />
+{description && <meta property="og:description" content={description} />}
+<meta property="og:url" content={url} />
+<meta property="og:locale" content={OG_LOCALE} />
+<meta property="og:image" content={image} />
+<meta property="og:image:width" content={String(DEFAULT_OG_IMAGE.width)} />
+<meta property="og:image:height" content={String(DEFAULT_OG_IMAGE.height)} />
+<meta property="og:image:alt" content={DEFAULT_OG_IMAGE.alt} />
+{type === 'article' && modified && <meta property="article:modified_time" content={modified} />}
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content={title} />
+{description && <meta name="twitter:description" content={description} />}
+<meta name="twitter:image" content={image} />
+<meta name="twitter:image:alt" content={DEFAULT_OG_IMAGE.alt} />
+{jsonLd.map((data) => <script is:inline type="application/ld+json" set:html={jsonLdText(data)} />)}

@@ -1,0 +1,495 @@
+/* Mock interview room (P3-11) with its whiteboard, and the landing's consent step. On the tokens only. */
+
+/* Landing: consent and past sessions (in the session card) */
+.ivs-consent {
+  margin-top: var(--space-16);
+  padding-top: var(--space-14);
+  border-top: 1px solid var(--black-a08);
+}
+.ivs-consent ul {
+  margin: var(--space-8) 0 0;
+  padding-left: var(--space-18);
+  font-size: var(--text-sm);
+  line-height: 1.45;
+  color: var(--fg-2);
+}
+.ivs-consent li + li {
+  margin-top: var(--space-6);
+}
+.ivs-consent__more {
+  margin: var(--space-10) 0 0;
+  font-size: var(--text-xs);
+  color: var(--fg-2);
+}
+.ivs-consent__more a,
+.iv-check__text a {
+  color: var(--fg);
+  text-decoration: underline;
+}
+.ivs-consent__agree {
+  margin-top: var(--space-12);
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  min-height: 24px;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  cursor: pointer;
+}
+.ivs-consent__agree input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--ink);
+}
+a.iv-start {
+  text-decoration: none;
+}
+.ivs-past {
+  margin-top: var(--space-18);
+  padding-top: var(--space-12);
+  border-top: 1px solid var(--black-a08);
+}
+.ivs-past ul {
+  margin: var(--space-6) 0 0;
+  padding: 0;
+  list-style: none;
+}
+.ivs-link {
+  min-height: 24px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: 500 var(--text-sm) var(--sans);
+  color: var(--fg);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+/* Room */
+.ivr {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--white);
+}
+.ivr-clock {
+  font: 600 var(--text-sm) var(--mono);
+  color: var(--fg);
+}
+.ivr-leave {
+  min-height: 24px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: 500 var(--text-sm) var(--sans);
+  color: var(--fg);
+  cursor: pointer;
+}
+.ivr-stages {
+  display: flex;
+  margin: 0;
+  padding: var(--space-10) var(--space-40);
+  gap: var(--space-8);
+  list-style: none;
+  border-bottom: 1px solid var(--black-a08);
+  overflow-x: auto;
+}
+.ivr-stages li {
+  flex: 1;
+  min-width: 140px;
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  padding: var(--space-8) var(--space-10);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-8);
+  font-size: var(--text-sm);
+  color: var(--fg-2);
+}
+.ivr-stages li.is-current {
+  border-color: var(--ink);
+  color: var(--fg);
+  font-weight: 600;
+}
+.ivr-stages li.is-done {
+  color: var(--fg-2);
+  background: var(--panel);
+}
+.ivr-stages__n {
+  font: 600 var(--text-xs) var(--mono);
+}
+.ivr-stages__title {
+  flex: 1;
+}
+.ivr-stages__min {
+  font: 500 var(--text-xs) var(--mono);
+  color: var(--fg-2);
+}
+.ivr-body {
+  flex: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: var(--space-40);
+  padding: var(--space-24) var(--space-40) var(--space-40);
+}
+.ivr-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-16);
+}
+.ivr-log {
+  max-height: 60vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-14);
+  padding: var(--space-4) var(--space-4) var(--space-12);
+}
+.ivr-log:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+.ivr-msg {
+  max-width: 76ch;
+  padding: var(--space-12) var(--space-16);
+  border-radius: var(--radius-10);
+  font-size: var(--text-base);
+  line-height: 1.55;
+}
+.ivr-msg--interviewer {
+  align-self: flex-start;
+  background: var(--sheet);
+  border: 1px solid var(--line);
+}
+.ivr-msg--candidate {
+  align-self: flex-end;
+  background: var(--panel);
+}
+.ivr-msg__who {
+  margin-bottom: var(--space-4);
+  font: 600 var(--text-xs) var(--mono);
+  letter-spacing: 0.04em;
+  color: var(--fg-2);
+}
+.ivr-msg__text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.ivr-msg--typing .ivr-msg__text {
+  color: var(--fg-2);
+}
+.ivr-event {
+  align-self: center;
+  font: 500 var(--text-xs) var(--mono);
+  color: var(--fg-2);
+}
+.ivr-error,
+.ivr-closed {
+  padding: var(--space-10) var(--space-14);
+  border-radius: var(--radius-8);
+  border: 1px solid var(--line);
+  background: var(--sheet);
+  font-size: var(--text-sm);
+}
+.ivr-error {
+  border-color: var(--red);
+}
+.ivr-compose {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+.ivr-compose textarea {
+  width: 100%;
+  padding: var(--space-12);
+  border: 1px solid var(--ink-a42);
+  border-radius: var(--radius-8);
+  font: var(--text-base) var(--sans);
+  line-height: 1.5;
+  resize: vertical;
+}
+.ivr-compose textarea:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 1px;
+}
+.ivr-compose__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-12);
+}
+.ivr-compose__count {
+  font-size: var(--text-xs);
+  color: var(--fg-2);
+}
+.ivr-btn {
+  min-height: 36px;
+  padding: 0 var(--space-16);
+  border: 1px solid var(--ink);
+  border-radius: var(--radius-8);
+  background: var(--white);
+  color: var(--fg);
+  font: 600 var(--text-sm) var(--sans);
+  cursor: pointer;
+}
+.ivr-btn:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+.ivr-btn--primary {
+  background: var(--ink);
+  color: var(--white);
+}
+.ivr-btn--danger {
+  border-color: var(--red);
+  color: var(--fg);
+}
+.ivr-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-10);
+  padding: var(--space-18);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-10);
+}
+.ivr-card__title {
+  margin: 0;
+  font: 700 var(--text-lg) var(--sans);
+}
+.ivr-card__text {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: 1.45;
+  color: var(--fg-2);
+}
+.ivr-card__time {
+  font: 600 var(--text-sm) var(--mono);
+}
+.ivr-card__time.is-over {
+  color: var(--accent-text);
+}
+.ivr-card__small {
+  margin: 0;
+  font-size: var(--text-xs);
+  line-height: 1.45;
+  color: var(--fg-2);
+}
+.ivr-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+
+@media (max-width: 1100px) {
+  .ivr-body {
+    grid-template-columns: minmax(0, 1fr);
+    padding: var(--space-18) var(--space-16) var(--space-32);
+  }
+  .ivr-stages {
+    padding: var(--space-10) var(--space-16);
+  }
+}
+@media (max-width: 760px) {
+  .ivr-stages li {
+    min-width: 120px;
+  }
+  .ivr-stages__title {
+    font-size: var(--text-xs);
+  }
+  .ivr-log {
+    max-height: none;
+  }
+}
+
+/* The whiteboard (InterviewBoard.tsx): the canvas or the outline, between the transcript and the answer box. */
+.ivr-main.has-board .ivr-log {
+  max-height: 34vh;
+}
+.ivr-board {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--ink-a42);
+  border-radius: var(--radius-8);
+  background: var(--white);
+}
+.ivr-board__bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  padding: var(--space-6) var(--space-10);
+  border-bottom: 1px solid var(--black-a08);
+}
+.ivr-board__title {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+.ivr-board__status {
+  font-size: var(--text-xs);
+  color: var(--fg-2);
+}
+.ivr-board__spacer {
+  flex: 1;
+}
+.ivr-board__views {
+  display: flex;
+  gap: var(--space-4);
+}
+.ivr-btn--small {
+  min-height: 28px;
+  padding: 0 var(--space-10);
+  font-size: var(--text-xs);
+}
+.ivr-btn.is-on {
+  background: var(--ink);
+  color: var(--white);
+}
+.ivr-board__hint {
+  margin: 0;
+  padding: var(--space-6) var(--space-10);
+  font-size: var(--text-xs);
+  color: var(--fg-2);
+}
+.ivr-board__canvas {
+  position: relative;
+  height: 44vh;
+  min-height: 320px;
+  border-top: 1px solid var(--black-a08);
+}
+/* The pen over the canvas (lib/board/pen): its tip at the pen's position, moving with it. */
+.ivr-board__pen {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 4;
+  color: #1d4ed8;
+  pointer-events: none;
+  filter: drop-shadow(0 1px 1px rgb(0 0 0 / 0.25));
+  transition: transform 40ms linear;
+}
+.ivr-board__pen.is-drawing {
+  color: #1e3a8a;
+}
+.ivr-board__canvas[hidden] {
+  display: none;
+}
+.ivr-board__loading {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  font-size: var(--text-sm);
+  color: var(--fg-2);
+}
+.ivr-outline {
+  max-height: 44vh;
+  overflow-y: auto;
+  padding: var(--space-10);
+  border-top: 1px solid var(--black-a08);
+}
+.ivr-outline__h {
+  margin: var(--space-8) 0 var(--space-4);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--fg-2);
+}
+.ivr-outline__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.ivr-outline__list li {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  padding: var(--space-4) 0;
+  font-size: var(--text-sm);
+}
+.ivr-outline__name {
+  flex: 1;
+  min-width: 0;
+}
+.ivr-outline__in {
+  color: var(--fg-2);
+}
+.ivr-outline__form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-8);
+  margin-top: var(--space-8);
+  font-size: var(--text-sm);
+}
+.ivr-outline__form input,
+.ivr-outline__form select {
+  min-height: 32px;
+  padding: 0 var(--space-8);
+  border: 1px solid var(--ink-a42);
+  border-radius: var(--radius-8);
+  font: var(--text-sm) var(--sans);
+}
+
+/* The voice part (VoiceRoom.tsx): the line's state, mute and "switch to typing", live captions. */
+.ivr-voice {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  padding: var(--space-12) var(--space-14);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-8);
+  background: var(--sheet);
+}
+.ivr-voice__bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-8);
+}
+.ivr-voice__dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--fg-2);
+  flex: none;
+}
+.ivr-voice.is-live .ivr-voice__dot {
+  background: var(--green);
+}
+.ivr-voice.is-live.is-speaking-you .ivr-voice__dot {
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--green) 30%, transparent);
+}
+.ivr-voice.is-reconnecting .ivr-voice__dot,
+.ivr-voice.is-lost .ivr-voice__dot {
+  background: var(--red);
+}
+.ivr-voice__state {
+  font: 600 var(--text-sm) var(--sans);
+}
+.ivr-voice__spacer {
+  flex: 1;
+}
+.ivr-voice__captions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.ivr-voice__caption {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.ivr-voice__caption .ivr-msg__who {
+  display: inline;
+  margin-right: var(--space-4);
+}
+.ivr-voice__caption.is-interim {
+  color: var(--fg-2);
+}
+.ivr-voice__detail {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--fg-2);
+}

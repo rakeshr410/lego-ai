@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <style>
+    .ink { stroke: #121829; } .accent { stroke: #ec6f5b; }
+    @media (prefers-color-scheme: dark) { .ink { stroke: #f4f3ef; } .accent { stroke: #f48a77; } }
+    @media (max-width: 24px) { .ink, .accent { stroke-width: 7; } }
+  </style>
+  <rect class="ink" x="8" y="10" width="40" height="34" fill="none" stroke-width="6"/>
+  <path class="accent" d="M8 54h52M52 46l8 8-8 8" fill="none" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

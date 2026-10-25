@@ -1,0 +1,25 @@
+---
+import AppLayout from '../../../layouts/AppLayout.astro';
+import InterviewApp from '../../../components/sd/InterviewApp';
+import { getInterviewPages, type InterviewPage } from '../../../lib/interview.node';
+import { INTL_LOCALE } from '../../../i18n';
+import t from '../../../i18n/messages/interview';
+
+// A system's mock interview (P3-11, docs/interview/README.md): one per system, not per topic. The
+// landing page from the system's plan (content/interviews/<system>.yaml), and the text-only room.
+// Behind PUBLIC_INTERVIEW_ENABLED: with the flag off no page is built, so the route is a 404.
+export async function getStaticPaths() {
+  const pages = await getInterviewPages();
+  return pages.map((page) => ({ params: { system: page.system.slug }, props: { page } }));
+}
+
+const { page } = Astro.props as { page: InterviewPage };
+---
+
+<AppLayout
+  title={t('meta.title', { system: page.system.name })}
+  description={t('meta.description', { minutes: page.minutes, title: page.title.toLocaleLowerCase(INTL_LOCALE) })}
+  noindex
+>
+  <InterviewApp client:load page={page} />
+</AppLayout>

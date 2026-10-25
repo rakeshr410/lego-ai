@@ -1,0 +1,42 @@
+[project]
+name = "interview-voice"
+version = "0.1.0"
+description = "The mock interview's voice service: a Pipecat pipeline per session, speaking for the web tier's interviewer (docs/interview/README.md, Voice)."
+requires-python = ">=3.12"
+dependencies = [
+  "pipecat-ai[daily,silero,deepgram,cartesia]==1.13.0",
+  "fastapi==0.135.0",
+  "uvicorn[standard]==0.44.0",
+  "httpx==0.28.1",
+  "pydantic==2.12.5",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest==9.0.2",
+  "pytest-asyncio==1.3.0",
+  "ruff==0.15.2",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "ASYNC"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E501"]
+"bot/speech.py" = ["E501"]
+
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["app", "bot"]

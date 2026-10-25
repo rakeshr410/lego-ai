@@ -1,0 +1,22 @@
+---
+// Privacy choices (P3-2): necessary storage is always on; analytics is off until the reader turns
+// it on. Hidden in the built page and shown by src/lib/consent-ui.ts when the reader hasn't
+// answered (and their browser sends no Global Privacy Control), or from the footer's "Privacy
+// choices". Fixed to the foot of the viewport, so showing it moves nothing on the page.
+import t from '../i18n/messages/feedback';
+---
+
+<section class="consent" aria-labelledby="consent-title" data-consent tabindex="-1" hidden>
+  <div class="consent__text">
+    <p class="consent__title" id="consent-title">{t('consent.title')}</p>
+    <p class="consent__body">
+      {t.rich('consent.body', { link: (text) => <a href="/legal/privacy#analytics">{text}</a> })}
+    </p>
+    <p class="consent__state" role="status" data-consent-state></p>
+  </div>
+  <div class="consent__actions">
+    <button type="button" class="consent__btn" data-consent-choice="necessary">{t('consent.necessary')}</button>
+    <button type="button" class="consent__btn" data-consent-choice="analytics">{t('consent.analytics')}</button>
+    <button type="button" class="consent__btn consent__btn--close" data-consent-close hidden>{t('consent.close')}</button>
+  </div>
+</section>

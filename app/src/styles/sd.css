@@ -1,0 +1,170 @@
+/* System Design Hub ("Arrowbox") — base styles and shared motion. The tokens (colours, type,
+   spacing, radii, layers) are generated from design/tokens; see design/DESIGN.md. */
+@import './tokens.css';
+
+:root {
+  /* Industrial theme (landing, picker, reader): blueprint grid patterns built from the tokens. */
+  --grid: linear-gradient(var(--black-a04) 1px, transparent 1px),
+    linear-gradient(90deg, var(--black-a04) 1px, transparent 1px);
+  --grid-strong: linear-gradient(var(--black-a05) 1px, transparent 1px),
+    linear-gradient(90deg, var(--black-a05) 1px, transparent 1px);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  /* Anchor jumps and focus land below the sticky reader header. */
+  scroll-padding-top: 64px;
+}
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--fg);
+  font-family: var(--sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button {
+  font-family: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+
+/* Hidden on screen, read by assistive tech. */
+.sr-only {
+  position: absolute !important;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.skip-link {
+  position: fixed;
+  left: 12px;
+  top: 8px;
+  z-index: var(--z-skip-link);
+  padding: 8px 14px;
+  background: var(--ink);
+  color: var(--white);
+  font: 600 13px var(--sans);
+  border-radius: 8px;
+  transform: translateY(-150%);
+}
+.skip-link:focus,
+.skip-link:focus-visible {
+  transform: none;
+}
+[id='content']:focus {
+  outline: none;
+}
+
+/* The home link around the Arrowbox logo (components/Logo.tsx). */
+.bp-logo {
+  display: flex;
+  align-items: center;
+}
+
+/* The logo: ink is currentColor, the connector and arrow use --logo-accent (brand tokens). */
+.ab-logo {
+  --logo-accent: var(--brand-accent);
+  display: block;
+  flex: none;
+  overflow: visible;
+  color: var(--brand-ink);
+}
+.ab-logo--dark {
+  --logo-accent: var(--brand-accent-dark);
+  color: var(--brand-ink-dark);
+}
+.ab-logo__accent {
+  stroke: var(--logo-accent);
+}
+.ab-logo__dot {
+  fill: var(--logo-accent);
+}
+
+.bp-grid {
+  background-color: var(--sheet);
+  background-image: var(--grid);
+  background-size: 36px 36px;
+}
+
+/* A frame with four bolts just inside its corners, drawn by one pseudo-element.
+   Put it on a positioned element; .bolts--dark suits dark panels. .bolts--edge puts larger bolts
+   on the frame's own corners, centred on its border (the plan grid in 13a, the landing's frames);
+   the element must not clip its overflow. */
+.bolts {
+  --bolt-ring: var(--ink);
+  --bolt-fill: var(--sheet);
+  --bolt-size: 5.5px;
+  --bolt-inset: 6.5px;
+  position: relative;
+}
+.bolts--dark {
+  --bolt-ring: var(--white-a55);
+  --bolt-fill: var(--ink);
+}
+.bolts--edge {
+  --bolt-size: 9px;
+  --bolt-inset: -4px;
+}
+.bolts::after {
+  --bolt: radial-gradient(circle closest-side, var(--bolt-fill) 48%, var(--bolt-ring) 52% 90%, transparent 100%);
+  content: '';
+  position: absolute;
+  inset: var(--bolt-inset);
+  pointer-events: none;
+  background: var(--bolt) 0 0 / var(--bolt-size) var(--bolt-size) no-repeat, var(--bolt) 100% 0 / var(--bolt-size) var(--bolt-size) no-repeat,
+    var(--bolt) 0 100% / var(--bolt-size) var(--bolt-size) no-repeat, var(--bolt) 100% 100% / var(--bolt-size) var(--bolt-size) no-repeat;
+}
+
+.display {
+  font-family: var(--display);
+  font-stretch: 112%;
+  font-weight: 700;
+}
+
+.mono-label {
+  font-family: var(--mono);
+}
+
+
+@keyframes fadeIn { from { opacity: 0 } to { opacity: 1 } }
+@keyframes flyIn { from { transform: translateX(100%) } to { transform: none } }
+@keyframes bubbleIn { from { opacity: 0; transform: translateY(6px) scale(.96) } to { opacity: 1; transform: none } }
+@keyframes typingDots { 0%, 100% { opacity: .2 } 50% { opacity: 1 } }
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  /* Mermaid styles its labels and measures them straight away; even a 0.01ms transition (on `all`,
+     the default property) hands it the old sizes and the diagram lays out many times too large. */
+  svg,
+  svg * {
+    transition: none !important;
+  }
+}
