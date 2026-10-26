@@ -1,0 +1,112 @@
+# Distributed logging interview, deep dive, alerting and finishing: the video's follow-up on the same picture: alert_topic under Kafka, the alert service above Kafka with the alert preference DB beside it, the notification service at the top right with its channels and an arrow to the client DB for the new pref column; then the live tail written under the picture, and the requirements read back.
+id: backend/distributed-logging/end-to-end/lld-alerting
+title: "Deep dive: alerting, live tail and the final design"
+source:
+  hash: "53540fca4b3e"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/distributed-logging/end-to-end/lld-retention
+  assumes:
+    - "Kafka buffers raw_logs; one Flink job processes every log and writes Cassandra, Elasticsearch and S3."
+    - "The client DB holds each organisation's ID, token and environment."
+  carries:
+    - "Flink writes alert-worthy logs to alert_topic; an alert service checks the client's rules in an alert preference DB and calls a notification service."
+    - "The notification service reads the client's pref (xMatters, email, SMS, pager) from the client DB."
+    - "Live tail: a WebSocket pushes new logs; GET /logs/tail is polled every 5 seconds."
+  terms:
+    - term: alert rule
+      means: "A client's condition for an alert, such as more than 10 errors from the checkout service."
+    - term: WebSocket
+      means: "A full-duplex connection kept open so the server can push data as it arrives."
+board:
+  keep: [title, nfr, nfr-scale, nfr-latency, nfr-cap, nfr-reliable, dd, dd-agents, dd-clients, dd-gw, dd-onboard, dd-clientdb, dd-file, dd-agentsvc, dd-kafka, dd-topic-raw, dd-flink-1, dd-flink-2, dd-flink, dd-logdb, dd-clients-gw, dd-gw-onboard, dd-onboard-db, dd-gw-file, dd-gw-agentsvc, dd-file-kafka, dd-agentsvc-kafka, dd-kafka-flink, dd-flink-logdb, dd-search, dd-es, dd-es-days, dd-t1a, dd-t1b, dd-t1c, dd-t2a, dd-t2b, dd-t3a, dd-t3b, dd-gw-search, dd-search-es, dd-flink-es, dd-search-logdb, dd-cron, dd-cron-note, dd-s3, dd-s3-note, dd-tiers, dd-cron-logdb, dd-flink-s3]
+  elements:
+    - { id: dd-topic-alert, kind: note, label: topic alert_topic, at: [49, 44], in: dd }
+    - { id: dd-alert, kind: box, label: alert service, at: [49, 32], size: [10, 3], in: dd, tone: blue }
+    - { id: dd-alertdb, kind: oval, label: alert preference DB, at: [31, 31], size: [14, 4], in: dd, tone: amber }
+    - { id: dd-channels, kind: note, label: "xMatters, email, SMS or pager", at: [80, 25] }
+    - { id: dd-notify, kind: box, label: notification service, at: [80, 27], size: [14, 3], tone: blue }
+    - { id: dd-pref, kind: note, label: "pref, how to alert", at: [61, 25], in: dd }
+    - { id: dd-live-ws, kind: note, label: "live tail, a WebSocket pushes new logs", at: [6, 64] }
+    - { id: dd-live-poll, kind: note, label: or GET /logs/tail polled every 5 s, at: [6, 65] }
+  arrows:
+    - { id: dd-alert-kafka, from: dd-alert, to: dd-kafka }
+    - { id: dd-alert-db, from: dd-alert, to: dd-alertdb }
+    - { id: dd-alert-notify, from: dd-alert, to: dd-notify }
+    - { id: dd-notify-clientdb, from: dd-notify, to: dd-clientdb, label: reads pref }
+beats:
+  - point: "For alerts, Flink already sees every log's level, so it also writes alert-worthy logs to a second Kafka topic, alert_topic."
+    kind: mechanism
+    weight: core
+    teach:
+      - "A common follow-up: Splunk emails you when an error shows up. How do we add that? Look at Flink: it reads every log, so it knows which are errors."
+      - "Besides saving them, it writes the ones that may need an alert to a second Kafka topic, alert_topic, for any downstream service to read."
+    draw: [dd-topic-alert]
+    check: Why is Flink the right place to spot alert-worthy logs?
+    answer: It already reads and parses every log, so it knows each one's level without another pass over the data.
+  - point: "An alert service consumes alert_topic and checks each log against the client's rules in an alert preference DB, since not every error deserves a page."
+    kind: component
+    weight: core
+    teach:
+      - "An alert service consumes alert_topic. But not every error is a P0; an exception now and then should not wake anyone."
+      - "So clients set rules, the rule book, in an alert preference DB: alert when the checkout service logs more than 10 errors, say. The alert service checks each log against them."
+    draw: [dd-alert, dd-alert-kafka, dd-alertdb, dd-alert-db]
+    check: Why does the alert service need its own rules database?
+    answer: Not every error deserves an alert; each client's rules decide which ones do, such as more than 10 errors on checkout.
+  - point: "When a rule fires, a notification service sends the alert by the client's preferred channel, xMatters, email, SMS or pager, read from a new pref column in the client DB."
+    kind: component
+    weight: core
+    teach:
+      - "When a rule fires, the alert service calls a notification service, which sends it by xMatters, email, SMS or pager."
+      - "Which one? Each client chooses, so the client DB gets a pref column. The notification service reads it before sending: this retailer wants a pager."
+    draw: [dd-notify, dd-alert-notify, dd-channels, dd-pref, dd-notify-clientdb]
+    check: How does the notification service know to page one client and email another?
+    answer: It reads each client's pref column in the client DB before sending.
+  - point: "Live tail has two endpoints: a WebSocket pushes new logs over one open, full-duplex connection; the GET is polled by the dashboard every 5 seconds."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Back to the two live-tail endpoints from the API. The WebSocket opens a full-duplex connection, and the platform pushes each new log to the dashboard as it arrives."
+      - "The GET is the simpler fallback: the page calls it every 5 seconds or so and shows what came in. Push, or repeated pull."
+    draw: [dd-live-ws, dd-live-poll]
+    check: What is the difference between the two live-tail endpoints?
+    answer: The WebSocket pushes new logs over one open connection; the GET is polled by the dashboard every 5 seconds.
+  - point: "Close by reading the non-functional list back against the board: scale-out everywhere, near real time through Kafka and Flink, ingestion that only needs Kafka, and no loss thanks to Kafka and S3."
+    kind: decision
+    weight: core
+    teach:
+      - "Read the qualities on the right back. Scale: ingestion services, Kafka, Flink and Cassandra all scale out. Latency: a log reaches Elasticsearch seconds after Kafka."
+      - "Availability: ingestion only has to reach Kafka, so it keeps accepting while processing or storage is slow. Reliability: Kafka holds accepted logs durably, and S3 keeps them past Cassandra's window."
+    check: Which part of the design keeps ingestion available when Cassandra is slow?
+    answer: Kafka; the ingestion services only append to it, and Flink catches up when the database recovers.
+asks:
+  - ids: [dd-topic-alert]
+    beats: [1]
+    question: "The interviewer asks for alerts when errors show up. Where in this picture would you spot them first?"
+    hints:
+      - Which component already reads every log?
+      - It could write the important ones somewhere for others to pick up.
+  - ids: [dd-alertdb]
+    beats: [2]
+    question: "Should every error log trigger an alert? How would you decide which ones do?"
+    hints:
+      - Think of one stray exception versus a burst of them.
+      - Who should decide, and where would that be kept?
+  - ids: [dd-notify]
+    beats: [3]
+    question: "Once an alert should go out, how does it reach the client the way they want?"
+    hints:
+      - "Email, SMS, pager: who sends it?"
+      - Where would each client's choice be stored?
+  - ids: [dd-live-ws]
+    beats: [4]
+    question: "The API has two live-tail endpoints. How would you show new logs on the dashboard as they arrive?"
+    hints:
+      - Could the server push them instead of the page asking?
+      - And what is the simpler fallback?
+task:
+  prompt: "Draw the final design: clients, the gateway, onboarding with the client DB, file and agent ingestion into Kafka, Flink writing Cassandra, Elasticsearch and S3, the search service, the daily cron, and the alert, alert preference and notification services."
+  expects: [2, 3]

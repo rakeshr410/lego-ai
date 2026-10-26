@@ -1,0 +1,131 @@
+# Ride-sharing interview, high-level design: "4. High level designing" under the API, as in the video: riders and drivers on the left, one tall load balancer and API gateway with its four roles, a column of services (ride, driver matching, rating, payment, location update) with the location map service above and their databases on the right, and the notification service under the gateway.
+id: backend/ride-sharing/end-to-end/high-level-design
+title: One gateway, a column of services
+source:
+  hash: "f71afde0fbeb"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/ride-sharing/end-to-end/api
+  assumes:
+    - "The rider gets fares by GET and books by POST with a requestId; the driver streams location over a WebSocket and accepts or denies."
+    - "Non-functional: millions of users, strong consistency in matching, a driver within 1 minute."
+  carries:
+    - "Riders and drivers reach a load balancer and API gateway: authentication and authorization, rate limiting, routing, round robin."
+    - "Ride service calculates the fare from a map service's distance and ETA; driver matching finds nearby drivers in the drivers database, offers through the notification service and saves the ride."
+    - "Rating and payment services each have a database; a location update service writes driver locations into the drivers database."
+  terms:
+    - term: API gateway
+      means: "The single entry for clients: authenticates, rate limits and routes each call to its service."
+    - term: FCM and APNs
+      means: "Firebase Cloud Messaging for Android and Apple Push Notification service for iOS, which deliver push notifications."
+board:
+  keep: [title, prompt-desc, fr, fr-fare, fr-request, fr-category, fr-accept, fr-match, fr-track, fr-rate, fr-pay, nfr, nfr-scale, nfr-rider, nfr-match, nfr-latency, entities, ent-rider, ent-driver, ent-location, ent-fare, ent-ride, api, api-user, api-fare, api-fare-ret, api-request, api-request-ret, api-history, api-cancel, api-ratings, api-driver, api-ws, api-accept, api-start, api-end]
+  elements:
+    - { id: hld, kind: region, label: 4. High-level design, at: [6, 46], size: [70, 30] }
+    - { id: h-riders, kind: box, label: riders, at: [8, 50], size: [8, 3], in: hld }
+    - { id: h-drivers, kind: box, label: drivers, at: [8, 62], size: [8, 3], in: hld }
+    - { id: h-gateway, kind: box, label: Load balancer and API gateway, at: [20, 49], size: [10, 19], in: hld }
+    - { id: h-roles-1, kind: note, label: "auth, rate limits", at: [8, 56], in: hld }
+    - { id: h-roles-2, kind: note, label: "routing, round robin", at: [8, 57], in: hld }
+    - { id: h-ride, kind: box, label: "Ride service, fare calculation", at: [36, 50], size: [14, 3], in: hld, tone: blue }
+    - { id: h-maps, kind: box, label: "Location map service, Google Maps", at: [58, 49], size: [14, 3], in: hld, tone: grey }
+    - { id: h-matching, kind: box, label: Driver matching service, at: [36, 55], size: [14, 3], in: hld, tone: blue }
+    - { id: h-drivers-db, kind: oval, label: Drivers DB, at: [58, 54], size: [12, 3], in: hld, tone: amber }
+    - { id: h-ride-db, kind: oval, label: Ride DB, at: [58, 58], size: [10, 3], in: hld, tone: amber }
+    - { id: h-notify, kind: box, label: Notification service, at: [20, 70], size: [12, 3], in: hld }
+    - { id: h-fcm, kind: note, label: "FCM on Android, APNs on iOS", at: [20, 74], in: hld }
+    - { id: h-rating, kind: box, label: Rating service, at: [36, 61], size: [14, 3], in: hld, tone: blue }
+    - { id: h-rating-db, kind: oval, label: Rating DB, at: [58, 61], size: [10, 3], in: hld, tone: amber }
+    - { id: h-payment, kind: box, label: Payment service, at: [36, 66], size: [14, 3], in: hld, tone: blue }
+    - { id: h-payment-db, kind: oval, label: Payment DB, at: [58, 66], size: [12, 3], in: hld, tone: amber }
+    - { id: h-location, kind: box, label: Location update service, at: [36, 71], size: [14, 3], in: hld, tone: blue }
+    - { id: h-gap, kind: note, label: scanning millions of drivers will not scale, at: [40, 75], in: hld, tone: red }
+  arrows:
+    - { id: h-riders-gw, from: h-riders, to: h-gateway, both: true }
+    - { id: h-drivers-gw, from: h-drivers, to: h-gateway, both: true }
+    - { id: h-gw-ride, from: h-gateway, to: h-ride, label: fare }
+    - { id: h-ride-maps, from: h-ride, to: h-maps, label: "distance, ETA" }
+    - { id: h-gw-matching, from: h-gateway, to: h-matching, label: book }
+    - { id: h-matching-drivers, from: h-matching, to: h-drivers-db, label: find drivers }
+    - { id: h-matching-notify, from: h-matching, to: h-notify, label: offer }
+    - { id: h-notify-drivers, from: h-notify, to: h-drivers }
+    - { id: h-matching-ride, from: h-matching, to: h-ride-db, label: save ride }
+    - { id: h-gw-rating, from: h-gateway, to: h-rating }
+    - { id: h-rating-db-arrow, from: h-rating, to: h-rating-db }
+    - { id: h-gw-payment, from: h-gateway, to: h-payment }
+    - { id: h-payment-db-arrow, from: h-payment, to: h-payment-db }
+    - { id: h-gw-location, from: h-gateway, to: h-location }
+    - { id: h-location-drivers, from: h-location, to: h-drivers-db, label: location }
+beats:
+  - point: "At millions of users this is a set of services behind a load balancer and API gateway, which authenticates and authorizes, rate limits, routes, and spreads traffic round robin."
+    kind: component
+    weight: core
+    teach:
+      - "Step four, the high-level design. On the left the two kinds of client, riders and drivers, on their phones."
+      - "Millions of them means services, so everything enters through a load balancer and an API gateway: authentication and authorization, rate limiting, routing to the right service, and spreading traffic evenly, round robin."
+    draw: [hld, h-riders, h-drivers, h-gateway, h-riders-gw, h-drivers-gw, h-roles-1, h-roles-2]
+    check: Name two jobs of the API gateway here.
+    answer: "Any two of: authentication and authorization, rate limiting, routing, distributing traffic round robin."
+  - point: "The ride service calculates the fare: it asks a third-party map service, Google Maps or Apple Maps, for the distance and the ETA between the two points."
+    kind: flow
+    weight: core
+    teach:
+      - "The first requirement is the fare, so a ride service that does the fare calculation from the pick-up and drop latitude and longitude."
+      - "Roads and traffic are a map provider's job: it calls a location map service, Google Maps or Apple Maps, which returns the distance and the time. How it becomes money is for the deep dive."
+    draw: [h-ride, h-gw-ride, h-maps, h-ride-maps]
+    check: What two numbers does the map service give the ride service?
+    answer: The route distance between the two points and the ETA, the time it takes.
+  - point: "On booking, the driver matching service finds nearby drivers in the drivers database, offers the ride through the notification service, FCM or APNs, and on an accept saves the ride in the ride database."
+    kind: flow
+    weight: core
+    teach:
+      - "When the rider accepts a fare, the booking goes to the core: a driver matching service. It looks in a drivers database for drivers near the pick-up."
+      - "It offers the ride through a notification service, FCM on Android, APNs on iOS. The driver's accept comes back through the gateway, the request becomes a ride in a ride database, and the rider is told a driver is on the way."
+    draw: [h-matching, h-gw-matching, h-drivers-db, h-matching-drivers, h-notify, h-fcm, h-matching-notify, h-notify-drivers, h-ride-db, h-matching-ride]
+    check: Walk me through what happens after the rider books.
+    answer: Matching finds nearby drivers in the drivers database, notifies them through the notification service, and when one accepts it saves the ride in the ride database and tells the rider.
+  - point: "After the trip, a rating service with its rating database and a payment service with its payment database."
+    kind: component
+    weight: supporting
+    teach:
+      - "Once the trip ends, two more things: a rating service, with a rating database, so riders and drivers rate each other and future riders see a driver's rating."
+      - "And a payment service, with its payment database, that takes the rider's payment."
+    draw: [h-rating, h-gw-rating, h-rating-db, h-rating-db-arrow, h-payment, h-gw-payment, h-payment-db, h-payment-db-arrow]
+    check: Which two services serve the end of the trip?
+    answer: The rating service and the payment service, each with its own database.
+  - point: "Real-time tracking needs a location update service that takes positions from drivers and riders and updates the drivers database, so matching sees where drivers are."
+    kind: component
+    weight: core
+    teach:
+      - "One requirement is still missing: real-time tracking. A location update service takes positions from drivers and riders periodically."
+      - "It updates the location in the drivers database, so the matching service can find drivers where they are now."
+    draw: [h-location, h-gw-location, h-location-drivers]
+    check: Why does the location update service write to the drivers database?
+    answer: So the matching service searches drivers by where they are now.
+  - point: "This meets every functional requirement, but matching cannot scan millions of drivers per request, and that is where the low-level design goes."
+    kind: failure
+    weight: supporting
+    teach:
+      - "Every functional line now has a box. But it is not as simple as it looks: with millions of drivers, matching cannot scan the whole drivers table for each request. Write that down; the deep dive starts from it."
+    draw: [h-gap]
+    check: What is the obvious weak spot in this design?
+    answer: Matching would scan millions of driver rows per request; it needs a proximity search and fresher locations.
+asks:
+  - ids: [h-ride, h-matching]
+    beats: [2, 3]
+    question: "Behind the gateway, what services would you need for the fare and for booking? Name them and I'll draw them."
+    hints:
+      - One works out the price, the other finds someone to drive.
+      - Where would the drivers' details live?
+  - ids: [h-location]
+    beats: [5]
+    question: "We still have real-time tracking to cover. What would keep the drivers' positions up to date?"
+    hints:
+      - Something has to take a position from every driver, often.
+      - Where should those positions end up for matching to read?
+task:
+  prompt: "Draw the high-level design: riders and drivers, the load balancer and API gateway, the ride service with the map service, driver matching with the drivers and ride databases and the notification service, rating and payment with their databases, and the location update service."
+  expects: [1, 2, 3, 5]

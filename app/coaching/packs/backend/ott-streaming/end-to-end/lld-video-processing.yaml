@@ -1,0 +1,134 @@
+# OTT streaming interview, low-level design 4: processing the video, the first half of the video's play service: uploader, S3, chunker, Kafka and video encoder laid out as on its board (chunker right of S3, Kafka right of the chunker, the encoder under Kafka writing back to S3), the encoder's formats and bitrates, the streaming protocols, the manifests, and the video DB in MongoDB holding them. Corrected: HLS takes .ts or fMP4, DASH fMP4; m3u8 is text, MPD is XML; the final manifests are written once the renditions exist.
+id: backend/ott-streaming/end-to-end/lld-video-processing
+title: "Low-level design, 4: processing the video"
+source:
+  hash: "334d2a6da7ae"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/ott-streaming/end-to-end/lld-search
+  assumes:
+    - "The uploader writes metadata to the video DB and video files and thumbnails to S3."
+    - "Non-functional: zero or negligible buffering, at 480p to 4K."
+  carries:
+    - "A whole video is too big to send: the video puts a 4K hour at about 40 GB."
+    - "S3 notifies a chunker that splits the master into 2 to 10 second segments and queues them on Kafka."
+    - "Video encoders transcode each segment into a bitrate ladder, 480p to 4K, with H.264 or H.265, as .ts or fragmented MP4, back into S3."
+    - "Manifests (.m3u8 for HLS, .mpd for DASH) list the renditions and each rendition's segments in order; they are kept in the video DB, MongoDB."
+  terms:
+    - term: segment
+      means: "A few seconds of video, 2 to 10 here, stored and fetched as its own file."
+    - term: bitrate ladder
+      means: "The same video encoded at several qualities, 480p, 720p, 1080p, 4K, so a player can pick one per segment."
+    - term: manifest
+      means: "The file that lists the renditions and the order of their segments: .m3u8 for HLS, .mpd for DASH."
+board:
+  keep: [title, prompt-desc, fr, fr-account, fr-search, fr-watch, fr-out, nfr, nfr-scale, nfr-cap, nfr-buffer, nfr-micro, entities, ent-user, ent-user-meta, ent-video, ent-video-meta, api, api-register, api-plans, api-subscribe, api-search, api-details, api-play, hld, hld-users, hld-gateway, hld-gw-roles, hld-lb-rr, hld-user-svc, hld-sub-svc, hld-search-svc, hld-play-svc, hld-user-db, hld-pay-gw, hld-uploader, hld-video-db, hld-blob, hld-blob-note, hld-users-gw, hld-gw-user, hld-gw-sub, hld-gw-search, hld-gw-play, hld-user-userdb, hld-sub-userdb, hld-sub-paygw, hld-up-videodb, hld-up-blob, hld-search-videodb, hld-play-blob]
+  elements:
+    - { id: lld-proc, kind: region, label: "5. Low-level design: 4. Video processing", at: [2, 64], size: [70, 36] }
+    - { id: p-vdb, kind: oval, label: "Video DB, MongoDB", at: [3, 67], size: [14, 4], in: lld-proc, tone: amber }
+    - { id: p-vdb-1, kind: note, label: "video: title, description,", at: [3, 72], in: lld-proc }
+    - { id: p-vdb-2, kind: note, label: "metadata, manifest", at: [4, 73], in: lld-proc }
+    - { id: p-uploader, kind: box, label: "Uploader, internal team", at: [24, 67], size: [13, 3], in: lld-proc, tone: grey }
+    - { id: p-s3, kind: oval, label: S3 bucket, at: [24, 75], size: [13, 7], in: lld-proc, tone: amber }
+    - { id: p-big, kind: note, label: a 4K hour is tens of GB, at: [3, 77], in: lld-proc, tone: red }
+    - { id: p-big-2, kind: note, label: too big to send whole, at: [3, 78], in: lld-proc, tone: red }
+    - { id: p-chunker, kind: box, label: Chunker, at: [45, 75], size: [10, 3], in: lld-proc, tone: blue }
+    - { id: p-chunk-note, kind: note, label: splits into 2 to 10 second segments, at: [41, 79], in: lld-proc }
+    - { id: p-kafka, kind: box, label: "Kafka, segment queue", at: [60, 75], size: [10, 3], in: lld-proc, tone: grey }
+    - { id: p-kafka-note, kind: note, label: for further processing, at: [59, 72], in: lld-proc }
+    - { id: p-encoder, kind: box, label: Video encoder, at: [60, 81], size: [10, 3], in: lld-proc, tone: blue }
+    - { id: p-enc-1, kind: note, label: "H.264 or H.265, as .ts or fMP4", at: [52, 86], in: lld-proc }
+    - { id: p-enc-2, kind: note, label: "ladder, 480p, 720p, 1080p, 4K", at: [52, 87], in: lld-proc }
+    - { id: p-s3-note, kind: note, label: "masters, thumbnails, every segment", at: [22, 84], in: lld-proc }
+    - { id: p-proto, kind: note, label: "streaming protocols, HLS and DASH", at: [3, 90], in: lld-proc }
+    - { id: p-manifest, kind: note, label: "manifest, .m3u8 text for HLS, .mpd XML for DASH", at: [3, 92], in: lld-proc }
+    - { id: p-master, kind: note, label: "master lists renditions by bandwidth, resolution", at: [3, 94], in: lld-proc }
+    - { id: p-variants, kind: note, label: "low.m3u8, medium.m3u8, high.m3u8", at: [5, 95], in: lld-proc }
+    - { id: p-media, kind: note, label: "each rendition's playlist lists its segments", at: [3, 97], in: lld-proc }
+    - { id: p-mongo, kind: note, label: "MongoDB, films and series differ in shape", at: [36, 92], in: lld-proc }
+  arrows:
+    - { id: p-up-vdb, from: p-uploader, to: p-vdb, label: metadata }
+    - { id: p-up-s3, from: p-uploader, to: p-s3 }
+    - { id: p-s3-chunker, from: p-s3, to: p-chunker, label: new upload }
+    - { id: p-chunker-kafka, from: p-chunker, to: p-kafka }
+    - { id: p-kafka-encoder, from: p-kafka, to: p-encoder }
+    - { id: p-encoder-s3, from: p-encoder, to: p-s3, label: renditions }
+    - { id: p-chunker-vdb, from: p-chunker, to: p-vdb, label: manifest }
+beats:
+  - point: "Play cannot send a whole video file: the video puts a 4K hour at about 40 GB and a long film near 100 GB, master sizes no phone downloads before playing."
+    kind: failure
+    weight: core
+    teach:
+      - "Now the play service, where the real logic is. The high-level design had it fetch the file from S3, but the video puts a one-hour 4K file at about 40 gigabytes, a two-and-a-half-hour film near 100. Those are master files; even the compressed 4K stream is several gigabytes an hour."
+      - "No phone waits for that, and many networks cannot hold top quality all the time. So before a title is published, it is processed."
+    draw: [lld-proc, p-big, p-big-2]
+    check: Why can the play service not just stream the file from S3 as it is?
+    answer: It is tens of gigabytes at one quality; the viewer would wait, and a slow network could never keep up.
+  - point: "The internal uploader writes the metadata to the video DB and the master file to an S3 bucket."
+    kind: flow
+    weight: supporting
+    teach:
+      - "Start where the high-level design left it: the internal team's uploader writes titles and descriptions to the video DB, and the master video and thumbnails to an S3 bucket."
+    draw: [p-uploader, p-vdb, p-up-vdb, p-s3, p-up-s3, p-s3-note]
+    check: What two places does the uploader write to?
+    answer: The video DB for the text metadata, and S3 for the video and thumbnails.
+  - point: "S3 notifies a chunker that splits the master into small segments of 2 to 10 seconds and puts them on Kafka for further processing."
+    kind: mechanism
+    weight: core
+    teach:
+      - "When a new video lands, S3 notifies a chunker. It splits the film into small segments, 2 to 10 seconds each: a 20-minute video in 10-second segments is 120 of them."
+      - "It puts the segments on a stream, Kafka, so the heavy work after it can run on many machines in parallel."
+    draw: [p-chunker, p-s3-chunker, p-chunk-note, p-kafka, p-chunker-kafka, p-kafka-note]
+    check: How many segments is a 20-minute video in 10-second segments?
+    answer: "120."
+  - point: "Video encoders take segments off Kafka and transcode each into a bitrate ladder, 480p, 720p, 1080p and 4K, with H.264 or H.265, as .ts or fragmented MP4, back into S3."
+    kind: mechanism
+    weight: core
+    teach:
+      - "A fleet of video encoders reads the queue. Each segment is encoded with H.264, or H.265 which is smaller at the same quality, and compressed into several bitrates: 480p, 720p, 1080p, 4K."
+      - "They are packaged for the streaming protocol: HLS takes MPEG-TS, dot ts, or fragmented MP4; DASH uses fragmented MP4. Every rendition goes back into S3."
+    draw: [p-encoder, p-kafka-encoder, p-encoder-s3, p-enc-1, p-enc-2]
+    check: Why encode the same segment several times?
+    answer: So the player can pick, segment by segment, the quality its network can sustain.
+    misconceptions:
+      - "HLS uses MP4 and DASH uses TS -> HLS takes .ts or fragmented MP4; DASH uses fragmented MP4."
+  - point: "Two streaming protocols, HLS and DASH, each describe a title with a manifest: a master that lists the renditions by bandwidth and resolution, and per rendition a playlist of its segments in order."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Thousands of files need an order, or the player cannot stitch them back. The streaming protocols, HLS, HTTP Live Streaming, and DASH, dynamic adaptive streaming over HTTP, use a manifest: for HLS an m3u8 file, plain text; for DASH an mpd file, XML."
+      - "A master playlist lists each rendition with its bandwidth and resolution, low, medium, high, each pointing to its own playlist, and that playlist lists its segments in order."
+    draw: [p-proto, p-manifest, p-master, p-variants, p-media]
+    check: What does the master playlist point to?
+    answer: One playlist per rendition, with its bandwidth and resolution; each of those lists that rendition's segments in order.
+  - point: "The manifest is kept with the title in the video DB, MongoDB, because films, series and episodes differ in shape; it is written once the renditions exist."
+    kind: decision
+    weight: core
+    teach:
+      - "In the video, the chunker writes the manifest into the video DB. The final lists can only be written once each rendition's segments exist, so in practice the packaging step after encoding writes them; either way they end up with the title."
+      - "The video DB: a film, a series with seasons, a single episode all have different shapes, so a document store, MongoDB. Its document: title, description, metadata, and the manifest."
+    draw: [p-chunker-vdb, p-vdb-1, p-vdb-2, p-mongo]
+    check: Why a document store for the video metadata?
+    answer: Films, series and episodes have different shapes, and a document store takes a different structure per title.
+asks:
+  - ids: [p-chunker]
+    beats: [3]
+    question: "The film is too big to send whole. What's the first thing you'd do to it after upload?"
+    hints:
+      - Think small pieces.
+      - How many seconds should each piece be?
+  - ids: [p-encoder]
+    beats: [4]
+    question: "Viewers have very different networks. What has to happen to each piece so every one of them can watch?"
+    hints:
+      - Think of the resolutions in the requirements.
+      - The same piece, more than once.
+  - ids: [p-manifest]
+    beats: [5]
+    question: "We now have thousands of small files per film. How does a player know which comes next, and at what quality?"
+    hints:
+      - Some file has to list them.
+      - And it would list the qualities too.

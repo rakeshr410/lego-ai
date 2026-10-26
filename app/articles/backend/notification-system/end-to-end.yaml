@@ -1,0 +1,978 @@
+# yaml-language-server: $schema=../../../../../lego/content-kit/schema/topic.schema.json
+# provenance: ai-drafted by claude-opus-5-5 on 2026-10-27
+#
+# A whole backend system design interview for a notification service that other companies call to reach
+# their users by email, SMS and in-app push, run step by step on one whiteboard. The order and the board
+# follow InterviewWithBunny's System Design 15: requirements, core entities, API, high-level design, then a
+# deep dive that opens the boxes one at a time: the gateway and the template service, preferences behind a
+# Kafka buffer, a notification queue with a topic per priority and channel, status tracking and reporting,
+# a preference cache, a transactional outbox for durability, and a fast path for OTPs with rate limits.
+# Every latency figure is an illustrative round number for the exercise, not a measurement.
+# A backend system of lego-ai's own (app/articles/backend): it stands alone and links to no main-site topic.
+catalogVersion: 5
+title: Designing a notification system, end to end
+shortTitle: Notifications interview
+summary: "A 45-minute backend design interview for a notification service that apps like Amazon or Uber call to send email, SMS and push: requirements with numbers, entities, the API, a high-level design, then a deep dive through templates, preferences, a Kafka queue per priority and channel, status reporting, an outbox for durability and a fast lane for OTPs."
+group: design
+order: 1
+xp: 280
+difficulty: intermediate
+tags: [interview, messaging, kafka, outbox, priority-queues, rate-limiting]
+eyebrow: Design
+breadcrumb: [Notifications, Interview walkthrough]
+lede: "Design the service every other system leans on: one that companies like Amazon, Flipkart or Uber call to send their users an order email, a bank OTP by SMS, or an in-app push, at a million notifications a minute. This walkthrough runs the interview the way a strong candidate runs it: pin the requirements down with numbers, separate the companies that call you from the people who receive, write the API, draw the simplest design, then open each box in turn until the design is durable, observable, and fast where it has to be."
+reviewStatus: draft
+author: rakeshr410
+provenance: ai-drafted
+sources:
+  - title: "System Design 15: Design Scalable Notifications System | SMS | OTP | Email & Push (InterviewWithBunny, YouTube)"
+    url: https://www.youtube.com/watch?v=Yv9q8d11Y7k
+    note: "The five-step order, the board and the deep-dive sequence. Corrected: Postgres is relational, not NoSQL; preference reads are keyed look-ups, not scans; outbox and row in one transaction; Kafka is replicated; consumers scale up to the partition count."
+  - title: "Pattern: Transactional outbox (microservices.io)"
+    url: https://microservices.io/patterns/data/transactional-outbox.html
+    note: "Write the business row and an outbox row in one local transaction; a relay publishes the outbox to the broker."
+  - title: Apache Kafka documentation
+    url: https://kafka.apache.org/documentation/
+    note: "Topics split into partitions, replicated across brokers; within a consumer group each partition is read by one consumer at a time."
+  - title: Firebase Cloud Messaging (Google)
+    url: https://firebase.google.com/docs/cloud-messaging
+    note: "The push channel for Android (and the web); Apple devices are reached through APNs."
+tutorBrief: >-
+  Interview walkthrough for a notification service used by other companies (clients such as Amazon, Flipkart,
+  Uber) to notify their users (people). Five numbered steps on the board: 1 requirements (functional left,
+  non-functional right), 2 core entities, 3 API, 4 high-level design, 5 deep dive (LLD). Functional: support
+  email, SMS and in-app push; create, update and manage templates with variables; let users set preferences
+  per channel and type; send immediately or at a scheduled time; track delivery status for a reporting
+  dashboard. Non-functional: scale 1M+ notifications a minute (about 16,700 a second); availability over
+  consistency (a template or preference change may take a few seconds to apply); latency near real time for
+  high-priority OTPs, 5 to 10 s acceptable for promotional ones. Entities: user and client (client is the
+  company, user the person, and preferences belong to the person), notification preference, notification
+  content, template, delivery status. API: POST /api/v1/notifications { templateId, recipientId, variables,
+  channels?, priority?, scheduledAt? }; GET /api/v1/notifications/{id}/status; POST /api/v1/templates and GET
+  /api/v1/templates/{templateId}/{version}, plus update and delete; PUT /api/v1/preferences { externalUserId,
+  clientId, preferences: { email, sms, inApp } }. HLD: clients, API gateway and load balancer, template
+  service and template DB, user preference service and preference DB, notification service, notification
+  provider as a black box. Deep dive: gateway does authentication, authorization, routing, rate limiting,
+  round robin. Template DB is Postgres (relational): template_id, name, type transactional or promotional,
+  channel, content, variables, version, is_active, created_at, updated_at; a template per channel because an
+  SMS must be short and an email can be rich. Preferences: millions of changes a minute are buffered in
+  Kafka (topic user_preference) and a preference consumer writes Postgres (id, client_id, external_user_id,
+  preferences JSON, updated_at). Notification service publishes to a Kafka notification queue; one
+  provider per channel consumes: SMS via Twilio or MSG91, email via SendGrid or Amazon SES or SMTP, in-app
+  push via FCM (Android) and APNs (Apple). Topics are priority times channel: critical, standard,
+  promotional, each with email, sms, push, nine in all, plus bulk email, bulk SMS, retry (exponential
+  backoff) and a DLQ after two or three failures for the support team. Status: a notification consumer
+  writes each notification to the notifications DB (Postgres, partitioned by client_id: notification_id,
+  client_id, external_user_id, template_id, channel, payload, status PENDING SCHEDULED SENT DELIVERED FAILED
+  CANCELLED, priority, scheduled_at, last_updated_at) as PENDING; providers publish status events to a
+  delivery_status Kafka topic instead of all writing the DB; a delivery consumer updates the status and
+  appends every change to a notification events table in BigQuery; a reporting service behind the gateway
+  reads final status from the DB and the history from BigQuery. Providers check the user's preference
+  before sending, through a preference cache in front of the preference DB. Durability: acknowledging the
+  client right after a Kafka publish leaves a gap; the transactional outbox writes the notification row and
+  an outbox row (outbox_id, notification_id, event_type, payload, published, created_at) in one transaction,
+  acknowledges, and a CDC pipeline publishes outbox rows to Kafka, replacing the notification consumer;
+  slower but well inside 5 to 10 s. Critical OTPs skip the outbox and go straight to Kafka (a lost OTP is
+  resent by the user), and a dedicated OTP service consumes only the critical topics, scaled out further
+  (needs at least as many partitions as consumers), in several regions. Follow-ups: provider webhooks
+  report delivered or failed; rate limiters at the gateway (abuse) and before each external provider (their
+  quotas).
+components:
+  - key: client-apps
+    name: Client apps
+    tone: sand
+    kind: client
+    summary: "Companies such as Amazon, Flipkart or Uber whose back ends call the service to notify their own users."
+    owns: [their users' ids]
+    talksTo: [api-gateway]
+  - key: api-gateway
+    name: API gateway and load balancer
+    tone: blue
+    kind: gateway
+    summary: "Authenticates and authorizes each client, routes by path, rate-limits, and spreads requests round robin."
+    owns: [client keys, rate limits]
+    talksTo: [template-service, preference-service, notification-service, reporting-service]
+  - key: template-service
+    name: Template service
+    tone: green
+    kind: service
+    summary: "Creates, versions, updates and deletes templates, one per channel, with variables to fill per user."
+    owns: [nothing durable]
+    talksTo: [template-db]
+  - key: template-db
+    name: Template DB
+    tone: yellow
+    kind: datastore
+    summary: "Postgres: one row per template version, with its type, channel, content and variables."
+    owns: [templates]
+    talksTo: []
+  - key: preference-service
+    name: Preference service
+    tone: green
+    kind: service
+    summary: "Accepts a user's channel preferences and publishes each change to Kafka instead of writing the database."
+    owns: [nothing durable]
+    talksTo: [preference-queue]
+  - key: preference-queue
+    name: Preference Kafka topic
+    tone: orange
+    kind: queue
+    summary: "The user_preference topic: a buffer that absorbs bursts of preference changes."
+    owns: [pending preference changes]
+    talksTo: [preference-consumer]
+  - key: preference-consumer
+    name: Preference consumer
+    tone: gray
+    kind: worker
+    summary: "Reads the user_preference topic and writes each change to the preference DB at a steady pace."
+    owns: [its topic offsets]
+    talksTo: [preference-db]
+  - key: preference-db
+    name: Preference DB
+    tone: yellow
+    kind: datastore
+    summary: "Postgres: per client and external user id, which channels the person accepts."
+    owns: [user preferences]
+    talksTo: []
+  - key: preference-cache
+    name: Preference cache
+    tone: orange
+    kind: cache
+    summary: "Hot preferences in memory, read by every provider before it sends."
+    owns: [cached preferences]
+    talksTo: [preference-db]
+  - key: notification-service
+    name: Notification service
+    tone: green
+    kind: service
+    summary: "Takes send requests, writes the notification and its outbox row in one transaction, and puts critical ones straight on Kafka."
+    owns: [nothing in memory]
+    talksTo: [notifications-db, notification-queue]
+  - key: notification-queue
+    name: Notification queue
+    tone: orange
+    kind: queue
+    summary: "Kafka with a topic per priority and channel, plus bulk, retry and dead-letter topics."
+    owns: [notifications waiting to be sent]
+    talksTo: [sms-provider, email-provider, inapp-provider, otp-service]
+  - key: sms-provider
+    name: SMS provider service
+    tone: blue
+    kind: worker
+    summary: "Consumes the SMS topics, checks the user's preference, and hands the message to Twilio or MSG91."
+    owns: [its topic offsets]
+    talksTo: [external-senders, preference-cache, delivery-queue, rate-limiter]
+  - key: email-provider
+    name: Email provider service
+    tone: blue
+    kind: worker
+    summary: "Consumes the email topics and sends through SendGrid, Amazon SES or an SMTP server."
+    owns: [its topic offsets]
+    talksTo: [external-senders, preference-cache, delivery-queue]
+  - key: inapp-provider
+    name: In-app provider service
+    tone: blue
+    kind: worker
+    summary: "Consumes the push topics and sends through FCM for Android and APNs for Apple devices."
+    owns: [its topic offsets]
+    talksTo: [external-senders, preference-cache, delivery-queue]
+  - key: otp-service
+    name: OTP service
+    tone: blue
+    kind: worker
+    summary: "Consumes only the critical topics, scaled out further than the other providers, so OTPs never wait behind promotions."
+    owns: [its topic offsets]
+    talksTo: [external-senders, preference-cache]
+  - key: external-senders
+    name: External senders
+    tone: purple
+    kind: external
+    summary: "Twilio or MSG91 for SMS, SendGrid or Amazon SES for email, FCM and APNs for push. Each has its own rate limits and calls back with delivery receipts."
+    owns: [the last mile]
+    talksTo: []
+  - key: rate-limiter
+    name: Rate limiter
+    tone: gray
+    kind: service
+    summary: "Keeps the providers under each external sender's quota."
+    owns: [request counts per window]
+    talksTo: []
+  - key: notifications-db
+    name: Notifications DB
+    tone: yellow
+    kind: datastore
+    summary: "Postgres partitioned by client: the notifications table with each one's current status, and the outbox table."
+    owns: [notifications, outbox]
+    talksTo: []
+  - key: notification-consumer
+    name: Notification consumer
+    tone: gray
+    kind: worker
+    summary: "The first way to persist: reads the queue and writes each notification as pending. The outbox later replaces it."
+    owns: [its topic offsets]
+    talksTo: [notifications-db]
+  - key: cdc-pipeline
+    name: CDC pipeline
+    tone: gray
+    kind: worker
+    summary: "Change data capture: reads new outbox rows from the database log and publishes them to the notification queue."
+    owns: [its log position]
+    talksTo: [notification-queue]
+  - key: delivery-queue
+    name: Delivery status topic
+    tone: orange
+    kind: queue
+    summary: "Kafka topic delivery_status: every provider publishes sent, delivered and failed events here."
+    owns: [status events]
+    talksTo: [delivery-consumer]
+  - key: delivery-consumer
+    name: Delivery consumer
+    tone: gray
+    kind: worker
+    summary: "The one writer of status: updates the notifications DB and appends each change to the events table."
+    owns: [its topic offsets]
+    talksTo: [notifications-db, event-db]
+  - key: event-db
+    name: Notification events (BigQuery)
+    tone: yellow
+    kind: datastore
+    summary: "Every status change of every notification with its time, for timelines and analytics."
+    owns: [status history]
+    talksTo: []
+  - key: reporting-service
+    name: Reporting service
+    tone: green
+    kind: service
+    summary: "Answers clients' status and dashboard requests: current status from the notifications DB, history from BigQuery."
+    owns: [nothing durable]
+    talksTo: [notifications-db, event-db]
+content:
+  # ────────────────────────────────────────────────────────────────── Problem statement
+  - __component: sd.section
+    key: problem-statement
+    title: Understanding the problem.
+    railLabel: Problem
+    intro: "The prompt: design a notification system. Most designs call one as a third-party box, for a booking email or a chat push. This time you build that box, for other companies to call."
+  - __component: sd.rich-text
+    key: problem-what
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "A notification system is a service that delivers timely messages to people through several channels: email, SMS and in-app push. Here it is an industry-grade service: companies such as Amazon, Flipkart or Uber integrate with it through an open API and send every order confirmation, promotion and bank OTP through it, instead of each building their own."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Say it in your own words with an example and agree it with the interviewer: Amazon sends an order email, a bank sends an OTP by SMS, a chat app sends a push. Then run the interview in five steps and say them once: requirements, core entities, API, high-level design, then the deep dive, where most of the time goes and where the interview is scored."
+  - __component: sd.card-grid
+    key: board-steps
+    title: The board, in the order you fill it
+    columns: 3
+    cards:
+      - title: 1. Requirements
+        text: Functional on the left, non-functional on the right, each quality with a number.
+      - title: 2. Core entities
+        text: "The nouns the system keeps, and the difference between a client (a company) and a user (a person)."
+      - title: 3. API
+        text: Send a notification, read its status, manage templates, set preferences.
+      - title: 4. High-level design
+        text: "Gateway, a template service, a preference service, a notification service, and the provider as a black box."
+      - title: 5. Deep dive
+        text: "Each box opened in turn: templates, preferences, the queue and its topics, status, a cache, the outbox, and the OTP fast lane."
+  - __component: sd.quiz
+    key: problem-quiz
+    title: Quick check
+    questions:
+      - question: Who calls this notification service?
+        optionA: End users directly from their phones
+        optionB: "Other companies' back ends, such as Amazon or Uber, through an open API"
+        optionC: Only the service's own apps
+        optionD: The mobile operators
+        answer: B
+        explanation: It is a platform other businesses integrate with; their users receive the messages.
+  # ────────────────────────────────────────────────────────────────── 1. Requirements
+  - __component: sd.section
+    key: requirements
+    title: Requirements.
+    railLabel: Requirements
+    intro: "Five functional lines and three non-functional ones. The non-functional numbers, a million a minute and two latency classes, are what the deep dive will be judged against."
+  - __component: sd.subsection
+    key: functional-sub
+    title: Functional requirements
+    railLabel: Functional
+  - __component: sd.checklist
+    key: functional
+    idPrefix: FR-
+    items:
+      - text: "Support several delivery channels: email, SMS and in-app push."
+      - text: "Create, update and manage notification templates with dynamic content (variables filled per user)."
+        note: "One template, many personalised messages: user 1 hears about a phone sale, user 2 about another brand."
+      - text: Let users set their notification preferences per channel and type.
+        note: "The person, not the company, chooses: email yes, SMS no."
+      - text: "Send immediately (an OTP, an order event) or at a scheduled time (a promotion)."
+      - text: Track delivery status, pending, sent, delivered, for a reporting dashboard.
+  - __component: sd.subsection
+    key: non-functional-sub
+    title: Non-functional requirements
+    railLabel: Non-functional
+  - __component: sd.requirement-table
+    key: non-functional
+    rows:
+      - area: Scale
+        requirement: Carry the traffic of large companies' every order and promotion.
+        targets: ["1M+ notifications a minute, about 16,700 a second"]
+        note: Ask for the number first; the design depends on it.
+      - area: Availability
+        requirement: Keep accepting and sending when machines fail.
+        targets: [availability over consistency]
+        note: "A changed template or preference may take a few seconds to apply everywhere. That is consistency, not latency."
+      - area: Latency
+        requirement: Deliver by priority.
+        targets: ["OTP and bank alerts near real time", "promotional within 5 to 10 s"]
+        note: "An OTP that arrives late has expired and the login fails; a promotion a few seconds late costs nothing."
+  - __component: sd.rich-text
+    key: requirements-cap
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "At a million a minute the system runs on many machines, and when the network between them splits it must either keep answering or wait until every copy agrees. A notification service keeps answering: if a company edits a template, it is fine for the old version to go out for a few more seconds. Do not confuse this with latency, which is how fast a message reaches the person, and which the third line handles by priority."
+  - __component: sd.quiz
+    key: requirements-quiz
+    title: Quick check
+    questions:
+      - question: Why does the latency requirement have two numbers?
+        optionA: To look thorough
+        optionB: "An OTP expires if it is late, so it needs near real time; a promotion can wait 5 to 10 seconds"
+        optionC: Email is slower than SMS
+        optionD: Because of the CAP theorem
+        answer: B
+        explanation: Priority decides latency. The design will give critical messages their own path.
+      - question: "A client edits a template and the old version goes out for three more seconds. Which requirement allows this?"
+        optionA: Latency
+        optionB: "Availability over consistency: eventual consistency is acceptable"
+        optionC: Scale
+        optionD: None; it is a bug
+        answer: B
+        explanation: Staleness of a few seconds is a consistency trade, not a latency problem.
+  # ────────────────────────────────────────────────────────────────── 2. Entities
+  - __component: sd.section
+    key: entities
+    title: Core entities.
+    railLabel: Entities
+    intro: "Read the functional lines and name the nouns. Five come straight out of them; the sixth, the client, is the one most candidates miss."
+  - __component: sd.table
+    key: entities-table
+    columns:
+      - { label: Entity, style: strong }
+      - { label: What it is, style: text }
+    rows:
+      - [Client, "The company that integrates with the service, such as Amazon, Flipkart or Uber. Not a person."]
+      - [User, "A person who uses the client's app and receives the notifications."]
+      - [Notification preference, "Which channels a user accepts, per client: email yes, SMS no."]
+      - [Notification content, The text actually sent once the template's variables are filled.]
+      - [Template, "The client's message format per channel, with variables and versions."]
+      - [Delivery status, "Where each notification is: pending, scheduled, sent, delivered, failed."]
+  - __component: sd.rich-text
+    key: client-vs-user
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "In most designs the client and the user are the same thing. Here they are not: the client is an application that calls the open API, and the user is a person using that application. Both are needed because preferences belong to the person. Amazon will not store how each of its customers wants to be reached; the customer decides between a pop-up and an email, and the service keeps that choice per client and user."
+  - __component: sd.quiz
+    key: entities-quiz
+    title: Quick check
+    questions:
+      - question: Why are client and user separate entities here?
+        optionA: They are the same; one is enough
+        optionB: "The client is the calling company and the user is the person who receives; preferences belong to the person"
+        optionC: Users pay and clients do not
+        optionD: For the load balancer
+        answer: B
+        explanation: "The preference table is keyed by client and external user id for exactly this reason."
+  # ────────────────────────────────────────────────────────────────── 3. API
+  - __component: sd.section
+    key: api
+    title: API.
+    railLabel: API
+    intro: "Each functional line becomes one or more endpoints: send a notification and read its status, manage templates, set preferences."
+  - __component: sd.endpoint
+    key: send-notification
+    method: POST
+    path: /api/v1/notifications
+    summary: "A client asks for a notification to one user. channels, priority and scheduledAt are optional: priority is low, medium or high, and scheduledAt makes it a scheduled send."
+    requestHeaders: ["Authorization: Bearer <client key>"]
+    requestBody:
+      templateId: tpl_spring_sale
+      recipientId: "1234"
+      variables: { product: iPhone }
+      channels: [email, push]
+      priority: low
+      scheduledAt: "2026-11-01T09:00:00Z"
+    responses:
+      - label: Accepted
+        status: "202"
+        body:
+          notificationId: ntf_8f2c
+          status: PENDING
+  - __component: sd.endpoint
+    key: notification-status
+    method: GET
+    path: "/api/v1/notifications/{notificationId}/status"
+    summary: The current status of one notification, for the client's dashboard.
+    responses:
+      - label: Found
+        status: "200"
+        body:
+          notificationId: ntf_8f2c
+          status: DELIVERED
+  - __component: sd.endpoint
+    key: create-template
+    method: POST
+    path: /api/v1/templates
+    summary: "Saves a template, a new row in the database, so a POST. Update and delete endpoints complete the set."
+    requestBody:
+      name: spring_sale
+      type: promotional
+      channel: email
+      content: "Hi {name}, the {product} you liked is on sale."
+    responses:
+      - label: Created
+        status: "201"
+        body:
+          templateId: tpl_spring_sale
+          version: 1
+  - __component: sd.endpoint
+    key: get-template
+    method: GET
+    path: "/api/v1/templates/{templateId}/{version}"
+    summary: A template has versions; read one by id and version.
+    responses:
+      - label: Found
+        status: "200"
+        body:
+          templateId: tpl_spring_sale
+          version: 2
+  - __component: sd.endpoint
+    key: set-preferences
+    method: PUT
+    path: /api/v1/preferences
+    summary: "Sets one user's channel preferences for one client. It comes through the client, never from the person directly."
+    requestBody:
+      externalUserId: "1234"
+      clientId: uber
+      preferences: { email: true, sms: false, inApp: true }
+    responses:
+      - label: Saved
+        status: "202"
+        body:
+          accepted: true
+  - __component: sd.quiz
+    key: api-quiz
+    title: Quick check
+    questions:
+      - question: "Which fields of the send request are optional?"
+        optionA: templateId and recipientId
+        optionB: "channels, priority and scheduledAt, marked with a question mark on the board"
+        optionC: variables only
+        optionD: None
+        answer: B
+        explanation: "Without a schedule it is sent now; without channels, the user's preferences decide."
+      - question: Why is setting preferences a PUT keyed by clientId and externalUserId?
+        optionA: Because PUT is faster
+        optionB: "It replaces one person's preferences for one client, and the same person may use several clients"
+        optionC: Because users call it directly
+        optionD: It should be a GET
+        answer: B
+        explanation: "The person is identified by the client's own user id, scoped to that client."
+  # ────────────────────────────────────────────────────────────────── 4. High-level design
+  - __component: sd.section
+    key: high-level-design
+    title: High-level design.
+    railLabel: High level
+    intro: "The fewest boxes that meet the functional requirements: the clients, a gateway in front, three services with their stores, and the notification provider as a black box for now."
+  - __component: sd.component-diagram
+    key: hld-diagram
+    title: The first design
+    direction: LR
+    nodes:
+      - { key: client-apps, details: [Amazon, Uber] }
+      - { key: api-gateway }
+      - { key: template-service }
+      - { key: template-db }
+      - { key: preference-service }
+      - { key: preference-db }
+      - { key: notification-service }
+      - { key: external-senders, details: ["the notification provider, a black box: email, in-app, SMS"] }
+    edges:
+      - { from: client-apps, to: api-gateway }
+      - { from: api-gateway, to: template-service, label: templates }
+      - { from: api-gateway, to: preference-service, label: preferences }
+      - { from: api-gateway, to: notification-service, label: send }
+      - { from: template-service, to: template-db }
+      - { from: preference-service, to: preference-db }
+      - { from: notification-service, to: preference-db, label: checks }
+      - { from: notification-service, to: external-senders }
+  - __component: sd.rich-text
+    key: hld-flows
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "The clients are companies, not people. At this scale it is a set of microservices, not a monolith, so an API gateway and load balancer sits in front. A client first saves a template through the template service, which stores it in the template DB. Preference changes, which come from the person through the client's app, go to the user preference service and its database."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Sending goes to the notification service, which checks the user's preferences and hands the message to a notification provider, a third party such as an SMTP server for email. How it is handed over, and how a million a minute get through, is left black-boxed for the deep dive."
+  - __component: sd.quiz
+    key: hld-quiz
+    title: Quick check
+    questions:
+      - question: Why is there a gateway in front of the services?
+        optionA: Because there is a database
+        optionB: "Many microservices at large scale need one entry that authenticates clients, routes each request and balances load"
+        optionC: To send emails
+        optionD: It is optional at this scale
+        answer: B
+        explanation: The deep dive lists its jobs; the high-level design only needs the box.
+  # ────────────────────────────────────────────────────────────────── 5. Deep dive: gateway and templates
+  - __component: sd.section
+    key: lld-template
+    title: "Deep dive: the gateway and the template service."
+    railLabel: LLD, templates
+    intro: "Copy the high-level design down into the deep dive and open the boxes one at a time, starting at the front: what the gateway does, then the template service and its table."
+  - __component: sd.rich-text
+    key: gateway-jobs
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "The clients and the gateway do not change in the deep dive; state what the gateway is responsible for: authentication and authorization of each client, routing by path to the right service, rate limiting, and load balancing round robin across each service's instances. Rate limiting matters most here, because this is a public API that anyone could flood; it comes back at the end."
+      - type: paragraph
+        children:
+          - type: text
+            text: "The template service is plain: an API through which a client creates, reads, updates and deletes templates, saved as rows in the template DB. Templates are structured and relational, so Postgres fits. It is a relational database, not a NoSQL one."
+  - __component: sd.db-schema
+    key: template-table
+    stores:
+      - key: template-store
+        engine: Postgres
+        component: template-db
+        why: Structured rows read by id and version.
+        tables:
+          - name: templates
+            columns:
+              - { name: template_id, type: bigint, role: primary, note: generated }
+              - { name: name, type: text }
+              - { name: type, type: text, note: "transactional or promotional" }
+              - { name: channel, type: text, note: "email, sms or push" }
+              - { name: content, type: text }
+              - { name: variables, type: jsonb }
+              - { name: version, type: int }
+              - { name: is_active, type: bool }
+              - { name: created_at, type: timestamp }
+              - { name: updated_at, type: timestamp }
+  - __component: sd.rich-text
+    key: template-channel
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Why a channel per template: an email can carry a long description and images, while an SMS must be short and to the point or nobody reads it on a phone. So a client keeps one template per channel, and versions of each, with is_active marking the one in use."
+  - __component: sd.quiz
+    key: template-quiz
+    title: Quick check
+    questions:
+      - question: Why does the templates table have a channel column?
+        optionA: To pick the provider's price
+        optionB: "An SMS must be short while an email can be rich, so each channel gets its own template"
+        optionC: For sharding
+        optionD: It is not needed
+        answer: B
+        explanation: One message, written differently for each channel.
+      - question: Which gateway responsibility matters most for a public notification API?
+        optionA: Caching templates
+        optionB: Rate limiting, so no caller can flood the system
+        optionC: Sending emails
+        optionD: Storing preferences
+        answer: B
+        explanation: "Authentication, authorization and routing too, but a public API must be protected from bursts."
+  # ────────────────────────────────────────────────────────────────── 5. Deep dive: preferences
+  - __component: sd.section
+    key: lld-preferences
+    title: "Deep dive: preferences behind a buffer."
+    railLabel: LLD, preferences
+    intro: "Thousands of clients, each with millions of users, and a large share of them changing how they want to be reached. Written straight into the database, that is millions of writes a minute."
+  - __component: sd.rich-text
+    key: preferences-buffer
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "The video estimates that 40 to 60 percent of a client's users change their preferences. Even half of millions, across thousands of clients, is too much to write synchronously. So put a buffer in between: the preference service publishes each change to a Kafka topic, user_preference, and answers at once; a preference consumer reads the topic and updates the preference DB at the pace the database can take. That is publish and subscribe, and the spikes stay in Kafka instead of in the database."
+      - type: paragraph
+        children:
+          - type: text
+            text: "The change lands a moment later, which the requirements allow: availability over consistency. The data is a small structured record per person, so Postgres again."
+  - __component: sd.db-schema
+    key: preference-table
+    stores:
+      - key: preference-store
+        engine: Postgres
+        component: preference-db
+        why: One small row per client and user, read by that pair.
+        tables:
+          - name: user_preference
+            columns:
+              - { name: id, type: bigint, role: primary, note: generated }
+              - { name: client_id, type: text, note: "Amazon, Flipkart, Uber" }
+              - { name: external_user_id, type: text, note: "the client's own id for the person; unique with client_id" }
+              - { name: preferences, type: jsonb, note: "{ email: true, sms: false, push: true }" }
+              - { name: updated_at, type: timestamp }
+  - __component: sd.component-diagram
+    key: preference-diagram
+    title: Preferences through Kafka
+    direction: LR
+    nodes:
+      - { key: preference-service }
+      - { key: preference-queue, details: [topic user_preference] }
+      - { key: preference-consumer }
+      - { key: preference-db }
+    edges:
+      - { from: preference-service, to: preference-queue, label: publish }
+      - { from: preference-queue, to: preference-consumer, label: consume }
+      - { from: preference-consumer, to: preference-db, label: update }
+  - __component: sd.quiz
+    key: preferences-quiz
+    title: Quick check
+    questions:
+      - question: Why does the preference service publish to Kafka instead of writing the database?
+        optionA: Kafka is a database
+        optionB: "Millions of changes a minute would overload direct writes; Kafka absorbs the bursts and a consumer writes at a steady pace"
+        optionC: To encrypt the preferences
+        optionD: Because Postgres cannot store JSON
+        answer: B
+        explanation: "A buffer between a bursty producer and a database, with eventual consistency as the price."
+  # ────────────────────────────────────────────────────────────────── 5. Deep dive: the notification queue
+  - __component: sd.section
+    key: lld-notification-queue
+    title: "Deep dive: providers, and a queue between them."
+    railLabel: LLD, the queue
+    intro: "Open the black box. The provider becomes one service per channel, each calling an external sender, and a Kafka queue with a topic per priority and channel sits between them and the notification service."
+  - __component: sd.rich-text
+    key: providers
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Split the notification provider into three microservices so each has one responsibility: an SMS provider, an email provider and an in-app provider. None of them reaches a phone or an inbox by itself; each calls an external sender. SMS goes through Twilio or MSG91. Email goes through SendGrid (owned by Twilio), Amazon SES or an SMTP server such as Gmail's. In-app push goes through FCM, Firebase Cloud Messaging, for Android, and APNs, the Apple Push Notification service, for iPhones."
+      - type: paragraph
+        children:
+          - type: text
+            text: "If the notification service called the three providers directly, it would have to route a million requests a minute, about 16,700 a second, and wait on each: a bottleneck that does not scale. Put a Kafka broker in between, the notification queue. The service publishes each request and moves on; every provider is a consumer that reads only the topics meant for it."
+  - __component: sd.table
+    key: topics
+    title: Topics on the notification queue
+    columns:
+      - { label: Priority, style: strong }
+      - { label: Topics, style: mono }
+      - { label: For, style: text }
+    rows:
+      - [Critical, "notifications.critical.email, .sms, .push", OTPs and bank alerts]
+      - [Standard, "notifications.standard.email, .sms, .push", Order and account events]
+      - [Promotional, "notifications.promotional.email, .sms, .push", Campaigns]
+      - [Other, "notifications.bulk.email, .bulk.sms, .retry, .dlq", "Bulk sends, retries, and the dead letters"]
+  - __component: sd.rich-text
+    key: retry-dlq
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Three priorities, low, medium and high in the API, become promotional, standard and critical, and each has the three channels: nine topics. The SMS provider subscribes to the SMS ones only. A message that fails goes to the retry topic and is tried again after an exponentially growing wait; after two or three failures it goes to the dead letter queue, where the support team looks at what went wrong."
+  - __component: sd.quiz
+    key: queue-quiz
+    title: Quick check
+    questions:
+      - question: How does the SMS provider receive only SMS work?
+        optionA: The notification service calls it directly
+        optionB: "It subscribes only to the SMS topics, one per priority"
+        optionC: It reads every message and drops the rest
+        optionD: Twilio sends it the work
+        answer: B
+        explanation: Topics are priority times channel, so routing is a subscription.
+      - question: A message fails three times. Where does it end up?
+        optionA: It is dropped silently
+        optionB: "In the dead letter queue, after retries with exponential backoff, for the support team"
+        optionC: Back at the client
+        optionD: In the template DB
+        answer: B
+        explanation: Retries absorb transient failures; the DLQ keeps the rest visible.
+  # ────────────────────────────────────────────────────────────────── 5. Deep dive: status and reporting
+  - __component: sd.section
+    key: lld-delivery-status
+    title: "Deep dive: status, and reporting."
+    railLabel: LLD, status
+    intro: "So far nothing is saved. A client asking whether a message went out gets no answer, and the reporting requirement is not met."
+  - __component: sd.rich-text
+    key: status-store
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Add a notifications DB, Postgres partitioned by client_id, and a notification consumer that reads the queue and writes each notification with status PENDING: it has arrived but has not been sent. When a provider hands a message to its external sender, the status should become SENT."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Letting every provider update the notifications DB directly makes many services write one table: they contend for the same rows and are all coupled to its schema. Instead each provider publishes a status event to a second Kafka topic, delivery_status, and one delivery consumer applies them to the database. One writer, and a buffer in front of it."
+  - __component: sd.db-schema
+    key: notifications-table
+    stores:
+      - key: notifications-store
+        engine: "Postgres, partitioned by client_id"
+        component: notifications-db
+        why: The current state of every notification, read by id or by client.
+        tables:
+          - name: notifications
+            columns:
+              - { name: notification_id, type: text, role: primary }
+              - { name: client_id, type: text, note: partition key }
+              - { name: external_user_id, type: text }
+              - { name: template_id, type: bigint }
+              - { name: channel, type: text }
+              - { name: payload, type: jsonb }
+              - { name: status, type: text, note: "PENDING, SCHEDULED, SENT, DELIVERED, FAILED, CANCELLED" }
+              - { name: priority, type: text, note: "high, normal, low" }
+              - { name: scheduled_at, type: timestamp }
+              - { name: last_updated_at, type: timestamp }
+  - __component: sd.rich-text
+    key: reporting
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "A reporting service behind the gateway answers clients' status and dashboard requests by reading the notifications DB. But that table holds only the latest status. A client who wants the timeline, when it was scheduled, sent and delivered, needs every change. So the delivery consumer also appends each status event to a notification events table in BigQuery, an analytics warehouse; it can be split into a delivery consumer and an analytics ingester. The reporting service reads current status from Postgres and history from BigQuery."
+  - __component: sd.quiz
+    key: status-quiz
+    title: Quick check
+    questions:
+      - question: Why do providers publish status events instead of updating the notifications DB?
+        optionA: Providers cannot reach the database
+        optionB: "Many services writing one table contend and couple to it; one delivery consumer applies the events"
+        optionC: Kafka is faster than Postgres for reads
+        optionD: To save storage
+        answer: B
+        explanation: One writer behind a buffer.
+      - question: Why a separate events table in BigQuery?
+        optionA: Postgres cannot store timestamps
+        optionB: "The notifications table keeps only the latest status; the timeline needs every change, an append-only analytics workload"
+        optionC: For the templates
+        optionD: To cache preferences
+        answer: B
+        explanation: Current state in Postgres, history in the warehouse.
+  # ────────────────────────────────────────────────────────────────── 5. Deep dive: preference cache
+  - __component: sd.section
+    key: lld-preference-cache
+    title: "Deep dive: using the preferences."
+    railLabel: LLD, preference cache
+    intro: "The preferences are stored, but nothing reads them yet. Every provider must check them before it sends."
+  - __component: sd.rich-text
+    key: preference-check
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Before handing a message to its external sender, each provider looks up the user's preference for that client and channel; if the channel is switched off, the message is dropped. That is one look-up per notification, a million a minute. With a key on client_id and external_user_id each look-up is an index read, not a scan of the table, but that many reads still load the database and add a round trip to every send."
+      - type: paragraph
+        children:
+          - type: text
+            text: "So put a preference cache in front of the preference DB. Providers read the cache and fall back to the database on a miss. A changed preference may be served stale for a short while, as the availability requirement already allows; expire entries or refresh them when the preference consumer writes."
+  - __component: sd.quiz
+    key: preference-cache-quiz
+    title: Quick check
+    questions:
+      - question: Where is the user's preference checked?
+        optionA: At the gateway
+        optionB: "In each provider, before it calls the external sender, through the preference cache"
+        optionC: In the template service
+        optionD: Nowhere; clients filter
+        answer: B
+        explanation: The last moment before sending, so a fresh opt-out is honoured.
+  # ────────────────────────────────────────────────────────────────── 5. Deep dive: outbox
+  - __component: sd.section
+    key: lld-outbox
+    title: "Deep dive: never lose an accepted message."
+    railLabel: LLD, outbox
+    intro: "A critical gap: the notification service tells the client the message is accepted the moment it has handed it to Kafka, before anything is stored."
+  - __component: sd.rich-text
+    key: outbox-problem
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Say Amazon sends message ABC. The service publishes it and answers that it will be sent soon. The video's worry is that Kafka goes down before the notification consumer has saved it, and the message is lost. Kafka is in fact a replicated log that keeps acknowledged messages on several brokers, so the real gap is narrower: the service acknowledging before the broker has durably accepted the write, or failing between the two. Either way the client was promised something nobody stored."
+      - type: paragraph
+        children:
+          - type: text
+            text: "The fix is the transactional outbox. The notifications DB gets a second table, the outbox. The notification service writes the notification row and an outbox row in one database transaction, so both are saved or neither is, and only then acknowledges the client. A CDC pipeline, change data capture, reads new outbox rows from the database's log and publishes them to the notification queue. It replaces the notification consumer: the row is already in the database before the message reaches Kafka."
+  - __component: sd.db-schema
+    key: outbox-table
+    stores:
+      - key: outbox-store
+        engine: Postgres (the notifications DB)
+        component: notifications-db
+        why: Written in the same transaction as the notification row.
+        tables:
+          - name: notification_outbox
+            columns:
+              - { name: outbox_id, type: bigint, role: primary }
+              - { name: notification_id, type: text }
+              - { name: event_type, type: text }
+              - { name: payload, type: jsonb }
+              - { name: published, type: bool }
+              - { name: created_at, type: timestamp }
+  - __component: sd.rich-text
+    key: outbox-cost
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "The price is latency: a database write and a CDC hop before the queue. For standard and promotional messages that is well inside the 5 to 10 seconds allowed, so they take this path and gain durability."
+  - __component: sd.quiz
+    key: outbox-quiz
+    title: Quick check
+    questions:
+      - question: Why must the notification row and the outbox row be written in one transaction?
+        optionA: For speed
+        optionB: "So both are saved or neither is; two separate writes could leave a notification with no event, or an event with no row"
+        optionC: Because Kafka requires it
+        optionD: It does not matter
+        answer: B
+        explanation: Writing to two places separately is the dual-write problem the outbox exists to avoid.
+      - question: When does the client get its acknowledgement now?
+        optionA: Before anything is written
+        optionB: After the transaction commits in the notifications DB
+        optionC: After the SMS is delivered
+        optionD: After the CDC pipeline publishes
+        answer: B
+        explanation: Once the row is durable, nothing accepted can be lost.
+  # ────────────────────────────────────────────────────────────────── 5. Deep dive: priority, and finishing
+  - __component: sd.section
+    key: lld-priority
+    title: "Deep dive: a fast lane for OTPs, and finishing."
+    railLabel: LLD, priority
+    intro: "The priority flag is set on every request, but every message still takes the same path. An OTP must not wait behind a promotion, or behind the outbox."
+  - __component: sd.rich-text
+    key: otp-path
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Critical messages skip the outbox: the notification service puts them straight on Kafka, on the critical topics, the path drawn first. If one is lost, the user asks for the OTP again and a new request follows the same path; a separate consumer may still record critical messages in the notifications DB. Then give them their own consumer: an OTP service that reads only the critical topics, while the SMS, email and in-app providers read standard and promotional ones."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Delay in a Kafka pipeline is consumer lag: producers writing faster than consumers read. So scale the OTP service out further than the others, in several regions. Consumers in a group share a topic's partitions, so the critical topics need at least as many partitions as OTP consumers, or the extra consumers sit idle."
+  - __component: sd.rich-text
+    key: follow-ups
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Two follow-ups. Delivered: the status stops at SENT, because only the external sender knows whether the message arrived. Each provider exposes a webhook; Twilio, SendGrid and the rest call it with delivered or failed, and the provider publishes that to the delivery_status topic. Rate limits: one at the gateway, so a spammer cannot flood the public API, and one before the external senders, since each has its own quota and drops what exceeds it. Every provider asks the rate limiter before it sends."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Close by reading the non-functional list back. Scale: Kafka between every producer and consumer, consumers scaled per channel. Availability: preferences and templates may lag by seconds. Latency: OTPs on their own topics and consumers, promotions through the durable outbox within 5 to 10 seconds."
+  - __component: sd.component-diagram
+    key: final-diagram
+    title: The final design
+    direction: LR
+    nodes:
+      - { key: client-apps }
+      - { key: api-gateway, details: [auth, routing, rate limiting, round robin] }
+      - { key: template-service }
+      - { key: template-db }
+      - { key: preference-service }
+      - { key: preference-queue }
+      - { key: preference-consumer }
+      - { key: preference-db }
+      - { key: preference-cache }
+      - { key: notification-service, details: [outbox for standard and promotional, Kafka for critical] }
+      - { key: notifications-db, details: [notifications, outbox] }
+      - { key: cdc-pipeline }
+      - { key: notification-consumer, details: [replaced by the CDC pipeline] }
+      - { key: notification-queue, details: [9 priority and channel topics, bulk, retry, DLQ] }
+      - { key: sms-provider }
+      - { key: email-provider }
+      - { key: inapp-provider }
+      - { key: otp-service, details: [critical topics only] }
+      - { key: external-senders }
+      - { key: rate-limiter }
+      - { key: delivery-queue }
+      - { key: delivery-consumer }
+      - { key: event-db }
+      - { key: reporting-service }
+    edges:
+      - { from: client-apps, to: api-gateway }
+      - { from: api-gateway, to: template-service }
+      - { from: template-service, to: template-db }
+      - { from: api-gateway, to: preference-service }
+      - { from: preference-service, to: preference-queue }
+      - { from: preference-queue, to: preference-consumer }
+      - { from: preference-consumer, to: preference-db }
+      - { from: preference-cache, to: preference-db, label: on a miss }
+      - { from: api-gateway, to: notification-service }
+      - { from: notification-service, to: notifications-db, label: one transaction }
+      - { from: notifications-db, to: cdc-pipeline }
+      - { from: cdc-pipeline, to: notification-queue }
+      - { from: notification-service, to: notification-queue, label: critical }
+      - { from: notification-queue, to: notification-consumer }
+      - { from: notification-queue, to: sms-provider }
+      - { from: notification-queue, to: email-provider }
+      - { from: notification-queue, to: inapp-provider }
+      - { from: notification-queue, to: otp-service }
+      - { from: sms-provider, to: rate-limiter }
+      - { from: sms-provider, to: external-senders }
+      - { from: email-provider, to: external-senders }
+      - { from: inapp-provider, to: external-senders }
+      - { from: otp-service, to: preference-cache }
+      - { from: sms-provider, to: delivery-queue, label: status }
+      - { from: delivery-queue, to: delivery-consumer }
+      - { from: delivery-consumer, to: notifications-db }
+      - { from: delivery-consumer, to: event-db }
+      - { from: api-gateway, to: reporting-service }
+      - { from: reporting-service, to: notifications-db }
+      - { from: reporting-service, to: event-db }
+  - __component: sd.quiz
+    key: priority-quiz
+    title: Quick check
+    questions:
+      - question: Why do OTPs skip the outbox?
+        optionA: They are not important
+        optionB: "The outbox adds a database write and a CDC hop; an OTP needs near real time, and a lost one is simply requested again"
+        optionC: Kafka cannot hold OTPs
+        optionD: The outbox is only for email
+        answer: B
+        explanation: Durability is traded for latency only where a retry by the user covers the loss.
+      - question: You add twenty OTP consumers to a critical topic with six partitions. What happens?
+        optionA: Twenty times the throughput
+        optionB: "Only six consume; in a group each partition goes to one consumer, so add partitions too"
+        optionC: Messages are duplicated
+        optionD: Kafka rejects them
+        answer: B
+        explanation: Partitions bound a consumer group's parallelism.
+      - question: How does the system learn that an SMS was delivered, not just sent?
+        optionA: It assumes so after a minute
+        optionB: "The external sender calls the provider's webhook, and the provider publishes the status event"
+        optionC: The user replies
+        optionD: The gateway checks
+        answer: B
+        explanation: Only the last-mile sender knows; webhooks bring its receipts back.
+      - question: Why a rate limiter before the external senders as well as at the gateway?
+        optionA: Twice is safer
+        optionB: "Each external sender has its own quota and drops what exceeds it; the gateway's limiter only protects the API"
+        optionC: For authentication
+        optionD: To pick a channel
+        answer: B
+        explanation: "Two limits, two purposes: abuse at the front, quotas at the back."

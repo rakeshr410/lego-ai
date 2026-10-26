@@ -1,0 +1,884 @@
+# yaml-language-server: $schema=../../../../../lego/content-kit/schema/topic.schema.json
+# provenance: ai-drafted by claude-opus-5-5 on 2026-10-27
+#
+# A whole backend system design interview for a chat application like WhatsApp or Messenger, run step
+# by step on one whiteboard. The order and the board follow InterviewWithBunny's System Design 8
+# (youtube.com/watch?v=3HXFy_7M12E): requirements, core entities, the API, a high-level design of
+# services and stores, then a low-level design taken one part at a time as the video takes it (the user
+# and group services, the four ways a client can talk to a server, WebSocket chat servers with a
+# registry, offline delivery through a stream, groups, media, search and the CDN, then presence,
+# pending messages and receipts). The video's factual slips are corrected here (sources[0].note).
+# Every latency figure is an illustrative round number for the exercise, not a measurement.
+# A backend system of lego-ai's own (app/articles/backend): it stands alone and links to no main-site topic.
+catalogVersion: 5
+title: Designing a chat application, end to end
+shortTitle: Chat app interview
+summary: "A backend design interview for a chat app like WhatsApp or Messenger, step by step on one board: six functional and four non-functional requirements, three entities, the REST and WebSocket API, a high-level design, then the chat servers, the registry, offline delivery, groups, media, search, presence and receipts."
+group: design
+order: 8
+xp: 300
+difficulty: intermediate
+tags: [interview, websockets, messaging, real-time, streams, presence]
+eyebrow: Design
+breadcrumb: [Chat, Interview walkthrough]
+lede: "You have about an hour and one whiteboard to design a chat service like WhatsApp: people sign up with a phone number, message one friend or a whole group, send photos and videos, scroll back through history and see one tick, two ticks and blue ticks. This walkthrough runs the interview the way the video does: pin down the requirements with numbers, name the entities and the endpoints, draw the services, then spend the rest of the time on the hard part, getting a message from one phone to another in under 300 ms, whether the friend is online or not, without ever losing it."
+reviewStatus: draft
+author: rakeshr410
+provenance: ai-drafted
+sources:
+  - title: "System Design 8: Design Chat Application like Whatsapp | Messenger (InterviewWithBunny, YouTube)"
+    url: https://www.youtube.com/watch?v=3HXFy_7M12E
+    note: "Order and drawings. Corrected: 100 TB a day, not 1 TB; SSE can carry data; registry looked up by key; Redis channels are Pub/Sub; no auto-increment in Cassandra; search indexes a copy; read is blue ticks; expiry events, not CDC."
+  - title: "RFC 6455, The WebSocket Protocol"
+    url: https://www.rfc-editor.org/rfc/rfc6455
+    note: "The opening handshake is an HTTP request with Upgrade: websocket, answered with 101 Switching Protocols; after it, frames flow both ways on one TCP connection."
+  - title: Server-sent events (MDN)
+    url: https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events
+    note: "A one-way stream of events from server to browser over HTTP; each event carries its own data."
+  - title: Redis Streams (Redis documentation)
+    url: https://redis.io/docs/latest/develop/data-types/streams/
+    note: "An append-only log per key, read by consumer groups that acknowledge each entry; unlike Pub/Sub, entries are kept until trimmed."
+tutorBrief: >-
+  Interview walkthrough for a chat app like WhatsApp or Messenger. Prompt: users send and receive
+  messages from friends and groups in near real time. Board, top to bottom: title; 1 functional
+  requirements (left) and non-functional (right); 2 core entities; 3 API; 4 high-level design; 5 low-level
+  design (the video numbers the high-level design 3 again by slip). Functional: register and log in;
+  one-to-one messaging; group messaging; text and media (images, video); message history per chat;
+  sent, delivered and read receipts. Non-functional: 1 billion users, 100 messages a user a day, so
+  100 billion messages a day; at 1 KB average that is 100 TB a day (the video says 1 TB aloud, its board
+  says 100 TB, which is right; 1 KB is a text average, media is far bigger and goes to blob storage);
+  availability over consistency, eventual consistency fine (not a bank); latency under 300 ms sender to
+  receiver; highly reliable, zero message loss. Entities: user, group, message (chat). API: POST
+  /v1/user/register { userName, email or phone } (phone for WhatsApp, email for Messenger); one-to-one:
+  WS /v1/messages/send, GET /v1/chat/{userId} (the user's chats, paginated), GET
+  /v1/message/{userId}/{receiverId} (messages of one chat, lazy loaded as the user scrolls up, by cursor);
+  group: POST /v1/groups/create, POST /v1/groups/{groupId}/add, POST /v1/groups/{groupId}/remove, WS
+  /v1/messages/send with a group id, GET /v1/groups/{groupId}/messages (lazy load). Receipts have no REST
+  endpoint: they ride the WebSocket. Media is uploaded over HTTP to a media upload service, then its URL
+  is sent as a message. High-level design: clients, load balancer and API gateway (authentication and
+  authorization, routing, rate limiting, round robin), user service with user DB, chat service with chat
+  DB and blob storage, group service with group DB. Low-level design: user DB in Postgres (userId,
+  username, email, phone, status, lastSeen, metadata; login returns a JWT or session id); group DB in
+  Postgres (groupId, groupName, description, metadata) and a group mapping table (id, groupId, userId,
+  joinedDate; unique on groupId and userId). Connections: HTTP (client asks, server answers; chat would
+  poll forever), long polling (held open about 30 s, then reopened), server-sent events (server pushes one
+  way; sending still needs HTTP calls), WebSocket (full duplex, persistent; chosen). WebSocket handshake:
+  HTTP request with Upgrade, 101 Switching Protocols, messages both ways, either side closes. Chat
+  servers are replicated behind a dedicated WebSocket gateway and load balancer. User 1 on chat server 1
+  sends send(msg, user1, user4); user 4 is on chat server 2; a WebSocket registry in Redis maps each user
+  to their server and connection, looked up by user id, each entry with a TTL refreshed by heartbeats
+  (about a minute idle). Offline: the chat server writes to a Redis stream (lighter than Kafka; Kafka is
+  more durable), a message service consumes it into the chat DB, a notification service pushes through
+  FCM (Android) and APNs (iOS). Chat DB in Cassandra (write-heavy): chatId, messageId, senderId,
+  receiverId, message (text or media URL), type, timestamp, deliveryStatus; partition by chatId, cluster by
+  a time-ordered messageId (no auto-increment in Cassandra). Group message: the chat server asks the group
+  service for members and sends each member their own copy (per-member receipts): online through the
+  registry, offline through the stream. Search: a message search service over Elasticsearch, fed from the
+  chat DB by CDC. CDN in front of S3 for media. Phones keep history locally; WhatsApp keeps undelivered
+  messages on its servers and deletes them once delivered. Presence: online while the registry holds the
+  user's entry; when it expires, a key-expiry event tells a user management service to save lastSeen in the
+  user DB. On reconnect, the chat server asks a message service for undelivered messages (looked up by
+  receiver, not a scan) and sends them. Receipts: one tick stored on the server, two ticks delivered
+  (phone acks), blue ticks read (phone reports it); deliveryStatus sent, delivered, read.
+components:
+  - key: client
+    name: Phone app
+    tone: sand
+    kind: client
+    summary: The WhatsApp or Messenger app on a phone; keeps recent history locally and holds one WebSocket while open.
+    owns: [local message history]
+    talksTo: [api-gateway, ws-gateway, cdn]
+  - key: api-gateway
+    name: Load balancer and API gateway
+    tone: blue
+    kind: gateway
+    summary: Takes the REST calls; authentication and authorization, routing, rate limiting, round robin across servers.
+    owns: [routes, rate limits]
+    talksTo: [user-service, group-service, media-service, search-service]
+  - key: ws-gateway
+    name: WebSocket gateway
+    tone: blue
+    kind: gateway
+    summary: A load balancer dedicated to WebSocket connections; authenticates the upgrade and hands each connection to a chat server.
+    owns: [nothing durable]
+    talksTo: [chat-service, registry]
+  - key: user-service
+    name: User service
+    tone: blue
+    kind: service
+    summary: Registers users and logs them in, returning a JWT or session id.
+    owns: [accounts]
+    talksTo: [user-db]
+  - key: group-service
+    name: Group service
+    tone: blue
+    kind: service
+    summary: Creates and edits groups and returns a group's members.
+    owns: [groups, memberships]
+    talksTo: [group-db]
+  - key: chat-service
+    name: Chat servers
+    tone: green
+    kind: service
+    summary: Hold the users' WebSocket connections, deliver messages to online users and hand the rest to the stream.
+    owns: [open connections]
+    talksTo: [registry, message-stream, group-service, pending-service]
+  - key: registry
+    name: WebSocket registry
+    tone: orange
+    kind: cache
+    summary: Redis keys from user id to chat server and connection, each with a TTL refreshed by heartbeats.
+    owns: [who is connected where]
+    talksTo: [presence-service]
+  - key: message-stream
+    name: Redis stream
+    tone: purple
+    kind: queue
+    summary: Messages on their way to storage and to offline users, read by consumer groups.
+    owns: [messages in flight]
+    talksTo: [message-service, notification-service]
+  - key: message-service
+    name: Message service
+    tone: blue
+    kind: worker
+    summary: Consumes the stream and writes each message to the chat database.
+    owns: [nothing durable]
+    talksTo: [chat-db]
+  - key: notification-service
+    name: Notification service
+    tone: blue
+    kind: worker
+    summary: Pushes a new-message notification to offline users.
+    owns: [device tokens]
+    talksTo: [push]
+  - key: push
+    name: FCM and APNs
+    tone: gray
+    kind: external
+    summary: Firebase Cloud Messaging for Android and the Apple Push Notification service for iOS.
+    owns: [delivery to devices]
+    talksTo: []
+  - key: chat-db
+    name: Chat database
+    tone: yellow
+    kind: datastore
+    summary: Cassandra, partitioned by chat, holding every message and its delivery status.
+    owns: [messages]
+    talksTo: []
+  - key: user-db
+    name: User database
+    tone: yellow
+    kind: datastore
+    summary: Postgres; one row per user with status and last seen.
+    owns: [users]
+    talksTo: []
+  - key: group-db
+    name: Group database
+    tone: yellow
+    kind: datastore
+    summary: Postgres; groups and the group mapping table of members.
+    owns: [groups, group mapping]
+    talksTo: []
+  - key: media-service
+    name: Media upload service
+    tone: blue
+    kind: service
+    summary: Takes an image or video over HTTP, stores it in S3 and returns its URL.
+    owns: [nothing durable]
+    talksTo: [blob]
+  - key: blob
+    name: S3 blob storage
+    tone: yellow
+    kind: datastore
+    summary: Images and videos, by URL.
+    owns: [media files]
+    talksTo: []
+  - key: cdn
+    name: CDN
+    tone: green
+    kind: cache
+    summary: Serves media from servers near the user; on a miss it fetches from S3.
+    owns: [cached media]
+    talksTo: [blob]
+  - key: search-service
+    name: Message search service
+    tone: blue
+    kind: service
+    summary: Answers keyword searches and history pages.
+    owns: [nothing durable]
+    talksTo: [search-index]
+  - key: search-index
+    name: Elasticsearch
+    tone: orange
+    kind: datastore
+    summary: A search index of messages, kept in step with the chat database by CDC.
+    owns: [message index]
+    talksTo: []
+  - key: presence-service
+    name: User management service
+    tone: blue
+    kind: worker
+    summary: Hears when a registry entry expires and saves the user's last seen time.
+    owns: [nothing durable]
+    talksTo: [user-db]
+  - key: pending-service
+    name: Undelivered message service
+    tone: blue
+    kind: service
+    summary: When a user reconnects, fetches the messages still waiting for them.
+    owns: [nothing durable]
+    talksTo: [chat-db]
+content:
+  # ────────────────────────────────────────────────────────────────── Problem statement
+  - __component: sd.section
+    key: problem-statement
+    title: Understanding the problem.
+    railLabel: Problem
+    intro: "The prompt is one line: design a chat server like Messenger or WhatsApp. Write what it does at the top of the board, then the rest, what it must do, for how many, how fast, is yours to ask for."
+  - __component: sd.rich-text
+    key: problem-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "The core of the product: users send and receive text messages and media files, to one friend directly or to a group, in near real time. Everyone has used WhatsApp, so there is no need to explain the app at length; say the one line, agree it with the interviewer, and move to what makes it hard."
+      - type: paragraph
+        children:
+          - type: text
+            text: "The round is deliberately vague. Design WhatsApp means nothing until you have asked for the features and the numbers, so the first job is to gather the functional and non-functional requirements. Then come the core entities, the API, the high-level design and the low-level design, numbered on the board as you reach them."
+  - __component: sd.card-grid
+    key: board-steps
+    title: The board, in the order you fill it
+    columns: 3
+    cards:
+      - title: 1. Requirements
+        text: Six functional lines on the left, four non-functional ones on the right, each with a number.
+      - title: 2. Entities
+        text: "User, group and message."
+      - title: 3. API
+        text: "REST calls for accounts, groups and history; one WebSocket for sending messages and receipts."
+      - title: 4. High-level design
+        text: "Clients, a gateway, a user, chat and group service, each with its store."
+      - title: 5. Low-level design
+        text: "Each service opened in turn: tables, how the client connects, the chat servers and their registry, offline delivery, groups, media, search, presence and receipts."
+  - __component: sd.quiz
+    key: problem-quiz
+    title: Quick check
+    questions:
+      - question: The interviewer says only "design WhatsApp". What comes first?
+        optionA: Draw the WebSocket servers
+        optionB: Ask for the features and the numbers, and write them down as functional and non-functional requirements
+        optionC: Pick Cassandra
+        optionD: Explain the history of WhatsApp
+        answer: B
+        explanation: The prompt is open on purpose. Every later decision is measured against the requirements you agree.
+  # ────────────────────────────────────────────────────────────────── 1. Requirements
+  - __component: sd.section
+    key: requirements
+    title: Requirements.
+    railLabel: Requirements
+    intro: "Two lists side by side: what the chat app does, and how well. The numbers on the right decide the low-level design."
+  - __component: sd.subsection
+    key: functional-sub
+    title: Functional requirements
+    railLabel: Functional
+  - __component: sd.checklist
+    key: functional
+    idPrefix: FR-
+    items:
+      - text: Users register and log in, with a phone number for WhatsApp or an email for Messenger.
+      - text: One-to-one messaging.
+      - text: Group messaging.
+      - text: Both text and media messages, images and videos.
+      - text: The message history of each chat.
+      - text: "Receipts: sent, delivered and read."
+        note: One tick, two ticks, blue ticks.
+  - __component: sd.subsection
+    key: non-functional-sub
+    title: Non-functional requirements
+    railLabel: Non-functional
+  - __component: sd.requirement-table
+    key: non-functional
+    rows:
+      - area: Scale
+        requirement: Serve every user of a global messenger.
+        targets: [1 billion users, 100 messages a user a day, 100 billion messages a day]
+        note: "At 1 KB a message that is 1 KB x 100 billion = 100 TB a day. 1 KB is a text average; media is far larger and lives in blob storage."
+      - area: Availability
+        requirement: The app works at any moment.
+        targets: [availability over consistency]
+        note: "Eventual consistency is fine: this is not a bank, and a message that shows up a moment late on a second device costs nothing."
+      - area: Latency
+        requirement: A message reaches the receiver almost at once.
+        targets: [under 300 ms sender to receiver]
+        note: Quantify it; low latency alone is not a requirement.
+      - area: Reliability
+        requirement: No message is ever lost.
+        targets: [zero message loss]
+        note: Once sent, a message is delivered, even if the receiver is offline for days.
+  - __component: sd.rich-text
+    key: requirements-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Scale is the first non-functional question. A billion users sending a hundred messages each is a hundred billion messages a day, and at an average of a kilobyte that is a hundred terabytes of messages a day, so storage and write throughput shape the design. Then CAP: when the network splits, a chat app keeps answering rather than waiting for every copy to agree. Then latency, with a number, under 300 milliseconds from sender to receiver, and reliability, zero messages lost."
+  - __component: sd.quiz
+    key: requirements-quiz
+    title: Quick check
+    questions:
+      - question: A billion users each send 100 messages a day, about 1 KB each. How much is that a day?
+        optionA: About 1 TB
+        optionB: About 100 TB
+        optionC: About 100 GB
+        optionD: About 1 PB
+        answer: B
+        explanation: "100 billion messages x 1 KB = 100 TB a day, before media, which is far larger and goes to blob storage."
+      - question: Why can a chat app choose availability over consistency?
+        optionA: Consistency is impossible
+        optionB: It is not a bank; a message appearing a moment late on another device is harmless, while downtime stops everyone chatting
+        optionC: Because it uses WebSockets
+        optionD: Messages never change
+        answer: B
+        explanation: Eventual consistency is acceptable; zero loss is still required, which is a separate promise.
+  # ────────────────────────────────────────────────────────────────── 2. Entities
+  - __component: sd.section
+    key: entities
+    title: Core entities.
+    railLabel: Entities
+    intro: "Read them off the functional requirements: who chats, the groups they chat in, and what they send."
+  - __component: sd.table
+    key: entities-table
+    columns:
+      - { label: Entity, style: strong }
+      - { label: What it is, style: text }
+    rows:
+      - [User, "Someone with an account, a phone number or an email, a status and a last seen time."]
+      - [Group, A named set of users who all receive what any member sends.]
+      - [Message, "One text or media message in a chat, one-to-one or group, with its delivery status."]
+  - __component: sd.quiz
+    key: entities-quiz
+    title: Quick check
+    questions:
+      - question: Why is the group its own entity rather than a list on each message?
+        optionA: It is not needed
+        optionB: Groups are created, renamed and change members on their own, and every group message is sent to the current member list
+        optionC: For the CDN
+        optionD: Groups are stored in S3
+        answer: B
+        explanation: A group has a life of its own, its own service and tables.
+  # ────────────────────────────────────────────────────────────────── 3. API
+  - __component: sd.section
+    key: api
+    title: API.
+    railLabel: API
+    intro: "One call per functional requirement. Accounts, groups and history are ordinary REST calls; sending a message is not, it goes over a WebSocket, written WS on the board."
+  - __component: sd.endpoint
+    key: register
+    method: POST
+    path: /v1/user/register
+    summary: "Registers a user. The body carries the user's details: a phone number for WhatsApp, an email for Messenger. Updating and deleting a user are the usual calls and left out."
+    requestBody:
+      userName: user 1
+      phone: "+15550100"
+    responses:
+      - label: Created
+        status: "201"
+        body:
+          userId: u1
+  - __component: sd.table
+    key: one-to-one-api
+    title: One-to-one
+    columns:
+      - { label: Call, style: mono-strong }
+      - { label: What it does, style: text }
+    rows:
+      - ["WS /v1/messages/send", "Sends a message over the open WebSocket; why a WebSocket and not HTTP comes in the low-level design."]
+      - ["GET /v1/chat/{userId}", "The user's chats, a page at a time, as the chat list shows them."]
+      - ["GET /v1/message/{userId}/{receiverId}", "The messages of one chat, lazy loaded: as the user scrolls up, the next block comes back, asked for with a cursor (the oldest message id shown), not page numbers."]
+  - __component: sd.table
+    key: group-api
+    title: Groups
+    columns:
+      - { label: Call, style: mono-strong }
+      - { label: What it does, style: text }
+    rows:
+      - ["POST /v1/groups/create", Creates a group.]
+      - ["POST /v1/groups/{groupId}/add", Adds a member.]
+      - ["POST /v1/groups/{groupId}/remove", Removes a member.]
+      - ["WS /v1/messages/send", "The same WebSocket send, addressed to a group id."]
+      - ["GET /v1/groups/{groupId}/messages", "The group's messages, lazy loaded like a one-to-one chat."]
+  - __component: sd.rich-text
+    key: api-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "There is no endpoint for receipts. Sent, delivered and read travel as small messages over the same WebSocket that carries the chat. Media is the one exception to sending over the socket: a photo or video is uploaded with an ordinary HTTP call, and only its URL is sent as a message, as the low-level design shows."
+  - __component: sd.quiz
+    key: api-quiz
+    title: Quick check
+    questions:
+      - question: Why is the send call written WS instead of POST?
+        optionA: It is a typo
+        optionB: Messages go over a WebSocket that stays open, so both sides can send at any moment
+        optionC: POST is too slow to type
+        optionD: WebSockets are REST
+        answer: B
+        explanation: Chat needs the server to push to the client; a persistent two-way connection does that.
+      - question: How does the history endpoint page through a long chat?
+        optionA: Page numbers 1, 2, 3
+        optionB: Lazy loading as the user scrolls up, each request carrying a cursor to the oldest message shown
+        optionC: It returns every message at once
+        optionD: Over the WebSocket only
+        answer: B
+        explanation: A cursor stays correct while new messages arrive; an offset would shift.
+  # ────────────────────────────────────────────────────────────────── 4. High-level design
+  - __component: sd.section
+    key: high-level-design
+    title: High-level design.
+    railLabel: High level
+    intro: "Only enough to meet the functional requirements: the clients, a gateway, and one service per job with its own store."
+  - __component: sd.component-diagram
+    key: hld-diagram
+    title: The first design
+    direction: LR
+    nodes:
+      - { key: client, details: [the phone apps] }
+      - { key: api-gateway, details: [authentication and authorization, routing, rate limiting] }
+      - { key: user-service, details: [register, log in] }
+      - { key: chat-service, details: [send and receive] }
+      - { key: group-service, details: [create groups, members] }
+      - { key: user-db }
+      - { key: chat-db }
+      - { key: blob, details: [media files] }
+      - { key: group-db }
+    edges:
+      - { from: client, to: api-gateway }
+      - { from: api-gateway, to: user-service }
+      - { from: api-gateway, to: chat-service }
+      - { from: api-gateway, to: group-service }
+      - { from: user-service, to: user-db }
+      - { from: chat-service, to: chat-db, label: text }
+      - { from: chat-service, to: blob, label: media }
+      - { from: group-service, to: group-db }
+  - __component: sd.rich-text
+    key: hld-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "The users are the apps on their phones. At a billion users they reach the back end through a load balancer and API gateway that authenticates and authorizes each call, rate limits it, and spreads the traffic round robin across the servers."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Registration and login need a user service and a user database. Sending messages needs a chat service, the heart of the system, and a chat database for the text; images and videos do not belong in a database, so they go to blob storage such as an S3 bucket. Group messages travel through the same chat service, so groups only need a group service to manage them and a group database. That meets every functional requirement on paper; how the chat service actually delivers a message is the low-level design's job, and it is far from simple."
+  - __component: sd.quiz
+    key: hld-quiz
+    title: Quick check
+    questions:
+      - question: Where do images and videos go in the high-level design?
+        optionA: In the chat database
+        optionB: In blob storage, such as an S3 bucket
+        optionC: In the user database
+        optionD: In the load balancer
+        answer: B
+        explanation: Large files belong in object storage; the chat database keeps text and, later, the media URL.
+      - question: Why is there no separate service for group messages?
+        optionA: Groups are not supported
+        optionB: A group message travels through the same chat service; only managing groups needs its own service and store
+        optionC: The gateway sends group messages
+        optionD: Group messages go by email
+        answer: B
+        explanation: The group service answers who is in a group; the chat service does the sending.
+  # ────────────────────────────────────────────────────────────────── 5. Low-level design: user and group services
+  - __component: sd.section
+    key: lld-user-group
+    title: "Low-level design: the user and group services."
+    railLabel: LLD, users and groups
+    intro: "Copy the high-level design into the low-level section and start with the easy services. The chat service, the heart of the system, comes after them."
+  - __component: sd.rich-text
+    key: user-group-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "The user service registers users and logs them in. On login it checks the credentials against the user database and returns a JWT or a session id that every later call carries. User data is flat and relational, so Postgres or MySQL both do the job; pick one and move on. The row holds the user id, username, email, phone, status, last seen and other metadata. WhatsApp needs no email and Messenger needs no phone, so shape the row to the product you were given."
+      - type: paragraph
+        children:
+          - type: text
+            text: "The group service creates and edits groups and, given a group id, returns its members. Its Postgres database has two tables. The group table holds the group id, name, description and metadata such as when it was created and its picture. The group mapping table says which user belongs to which group: an id, the group id, the user id, the join date. A group id repeats once per member, so it cannot be the key; the row gets its own id, and a unique constraint on group id and user id stops anyone being added twice, with an index on user id to list a user's groups."
+  - __component: sd.db-schema
+    key: user-group-tables
+    stores:
+      - key: users-store
+        engine: Postgres
+        component: user-db
+        why: Flat relational rows reached by user id.
+        tables:
+          - name: users
+            columns:
+              - { name: user_id, type: bigint, role: primary }
+              - { name: username, type: text }
+              - { name: email, type: text, nullable: true, note: Messenger }
+              - { name: phone, type: text, nullable: true, note: WhatsApp }
+              - { name: status, type: text }
+              - { name: last_seen, type: timestamp }
+      - key: groups-store
+        engine: Postgres
+        component: group-db
+        why: Groups and their members, small relational tables.
+        tables:
+          - name: groups
+            columns:
+              - { name: group_id, type: bigint, role: primary }
+              - { name: group_name, type: text }
+              - { name: description, type: text }
+              - { name: created_at, type: timestamp }
+          - name: group_mapping
+            columns:
+              - { name: id, type: bigint, role: primary }
+              - { name: group_id, type: bigint, references: groups.group_id }
+              - { name: user_id, type: bigint, role: index, references: users.user_id }
+              - { name: joined_date, type: timestamp }
+            indexes:
+              - { name: one_membership, columns: [group_id, user_id], unique: true }
+  - __component: sd.quiz
+    key: user-group-quiz
+    title: Quick check
+    questions:
+      - question: Why can the group id not be the key of the group mapping table?
+        optionA: It is too long
+        optionB: It repeats once per member, so each row needs its own id, and group id with user id together are unique
+        optionC: Postgres forbids it
+        optionD: Groups have no id
+        answer: B
+        explanation: One row per membership; the pair is what must be unique.
+      - question: What does the user service give back on a successful login?
+        optionA: The user's messages
+        optionB: A JWT or session id that later calls carry
+        optionC: A WebSocket
+        optionD: The group list
+        answer: B
+        explanation: Every later call, the WebSocket upgrade included, presents it.
+  # ────────────────────────────────────────────────────────────────── 5. Low-level design: connections
+  - __component: sd.section
+    key: lld-connections
+    title: "Low-level design: how the chat service connects."
+    railLabel: LLD, connections
+    intro: "Before designing the chat service, list the four ways a client and a server can talk, and weigh each one against a chat in which either side may speak at any moment."
+  - __component: sd.table
+    key: connection-types
+    columns:
+      - { label: Connection, style: strong }
+      - { label: How it works, style: text }
+      - { label: For chat, style: text }
+    rows:
+      - [HTTP, "The client sends a request, the server answers it; the server cannot speak first.", "To see replies the client must keep sending GET requests, most of them finding nothing."]
+      - [Long polling, "The client asks, and the server holds the request open until it has data or a timeout, say 30 seconds.", "Works, but every quiet friend means a new request every 30 seconds, and sending still needs its own POST."]
+      - [Server-sent events, "The server pushes a one-way stream of events to the client over HTTP; each event can carry the message itself.", "Receiving is solved, but sending still takes a separate HTTP request per message: two channels for one conversation."]
+      - [WebSocket, "After an HTTP handshake, one persistent full-duplex connection; both sides send whenever they like.", "One connection does sending, receiving and receipts. Chosen."]
+  - __component: sd.quiz
+    key: connections-quiz
+    title: Quick check
+    questions:
+      - question: What is the real limitation of server-sent events for chat?
+        optionA: Events cannot carry data
+        optionB: They only flow from server to client, so every sent message still needs its own HTTP request
+        optionC: Browsers do not support them
+        optionD: They need a WebSocket first
+        answer: B
+        explanation: An event can carry the whole message; the trouble is the other direction.
+      - question: Why not plain HTTP for receiving messages?
+        optionA: HTTP is insecure
+        optionB: The server cannot speak first, so the client would poll with GETs forever, mostly finding nothing
+        optionC: HTTP cannot carry text
+        optionD: It is too fast
+        answer: B
+        explanation: A friend who does not reply turns every poll into wasted work.
+  # ────────────────────────────────────────────────────────────────── 5. Low-level design: WebSocket chat servers
+  - __component: sd.section
+    key: lld-websocket
+    title: "Low-level design: WebSocket chat servers and the registry."
+    railLabel: LLD, WebSockets
+    intro: "The chat service becomes a fleet of WebSocket servers behind a gateway of their own, and a registry in Redis records which server each user is connected to."
+  - __component: sd.rich-text
+    key: websocket-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Copy the high-level design down and replace the chat service with WebSocket chat servers, several of them, since millions of users are connected at once. Most load balancers handle HTTP and WebSocket alike, but the chat traffic depends entirely on long-lived connections, so give it a dedicated WebSocket gateway and load balancer, with the same duties: authentication and authorization, rate limiting and routing. The phones talk to both gateways: REST calls to the API gateway, the chat to the WebSocket gateway."
+      - type: paragraph
+        children:
+          - type: text
+            text: "A WebSocket starts as HTTP. The client sends an ordinary request asking to upgrade, the server validates it and answers 101 Switching Protocols, and from then on messages flow both ways on that one connection until either side closes it. The connection stays with the server that accepted it for as long as it is open."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Now user 1 sends a message to user 4: send with the message, user 1 and user 4. User 1 is connected to chat server 1, user 4 to chat server 2. Server 1 has to find where user 4 is, so a WebSocket registry in a Redis cache maps each user id to the server and connection holding it. It is a key look-up by user id, never a scan, which keeps it inside the latency budget. Server 1 looks user 4 up and forwards the message to server 2, which writes it down user 4's open socket."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Each registry entry carries a TTL. The phone sends heartbeats while the app is open; when they stop, about a minute later the entry expires, so the registry never points at a dead connection. A user who reconnects may land on any chat server, which simply writes a new entry. Connections are heavy, but each server holds a great many of them; the TTL is about stale entries, not about turning users away."
+  - __component: sd.table
+    key: registry-entries
+    title: The registry (Redis)
+    columns:
+      - { label: Key, style: mono }
+      - { label: Value, style: mono }
+      - { label: TTL, style: text }
+    rows:
+      - ["user 1", "chat server 1, connection 1", about a minute after the last heartbeat]
+      - ["user 4", "chat server 2, connection 4", about a minute after the last heartbeat]
+  - __component: sd.quiz
+    key: websocket-quiz
+    title: Quick check
+    questions:
+      - question: How does chat server 1 deliver a message to user 4, who is connected to chat server 2?
+        optionA: It broadcasts to every server
+        optionB: It looks user 4 up in the registry by user id and forwards the message to chat server 2
+        optionC: It stores it and waits
+        optionD: It asks the API gateway
+        answer: B
+        explanation: The registry is a key look-up from user to server and connection.
+      - question: What does a WebSocket connection start as?
+        optionA: A TCP reset
+        optionB: An HTTP request asking to upgrade, answered with 101 Switching Protocols
+        optionC: A server-sent event
+        optionD: A DNS query
+        answer: B
+        explanation: Every WebSocket begins with that handshake.
+      - question: Why does each registry entry have a TTL?
+        optionA: To log users out every minute
+        optionB: So an entry for a connection that died, with no more heartbeats, expires instead of pointing at nothing
+        optionC: Redis requires it
+        optionD: To save memory on active users
+        answer: B
+        explanation: Heartbeats keep a live entry fresh; a dead one ages out.
+  # ────────────────────────────────────────────────────────────────── 5. Low-level design: offline delivery
+  - __component: sd.section
+    key: lld-offline
+    title: "Low-level design: offline users, the stream and the chat database."
+    railLabel: LLD, offline
+    intro: "When the receiver is offline, the registry has no entry for them, and the message must be kept until they return. That brings a stream, a consumer, a write-heavy database and push notifications."
+  - __component: sd.rich-text
+    key: offline-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Thousands of messages arrive every second, too many for each chat server to write to a database itself. So the chat servers hand them to an event stream and move on. The video picks Redis over Kafka for its low latency and light weight; Kafka keeps messages more durably, which matters for zero loss, so whichever you choose, a message is acknowledged to the sender only once the stream has it. Two Redis tools are easy to mix up: Pub/Sub channels pass a message to whoever is listening right now and keep nothing, while a Redis stream keeps every entry until consumer groups acknowledge it. Each chat server listens on a channel of its own for messages to its online users; messages for storage and for offline users go into the stream."
+      - type: paragraph
+        children:
+          - type: text
+            text: "A consumer, the message service, reads the stream and writes every message to the chat database. That database takes a hundred billion writes a day, so it must be write-optimized: Cassandra or DynamoDB. In Cassandra, partition the messages by chat id, so one chat's messages sit together, and order them by message id. Cassandra has no auto-increment, so the message id is a time-ordered id, such as a TIMEUUID or a Snowflake id, which also sorts the chat."
+      - type: paragraph
+        children:
+          - type: text
+            text: "The chat id names a conversation (user 1 with user 4 is one chat, user 1 with user 3 another); the message id names one message in it. The message column holds the text or, for media, its URL, and the type says which. If the receiver is offline, the stream also feeds a notification service that pushes a new-message alert through Firebase Cloud Messaging on Android and the Apple Push Notification service on iOS."
+  - __component: sd.db-schema
+    key: chat-table
+    stores:
+      - key: chat-store
+        engine: Cassandra
+        component: chat-db
+        why: "Write-heavy, a hundred billion messages a day, read one chat at a time."
+        tables:
+          - name: messages
+            columns:
+              - { name: chat_id, type: uuid, role: partition }
+              - { name: message_id, type: timeuuid, role: clustering, order: desc, note: time-ordered }
+              - { name: sender_id, type: bigint }
+              - { name: receiver_id, type: bigint, note: a user or a group }
+              - { name: message, type: text, note: the text or the media URL }
+              - { name: type, type: text, note: "text, image or video" }
+              - { name: timestamp, type: timestamp }
+              - { name: delivery_status, type: text, note: "sent, delivered or read" }
+  - __component: sd.quiz
+    key: offline-quiz
+    title: Quick check
+    questions:
+      - question: Why do the chat servers write to a stream instead of straight to the database?
+        optionA: Databases cannot store text
+        optionB: Thousands of messages a second arrive; the stream absorbs them and a consumer writes them at its own pace
+        optionC: To encrypt them
+        optionD: The stream is the database
+        answer: B
+        explanation: The chat server stays fast; the message service does the writing.
+      - question: How is the Cassandra message table keyed?
+        optionA: An auto-increment id
+        optionB: Partitioned by chat id, ordered by a time-ordered message id
+        optionC: By receiver phone number only
+        optionD: By message text
+        answer: B
+        explanation: One chat's messages live together in order; Cassandra has no auto-increment.
+      - question: What is the difference between a Redis Pub/Sub channel and a Redis stream?
+        optionA: None
+        optionB: A channel delivers to current listeners and keeps nothing; a stream keeps entries until consumers acknowledge them
+        optionC: A stream is slower than a database
+        optionD: Channels are durable
+        answer: B
+        explanation: For zero loss, what must survive goes into the stream.
+  # ────────────────────────────────────────────────────────────────── 5. Low-level design: groups, media, search
+  - __component: sd.section
+    key: lld-group-media
+    title: "Low-level design: groups, media, search and the CDN."
+    railLabel: LLD, groups and media
+    intro: "With one-to-one delivery working, the rest reuses it: a group message is many one-to-one sends, a photo is an upload plus a URL, and search and history read a copy of the chat database."
+  - __component: sd.rich-text
+    key: group-media-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Group message: the chat server asks the group service for the group's members, then sends each member their own copy. It looks like a broadcast, but WhatsApp shows who has received and who has read each group message, and that needs one delivery per member. For each member, the registry says whether they are online: if so, the message goes to their server; if not, into the stream for storage and a push notification."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Media: a photo or video is not pushed through the WebSocket. The app uploads it over HTTP through the API gateway to a media upload service, which stores it in S3 and returns its URL. The app then sends a normal message whose content is that URL and whose type is image or video."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Search and history: a message search service answers keyword searches through Elasticsearch, which holds its own index of the messages, kept in step with the chat database by a CDC pipeline; it does not query the chat database itself. The same service serves the lazy-loaded history pages. Media in the results is fetched from S3, and to keep that fast a CDN sits in front of S3: the phone asks the CDN, which serves the file from a server near the user and only on a miss goes back to S3."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Phones also keep the history they have shown in local storage, so scrolling back rarely needs the server. WhatsApp encrypts messages end to end and keeps them on its servers only until they are delivered, deleting them afterwards; the chat database is still needed for every message whose receiver has not come back yet."
+  - __component: sd.quiz
+    key: group-media-quiz
+    title: Quick check
+    questions:
+      - question: Why is a group message sent to each member separately?
+        optionA: Broadcasting is impossible
+        optionB: Each member has their own delivered and read status, and some members are online while others are not
+        optionC: To use more bandwidth
+        optionD: The group service requires it
+        answer: B
+        explanation: Online members get it through their server, offline ones through the stream.
+      - question: How does a photo reach its receiver?
+        optionA: Through the WebSocket, as bytes
+        optionB: Uploaded over HTTP to the media upload service, stored in S3, and its URL sent as a message
+        optionC: By email
+        optionD: Stored in Cassandra
+        answer: B
+        explanation: The socket carries only the URL; the CDN serves the file.
+      - question: Where does Elasticsearch get the messages it searches?
+        optionA: It queries Cassandra on every search
+        optionB: From its own index, fed from the chat database by CDC
+        optionC: From the phones
+        optionD: From the registry
+        answer: B
+        explanation: Search reads a copy built for searching.
+  # ────────────────────────────────────────────────────────────────── 5. Low-level design: presence, pending, receipts
+  - __component: sd.section
+    key: lld-presence
+    title: "Low-level design: online status, pending messages and receipts."
+    railLabel: LLD, presence and receipts
+    intro: "The last pieces fall out of the registry and the WebSocket: who is online, what a returning user missed, and the ticks."
+  - __component: sd.rich-text
+    key: presence-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Online status: a user is online while the registry holds their entry. When it expires, the user went offline at that moment. Redis can announce the expiry with a key-expiry event; a user management service hears it and saves the user's last seen time in the user database, which is what others see as last seen at."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Pending messages: when a user connects, the chat server asks a message service for everything still waiting for them, and sends it down the new socket. Find those by receiver and delivery status in a table keyed by receiver, an inbox of undelivered messages, rather than scanning the chat database."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Receipts ride the WebSocket. One tick: the server has stored the message. Two ticks: the receiver's phone acknowledges it arrived, and its status becomes delivered. Blue ticks: the receiver opens the chat, the phone reports it, and the status becomes read. Each change goes back to the sender over their socket."
+  - __component: sd.table
+    key: data-flow
+    title: The data flow, start to finish
+    columns:
+      - { label: Step, style: strong }
+      - { label: What happens, style: text }
+    rows:
+      - [Register and log in, The user service onboards the user and returns a token.]
+      - [Connect, "No registry entry, so the HTTP request is upgraded to a WebSocket and an entry is written."]
+      - [Catch up, "The chat server fetches undelivered messages, sends them, and the phone's acks mark them delivered, then read."]
+      - [Send to someone online, "The registry names the receiver's server; the message is published to that server's channel and delivered; the sender gets two ticks."]
+      - [Send to someone offline, "The message goes into the stream, the message service stores it and a push notification goes out."]
+      - [Send to a group, "The group service lists the members, and each one gets the online or offline path."]
+  - __component: sd.component-diagram
+    key: final-diagram
+    title: The final design
+    direction: LR
+    nodes:
+      - { key: client }
+      - { key: cdn }
+      - { key: api-gateway }
+      - { key: ws-gateway }
+      - { key: user-service }
+      - { key: media-service }
+      - { key: search-service }
+      - { key: group-service }
+      - { key: chat-service }
+      - { key: registry }
+      - { key: message-stream }
+      - { key: message-service }
+      - { key: notification-service }
+      - { key: push }
+      - { key: pending-service }
+      - { key: presence-service }
+      - { key: user-db }
+      - { key: group-db }
+      - { key: chat-db }
+      - { key: blob }
+      - { key: search-index }
+    edges:
+      - { from: client, to: api-gateway, label: REST }
+      - { from: client, to: ws-gateway, label: WebSocket }
+      - { from: client, to: cdn, label: media }
+      - { from: cdn, to: blob, label: on a miss }
+      - { from: api-gateway, to: user-service }
+      - { from: api-gateway, to: media-service }
+      - { from: api-gateway, to: search-service }
+      - { from: api-gateway, to: group-service }
+      - { from: user-service, to: user-db }
+      - { from: media-service, to: blob }
+      - { from: search-service, to: search-index }
+      - { from: chat-db, to: search-index, label: CDC }
+      - { from: group-service, to: group-db }
+      - { from: ws-gateway, to: chat-service }
+      - { from: ws-gateway, to: registry }
+      - { from: chat-service, to: registry, label: who is where }
+      - { from: chat-service, to: group-service, label: members }
+      - { from: chat-service, to: message-stream }
+      - { from: chat-service, to: pending-service, label: on connect }
+      - { from: pending-service, to: chat-db }
+      - { from: message-stream, to: message-service }
+      - { from: message-stream, to: notification-service }
+      - { from: message-service, to: chat-db }
+      - { from: notification-service, to: push }
+      - { from: registry, to: presence-service, label: on expiry }
+      - { from: presence-service, to: user-db, label: last seen }
+  - __component: sd.quiz
+    key: presence-quiz
+    title: Quick check
+    questions:
+      - question: How does the system know a user is online?
+        optionA: It pings every phone each second
+        optionB: The user has a live entry in the WebSocket registry; when it expires, last seen is saved
+        optionC: The user database says so
+        optionD: The CDN tracks it
+        answer: B
+        explanation: The registry entry exists exactly while the connection is alive.
+      - question: Which tick means the receiver has read the message?
+        optionA: One grey tick
+        optionB: Two grey ticks
+        optionC: Blue ticks, after the phone reports the chat was opened
+        optionD: None
+        answer: C
+        explanation: One tick is stored, two is delivered, blue is read.
+      - question: A user comes back after a day offline. How do they get what they missed?
+        optionA: They scroll
+        optionB: On connect, the chat server asks the message service for messages waiting for that receiver and sends them over the socket
+        optionC: The CDN sends them
+        optionD: They are lost
+        answer: B
+        explanation: Looked up by receiver and status, then acknowledged as delivered.

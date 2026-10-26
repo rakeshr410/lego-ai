@@ -1,0 +1,150 @@
+# Food delivery interview, high-level design: "4. High level designing" under the API. As in the video: users on the left, a tall load balancer and API gateway with its duties, a column of services each with its database to the right (user, search, cart, order with the payment gateway under it); the restaurants' side on the far right (restaurant gateway, restaurant service to the restaurant DB, an order service fed by the order DB); the partners' side at the bottom (delivery matching to the driver DB, location updates from partners through a gateway), and partners' live location back to the users.
+id: backend/food-delivery/end-to-end/high-level-design
+title: One service per job, for three actors
+source:
+  hash: "1ec4582ccc14"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/food-delivery/end-to-end/api
+  assumes:
+    - "Nine endpoints: register, nearby, search, restaurant, menu, cart, order, payment, tracking."
+    - "Three actors: the user, the restaurant and the delivery partner."
+  carries:
+    - "Users reach a load balancer and API gateway (auth, rate limiting, routing, round robin), then user, search, cart and order services, each with its own database."
+    - "The order service pays through a third-party payment gateway before the order counts; failed payments are kept as failed orders."
+    - "Restaurants have a restaurant service writing the restaurant DB and an order service that pushes new orders and takes accept."
+    - "A delivery matching service pairs accepted orders with idle partners from the driver DB, kept current by partners' location updates every 5 s."
+  terms:
+    - term: API gateway
+      means: "The front door: authentication and authorisation, rate limiting and routing by path."
+    - term: load balancer
+      means: "Spreads requests across a service's instances, here round robin."
+board:
+  keep: [title, prompt-desc, fr, fr-register, fr-nearby, fr-search, fr-menu, fr-cart, fr-assign, fr-live, fr-notify, nfr, nfr-scale, nfr-available, nfr-consistent, entities, ent-user, ent-restaurant, ent-menu, ent-partner, ent-payment, api, api-register, api-nearby, api-search, api-restaurant, api-menu, api-cart, api-order, api-payment, api-track]
+  elements:
+    - { id: hld, kind: region, label: 4. High level design, at: [2, 46], size: [70, 44] }
+    - { id: hld-users, kind: box, label: users, at: [4, 56], size: [9, 3], in: hld }
+    - { id: hld-gateway, kind: box, label: Load balancer and API gateway, at: [15, 51], size: [10, 14], in: hld }
+    - { id: hld-duties, kind: note, label: "auth, rate limiting, routing, round robin", at: [4, 66], in: hld }
+    - { id: hld-user-svc, kind: box, label: User service, at: [32, 49], size: [12, 3], in: hld, tone: blue }
+    - { id: hld-user-db, kind: oval, label: User DB, at: [52, 49], size: [12, 3], in: hld, tone: amber }
+    - { id: hld-search-svc, kind: box, label: Search service, at: [32, 54], size: [12, 3], in: hld, tone: blue }
+    - { id: hld-rest-db, kind: oval, label: Restaurant DB, at: [52, 54], size: [12, 3], in: hld, tone: amber }
+    - { id: hld-cart-svc, kind: box, label: Cart service, at: [32, 59], size: [12, 3], in: hld, tone: blue }
+    - { id: hld-cart-db, kind: oval, label: Cart DB, at: [52, 59], size: [12, 3], in: hld, tone: amber }
+    - { id: hld-order-svc, kind: box, label: Order service, at: [32, 64], size: [12, 3], in: hld, tone: blue }
+    - { id: hld-order-db, kind: oval, label: Order DB, at: [52, 64], size: [12, 3], in: hld, tone: amber }
+    - { id: hld-payment, kind: box, label: Payment gateway, at: [32, 70], size: [12, 3], in: hld, tone: grey }
+    - { id: hld-rest-svc, kind: box, label: Restaurant service, at: [76, 52], size: [14, 3], tone: blue }
+    - { id: hld-rest-orders, kind: box, label: Order service for restaurants, at: [76, 62], size: [14, 3], tone: blue }
+    - { id: hld-rest-gw, kind: box, label: Restaurant gateway, at: [95, 50], size: [9, 16] }
+    - { id: hld-restaurants, kind: box, label: restaurants, at: [107, 56], size: [11, 3] }
+    - { id: hld-matching, kind: box, label: Delivery matching service, at: [30, 77], size: [16, 3], in: hld, tone: blue }
+    - { id: hld-driver-db, kind: oval, label: Driver DB, at: [54, 80], size: [12, 3], in: hld, tone: amber }
+    - { id: hld-location, kind: box, label: Location update service, at: [30, 84], size: [16, 3], in: hld, tone: blue }
+    - { id: hld-partners, kind: box, label: delivery partners, at: [4, 84], size: [9, 3], in: hld }
+    - { id: hld-partner-gw, kind: box, label: Partner gateway, at: [16, 84], size: [10, 3], in: hld }
+    - { id: hld-ping, kind: note, label: location every 5 seconds, at: [14, 88], in: hld }
+    - { id: hld-gaps, kind: note, label: "missing, food ready, notifications, safe hand-offs", at: [40, 88], in: hld }
+  arrows:
+    - { id: hld-users-gw, from: hld-users, to: hld-gateway }
+    - { id: hld-gw-user, from: hld-gateway, to: hld-user-svc }
+    - { id: hld-gw-search, from: hld-gateway, to: hld-search-svc }
+    - { id: hld-gw-cart, from: hld-gateway, to: hld-cart-svc }
+    - { id: hld-gw-order, from: hld-gateway, to: hld-order-svc }
+    - { id: hld-user-to-db, from: hld-user-svc, to: hld-user-db }
+    - { id: hld-search-to-db, from: hld-search-svc, to: hld-rest-db }
+    - { id: hld-cart-to-db, from: hld-cart-svc, to: hld-cart-db }
+    - { id: hld-order-to-db, from: hld-order-svc, to: hld-order-db }
+    - { id: hld-order-pay, from: hld-order-svc, to: hld-payment }
+    - { id: hld-rest-in, from: hld-restaurants, to: hld-rest-gw }
+    - { id: hld-rgw-svc, from: hld-rest-gw, to: hld-rest-svc }
+    - { id: hld-rgw-orders, from: hld-rest-gw, to: hld-rest-orders, both: true }
+    - { id: hld-rest-write, from: hld-rest-svc, to: hld-rest-db, label: listing and menu }
+    - { id: hld-new-order, from: hld-order-db, to: hld-rest-orders, label: new order }
+    - { id: hld-match-orders, from: hld-matching, to: hld-order-db }
+    - { id: hld-match-drivers, from: hld-matching, to: hld-driver-db }
+    - { id: hld-partners-gw, from: hld-partners, to: hld-partner-gw }
+    - { id: hld-pgw-location, from: hld-partner-gw, to: hld-location }
+    - { id: hld-location-db, from: hld-location, to: hld-driver-db }
+    - { id: hld-live, from: hld-partners, to: hld-users, label: live location }
+beats:
+  - point: "Every user request reaches a load balancer and API gateway, which authenticates and authorises, rate-limits, routes by path and balances round robin."
+    kind: component
+    weight: core
+    teach:
+      - "Step four, the high-level design. This one differs from simpler designs: three actors, so three flows. Start with the user's: draw the users."
+      - "It is a set of services, so the users go through a load balancer and API gateway. Write its duties beside it: authentication and authorisation, rate limiting, routing, and load balancing round robin."
+    draw: [hld, hld-users, hld-gateway, hld-users-gw, hld-duties]
+    check: Name two things the API gateway does besides routing.
+    answer: "Any two of: authentication and authorisation, rate limiting, load balancing across instances."
+  - point: "Behind the gateway, a user service with its user DB for accounts, and a search service reading the restaurant DB for the nearby list and searches."
+    kind: component
+    weight: core
+    teach:
+      - "One service per requirement. Registration needs a user service, and a user DB for the users' details. The gateway routes by the URL to it."
+      - "Nearby and search need a search service, which reads restaurant data: the restaurant DB. It is responsible for finding the relevant restaurants from the location, title and menu the user sends."
+    draw: [hld-user-svc, hld-gw-user, hld-user-db, hld-user-to-db, hld-search-svc, hld-gw-search, hld-rest-db, hld-search-to-db]
+    check: Which database does the search service read in this first picture?
+    answer: The restaurant DB, with the restaurants and their menus.
+  - point: "A cart service with a cart DB keeps the cart across visits; an order service calls the payment gateway first, then records the order, a failed payment as a failed order, in the order DB."
+    kind: component
+    weight: core
+    teach:
+      - "Adding to the cart needs a cart service, and a cart DB so the cart is still there when the user comes back."
+      - "Placing the order is the order service. It is two steps: it first calls a third-party payment gateway, and only when the gateway answers does it write the order DB. A failed payment is written too, marked failed."
+    draw: [hld-cart-svc, hld-gw-cart, hld-cart-db, hld-cart-to-db, hld-order-svc, hld-gw-order, hld-payment, hld-order-pay, hld-order-db, hld-order-to-db]
+    check: Why does the order service call the payment gateway before writing the order as placed?
+    answer: An order counts only once it is paid; the gateway's answer decides whether it is placed or failed.
+  - point: "The restaurant side: restaurants come through their own gateway to a restaurant service that writes their listing and menu into the restaurant DB, and to an order service that learns of new orders and asks them to accept."
+    kind: component
+    weight: core
+    teach:
+      - "Now the restaurants, on the right, with their own gateway; its duties are the same as before. The listing search reads is uploaded by the restaurants themselves, through a restaurant service writing the restaurant DB."
+      - "And an order service for restaurants. When an order lands in the order DB, it is told, and asks the restaurant to accept. That is why you see your order placed, then a minute or two later, accepted."
+    draw: [hld-restaurants, hld-rest-gw, hld-rest-in, hld-rest-svc, hld-rgw-svc, hld-rest-write, hld-rest-orders, hld-rgw-orders, hld-new-order]
+    check: Who writes the restaurant data that search reads?
+    answer: The restaurants themselves, through the restaurant service, into the restaurant DB.
+  - point: "The partner side: a delivery matching service reads accepted orders and finds idle partners near the restaurant in the driver DB, which partners keep current by sending their location every 5 seconds through a gateway to a location update service."
+    kind: component
+    weight: core
+    teach:
+      - "Once the restaurant accepts, we need a partner. A delivery matching service reads the accepted orders with no partner, checks the driver DB for partners near the restaurant who are idle, and assigns one."
+      - "The driver DB holds each partner's location and status. Partners' phones send it, say every 5 seconds, through a gateway to a location update service, which writes the driver DB."
+    draw: [hld-matching, hld-match-orders, hld-driver-db, hld-match-drivers, hld-partners, hld-partner-gw, hld-partners-gw, hld-location, hld-pgw-location, hld-location-db, hld-ping]
+    check: What does the matching service need to know about each partner?
+    answer: Where they are and whether they are idle or already delivering.
+  - point: "After pickup, the partner's location flows to the user. Then name what the picture lacks: how the partner learns the food is ready, the notifications, and how hand-offs avoid losing orders."
+    kind: flow
+    weight: supporting
+    teach:
+      - "Once the partner picks the food up, their live location goes to the user who ordered."
+      - "That covers every requirement at a high level, but say what is missing: nothing tells the partner the food is ready, there is no notification system, and nothing says how these services hand off safely. That is the deep dive."
+    draw: [hld-live, hld-gaps]
+    check: What is still missing from this high-level picture?
+    answer: How the partner learns the food is ready, a notification system for the user, and how the services hand the order on without losing it.
+asks:
+  - ids: [hld-user-svc, hld-search-svc, hld-cart-svc, hld-order-svc]
+    beats: [2, 3]
+    question: "Behind the gateway, what services does the user's side need? Go through the requirements and name one per job."
+    hints:
+      - Accounts, finding restaurants, the cart, and checkout.
+      - And where does each one keep its data?
+  - ids: [hld-rest-svc, hld-rest-orders]
+    beats: [4]
+    question: "Now the restaurants. What do they need to do in the system, and what services would handle that?"
+    hints:
+      - Who puts the menus and photos in?
+      - How does a restaurant find out it has an order?
+  - ids: [hld-matching, hld-location]
+    beats: [5]
+    question: "And the delivery partners. How would you pick a partner for an accepted order, and keep their positions current?"
+    hints:
+      - Matching needs to know where partners are and whether they are free.
+      - Who tells the system where a partner is?
+task:
+  prompt: "Draw the high-level design: users through a load balancer and API gateway to user, search, cart and order services with their databases and the payment gateway; the restaurant service and order service on the restaurants' side; delivery matching, the driver DB and location updates from partners."
+  expects: [2, 3, 4, 5]

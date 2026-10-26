@@ -1,0 +1,91 @@
+# Payment gateway interview, deep dive 2: the checkout session. As in the video, the session box is renamed the checkout session service and writes to Redis beside it, the session response JSON written to the right; then the buyer is redirected, and a checkout frontend service behind its own load balancer, drawn under the API gateway, serves the hosted page.
+id: backend/payment-gateway/end-to-end/lld-checkout-session
+title: "Deep dive, 2: the checkout session"
+source:
+  hash: "545197deed02"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/payment-gateway/end-to-end/lld-payment-intent
+  assumes:
+    - "The payment intent service writes the intent to PostgreSQL and returns its id."
+    - "Non-functional: 10,000 transactions per second, under 200 ms for the gateway's part."
+  carries:
+    - "The checkout session service keeps each session in Redis with a 10-minute TTL, which is also the page's countdown."
+    - "It returns a session id and a redirect URL on the gateway's domain ending in that id; the id is checked again at pay time."
+    - "A checkout frontend service, behind its own load balancer and no API gateway, serves the hosted card page."
+  terms:
+    - term: TTL
+      means: "Time to live: Redis deletes the key by itself when it runs out."
+    - term: hosted checkout page
+      means: "The gateway's own card form, at pay.gateway.com/checkout/{sessionId}, that the merchant redirects the buyer to."
+board:
+  keep: [title, prompt-desc, nfr, nfr-scale, nfr-cap, nfr-latency, nfr-security, dd-title, dd-merchant, dd-gateway, dd-intent-resp, dd-intent, dd-intent-db, dd-postgres, dd-intent-row-1, dd-intent-row-2, dd-intent-row-3, dd-merchant-gateway, dd-gateway-intent, dd-intent-save]
+  elements:
+    - { id: dd-session, kind: box, label: Checkout session service, at: [26, 58], size: [13, 3], tone: blue }
+    - { id: dd-redis, kind: oval, label: "Redis, sessions", at: [44, 57], size: [11, 4], tone: amber }
+    - { id: dd-ttl, kind: note, label: "TTL 10 minutes, the page's countdown", at: [57, 60] }
+    - { id: dd-json-1, kind: note, label: "{ sessionId: sess_f32j,", at: [57, 57] }
+    - { id: dd-json-2, kind: note, label: "redirectUrl: pay.gateway.com/checkout/sess_f32j }", at: [59, 58] }
+    - { id: dd-buyer, kind: box, label: buyer, at: [1, 98], size: [8, 3] }
+    - { id: dd-lb, kind: box, label: Load balancer, at: [13, 97], size: [8, 4] }
+    - { id: dd-frontend, kind: box, label: Checkout frontend service, at: [26, 98], size: [13, 3], tone: green }
+    - { id: dd-page-url, kind: note, label: pay.gateway.com/checkout/sess_f32j, at: [26, 102] }
+    - { id: dd-page-html, kind: note, label: "returns the card page, HTML and JS", at: [26, 103] }
+  arrows:
+    - { id: dd-gateway-session, from: dd-gateway, to: dd-session }
+    - { id: dd-session-redis, from: dd-session, to: dd-redis }
+    - { id: dd-buyer-merchant, from: dd-buyer, to: dd-merchant, label: buy now }
+    - { id: dd-buyer-lb, from: dd-buyer, to: dd-lb }
+    - { id: dd-lb-frontend, from: dd-lb, to: dd-frontend }
+beats:
+  - point: "The checkout session service keeps each session in Redis, not the database: a session lives at most 10 minutes, a TTL removes it by itself, and reads stay fast for the 200 ms target."
+    kind: decision
+    weight: core
+    teach:
+      - "The high-level design black-boxed the session; open it and give it a name for what it does: the checkout session service. The second call brings the intent id and the rest, transaction, user, order."
+      - "A session lives ten minutes at most, so instead of the database we keep it in a Redis cluster with a 10-minute TTL. Reads are quick, which helps the 200 milliseconds, and the TTL is the countdown the buyer sees on the page."
+    draw: [dd-session, dd-gateway-session, dd-redis, dd-session-redis, dd-ttl]
+    check: Why keep the session in Redis rather than the payment intent DB?
+    answer: "It is short-lived, about 10 minutes, so a TTL expires it by itself, and Redis reads are fast enough for the latency target."
+  - point: "The response is not a page but where to find one: a session id, and a redirect URL on the gateway's domain that ends in that session id, so the pay call can be checked against the session later."
+    kind: mechanism
+    weight: core
+    teach:
+      - "What does it return? Not a whole web page: the session id, and a redirect URL, our own domain, checkout, then the session id. Also the session's time limit."
+      - "Why the session id in the URL? When the pay call comes, we check it against the session in Redis. Change the id, and the request fails."
+    draw: [dd-json-1, dd-json-2]
+    check: Why does the redirect URL carry the session id?
+    answer: "So the pay request can be matched to the session stored in Redis; a tampered or unknown id is rejected."
+  - point: "The merchant redirects the buyer to that URL, the small refresh and change of address you see after clicking buy now."
+    kind: flow
+    weight: supporting
+    teach:
+      - "The merchant redirects its page to that URL. Watch it next time you pay online: a small refresh after buy now, the address changes, and you land on the gateway's card page."
+    draw: [dd-buyer, dd-buyer-merchant]
+    check: Whose domain is the card page on?
+    answer: "The gateway's; the merchant only redirects the buyer there."
+  - point: "A checkout frontend service serves the hosted page; it takes as many requests as sessions are created, 10,000 a second, behind its own load balancer, with no API gateway because it serves a page, not an API."
+    kind: component
+    weight: core
+    teach:
+      - "Someone must serve that page: a checkout frontend service, which returns the HTML and JavaScript for the URL."
+      - "Every session created is a page opened, so it also takes 10,000 requests a second: put a load balancer in front. Not the API gateway: this is one page from replicas of one server, nothing to route or authenticate."
+    draw: [dd-lb, dd-buyer-lb, dd-frontend, dd-lb-frontend, dd-page-url, dd-page-html]
+    check: Why does the checkout frontend get a load balancer but no API gateway?
+    answer: "It takes the same 10,000 requests a second, so it needs load spread, but it serves a web page from one replicated service, so there is nothing to route or authenticate."
+asks:
+  - ids: [dd-redis]
+    beats: [1]
+    question: "Sessions only live about ten minutes. Where would you keep them, and why?"
+    hints:
+      - Do they need to outlive the payment?
+      - "Think of a store that is fast, in memory, and can expire keys by itself."
+  - ids: [dd-frontend, dd-lb]
+    beats: [4]
+    question: "The buyer opens that URL. What has to exist on our side to answer it, at 10,000 a second?"
+    hints:
+      - Something has to return the HTML and JavaScript of the card page.
+      - And many copies of it need their traffic spread.

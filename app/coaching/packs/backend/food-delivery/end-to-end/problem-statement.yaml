@@ -1,0 +1,51 @@
+# Food delivery interview, the problem statement: the title and the one-line description at the top of the board, as the video writes them; the three actors and the five steps said, not drawn.
+id: backend/food-delivery/end-to-end/problem-statement
+title: The problem, and three actors
+source:
+  hash: "556eb11ffd0d"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: null
+  assumes: []
+  carries:
+    - "A food delivery app is an online platform to search restaurants and order food from them."
+    - "Three actors: the user who orders, the restaurant that accepts and cooks, the delivery partner who delivers."
+    - "The interview runs in five steps: requirements, core entities, API, high-level design, deep dive."
+  terms:
+    - term: delivery partner
+      means: "The rider assigned to an order, who carries it from the restaurant to the user."
+board:
+  keep: []
+  elements:
+    - { id: title, kind: note, label: "Food delivery app like Zomato, Swiggy, Uber Eats", at: [49, 0] }
+    - { id: prompt-desc, kind: note, label: a platform to search restaurants and order food from them, at: [47, 2] }
+  arrows: []
+beats:
+  - point: "A food delivery app like Zomato, Swiggy or Uber Eats is an online platform where users search restaurants and order food from them."
+    kind: rule
+    weight: core
+    teach:
+      - "Write the title: a food delivery app like Zomato, Swiggy or Uber Eats. Under it, one line on what it does: an online platform to search restaurants and order food from them."
+      - "The core of it: a user should be able to order food online from any restaurant they want."
+    draw: [title, prompt-desc]
+    check: In one sentence, what does this system let a user do?
+    answer: Find restaurants, especially nearby ones, and order food from them online.
+  - point: "Three actors share the system: the user who orders, the restaurant that accepts and cooks, and the delivery partner who is assigned and delivers. Ask which one the interviewer wants in depth."
+    kind: rule
+    weight: core
+    teach:
+      - "Look closer and there are three actors, each with its own app: the user placing the order, the restaurant accepting it and cooking, and the delivery partner assigned once it is accepted, who carries it to the user."
+      - "Exploring all three takes too long for one interview, so ask which one to design. We will cover all three, because you can't know which you'll get."
+    check: Who are the three actors, and what does each one do?
+    answer: The user places the order, the restaurant accepts and cooks it, and the delivery partner picks it up and delivers it.
+  - point: "The interview runs in five steps: requirements, core entities, API, high-level design, then a deep dive; keep the first three brisk."
+    kind: rule
+    weight: supporting
+    teach:
+      - "Say the plan once: requirements, functional and non-functional; core entities; the API; the high-level design; then the deep dive, service by service."
+      - "The first three are quick here; the order and delivery flows need the time. Said, not written; each step gets its number on the board when we reach it."
+    check: Why move quickly through requirements in this interview?
+    answer: There is a lot to design in the high-level and deep-dive steps, and a 45 to 50 minute interview leaves no time to waste.

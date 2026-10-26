@@ -1,0 +1,97 @@
+# Collaborative editor interview, high-level design: "4. High level design" under the API, as the video draws it: a column of clients on the left, a tall load balancer and API gateway listing authentication, rate limiting and routing, the document metadata service above the document editor service (reached over a websocket), the database on the right of the first and blob storage on the right of the second.
+id: backend/collaborative-editor/end-to-end/high-level-design
+title: A gateway, two services, two stores
+source:
+  hash: "473dc1dcc188"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/collaborative-editor/end-to-end/api
+  assumes:
+    - "POST create returns a document id, GET opens it read-only, and editing is a websocket on the document."
+    - "Scale: millions of users and billions of documents."
+  carries:
+    - "Clients reach a load balancer and API gateway that authenticates, rate-limits and routes by path."
+    - "The document metadata service creates documents and keeps their metadata in a database; the document editor service handles edits over a websocket."
+    - "The content lives in blob storage (S3), because a document can be thousands of lines."
+  terms:
+    - term: API gateway
+      means: "The single entry point that authenticates and authorizes requests, rate-limits them and routes each path to its service."
+    - term: blob storage
+      means: "Object storage such as S3 for large files, addressed by URL."
+board:
+  keep: [title, prompt-desc, fr, fr-crud, fr-together, fr-see, fr-cursor, fr-versions, nfr, nfr-scale, nfr-cap, nfr-latency, entities, ent-user, ent-doc, ent-edit, ent-cursor, api, api-post, api-get, api-ws]
+  elements:
+    - { id: hld, kind: region, label: 4. High-level design, at: [6, 35], size: [68, 18] }
+    - { id: hld-c1, kind: box, label: client 1, at: [8, 38], size: [7, 3], in: hld }
+    - { id: hld-c2, kind: box, label: client 2, at: [8, 42], size: [7, 3], in: hld }
+    - { id: hld-c3, kind: box, label: client 3, at: [8, 46], size: [7, 3], in: hld }
+    - { id: hld-gateway, kind: box, label: "LB and API gateway: auth, rate limiting, routing", at: [21, 38], size: [10, 11], in: hld }
+    - { id: hld-meta, kind: box, label: Document metadata service, at: [38, 38], size: [12, 4], tone: blue, in: hld }
+    - { id: hld-editor, kind: box, label: Document editor service, at: [38, 45], size: [12, 4], tone: blue, in: hld }
+    - { id: hld-db, kind: oval, label: Metadata DB, at: [58, 37], size: [10, 4], tone: amber, in: hld }
+    - { id: hld-blob, kind: oval, label: "Blob store, S3", at: [58, 45], size: [10, 4], tone: amber, in: hld }
+    - { id: hld-why-blob, kind: note, label: the text can be thousands of lines, at: [38, 50], in: hld }
+  arrows:
+    - { id: hld-c1-gw, from: hld-c1, to: hld-gateway }
+    - { id: hld-c2-gw, from: hld-c2, to: hld-gateway }
+    - { id: hld-c3-gw, from: hld-c3, to: hld-gateway }
+    - { id: hld-gw-meta, from: hld-gateway, to: hld-meta, label: HTTP }
+    - { id: hld-gw-editor, from: hld-gateway, to: hld-editor, label: websocket, both: true }
+    - { id: hld-meta-db, from: hld-meta, to: hld-db, label: metadata }
+    - { id: hld-meta-blob, from: hld-meta, to: hld-blob, label: "create, read" }
+    - { id: hld-editor-blob, from: hld-editor, to: hld-blob, label: save }
+beats:
+  - point: "At millions of users the design is split into services behind one entry point: a load balancer and API gateway that authenticates, rate-limits and routes each request."
+    kind: component
+    weight: core
+    teach:
+      - "Step four, the high-level design. Draw a few clients on the left. At this scale we split the work into services, so everything enters through one place: a load balancer and API gateway."
+      - "Say what it does: authentication and authorization, rate limiting, and routing each path to the right service, spreading the load round robin."
+    draw: [hld, hld-c1, hld-c2, hld-c3, hld-gateway, hld-c1-gw, hld-c2-gw, hld-c3-gw]
+    check: Name two jobs of the API gateway besides spreading the load.
+    answer: "Any two of: authentication and authorization, rate limiting, routing each path to its service."
+  - point: "Two services split the requirements: a document metadata service creates documents and changes their metadata, and a document editor service changes their content, over a websocket."
+    kind: component
+    weight: core
+    teach:
+      - "First requirement, create, update and delete: a document metadata service. Creating a document only submits its metadata, a title, who made it, when, so this service owns that."
+      - "The heart of the system is editing the content: a document editor service. The gateway reaches it over a websocket, two-way, so edits can travel both directions at once."
+    draw: [hld-meta, hld-gw-meta, hld-editor, hld-gw-editor]
+    check: Why two services instead of one?
+    answer: Changing a document's metadata and editing its content are different jobs with different traffic; the editor is the heart of the system and scales on its own.
+  - point: "Metadata goes to a database, but the content goes to blob storage such as S3, because a document can run to thousands of lines."
+    kind: decision
+    weight: core
+    teach:
+      - "The metadata service writes a metadata database: title, owner, times. That is not the file."
+      - "The text itself goes to blob storage, an S3 bucket, because a document can be thousands of lines and keeps growing; a database row is the wrong place. The metadata service creates and reads the file, and the editor service saves it."
+    draw: [hld-db, hld-meta-db, hld-blob, hld-meta-blob, hld-editor-blob, hld-why-blob]
+    check: Why not keep the document's text in the metadata database?
+    answer: A document can be thousands of lines and keeps growing; blob storage holds large files cheaply while the database keeps the small row that points to it.
+  - point: "Create goes to the metadata service, which writes the row, creates the file and returns the id; open reads the file through it; edits go to the editor service, which saves the file. Concurrent edits are the open problem."
+    kind: flow
+    weight: core
+    teach:
+      - "Walk the flow. Create: the metadata service writes the row, creates an empty file in blob storage and returns the document id. Open: the GET reads the file through the same service. Edit: the editor service takes the edits and, on save, overwrites the file."
+      - "It looks simple, but it is not. Say the title reads API designing; user A rewrites the title while user B adds a space at its end, at the same moment. Whose change wins, and do both screens agree? That is the low-level design."
+    check: Walk me through creating a document and then opening it.
+    answer: Create goes through the metadata service, which writes the metadata row, creates the file in blob storage and returns the id; opening reads the file by that id through the same service.
+asks:
+  - ids: [hld-meta, hld-editor]
+    beats: [2]
+    question: "Behind the gateway, what services would you have? Name them by what they do and I'll draw them."
+    hints:
+      - Creating a document and typing into it are quite different jobs.
+      - One handles the document's details, the other its text being edited.
+  - ids: [hld-db, hld-blob]
+    beats: [3]
+    question: "Where would the metadata go, and where would the text of a document go?"
+    hints:
+      - The metadata is a small row per document.
+      - The text can be thousands of lines. Is a database row the right home?
+task:
+  prompt: "Draw the high-level design: clients, a load balancer and API gateway, a document metadata service writing a database, a document editor service on a websocket, and blob storage for the content."
+  expects: [1, 2, 3]

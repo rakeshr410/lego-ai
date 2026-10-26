@@ -1,0 +1,72 @@
+# Cloud storage interview, deep dive, edits: the watcher added at the top of the client, and the changed-chunk rule written under it; the same upload steps run again for only the chunks whose hash changed, as in the video.
+id: backend/cloud-storage/end-to-end/lld-versions
+title: "Edits: upload only the changed chunks"
+source:
+  hash: "e2da46d1ecb3"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/cloud-storage/end-to-end/lld-sync
+  assumes:
+    - "Uploads run init, chunk and hash, signed URLs, commit."
+    - "The local metadata index holds each file's chunk hashes; the tables keep versions and their chunk lists."
+  carries:
+    - "A watcher in the app notices added or changed files and hands them to the upload manager."
+    - "Only chunks whose hash changed are uploaded; the new version lists every chunk, reusing the unchanged chunk ids."
+  terms:
+    - term: "watcher"
+      means: "The part of the app that notices files added or changed in the synced folder."
+    - term: "file version"
+      means: "A snapshot of a file: its ordered list of chunks."
+board:
+  keep: [title, desc, fr, fr-account, fr-upload, fr-sync, fr-share, fr-folders, fr-quota, fr-out, nfr, nfr-scale, nfr-cap, nfr-large, nfr-latency, nfr-durable, hld, hld-phone, hld-laptop, hld-tablet, hld-clients, hld-gateway, hld-user-svc, hld-uploader, hld-meta-svc, hld-user-db, hld-blob, hld-meta-db, hld-phone-gw, hld-laptop-gw, hld-tablet-gw, hld-gw-user, hld-gw-uploader, hld-gw-meta, hld-user-db-arrow, hld-blob-arrow, hld-meta-db-arrow, lld-head, lc-client, lc-chunker, lc-upload-mgr, lc-index, lk-gateway, lk-user-svc, lk-users-db, lk-users-1, lk-users-2, lk-client-gw, lk-gw-user, lk-user-db, lk-uploader, s1, s1-post, s1-req-1, s1-req-2, s1-req-3, s1-resp-1, s1-resp-2, s1-resp-3, s1-resp-4, s1-quota, s1-resume-1, s1-resume-2, s1-resume-3, s1-resume-4, lk-gw-uploader, lk-quota, s2, s2-chunk, s3-post, s3-body, s3-sign, s3-resp, s4-upload, lk-s3, lk-redis, lk-redis-1, lk-redis-2, lk-sign, lk-state, s5, s5-commit, s5-validate, s6-save, s6-publish, lk-meta-svc, lk-meta-db, lk-kafka, lk-gw-meta, lk-up-meta, lk-meta-db-arrow, lk-publish, lc-sync-engine, lk-sync, lk-sync-pull, lk-sync-push, lk-tables-head, lk-t-folders, lk-t-files, lk-t-files-2, lk-t-versions, lk-t-vchunks, lk-t-chunks, lk-t-perms, lk-consume, lk-gw-sync, lk-sync-meta]
+  elements:
+    - { id: "lc-watcher", kind: "box", label: "watcher", at: [3, 58], size: [10, 3], in: "lc-client" }
+    - { id: "lv-changed", kind: "note", label: "edit, only chunks with a new hash upload", at: [2, 63] }
+    - { id: "lv-version", kind: "note", label: "new version, same chunk ids for the rest", at: [2, 64] }
+  arrows: []
+beats:
+  - point: "A watcher in the app notices when a file is added or changed and hands it to the upload manager, which runs the same upload steps."
+    kind: component
+    weight: core
+    teach:
+      - "Days later the user edits the big file and saves it. Who notices? One more part of the app, a watcher, which sees every file added or changed in the synced folder."
+      - "It hands the file to the upload manager, and the same steps run: init, chunk and hash, signed URLs, commit."
+    draw: [lc-watcher]
+    check: "What starts an upload when a user edits a file in the synced folder?"
+    answer: "The watcher in the app notices the change and hands the file to the upload manager."
+  - point: "Only the chunks whose hash changed are uploaded: the app compares the new chunk hashes with the ones in its local metadata index."
+    kind: mechanism
+    weight: core
+    teach:
+      - "The difference: the app compares each new chunk's hash with the hash in its local metadata index. One paragraph changed inside one 5 MB chunk, so only that chunk differs."
+      - "Only that chunk is uploaded, through the same signed URL path. One 5 MB upload instead of 50 MB."
+    draw: [lv-changed]
+    check: "One paragraph of a 50 MB file changes inside one chunk. What is uploaded?"
+    answer: "Only the chunk whose hash changed, 5 MB; the other nine are already there."
+  - point: "At commit a new file version is saved whose chunk list names every chunk: the new one where it changed, the same chunk ids as before for the rest."
+    kind: decision
+    weight: supporting
+    teach:
+      - "At commit, a new file version. Its chunk list has all ten positions: the new chunk where the edit was, and the old chunk ids everywhere else."
+      - "The video says the changed chunk becomes version 2 while the rest stay version 1; strictly, versions belong to the file, and unchanged chunks are reused by id."
+    draw: [lv-version]
+    check: "What does the new version's chunk list contain?"
+    answer: "Every chunk of the file in order: the new chunk for the changed position and the same chunk ids as before for the others."
+    misconceptions:
+      - "Each chunk has its own version number -> the file has versions; each version lists chunk ids, and unchanged chunks are shared between versions."
+asks:
+  - ids: [lc-watcher]
+    beats: [1]
+    question: "The user edits a file already uploaded. How does the app even know it changed?"
+    hints:
+      - "Something in the app has to watch the folder."
+      - "Then it hands the file to which part?"
+  - ids: [lv-changed]
+    beats: [2]
+    question: "Only one paragraph of a 50 MB file changed. What should the app upload, and how does it know?"
+    hints:
+      - "The file is already in chunks with hashes."
+      - "Compare with what the local metadata index holds."

@@ -1,0 +1,37 @@
+slug: backend-ott-streaming
+title: "The OTT streaming interview"
+summary: "A backend design interview for a streaming service like Netflix, run step by step on one whiteboard: requirements, entities, the API, a high-level design, then each service opened in turn, ending with how a film is cut, encoded and streamed without buffering."
+outline: "The OTT streaming lessons follow the order and the drawings of InterviewWithBunny's System Design 4, Design OTT Platform like Netflix / Amazon Prime / Hotstar (youtube.com/watch?v=NH-f955mvGg), section by section; no text is taken from it, and its factual slips are corrected in the article."
+lessons:
+  - slug: ott-streaming
+    title: "The OTT streaming interview: the problem, requirements, entities and API"
+    summary: "The problem written at the top of the board, functional and non-functional requirements side by side, the four entities, and the six endpoints."
+    parts:
+      - { title: "The problem, then two lists", minutes: 10, packs: [backend/ott-streaming/end-to-end/problem-statement, backend/ott-streaming/end-to-end/requirements] }
+      - { title: "Entities, then the API", minutes: 8, packs: [backend/ott-streaming/end-to-end/entities, backend/ott-streaming/end-to-end/api] }
+  - slug: ott-streaming-design
+    title: "The OTT streaming interview: high-level design, then the user service"
+    summary: "Users, the gateway, four services and their stores, with the uploader feeding the video DB and S3; then the low-level design opens the user service: MySQL and a JWT."
+    parts:
+      - { title: "Gateway, services, stores", minutes: 10, packs: [backend/ott-streaming/end-to-end/high-level-design] }
+      - { title: "The user service", minutes: 5, packs: [backend/ott-streaming/end-to-end/lld-user-service] }
+  - slug: ott-streaming-subscription
+    title: "The OTT streaming interview: subscriptions and payments"
+    summary: "The plans in MySQL, a payment service and a third-party gateway, a consistent payment DB, and a Kafka event read by a notifier and a consumer that activates the plan."
+    parts:
+      - { title: "Plans, payment, then an event", minutes: 12, packs: [backend/ott-streaming/end-to-end/lld-subscription] }
+  - slug: ott-streaming-search
+    title: "The OTT streaming interview: search"
+    summary: "Why scanning the video DB fails, Elasticsearch's inverted index, and a CDC pipeline that keeps it in step."
+    parts:
+      - { title: "Elasticsearch and CDC", minutes: 6, packs: [backend/ott-streaming/end-to-end/lld-search] }
+  - slug: ott-streaming-processing
+    title: "The OTT streaming interview: processing the video"
+    summary: "Why a film cannot be sent whole; the chunker, Kafka and encoders that turn it into segments at four qualities; the HLS and DASH manifests; MongoDB for the metadata."
+    parts:
+      - { title: "Segments, a bitrate ladder, a manifest", minutes: 14, packs: [backend/ott-streaming/end-to-end/lld-video-processing] }
+  - slug: ott-streaming-playback
+    title: "The OTT streaming interview: playback and the CDN"
+    summary: "Play returns a manifest; the player fetches segments at the quality its network allows; a CDN and a Redis cluster cut the trips; HLS against DASH; the requirements read back."
+    parts:
+      - { title: "Adaptive playback, the CDN, HLS or DASH", minutes: 15, packs: [backend/ott-streaming/end-to-end/lld-playback] }

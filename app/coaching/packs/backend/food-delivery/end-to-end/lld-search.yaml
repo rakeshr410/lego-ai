@@ -1,0 +1,97 @@
+# Food delivery interview, deep dive 2, search: the search service in front of Elasticsearch, the restaurant DB (Postgres) beside it fed to the index by a CDC pipeline, the S3 bucket for photos, the restaurant service writing the database, and the restaurant and menu tables written underneath, as the video draws them. Corrected: the search service and Elasticsearch never query the database; images load by URL through a CDN.
+id: backend/food-delivery/end-to-end/lld-search
+title: "Deep dive: search"
+source:
+  hash: "447ed608555d"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/food-delivery/end-to-end/lld-user
+  assumes:
+    - "Search serves the nearby list (lat, long, radius) and title or menu search, both paginated."
+    - "Restaurants upload their listing and menu through the restaurant service into the restaurant DB."
+  carries:
+    - "The search service queries Elasticsearch, which combines a geo-distance filter with full-text matching."
+    - "The restaurant DB (Postgres: restaurant and menu tables) is the source of truth; a CDC pipeline joins each restaurant with its menu into one document in the index."
+    - "Photos live in an S3 bucket; the tables keep their URLs and the app loads them through a CDN."
+  terms:
+    - term: Elasticsearch
+      means: "A search engine holding its own index of documents, queried by text and by location."
+    - term: CDC
+      means: "Change data capture: reading every change from a database's log and passing it on, here to the search index."
+board:
+  keep: [title, prompt-desc, nfr, nfr-scale, nfr-available, nfr-consistent]
+  elements:
+    - { id: lld-search, kind: region, label: "5. Deep dive, search", at: [2, 20], size: [68, 31] }
+    - { id: s-svc, kind: box, label: Search service, at: [4, 25], size: [12, 3], in: lld-search, tone: blue }
+    - { id: s-es, kind: box, label: Elasticsearch, at: [24, 25], size: [14, 3], in: lld-search, tone: green }
+    - { id: s-es-note, kind: note, label: distance filter plus full text, at: [24, 29], in: lld-search }
+    - { id: s-db, kind: oval, label: "Restaurant DB, Postgres", at: [50, 25], size: [16, 4], in: lld-search, tone: amber }
+    - { id: s-restsvc, kind: box, label: Restaurant service, at: [50, 34], size: [16, 3], in: lld-search, tone: blue }
+    - { id: s-owners, kind: box, label: restaurant owners, at: [50, 41], size: [16, 3], in: lld-search }
+    - { id: s-s3, kind: oval, label: S3 bucket, at: [24, 34], size: [14, 3], in: lld-search, tone: amber }
+    - { id: s-s3-note, kind: note, label: "photos, loaded by URL through a CDN", at: [22, 38], in: lld-search }
+    - { id: s-tbl-rest, kind: note, label: "restaurant: restId, name, address, status, lat, long, images", at: [4, 45], in: lld-search }
+    - { id: s-tbl-menu, kind: note, label: "menu: itemId, menuId, restId, title, price, image URL", at: [4, 46], in: lld-search }
+    - { id: s-cdc-note, kind: note, label: CDC joins a restaurant and its menu into one document, at: [4, 48], in: lld-search }
+  arrows:
+    - { id: s-query, from: s-svc, to: s-es, label: geo and text }
+    - { id: s-cdc, from: s-db, to: s-es, label: CDC }
+    - { id: s-owners-in, from: s-owners, to: s-restsvc }
+    - { id: s-write, from: s-restsvc, to: s-db }
+    - { id: s-photos, from: s-restsvc, to: s-s3, label: photos }
+beats:
+  - point: "Nearby and search both mix a location with text, so the search service queries Elasticsearch, which filters by distance and matches text in one ranked query."
+    kind: decision
+    weight: core
+    teach:
+      - "The search service has two jobs: the nearby list when the app opens, and search by restaurant or dish. Both are location plus text."
+      - "So put Elasticsearch behind it: a distance filter and full-text matching in one query. Be ready to say why not a quadtree or Postgres with a geo extension: they do the nearby list, not the text alongside it."
+    draw: [lld-search, s-svc, s-es, s-query, s-es-note]
+    check: Why Elasticsearch rather than a quadtree for this search?
+    answer: The queries combine distance with full-text matching on titles and dishes; a quadtree only answers the location part.
+  - point: "The source of truth is a Postgres restaurant DB, written by restaurant owners through the restaurant service, with a restaurant table and a menu table."
+    kind: component
+    weight: core
+    teach:
+      - "The data itself is relational, restaurants and their menu items, so a Postgres restaurant DB. Owners write it through the restaurant service."
+      - "Two tables, written underneath: restaurant, with id, name, address, status open or closed, latitude and longitude, and image URLs; and menu, with item id, the restaurant it belongs to, title, description, price and image URL."
+    draw: [s-db, s-owners, s-restsvc, s-owners-in, s-write, s-tbl-rest, s-tbl-menu]
+    check: Why keep a relational database at all when search uses Elasticsearch?
+    answer: It is the source of truth for related rows, restaurants and their menu items; the index is a copy built from it.
+  - point: "Photos go to an S3 bucket and the tables keep only their URLs; the app loads the images by URL through a CDN."
+    kind: decision
+    weight: supporting
+    teach:
+      - "Each restaurant and each dish has photos. Files, not rows: they go to an S3 bucket, and the tables keep the URL."
+      - "The app loads them straight from the URL, through a CDN, not through the search service."
+    draw: [s-s3, s-photos, s-s3-note]
+    check: Where are dish photos stored, and what does the menu table hold for them?
+    answer: In an S3 bucket; the table holds only each photo's URL.
+  - point: "Neither the search service nor Elasticsearch queries the restaurant DB: a CDC pipeline reads each change from the database log and writes one joined document per restaurant into the index."
+    kind: mechanism
+    weight: core
+    teach:
+      - "How does a new dish reach search? Elasticsearch keeps its own copy. A CDC pipeline reads every change from the database's log, and its consumer joins a restaurant with its menu items into one document and writes it to the index."
+      - "So the search path never touches the database. The index is a moment behind, which the available-first choice for search allows."
+    draw: [s-cdc, s-cdc-note]
+    check: A restaurant adds a dish. How does it become searchable?
+    answer: The change lands in the restaurant DB, CDC reads it from the log, and the consumer rewrites that restaurant's document in Elasticsearch.
+    misconceptions:
+      - "Elasticsearch queries the restaurant database on each search -> it holds its own index, kept current by CDC."
+      - "The search service reads S3 to return images -> it returns URLs; the app fetches images through a CDN."
+asks:
+  - ids: [s-es]
+    beats: [1]
+    question: "Search has to handle 'near me' and 'biryani' at the same time, over a million restaurants. What would you put behind the search service?"
+    hints:
+      - You need distance and text matching together.
+      - Something built for full-text search, with geo queries.
+  - ids: [s-cdc-note]
+    beats: [4]
+    question: "The data lives in Postgres, but search reads the index. How do changes get from one to the other?"
+    hints:
+      - Every database keeps a log of its changes.
+      - And the index wants one document per restaurant, menu included.

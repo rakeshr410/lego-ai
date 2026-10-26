@@ -1,0 +1,80 @@
+# Cloud storage interview, deep dive, the client: "5. Deep Dive Design (Low Level)" under the high-level design, the client magnified on the left (chunker, upload manager, local metadata index), the tall gateway, and the user service with its Postgres table, as in the video.
+id: backend/cloud-storage/end-to-end/lld-client
+title: "Deep dive: the client, and the user service"
+source:
+  hash: "7b4ff995f808"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/cloud-storage/end-to-end/high-level-design
+  assumes:
+    - "The high-level design: clients, gateway, user onboarding, file uploader and file metadata services, user DB, blob storage, metadata DB."
+  carries:
+    - "The app has a chunker that splits large files and an upload manager that sends the pieces; small files go up whole."
+    - "A local metadata index on the device records each uploaded file's version and chunk hashes; it spots duplicates and drives sync."
+    - "The user service uses Postgres: userId, email, password, createdAt, storage used."
+  terms:
+    - term: "chunk"
+      means: "A fixed-size piece of a file, uploaded on its own."
+    - term: "local metadata index"
+      means: "A small database on the device of the files already uploaded, with versions and chunk hashes."
+board:
+  keep: [title, desc, fr, fr-account, fr-upload, fr-sync, fr-share, fr-folders, fr-quota, fr-out, nfr, nfr-scale, nfr-cap, nfr-large, nfr-latency, nfr-durable, hld, hld-phone, hld-laptop, hld-tablet, hld-clients, hld-gateway, hld-user-svc, hld-uploader, hld-meta-svc, hld-user-db, hld-blob, hld-meta-db, hld-phone-gw, hld-laptop-gw, hld-tablet-gw, hld-gw-user, hld-gw-uploader, hld-gw-meta, hld-user-db-arrow, hld-blob-arrow, hld-meta-db-arrow]
+  elements:
+    - { id: "lld-head", kind: "note", label: "5. Deep dive design, low level", at: [2, 42] }
+    - { id: "lc-client", kind: "region", label: "Client app", at: [2, 48], size: [23, 13] }
+    - { id: "lc-chunker", kind: "box", label: "chunker", at: [3, 50], size: [10, 3], in: "lc-client" }
+    - { id: "lc-upload-mgr", kind: "box", label: "upload manager", at: [14, 50], size: [10, 3], in: "lc-client" }
+    - { id: "lc-index", kind: "box", label: "local metadata index", at: [3, 54], size: [10, 3], in: "lc-client" }
+    - { id: "lk-gateway", kind: "box", label: "Gateway, load balancer", at: [28, 44], size: [6, 35] }
+    - { id: "lk-user-svc", kind: "box", label: "User service", at: [37, 44], size: [13, 3], tone: "blue" }
+    - { id: "lk-users-db", kind: "oval", label: "Users, Postgres", at: [54, 44], size: [11, 3], tone: "amber" }
+    - { id: "lk-users-1", kind: "note", label: "userId, email, password,", at: [66, 44] }
+    - { id: "lk-users-2", kind: "note", label: "createdAt, storage used", at: [67, 45] }
+  arrows:
+    - { id: "lk-client-gw", from: "lc-client", to: "lk-gateway" }
+    - { id: "lk-gw-user", from: "lk-gateway", to: "lk-user-svc" }
+    - { id: "lk-user-db", from: "lk-user-svc", to: "lk-users-db" }
+beats:
+  - point: "The client is ours: a chunker splits a large file into chunks and an upload manager sends them; a small file skips the chunker and goes up whole."
+    kind: component
+    weight: core
+    teach:
+      - "Step five. Copy the high-level picture into the deep dive and open the client first, because here the app is ours."
+      - "Drop a 16 MB file, or a 15 GB one, into Dropbox: it is not sent in one piece. A chunker splits it into chunks, like a streaming platform does with video, and an upload manager sends the chunks. A file smaller than one chunk goes up whole."
+    draw: [lld-head, lc-client, lc-chunker, lc-upload-mgr]
+    check: "Why does the app split a large file before uploading it?"
+    answer: "A multi-gigabyte file cannot go up reliably in one request; small chunks use the bandwidth well and a failed one can be sent again alone."
+  - point: "Before uploading, the app checks a local metadata index of what is already uploaded, with versions and chunk hashes: a duplicate is skipped, an edit shows what changed."
+    kind: mechanism
+    weight: core
+    teach:
+      - "When a file is dropped in, the app first asks: is this already uploaded, or an edited copy of something uploaded?"
+      - "To answer it keeps a local metadata index, a small database on the device with every uploaded file's version and chunk hashes. It is also what keeps the devices in sync later."
+    draw: [lc-index]
+    check: "What is the local metadata index for?"
+    answer: "It records what is already uploaded, with versions and chunk hashes, so the app skips duplicates, finds what changed in an edit, and can sync."
+  - point: "Every call goes through the gateway; the user service keeps users in Postgres, flat relational data: id, email, password, created date and storage used."
+    kind: decision
+    weight: supporting
+    teach:
+      - "The app's calls still go through the gateway. Behind it, the user service, plain as ever: user data is flat and relational, so Postgres."
+      - "The table: user id, email, password hash, created date, and one column the upload needs, the storage the user has used."
+    draw: [lk-gateway, lk-client-gw, lk-user-svc, lk-gw-user, lk-users-db, lk-user-db, lk-users-1, lk-users-2]
+    check: "Which column of the user table will the upload path need, and why?"
+    answer: "The storage used, to check a new file against the user's quota."
+asks:
+  - ids: [lc-chunker, lc-upload-mgr]
+    beats: [1]
+    question: "A 15 GB file is dropped into the app. What parts would the app need to get it to the backend?"
+    hints:
+      - "Could it go in one request?"
+      - "Something to cut it, something to send the pieces."
+  - ids: [lc-index]
+    beats: [2]
+    question: "How would the app know the dropped file is already uploaded, or only slightly edited?"
+    hints:
+      - "It would need a record of what it has uploaded."
+      - "Kept on the device itself."

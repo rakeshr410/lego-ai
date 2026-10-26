@@ -1,0 +1,98 @@
+# Top K leaderboard interview, requirements: "1. Functional requirements" on the left and "Non-functional requirements" on the right, under the problem statement, as the video lays them out; every non-functional line with its number.
+id: backend/top-k-leaderboard/end-to-end/requirements
+title: Two lists, functional and non-functional
+source:
+  hash: "34ab7816a0d9"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/top-k-leaderboard/end-to-end/problem-statement
+  assumes:
+    - "A leaderboard returns the K items with the highest score for a board, a region and a time window."
+  carries:
+    - "Functional: insert, update or delete scores; query the top K by region or group; windows of hour, day, month, all time; real-time updates for live leaderboards."
+    - "Non-functional: 1M writes a second, billions of items; availability over consistency; top K in 100 ms, updates within 500 ms; exact, not probabilistic."
+    - Requirements are gathered within the first 10 to 15 minutes of 45.
+  terms:
+    - term: functional requirement
+      means: What the system does.
+    - term: non-functional requirement
+      means: "A quality of the system (scale, latency, availability, accuracy), stated with a number."
+    - term: soft real time
+      means: "An update shows up within a bound, here 500 ms, rather than instantly."
+board:
+  keep: [title, prompt-desc, prompt-example]
+  elements:
+    - { id: fr, kind: region, label: 1. Functional requirements, at: [6, 6], size: [34, 14], dashed: true }
+    - { id: fr-insert, kind: note, label: "insert, update or delete a score, view or like", at: [7, 8], in: fr }
+    - { id: fr-query, kind: note, label: query the top K by region or group, at: [7, 10], in: fr }
+    - { id: fr-window, kind: note, label: "time windows of hour, day, month and all time", at: [7, 12], in: fr }
+    - { id: fr-realtime, kind: note, label: "real-time updates, for live leaderboards only", at: [7, 14], in: fr }
+    - { id: nfr, kind: region, label: Non-functional requirements, at: [44, 6], size: [34, 14], dashed: true }
+    - { id: nfr-scale, kind: note, label: "scale, 1M writes a second, billions of items", at: [45, 8], in: nfr }
+    - { id: nfr-cap, kind: note, label: "availability over consistency, eventual", at: [45, 10], in: nfr }
+    - { id: nfr-latency, kind: note, label: "latency, top K in 100 ms, updates in 500 ms", at: [45, 12], in: nfr }
+    - { id: nfr-exact, kind: note, label: "exact top K, not probabilistic", at: [45, 14], in: nfr }
+  arrows: []
+  lists:
+    - { id: fr-list, in: fr, at: [7, 8], step: 2, slots: 6, width: 32, items: [fr-insert, fr-query, fr-window, fr-realtime] }
+    - { id: nfr-list, in: nfr, at: [45, 8], step: 2, slots: 6, width: 32, items: [nfr-scale, nfr-cap, nfr-latency, nfr-exact] }
+beats:
+  - point: "The two core functional requirements: put data in (insert, update or delete a score, view or like) and query the top K by region or group."
+    kind: requirement
+    weight: core
+    teach:
+      - "Step one, on the left: functional requirements. The headline one is to query the top K, songs, videos or players, by region or group."
+      - "But without data there is nothing to rank, so ingestion is a requirement of its own: insert, update or delete a player's score, a video's view, a song's like."
+    draw: [fr, fr-insert, fr-query]
+    check: Why is putting data in a requirement of its own, when the product is a ranking?
+    answer: "Without scores, views and likes coming in there is nothing to rank; the system has to ingest them as well as query them."
+  - point: "Queries take a time window, the last hour, day or month or all time, and live leaderboards need real-time updates, which trending lists do not."
+    kind: requirement
+    weight: core
+    teach:
+      - "A query also picks a window: the top 100 videos of the last 90 days, say. Fix the set: an hour, a day, a month, all time."
+      - "And real-time updates, but only for live leaderboards, a game event watching its scores. Trending songs or movies can be a little behind."
+    draw: [fr-window, fr-realtime]
+    check: Which kind of product needs real-time updates, and which does not?
+    answer: "A live game leaderboard needs them; a trending list of songs or videos can lag a little."
+  - point: "Scale decides this design: 1 million write requests a second, the score events, over billions of songs, videos or players; and availability over consistency."
+    kind: metric
+    weight: core
+    teach:
+      - "On the right, non-functional. Scale first, because here the whole design depends on it: about a million requests a second, and these are writes, likes and views coming in, not top K queries. Over billions of songs, videos or players."
+      - "Then CAP. When the network splits we keep answering: a client should always get some list, never a service-unavailable error. A video moving from second to first can show a moment late: eventual consistency."
+    draw: [nfr, nfr-scale, nfr-cap]
+    check: "The million requests a second: are they top K reads or something else?"
+    answer: "Writes: the score, view and like events coming in."
+    misconceptions:
+      - "CAP means a system can never be both available and consistent -> it is a choice made while the network is partitioned; here we choose to keep answering."
+  - point: "Latency: the top K in 100 ms, an update reflected within 500 ms (soft real time); and the results are exact, not probabilistic, agreed up front because it changes the design."
+    kind: metric
+    weight: core
+    teach:
+      - "Latency, two numbers: fetching the top K in 100 milliseconds, near real time; an update or delete reflected within 500, soft real time, since it may move ranks."
+      - "Last, accuracy. Ask whether they want the exact top K or a probabilistic one. The design changes completely, so settle it now: exact, and we'll say at the end how to go probabilistic."
+    draw: [nfr-latency, nfr-exact]
+    check: Why settle exact versus probabilistic at the start?
+    answer: "Approximate top K uses different structures, sketches in fixed memory, so the choice changes the whole design."
+  - point: "Keep requirement gathering inside 10 to 15 minutes of a 45-minute interview."
+    kind: rule
+    weight: supporting
+    teach:
+      - "Watch the clock: ten to fifteen minutes for all of this, then move on."
+asks:
+  - list: fr-list
+    beats: [1, 2]
+    question: "So what should this leaderboard service do? Tell me the features one at a time, and I'll write them down."
+    hints:
+      - What has to come into the system before anything can be ranked?
+      - And when someone asks for the top K, what else might they choose?
+  - list: nfr-list
+    beats: [3, 4]
+    question: "Now the qualities. How big, how fast, how reliable, how exact? A number if you have one."
+    hints:
+      - Think of every like and view on a large video site arriving at once.
+      - How long may fetching the top K take, and must it be exact?

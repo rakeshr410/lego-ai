@@ -1,0 +1,68 @@
+# Payment gateway interview, the problem statement: the title and one line on what a gateway does at the top of the board, then the gateway and the processor defined side by side, as the video writes them before any requirement; the five steps said once (said, not drawn).
+id: backend/payment-gateway/end-to-end/problem-statement
+title: Gateway or processor
+source:
+  hash: "3088711aefd2"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: null
+  assumes: []
+  carries:
+    - "A payment gateway collects card details, secures and tokenizes them, orchestrates the payment and talks to a processor: the traffic controller of payments."
+    - "A payment processor talks to banks and card networks to authorize, capture and settle: it moves the money, and it is outside this design."
+    - "The interview runs in five steps: requirements, core entities, API, high-level design, deep dive."
+  terms:
+    - term: payment gateway
+      means: "The platform that collects and tokenizes card details and routes the payment to a processor."
+    - term: payment processor
+      means: "The financial network entity that talks to banks and card networks and moves the money."
+board:
+  keep: []
+  elements:
+    - { id: title, kind: note, label: Payment gateway like Stripe or Razorpay, at: [51, 0] }
+    - { id: prompt-desc, kind: note, label: secures card details and routes payments to processors, at: [48, 2] }
+    - { id: def-gateway, kind: note, label: "gateway, collects and tokenizes cards, routes the payment", at: [4, 4] }
+    - { id: def-gateway-2, kind: note, label: the traffic controller of payments, at: [4, 5] }
+    - { id: def-processor, kind: note, label: "processor, talks to banks and card networks", at: [62, 4] }
+    - { id: def-processor-2, kind: note, label: "authorizes, captures and settles, moves the money", at: [62, 5] }
+  arrows: []
+beats:
+  - point: "A payment gateway like Stripe or Razorpay sits between a shop's checkout and the networks that move money: it captures the buyer's card details securely and routes each payment between merchants and processors."
+    kind: rule
+    weight: core
+    teach:
+      - "Write the title: a payment gateway like Stripe or Razorpay. Under it, one line on what it is: a platform that captures the buyer's payment details securely and orchestrates the payment between merchants and processors."
+      - "Warn that this is a domain question; candidates outside payments rarely get it. If it comes, the same five steps work, but the definitions come first."
+    draw: [title, prompt-desc]
+    check: In one sentence, where does a payment gateway sit in a card payment?
+    answer: "Between the merchant's checkout and the processors: it captures the card details securely and routes the payment to a processor."
+  - point: "The gateway collects, secures and tokenizes card details and orchestrates the flow, the traffic controller of payments; the processor talks to banks and card networks to authorize, capture and settle, it moves the money, and it is outside our design."
+    kind: rule
+    weight: core
+    teach:
+      - "On the left, the gateway: it collects the card number, the CVV and the rest from the buyer, secures and tokenizes them, and sends the token to whichever processor is needed. The traffic controller of payments."
+      - "On the right, the processor: the financial network entity that really talks to the bank and the card networks, to authorize, capture and settle. It moves the money."
+      - "So we design the gateway only. How money leaves one bank and reaches another is not ours. Say that boundary out loud, or the interviewer expects a card network."
+    draw: [def-gateway, def-gateway-2, def-processor, def-processor-2]
+    check: Which of the two actually talks to the bank, and which one are we designing?
+    answer: "The processor talks to the banks and card networks and moves the money; we design the gateway, which collects, tokenizes and routes."
+    misconceptions:
+      - "The gateway moves the money between banks -> that is the processor's job; the gateway collects, tokenizes and routes the payment to a processor."
+  - point: "The interview still runs in five steps: requirements, core entities, API, high-level design, then the deep dive."
+    kind: rule
+    weight: supporting
+    teach:
+      - "Say the plan once: requirements, functional and non-functional; the core entities; the API; a high-level design; then the deep dive, where most of the time goes."
+      - "Said, not written; each step gets its number on the board when we reach it."
+    check: What comes straight after the requirements?
+    answer: The core entities, then the API.
+asks:
+  - ids: [def-processor]
+    beats: [2]
+    question: "Before we design anything: what do you think a payment processor does that a gateway does not?"
+    hints:
+      - Who actually talks to the buyer's bank?
+      - Think about who moves the money, rather than who collects the card.

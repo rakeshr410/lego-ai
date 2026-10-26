@@ -1,0 +1,80 @@
+# OTT streaming interview, low-level design 3: search, as in the video: the search service now calls Elasticsearch instead of the video DB, and a CDC pipeline feeds Elasticsearch from the video DB. Elasticsearch answers from its own index, not by searching the database.
+id: backend/ott-streaming/end-to-end/lld-search
+title: "Low-level design, 3: search"
+source:
+  hash: "fded3ad8bf6d"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/ott-streaming/end-to-end/lld-subscription
+  assumes:
+    - "The search service reads the video DB, where the uploader writes titles and descriptions."
+  carries:
+    - "A pattern search scans the whole video DB; Elasticsearch answers from an inverted index instead."
+    - "A CDC pipeline streams every video DB change into Elasticsearch within seconds."
+    - "Results are paged, with partial metadata."
+  terms:
+    - term: inverted index
+      means: "A map from each word to the documents that contain it, which full-text search reads."
+    - term: CDC
+      means: "Change data capture: reading a database's change log and streaming every insert and update elsewhere."
+board:
+  keep: [title, prompt-desc, fr, fr-account, fr-search, fr-watch, fr-out, nfr, nfr-scale, nfr-cap, nfr-buffer, nfr-micro, entities, ent-user, ent-user-meta, ent-video, ent-video-meta, api, api-register, api-plans, api-subscribe, api-search, api-details, api-play, hld, hld-users, hld-gateway, hld-gw-roles, hld-lb-rr, hld-user-svc, hld-sub-svc, hld-search-svc, hld-play-svc, hld-user-db, hld-pay-gw, hld-uploader, hld-video-db, hld-blob, hld-blob-note, hld-users-gw, hld-gw-user, hld-gw-sub, hld-gw-search, hld-gw-play, hld-user-userdb, hld-sub-userdb, hld-sub-paygw, hld-up-videodb, hld-up-blob, hld-search-videodb, hld-play-blob]
+  elements:
+    - { id: lld-search, kind: region, label: "5. Low-level design: 3. Search service", at: [2, 64], size: [62, 15] }
+    - { id: q-svc, kind: box, label: "Search service, queries", at: [3, 68], size: [14, 4], in: lld-search, tone: blue }
+    - { id: q-scan, kind: note, label: a LIKE scan reads every row, at: [3, 74], in: lld-search, tone: red }
+    - { id: q-paged, kind: note, label: "results paged, partial metadata", at: [3, 75], in: lld-search }
+    - { id: q-es, kind: oval, label: Elasticsearch, at: [24, 68], size: [14, 4], in: lld-search, tone: amber }
+    - { id: q-index, kind: note, label: "inverted index, word to titles", at: [24, 74], in: lld-search }
+    - { id: q-fuzzy, kind: note, label: "full-text, fuzzy, ranked", at: [24, 75], in: lld-search }
+    - { id: q-vdb, kind: oval, label: "Video DB, source", at: [46, 68], size: [14, 4], in: lld-search, tone: amber }
+    - { id: q-cdc-note, kind: note, label: "every change, within seconds", at: [44, 74], in: lld-search }
+  arrows:
+    - { id: q-svc-es, from: q-svc, to: q-es, label: query }
+    - { id: q-vdb-es, from: q-vdb, to: q-es, label: CDC pipeline }
+beats:
+  - point: "Searching titles straight from the video DB means a pattern scan over every row, which does not scale."
+    kind: failure
+    weight: core
+    teach:
+      - "Third, search. A title search on the database is a pattern match, like percent night percent, and an ordinary index cannot help it, so the database scans every row."
+      - "That is the wrong tool for searching, however small the catalogue."
+    draw: [lld-search, q-svc, q-scan]
+    check: Why can't an ordinary index speed up a search for a word in the middle of a title?
+    answer: A pattern with a leading wildcard cannot use a sorted index, so the database scans every row.
+  - point: "Put Elasticsearch between the search service and the data: it answers full-text, fuzzy and ranked queries from an inverted index, a page at a time."
+    kind: component
+    weight: core
+    teach:
+      - "So the search service calls Elasticsearch instead. It keeps an inverted index, each word pointing to the titles that contain it, and answers full-text, fuzzy and ranked queries from it."
+      - "It searches its own index, not the database. Results go back a page at a time, with the partial metadata the list needs."
+    draw: [q-es, q-svc-es, q-index, q-fuzzy, q-paged]
+    check: Where does Elasticsearch run the user's query?
+    answer: Against its own inverted index, not against the video DB.
+    misconceptions:
+      - "Elasticsearch searches the database faster -> it searches its own copy of the data, an index built for search."
+  - point: "A CDC pipeline keeps the index in step: it streams every insert and update of the video DB into Elasticsearch within seconds."
+    kind: mechanism
+    weight: core
+    teach:
+      - "The index is a copy, so how does a new title get there? A CDC pipeline, change data capture, Debezium for example, reads the video DB's change log and streams every change into Elasticsearch."
+      - "Within seconds, near real time. The uploader writes to one place, and the title becomes searchable on its own."
+    draw: [q-vdb, q-vdb-es, q-cdc-note]
+    check: How does a newly uploaded title become searchable without the uploader writing to Elasticsearch?
+    answer: CDC reads the video DB's change log and streams the new row into the index within seconds.
+asks:
+  - ids: [q-es]
+    beats: [2]
+    question: "Scanning the database for every search won't do. What would you put in front of the data for search?"
+    hints:
+      - A tool built for full-text search.
+      - It keeps an index of words to titles.
+  - ids: [q-cdc-note]
+    beats: [3]
+    question: "That search engine holds a copy. How does it stay in step with the video DB?"
+    hints:
+      - Every database keeps a log of its changes.
+      - Something could stream that log out.

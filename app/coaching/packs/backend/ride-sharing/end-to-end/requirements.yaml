@@ -1,0 +1,104 @@
+# Ride-sharing interview, requirements: "1. Functional requirements" on the left and "Non-functional requirements" on the right, as the video lays them out; the CAP line split between rider and driver, and the one-minute match.
+id: backend/ride-sharing/end-to-end/requirements
+title: Two lists, functional and non-functional
+source:
+  hash: "f7e2d27f53d9"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/ride-sharing/end-to-end/problem-statement
+  assumes:
+    - "A ride-sharing service is an online platform where a rider requests and books rides from nearby drivers."
+  carries:
+    - "Functional: fare estimate; request a ride at that fare; choose a category; drivers accept or decline; match a nearby available driver; real-time tracking; mutual ratings; payment."
+    - "Non-functional: millions of riders and drivers; availability over consistency for riders; strong consistency in matching; a driver assigned within 1 minute, else the request fails."
+  terms:
+    - term: functional requirement
+      means: What the system does.
+    - term: non-functional requirement
+      means: "A quality of the system (scale, consistency, latency), stated with a number and where it applies."
+    - term: strong consistency
+      means: Every reader sees the latest write; here, no two servers can believe the same driver is free.
+board:
+  keep: [title, prompt-desc]
+  elements:
+    - { id: fr, kind: region, label: 1. Functional requirements, at: [6, 4], size: [34, 20], dashed: true }
+    - { id: fr-fare, kind: note, label: a fare estimate from start and drop location, at: [7, 6], in: fr }
+    - { id: fr-request, kind: note, label: request a ride at the estimated fare, at: [7, 8], in: fr }
+    - { id: fr-category, kind: note, label: "choose a category, bike, car or SUV", at: [7, 10], in: fr }
+    - { id: fr-accept, kind: note, label: "drivers accept or decline, then navigate", at: [7, 12], in: fr }
+    - { id: fr-match, kind: note, label: "matched with a nearby, available driver", at: [7, 14], in: fr }
+    - { id: fr-track, kind: note, label: track driver and rider in real time, at: [7, 16], in: fr }
+    - { id: fr-rate, kind: note, label: driver and rider rate each other after the trip, at: [7, 18], in: fr }
+    - { id: fr-pay, kind: note, label: the rider pays in the app, at: [7, 20], in: fr }
+    - { id: nfr, kind: region, label: Non-functional requirements, at: [42, 4], size: [34, 14], dashed: true }
+    - { id: nfr-scale, kind: note, label: "scale, millions of riders and drivers", at: [43, 6], in: nfr }
+    - { id: nfr-rider, kind: note, label: "riders, availability over consistency", at: [43, 8], in: nfr }
+    - { id: nfr-match, kind: note, label: "matching, strongly consistent, one ride per driver", at: [43, 10], in: nfr }
+    - { id: nfr-latency, kind: note, label: "a driver assigned within 1 minute, else fail", at: [43, 12], in: nfr }
+  arrows: []
+  lists:
+    - { id: fr-list, in: fr, at: [7, 6], step: 2, slots: 9, width: 32, items: [fr-fare, fr-request, fr-category, fr-accept, fr-match, fr-track, fr-rate, fr-pay] }
+    - { id: nfr-list, in: nfr, at: [43, 6], step: 2, slots: 6, width: 32, items: [nfr-scale, nfr-rider, nfr-match, nfr-latency] }
+beats:
+  - point: "Booking comes first: a fare estimate from a start and a drop location, a request for a ride at that fare, and a choice of category, bike, car or SUV."
+    kind: requirement
+    weight: core
+    teach:
+      - "Step one, on the left: functional requirements. First, the rider gives a start and a drop location and gets a fare estimate."
+      - "Then the rider requests a ride at that estimated fare, and can choose a category, a bike, a car or an SUV, each with its own price."
+    draw: [fr, fr-fare, fr-request, fr-category]
+    check: What does a rider give the app before seeing any price?
+    answer: The start and the drop location of the trip.
+  - point: "Then the driver's side and the trip: drivers accept or decline and navigate, the rider is matched with a nearby available driver, both are tracked in real time, they rate each other, and the rider pays."
+    kind: requirement
+    weight: core
+    teach:
+      - "On the driver's side, a driver can accept or decline a request, depending on the drop or the fare, then navigate to pick-up and drop-off."
+      - "On request, the rider is matched with a driver who is nearby and available; that is the heart of the system. Both see each other move in near real time; after the trip they rate each other; and the rider pays the final amount in the app."
+    draw: [fr-accept, fr-match, fr-track, fr-rate, fr-pay]
+    check: Which of these requirements is the core that most of the design will serve?
+    answer: Matching the rider with a nearby, available driver.
+  - point: "Scale is millions of riders and drivers, so the design is distributed from the start."
+    kind: metric
+    weight: core
+    teach:
+      - "On the right, the non-functional requirements. Ask for the scale: millions of riders and drivers. That alone says many services and many machines."
+    draw: [nfr, nfr-scale]
+    check: Why ask for the scale first?
+    answer: It decides the architecture; millions of users means a distributed design.
+  - point: "CAP differs by side: riders get availability over consistency, eventual is fine; matching must be strongly consistent so no driver is assigned two rides at once."
+    kind: requirement
+    weight: core
+    teach:
+      - "CAP: when the network splits, a part of the system either keeps answering or waits until its copies agree. For the rider, stay available: if the app is down nobody can book, and slightly stale data is fine."
+      - "For the driver, consistency wins: the assignment must be strongly consistent, so one driver is never matched to two riders at the same time."
+    draw: [nfr-rider, nfr-match]
+    check: Why can the rider's side be eventually consistent while matching cannot?
+    answer: A rider seeing slightly old data is harmless, but a driver assigned to two rides at once is a real, visible failure.
+    misconceptions:
+      - "One CAP choice covers the whole system -> it is made per part: available for riders, consistent for matching."
+  - point: "Latency: a driver is assigned within 1 minute, and if not, the request fails rather than searching forever."
+    kind: metric
+    weight: core
+    teach:
+      - "Latency here is not milliseconds: once a rider requests, matching must assign a driver within about a minute."
+      - "And say the other half: if no driver is found in that minute, the request fails cleanly, so the rider is not left waiting indefinitely."
+    draw: [nfr-latency]
+    check: What happens when no driver accepts within the minute?
+    answer: The request fails cleanly and the rider can try again; it does not keep searching forever.
+asks:
+  - list: fr-list
+    beats: [1, 2]
+    question: "So what should this app do, for the rider and for the driver? Tell me the features one at a time, and I'll write them down."
+    hints:
+      - Think of a trip from start to end, from seeing a price to paying.
+      - And what does the driver need to do with a request?
+  - list: nfr-list
+    beats: [3, 4, 5]
+    question: "Now the qualities. How big, how consistent, how fast should it be? A number if you have one."
+    hints:
+      - How many riders and drivers, and how long may finding a driver take?
+      - Is there anything that must never happen twice to one driver?

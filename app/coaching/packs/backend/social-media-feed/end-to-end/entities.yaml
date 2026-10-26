@@ -1,0 +1,47 @@
+# Social media interview, core entities: "2. Core entities" under the functional list, five lines, as in the video.
+id: backend/social-media-feed/end-to-end/entities
+title: Five entities
+source:
+  hash: "b4b42bf0469b"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/social-media-feed/end-to-end/requirements
+  assumes:
+    - "Functional: sign up and log in, create posts, follow, like and comment, see a feed."
+  carries:
+    - "The core entities are the user, the post, followers, likes and comments, and the feed."
+  terms:
+    - term: core entity
+      means: A noun the system stores and moves.
+board:
+  keep: [title, prompt-desc, fr, fr-login, fr-post, fr-follow, fr-engage, fr-feed, nfr, nfr-scale, nfr-cap, nfr-latency]
+  elements:
+    - { id: entities, kind: region, label: 2. Core entities, at: [2, 23], size: [18, 15], dashed: true }
+    - { id: ent-user, kind: note, label: user, at: [3, 25], in: entities }
+    - { id: ent-post, kind: note, label: post, at: [3, 27], in: entities }
+    - { id: ent-followers, kind: note, label: followers, at: [3, 29], in: entities }
+    - { id: ent-engage, kind: note, label: like and comment, at: [3, 31], in: entities }
+    - { id: ent-feed, kind: note, label: feed, at: [3, 33], in: entities }
+  arrows: []
+  lists:
+    - { id: entity-list, in: entities, at: [3, 25], step: 2, slots: 6, width: 14, items: [ent-user, ent-post, ent-followers, ent-engage, ent-feed] }
+beats:
+  - point: "Reading the requirements gives five core entities: the user, the post, followers, likes and comments, and the feed; more may appear later."
+    kind: component
+    weight: core
+    teach:
+      - "Step two: the core entities. Read the requirements and pick out the nouns: the user who logs in, the post, the followers or friends, the likes and comments, and the feed you see on opening the app."
+      - "More may turn up once the design is detailed; five is what the requirements give us now."
+    draw: [entities, ent-user, ent-post, ent-followers, ent-engage, ent-feed]
+    check: Why is the feed an entity when it is made of posts?
+    answer: Because the design will store each user's feed, precomputed, instead of building it on every open.
+asks:
+  - list: entity-list
+    beats: [1]
+    question: "What are the core entities here, the things this system keeps track of?"
+    hints:
+      - Go through the five requirements and pick out the nouns.
+      - What do you see when you open the app?

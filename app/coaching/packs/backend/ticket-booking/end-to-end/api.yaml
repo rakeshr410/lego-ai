@@ -1,0 +1,73 @@
+# Ticket booking interview, API: "3. API designing" beside the entities, the search GET, the event GET, and the two booking POSTs (reserve, then confirm) side by side with their bodies as code, as in the video.
+id: backend/ticket-booking/end-to-end/api
+title: Search, view, reserve, confirm
+source:
+  hash: "4a2fd389c1eb"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/ticket-booking/end-to-end/entities
+  assumes:
+    - "Functional: search events by title, location and date; view an event's details and seats; book seats."
+    - "The core entities are the user, the event, the venue and the ticket."
+  carries:
+    - "GET /v1/search?q=term&location=place&date=day returns a page of event ids."
+    - "GET /v1/event/{eventId} returns the event's details, location and seats."
+    - "Booking is two calls: POST /v1/booking/reserve with { seats } returns a bookingId; POST /v1/booking/confirm with { bookingId, paymentDetails } books."
+    - The user comes from the auth token in the header, never from the body.
+  terms:
+    - term: endpoint
+      means: A method and a path the service answers, with what it takes and what it returns.
+    - term: pagination
+      means: Returning a long result one page at a time, with a cursor for the next page.
+board:
+  keep: [title, prompt-desc, fr, fr-search, fr-view, fr-book, nfr, nfr-scale, nfr-available, nfr-consistent, entities, ent-user, ent-event, ent-venue, ent-ticket]
+  elements:
+    - { id: api, kind: region, label: 3. API designing, at: [31, 21], size: [47, 12], dashed: true }
+    - { id: api-search, kind: note, label: "GET /v1/search?q=term&location=place&date=day, event ids", at: [32, 23], in: api }
+    - { id: api-event, kind: note, label: "GET /v1/event/{eventId}, event details, location and seats", at: [32, 25], in: api }
+    - { id: api-reserve, kind: note, label: "POST /v1/booking/reserve, returns a bookingId", at: [32, 27], in: api }
+    - { id: api-reserve-body, kind: note, label: "{ seats: [L12, L13] }", at: [34, 28], in: api }
+    - { id: api-confirm, kind: note, label: POST /v1/booking/confirm, at: [58, 27], in: api }
+    - { id: api-confirm-body, kind: note, label: "{ bookingId, paymentDetails }", at: [60, 28], in: api }
+    - { id: api-auth, kind: note, label: the user comes from the auth token in the header, at: [32, 30], in: api }
+  arrows: []
+beats:
+  - point: "Searching is a GET with the search term, location and date as query parameters, returning a paginated list of matching event ids."
+    kind: flow
+    weight: core
+    teach:
+      - "Step three, the API: one endpoint per requirement. Search returns data, so it is a GET on v1 search, with a free-text term, a location, latitude and longitude, and a date."
+      - "Many events can match, so it returns a list of event ids, with a title and thumbnail if the results page wants them, a page at a time."
+    draw: [api, api-search]
+    check: Why does the search return a list, and why paginated?
+    answer: Many events can match one search, and the list can be long, so it comes a page at a time.
+  - point: "Viewing is a GET on the event id from the search results, returning the event's details, its location and its seats."
+    kind: flow
+    weight: core
+    teach:
+      - "The second requirement: open one event. A GET on v1 event slash the event id, which came from the search."
+      - "It returns the details, the location, and the seats with which are still free, everything the event page needs."
+    draw: [api-event]
+    check: Where does the client get the event id it passes here?
+    answer: From the search results.
+  - point: "Booking is two POSTs: reserve sends the list of seats and returns a bookingId; confirm sends that bookingId and the payment details. The user comes from the auth token in the header."
+    kind: flow
+    weight: core
+    teach:
+      - "Booking changes data, so it is a POST, and it is two steps: hold the seats, then pay. Reserve takes a list of seats, since one user often books several, and returns a bookingId."
+      - "Confirm takes the bookingId and the payment details, a token from the payment gateway. The user is not in the body: it comes from the auth token in the header, checked at the gateway, so nobody can book as someone else."
+    draw: [api-reserve, api-reserve-body, api-confirm, api-confirm-body, api-auth]
+    check: Why is the user's id not a field in the reserve body?
+    answer: Anyone can change a body field; the user comes from the verified auth token in the header.
+    misconceptions:
+      - "Booking is one call -> it is two, because seats must be held while the payment, which can fail, happens."
+asks:
+  - ids: [api-search, api-event, api-reserve, api-confirm]
+    beats: [1, 2, 3]
+    question: "Looking at the three requirements, what endpoints do we need? Give me the method and the path for each, and I'll write them."
+    hints:
+      - Search and view only read; booking changes something.
+      - Booking happens in two steps. What are they?

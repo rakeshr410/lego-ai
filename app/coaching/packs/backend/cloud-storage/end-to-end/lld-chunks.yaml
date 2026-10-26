@@ -1,0 +1,92 @@
+# Cloud storage interview, deep dive, steps 2 to 4 as the video writes them under step 1: the chunker cuts and hashes, the client asks for a signed URL per chunk, the uploader records the upload in Redis, and the chunks go straight to S3, three at a time; S3 and Redis added beside the uploader.
+id: backend/cloud-storage/end-to-end/lld-chunks
+title: "Steps 2 to 4: chunk, sign, upload"
+source:
+  hash: "00149ba8c2b7"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/cloud-storage/end-to-end/lld-initiate
+  assumes:
+    - "Init returns fileId, uploadId, a 5 MB chunkSize and existingChunks."
+  carries:
+    - "The chunker cuts the file at chunkSize (a 50 MB file is chunks 0 to 9) and computes a SHA-256 of each chunk."
+    - "Per chunk the client sends uploadId, chunkId and chunkHash; the uploader validates them and signs a short-lived PUT URL itself."
+    - "Redis holds the upload state with a TTL: uploadId, a bitmap of chunks received, the hashes, a retry count."
+    - "The client PUTs chunks straight to S3, about three at a time."
+  terms:
+    - term: "SHA-256"
+      means: "A hash of a chunk's bytes; equal bytes give an equal hash."
+    - term: "signed URL"
+      means: "A short-lived URL, signed by the service, that lets the client PUT or GET one object in storage."
+board:
+  keep: [title, desc, fr, fr-account, fr-upload, fr-sync, fr-share, fr-folders, fr-quota, fr-out, nfr, nfr-scale, nfr-cap, nfr-large, nfr-latency, nfr-durable, hld, hld-phone, hld-laptop, hld-tablet, hld-clients, hld-gateway, hld-user-svc, hld-uploader, hld-meta-svc, hld-user-db, hld-blob, hld-meta-db, hld-phone-gw, hld-laptop-gw, hld-tablet-gw, hld-gw-user, hld-gw-uploader, hld-gw-meta, hld-user-db-arrow, hld-blob-arrow, hld-meta-db-arrow, lld-head, lc-client, lc-chunker, lc-upload-mgr, lc-index, lk-gateway, lk-user-svc, lk-users-db, lk-users-1, lk-users-2, lk-client-gw, lk-gw-user, lk-user-db, lk-uploader, s1, s1-post, s1-req-1, s1-req-2, s1-req-3, s1-resp-1, s1-resp-2, s1-resp-3, s1-resp-4, s1-quota, s1-resume-1, s1-resume-2, s1-resume-3, s1-resume-4, lk-gw-uploader, lk-quota]
+  elements:
+    - { id: "s2", kind: "region", label: "Steps 2 to 4, chunk, sign, upload", at: [80, 40], size: [34, 12] }
+    - { id: "s2-chunk", kind: "note", label: "Step 2, chunker cuts 5 MB chunks 0 to 9, SHA-256 each", at: [81, 42], in: "s2" }
+    - { id: "s3-post", kind: "note", label: "Step 3, POST /api/v1/files/uploads/upload123/chunk-url", at: [81, 44], in: "s2" }
+    - { id: "s3-body", kind: "note", label: "{ uploadId: upload123, chunkId: 3, chunkHash: xyz123 }", at: [82, 45], in: "s2" }
+    - { id: "s3-sign", kind: "note", label: "validates upload and chunk, signs a PUT URL itself", at: [81, 46], in: "s2" }
+    - { id: "s3-resp", kind: "note", label: "returns { signedUrl: https://s3... }", at: [81, 47], in: "s2" }
+    - { id: "s4-upload", kind: "note", label: "Step 4, PUT chunks straight to S3, 3 at a time", at: [81, 49], in: "s2" }
+    - { id: "lk-s3", kind: "oval", label: "S3 bucket", at: [54, 48], size: [11, 3], tone: "amber" }
+    - { id: "lk-redis", kind: "oval", label: "Redis state", at: [54, 52], size: [11, 3], tone: "amber" }
+    - { id: "lk-redis-1", kind: "note", label: "uploadId, chunk bitmap,", at: [54, 56] }
+    - { id: "lk-redis-2", kind: "note", label: "chunk hashes, retries, TTL", at: [54, 57] }
+  arrows:
+    - { id: "lk-sign", from: "lk-uploader", to: "lk-s3" }
+    - { id: "lk-state", from: "lk-uploader", to: "lk-redis" }
+beats:
+  - point: "Step 2: the chunker cuts the file at the chunk size, a 50 MB file into chunks 0 to 9, and computes a SHA-256 hash of each chunk."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Step two happens in the app. The chunker cuts the file at the 5 MB the server sent: 50 MB is ten chunks, 0 to 9."
+      - "For each chunk it also computes a SHA-256, a fingerprint of its bytes. Hold on to it; it proves later that each chunk arrived intact."
+    draw: [s2, s2-chunk]
+    check: "What does the chunker produce for a 50 MB file?"
+    answer: "Ten 5 MB chunks, numbered 0 to 9, each with its SHA-256 hash."
+  - point: "Step 3: for each chunk the client asks the uploader for a signed URL, sending the upload id, chunk id and hash; the uploader validates them and signs a short-lived PUT URL itself."
+    kind: mechanism
+    weight: core
+    teach:
+      - "The bytes should not flow through our gateway and servers. So for each chunk the client asks the uploader for a signed URL, with the upload id, the chunk id and the chunk hash."
+      - "The uploader checks the upload id is a live upload and the chunk id is in range, then signs a URL that lets this client PUT exactly this chunk into the S3 bucket for a few minutes. It signs it with its own credentials; it does not have to call S3 to make it."
+    draw: [s3-post, s3-body, s3-sign, s3-resp, lk-s3, lk-sign]
+    check: "Why a signed URL per chunk, instead of sending the chunk to the uploader?"
+    answer: "So gigabytes go straight from the app to storage, skipping our gateway and servers, while the service still decides who may upload what, with a URL that expires."
+    misconceptions:
+      - "S3 generates the signed URL when the service asks it -> the service signs the URL itself with its credentials; S3 only checks the signature when the PUT arrives."
+  - point: "The uploader is off the byte path, so it records the upload in Redis: the upload id, a bitmap of chunks received, each chunk's expected hash and a retry count, with a TTL."
+    kind: decision
+    weight: core
+    teach:
+      - "When it signs a URL the uploader writes down what to expect, because it will not see the bytes: in Redis, per upload, the upload id, a bitmap of which chunks arrived, the hash of each chunk, and a retry count."
+      - "Why Redis and not the database: this is read and updated on every chunk and only matters until the upload ends, so it lives in memory with a TTL. The database gets the final record at commit."
+    draw: [lk-redis, lk-state, lk-redis-1, lk-redis-2]
+    check: "Why keep the upload state in Redis with a TTL rather than in the metadata DB?"
+    answer: "It changes on every chunk and is only needed until the upload ends; memory is cheap for that, and abandoned uploads expire by themselves."
+  - point: "Step 4: the upload manager PUTs the chunks straight to S3 through their signed URLs, about three at a time."
+    kind: flow
+    weight: supporting
+    teach:
+      - "Step four: the upload manager PUTs each chunk to its URL, straight into S3, about three at a time, so a big file keeps the connection busy and one slow chunk does not hold up the rest."
+    draw: [s4-upload]
+    check: "Why upload several chunks at once?"
+    answer: "To use the bandwidth fully and keep one slow chunk from holding up the rest; three at a time is a common choice."
+asks:
+  - ids: [s3-sign, s3-resp]
+    frame: [s3-post, s3-body]
+    beats: [2]
+    question: "We don't want gigabytes flowing through our servers. How could the client put each chunk straight into storage, safely?"
+    hints:
+      - "Storage can accept an upload if it carries permission."
+      - "Who would hand out that permission, and for how long?"
+  - ids: [lk-redis]
+    beats: [3]
+    question: "The uploader never sees the bytes now. What should it write down, and where, to check the upload later?"
+    hints:
+      - "Which chunks have arrived, and what should each one hash to?"
+      - "It changes on every chunk and is short-lived."

@@ -1,0 +1,71 @@
+# Top K leaderboard interview, API: "3. API design" beside the entities, three request lines one under another as in the video: the POST for scores, the GET or WebSocket for the top K with its query, and the rank-around-me GET.
+id: backend/top-k-leaderboard/end-to-end/api
+title: Three endpoints
+source:
+  hash: "06827cac2c03"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/top-k-leaderboard/end-to-end/entities
+  assumes:
+    - "Functional: insert scores, query the top K by region, time windows, real-time for live leaderboards."
+    - "The core entities are the score, the item and the time frame."
+  carries:
+    - "POST /api/v1/scores records a score, view or like."
+    - "GET or WebSocket /leaderboards/{id}/top?window=daily&region=IN&limit=K, with K from 1 to 10,000, paginated."
+    - "GET /leaderboards/{id}/rank/{userId}?window=month&k=5 returns my rank and the players around me."
+  terms:
+    - term: endpoint
+      means: A method and a path the service answers, with what it takes and what it returns.
+    - term: pagination
+      means: "Returning a large answer in pages, each with a cursor to the next."
+board:
+  keep: [title, prompt-desc, prompt-example, fr, fr-insert, fr-query, fr-window, fr-realtime, nfr, nfr-scale, nfr-cap, nfr-latency, nfr-exact, entities, ent-score, ent-item, ent-time]
+  elements:
+    - { id: api, kind: region, label: 3. API design, at: [30, 22], size: [32, 13], dashed: true }
+    - { id: api-post, kind: note, label: "POST /api/v1/scores, a score or a view", at: [31, 24], in: api }
+    - { id: api-top, kind: note, label: "GET or WebSocket /leaderboards/{id}/top", at: [31, 26], in: api }
+    - { id: api-top-query, kind: note, label: "?window=daily&region=IN&limit=K", at: [33, 27], in: api }
+    - { id: api-top-limit, kind: note, label: "K from 1 to 10K, paginated", at: [33, 28], in: api }
+    - { id: api-rank, kind: note, label: "GET /leaderboards/{id}/rank/{userId}", at: [31, 30], in: api }
+    - { id: api-rank-query, kind: note, label: "?window=month&k=5, me and the players around me", at: [33, 31], in: api }
+  arrows: []
+beats:
+  - point: "Putting data in is a POST to /api/v1/scores, named for the product: scores for a game, views for videos, likes for songs."
+    kind: flow
+    weight: core
+    teach:
+      - "Step three, the API, almost one to one with the requirements. Inserting data is a POST to api v1 scores."
+      - "Name it for the product: scores for a leaderboard, views for a video, likes for a song."
+    draw: [api, api-post]
+    check: Which requirement does the POST serve?
+    answer: "Inserting, updating or deleting the data: a score, a view or a like."
+  - point: "Reading is GET /leaderboards/{id}/top with the window, the region and K; K is bounded, 1 to 10,000, and paginated; a live leaderboard opens it as a WebSocket."
+    kind: flow
+    weight: core
+    teach:
+      - "Reading the top K: GET leaderboards, the board's id, top. The query carries the window, daily or monthly, the region, since India's trending songs differ from the US's, and the limit K."
+      - "Bound K, say 1 to 10,000, so no request asks for everything, and paginate large answers. For a trending list it is a plain GET; a live leaderboard opens the same request as a WebSocket to get updates."
+    draw: [api-top, api-top-query, api-top-limit]
+    check: Why does K need an upper bound?
+    answer: "So no request can ask for everything; a bounded, paginated K keeps every query cheap, and the design relies on it."
+    misconceptions:
+      - "Every client should hold a WebSocket -> only live leaderboards need pushed updates; trending lists are plain GETs."
+  - point: "The follow-up every interviewer asks: GET /leaderboards/{id}/rank/{userId} with a window and k, returning my rank and the players around me."
+    kind: flow
+    weight: supporting
+    teach:
+      - "Not in our requirements, but the interviewer will ask: what is my rank? GET leaderboards, id, rank, the user id, with the window, January say, and k."
+      - "Here k is how many players around me: with k of 5 and me third, it returns two above, me, and two below."
+    draw: [api-rank, api-rank-query]
+    check: With k equal to 5 and the player in third place, what comes back?
+    answer: "Their rank and five players: the two above, the player, and the two below."
+asks:
+  - ids: [api-post, api-top]
+    beats: [1, 2]
+    question: "Looking at the requirements, what endpoints do we need? Give me the method and the path, and I'll write them."
+    hints:
+      - One puts data in, the other gets the ranking out.
+      - What would the read need to know besides the board?

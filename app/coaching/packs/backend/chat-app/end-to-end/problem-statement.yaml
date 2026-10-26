@@ -1,0 +1,42 @@
+# Chat app interview, the problem statement: the title and the one-line prompt at the top of the board, as the video writes them ("Design a Chat Server (Messenger / Whatsapp)", "User should be able to send and receive message from friends and groups in near real time"); the steps said, not drawn.
+id: backend/chat-app/end-to-end/problem-statement
+title: The problem, in one line
+source:
+  hash: "62480ea90cbd"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: null
+  assumes: []
+  carries:
+    - "A chat app like WhatsApp or Messenger lets users send and receive text and media, to one friend or a group, in near real time."
+    - "The interview runs in steps: requirements, core entities, API, high-level design, low-level design."
+  terms:
+    - term: near real time
+      means: "Delivered fast enough to feel instant; here, under 300 ms from sender to receiver."
+board:
+  keep: []
+  elements:
+    - { id: title, kind: note, label: Design a chat server like Messenger or WhatsApp, at: [42, 0] }
+    - { id: prompt-desc, kind: note, label: users message friends and groups in near real time, at: [42, 2] }
+  arrows: []
+beats:
+  - point: "A chat app like WhatsApp or Messenger lets users send and receive text and media files, to one friend directly or to a group, in near real time."
+    kind: rule
+    weight: core
+    teach:
+      - "Write the title: design a chat server like Messenger or WhatsApp. Under it, the core in one line: users send and receive messages from friends and groups in near real time."
+      - "Everyone knows the app, so do not spend long explaining it. Say the line, agree it with the interviewer, and move on to what makes it hard."
+    draw: [title, prompt-desc]
+    check: In one sentence, what is the core of the product?
+    answer: Users send and receive text and media messages, one-to-one or in groups, in near real time.
+  - point: "The round is vague on purpose: gather the requirements first, then the core entities, the API, the high-level design and the low-level design."
+    kind: rule
+    weight: core
+    teach:
+      - "Design WhatsApp is an open question. It is your job to ask for the features and the numbers and write them down."
+      - "Then the order: requirements, core entities, API, high-level design, low-level design. Said once; each gets its number on the board when we reach it."
+    check: What do you do straight after hearing the prompt?
+    answer: Ask for and write down the functional and non-functional requirements, before any design.

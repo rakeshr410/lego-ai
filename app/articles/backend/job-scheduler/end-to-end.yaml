@@ -1,0 +1,811 @@
+# yaml-language-server: $schema=../../../../../lego/content-kit/schema/topic.schema.json
+# provenance: ai-drafted by claude-opus-5-5 on 2026-10-27
+#
+# A whole backend system design interview for a distributed job scheduler like Airflow, Temporal or
+# Celery, run step by step on one whiteboard. The order and the board follow the five-step interview
+# of InterviewWithBunny's System Design 9: requirements, core entities, API, a high-level design of a
+# job service, a job database and a job executor, then a low-level design that opens that picture one
+# deep dive at a time: split reads from writes and buffer writes in Kafka, a watcher that queues the
+# jobs due in the next five minutes for consumers and executors, retries and dead executors, then
+# cancelling a running job, running one now, the polling race, the watcher's own state and the
+# indexes, and last the follow-ups (queue order, logs). Timings such as the 20-second poll are the
+# video's design choices; nothing here is a measurement.
+# A backend system of lego-ai's own (app/articles/backend): it stands alone and links to no main-site topic.
+catalogVersion: 5
+title: Designing a distributed job scheduler, end to end
+shortTitle: Job scheduler interview
+summary: "A backend design interview for a distributed job scheduler like Airflow, Temporal or Celery, step by step on one board: requirements with numbers, entities, six endpoints, the high-level design, then the deep dives: buffered writes, a watcher that queues due jobs, retries and dead executors, cancelling, running now, the polling race, and the follow-ups."
+group: design
+order: 9
+xp: 280
+difficulty: intermediate
+tags: [interview, scheduling, queues, kafka, retries, heartbeats, at-least-once]
+eyebrow: Design
+breadcrumb: [Job scheduler, Interview walkthrough]
+lede: "You have about an hour and one whiteboard to design a service that runs jobs for its users: now, at a time in the future, or again and again on a cron schedule, ten thousand of them a second at peak, each starting within two seconds of its time and none ever lost. This walkthrough runs the interview the way a strong candidate runs it: pin down the requirements, name the entities and the endpoints, draw the three boxes that work, then spend the rest of the time on what makes it hard: finding due jobs without scanning the database every second, running them on many machines, and noticing when a job or a machine fails."
+reviewStatus: draft
+author: rakeshr410
+provenance: ai-drafted
+sources:
+  - title: "System Design 9: Design Distributed Job Scheduler like Airflow, Temporal, Celery (InterviewWithBunny, YouTube)"
+    url: https://www.youtube.com/watch?v=hLvB2haod5w
+    note: "Order and drawings. Corrected: CAP is a choice under partition; cron has 5 fields (seconds only in Quartz); SQS delays cap at 15 min; status before time in the index; at-least-once needs idempotent jobs."
+  - title: Apache Airflow documentation, architecture overview
+    url: https://airflow.apache.org/docs/apache-airflow/stable/core-concepts/overview.html
+    note: "A scheduler that decides what is due, an executor and workers that run tasks, and a metadata database that records every run."
+  - title: crontab(5), Linux manual page
+    url: https://man7.org/linux/man-pages/man5/crontab.5.html
+    note: "The five time fields of a standard cron expression: minute, hour, day of month, month, day of week."
+  - title: Amazon SQS delay queues (AWS documentation)
+    url: https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-delay-queues.html
+    note: "A message can be delayed by at most 15 minutes."
+  - title: ZADD and sorted sets (Redis documentation)
+    url: https://redis.io/docs/latest/commands/zadd/
+    note: "Members kept ordered by a score, here the run time, so the next due jobs are a range query."
+  - title: Kafka documentation, introduction
+    url: https://kafka.apache.org/documentation/#introduction
+    note: "Topics split into partitions; order is kept within a partition, and consumers read in that order."
+tutorBrief: >-
+  Interview walkthrough for a distributed job scheduler like Airflow, Temporal or Celery. About an
+  hour: requirements in the first 6 to 7 minutes, entities 1, API 4, high-level design 8, low-level
+  design the rest. Five numbered steps on the board, top to bottom: 1 requirements (functional left,
+  non-functional right), 2 core entities, 3 API (beside the entities), 4 high-level design, 5 low-level
+  design (the high-level picture copied and grown). Functional: create and schedule a job to run
+  immediately, at a future time, or on a cron schedule; monitor a job's status in real time; cancel or
+  update a scheduled job at any time, even while it runs. Out of scope: jobs that depend on each other
+  (DAGs). Non-functional: scale 10,000 jobs per second at peak; availability over consistency (a new
+  job may show on the dashboard a second or two late); every job runs at least once; a job starts
+  within 2 s of its scheduled time. Entities: job, schedule, executor. API: POST /v1/jobs (job and its
+  schedule, returns jobId), GET /v1/jobs/{jobId}, GET /v1/jobs/{jobId}/status, PUT /v1/jobs/{jobId},
+  POST /v1/jobs/{jobId}/cancel, POST /v1/jobs/{jobId}/run-now. High-level design: clients, a load
+  balancer and API gateway (authentication and authorization, rate limiting, routing), a job service,
+  a job database, a job executor that pulls due jobs and updates their status. Low-level design: (1)
+  split the job service into a job service for writes (create, edit, cancel, trigger) and a job search
+  service for reads (details and status by id, straight from the database, no search engine needed);
+  writes go to Kafka and a consumer service is the only writer to the database. Database PostgreSQL;
+  jobs table (id, name, scheduleType, status paused, scheduled or cancelled, scheduleTime,
+  cronExpression, payload, maxRetries, default 3) and job runs table (id, jobId, status queued,
+  running, success or failed, startTime, endTime, modifiedTime, executorId, attemptNumber,
+  errorMessage). (2) a watcher service polls the database every 10 to 20 s for jobs due in [now, now
+  + 5 min], marks each run queued and pushes it to a Kafka run topic; a job consumer service reads the
+  topic, holds each job until its time and hands it to one of many executor services; executors send
+  status every 10 s through Kafka, and the consumer service writes it, updating modifiedTime. (3)
+  failures: a failed job goes to a retry topic and its attempt number goes up; at maxRetries it goes to
+  a dead topic and the job is marked failed. An executor that dies sends nothing: the watcher also
+  fetches runs that are running with modifiedTime older than 15 s and re-queues them. At-least-once
+  means a job may run twice, so jobs should be idempotent. (4) cancel: the job service writes the
+  cancel through Kafka (future runs) and puts cancel with the jobId in a Redis cache with a TTL of
+  about 30 s; each executor checks Redis every 10 s on a side thread and stops the job. Run now, and
+  any job due within about a minute, go straight to the run topic, closing the race where a job is
+  created after a poll and due before the next one. The watcher keeps its last polled time in Redis,
+  so a restarted watcher resumes where it stopped. Indexes: jobs partitioned by the next scheduleTime
+  and keyed by id; job runs indexed by jobId and by (status, modifiedTime), status first. (5)
+  follow-ups: a Kafka partition is first in, first out, so a job pushed now waits behind jobs already
+  queued for the next five minutes; a Redis sorted set scored by run time, or a delay queue, fixes the
+  order (SQS delays only up to 15 minutes). Executors ship logs to a log store and errorMessage holds
+  the log's link.
+components:
+  - key: client
+    name: Clients
+    tone: sand
+    kind: client
+    summary: Users and teams who create, watch and cancel jobs through the API.
+    owns: [nothing of their own]
+    talksTo: [gateway]
+  - key: gateway
+    name: Load balancer and API gateway
+    tone: blue
+    kind: gateway
+    summary: Authenticates and authorizes each request, rate-limits it, and routes it by path to the right service.
+    owns: [routes, rate limits]
+    talksTo: [job-service, search-service]
+  - key: job-service
+    name: Job service
+    tone: green
+    kind: service
+    summary: Takes every write (create, edit, cancel, run now) and publishes it to Kafka instead of writing the database itself.
+    owns: [nothing durable]
+    talksTo: [jobs-kafka, run-queue, cancel-cache]
+  - key: search-service
+    name: Job search service
+    tone: green
+    kind: service
+    summary: Answers every read, a job's details or its status by id, straight from the job database.
+    owns: [nothing durable]
+    talksTo: [job-db]
+  - key: jobs-kafka
+    name: Kafka, job writes
+    tone: orange
+    kind: queue
+    summary: Buffers job writes and executor status updates, so bursts never hit the database directly.
+    owns: [write and status events]
+    talksTo: [consumer]
+  - key: consumer
+    name: Consumer service
+    tone: gray
+    kind: worker
+    summary: "The only writer to the job database: applies job writes, run status updates and attempt counts."
+    owns: [nothing durable]
+    talksTo: [job-db]
+  - key: job-db
+    name: Job database
+    tone: yellow
+    kind: datastore
+    summary: PostgreSQL with a jobs table and a job runs table.
+    owns: [jobs, job runs]
+    talksTo: []
+  - key: watcher
+    name: Watcher service
+    tone: blue
+    kind: worker
+    summary: Every 10 to 20 seconds, reads the jobs due in the next five minutes and the runs that stopped reporting, marks them queued and pushes them to the run topic.
+    owns: [nothing durable]
+    talksTo: [job-db, run-queue, watcher-state]
+  - key: run-queue
+    name: Kafka, run queue
+    tone: orange
+    kind: queue
+    summary: Topics run, retry and dead, the jobs ready to run, to run again, and given up on.
+    owns: [queued runs]
+    talksTo: [job-consumer]
+  - key: job-consumer
+    name: Job consumer service
+    tone: blue
+    kind: worker
+    summary: Reads the run and retry topics, holds each job until its time and hands it to a free executor.
+    owns: [jobs about to start]
+    talksTo: [executor]
+  - key: executor
+    name: Executor services
+    tone: green
+    kind: worker
+    summary: Run the job itself (a script, a container, a database task) and report its status every 10 seconds.
+    owns: [the running job]
+    talksTo: [jobs-kafka, run-queue, cancel-cache]
+  - key: cancel-cache
+    name: Redis, cancel requests
+    tone: purple
+    kind: cache
+    summary: One short-lived entry per cancel request, job id and a TTL of about 30 seconds, read by the executors.
+    owns: [pending cancels]
+    talksTo: []
+  - key: watcher-state
+    name: Redis, last polled time
+    tone: purple
+    kind: cache
+    summary: The time up to which the watcher has read the database, so a restarted watcher carries on from there.
+    owns: [last polled time]
+    talksTo: []
+content:
+  # ────────────────────────────────────────────────────────────────── Problem statement
+  - __component: sd.section
+    key: problem-statement
+    title: Understanding the problem.
+    railLabel: Problem
+    intro: "The prompt is one line: design a distributed job scheduler like Airflow or Temporal. Say what it does in your own words before designing anything, then run the interview in five steps."
+  - __component: sd.rich-text
+    key: problem-what
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "A job scheduler is a program that runs jobs automatically at set times or intervals. Teams use it for repetitive tasks, scheduled maintenance and batch processing: clear a staging table every Friday at nine, send a report every morning, rebuild an index right now. A job is some work (a script, a container, a database task) plus when to run it."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Distributed means it runs on many machines, because one machine cannot start ten thousand jobs a second, and because the scheduler itself must keep going when a machine dies. That last part is where the interview is decided: a job that silently never runs is the failure everyone remembers."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Run the interview in five steps and say them once: gather the requirements, identify the core entities, design the API, draw the high-level design, then go deep in the low-level design. Number each step on the board as you reach it, top to bottom."
+  - __component: sd.quiz
+    key: problem-quiz
+    title: Quick check
+    questions:
+      - question: What does a job scheduler have to know about every job?
+        optionA: Only its name
+        optionB: The work to do and when to run it, now, at a time, or on a repeating schedule
+        optionC: Which database it uses
+        optionD: Its owner's password
+        answer: B
+        explanation: A job is work plus a schedule; everything else in the design serves running that work at that time.
+  # ────────────────────────────────────────────────────────────────── 1. Requirements
+  - __component: sd.section
+    key: requirements
+    title: Requirements.
+    railLabel: Requirements
+    intro: "Functional requirements on the left, what the scheduler does; non-functional on the right, how well, each with a number. Say what is out of scope."
+  - __component: sd.subsection
+    key: functional-sub
+    title: Functional requirements
+    railLabel: Functional
+  - __component: sd.checklist
+    key: functional
+    idPrefix: FR-
+    items:
+      - text: "A user can create and schedule a job to run immediately, at a future time, or on a cron schedule (every day, every Friday at nine)."
+      - text: A user can monitor a job's status in real time, whether it is running, succeeded or failed, and why it failed.
+      - text: "A user can cancel or update a scheduled job at any time, even while it is running."
+        note: "Cancelling a running job is the hard case; it needs a way to reach the machine running it."
+  - __component: sd.rich-text
+    key: out-of-scope
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Out of scope: jobs that depend on each other, a directed acyclic graph (DAG) where one job starts when another finishes. That is what Airflow is best known for, and saying so out loud shows you know what you are leaving out."
+  - __component: sd.subsection
+    key: non-functional-sub
+    title: Non-functional requirements
+    railLabel: Non-functional
+  - __component: sd.requirement-table
+    key: non-functional
+    rows:
+      - area: Scale
+        requirement: Handle a burst of jobs at the busiest moment.
+        targets: ["10,000 jobs per second at peak"]
+        note: "Ask for it. It does not say whether those are immediate or scheduled jobs, so design for 10,000 started at once."
+      - area: Availability
+        requirement: The scheduler keeps accepting and running jobs when machines fail.
+        targets: [availability over consistency, eventual consistency]
+        note: "A job that shows on the dashboard a second or two after it is created costs nothing; a scheduler that is down misses every job due meanwhile."
+      - area: Delivery
+        requirement: A scheduled job is never lost.
+        targets: [every job runs at least once]
+        note: "At least once, not exactly once: a job may sometimes run twice, so jobs should be safe to repeat."
+      - area: Latency
+        requirement: Jobs start on time.
+        targets: ["within 2 s of the scheduled time"]
+        note: "A job due at 5:30:00 must start by 5:30:02."
+  - __component: sd.rich-text
+    key: cap-choice
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Why availability over consistency? CAP is a choice made when the network between machines splits: answer anyway with possibly stale data, or refuse until every copy agrees. It is not a rule that a system can never be both consistent and available while the network is healthy. For a scheduler, staying up wins: a team that creates a Friday job does not mind seeing it on the dashboard a moment later, but a scheduler that refuses work misses jobs."
+      - type: paragraph
+        children:
+          - type: text
+            text: "At least once is the honest delivery promise. Exactly once across machines that can crash mid-job is not achievable in general, so the design retries until a job is known to have finished, and accepts that a job may occasionally run twice. Say that jobs should be idempotent: running one twice must leave the same result as running it once."
+  - __component: sd.quiz
+    key: requirements-quiz
+    title: Quick check
+    questions:
+      - question: Which requirement is out of scope in this design?
+        optionA: Cron schedules
+        optionB: Cancelling a running job
+        optionC: Jobs that depend on each other (a DAG)
+        optionD: Monitoring status
+        answer: C
+        explanation: Dependencies between jobs are named and left out; the three functional requirements are create and schedule, monitor, and cancel or update.
+      - question: The scheduler promises every job runs at least once. What must job authors accept?
+        optionA: Nothing; every job runs exactly once
+        optionB: A job may occasionally run twice, so it should be idempotent
+        optionC: Some jobs never run
+        optionD: Jobs run in alphabetical order
+        answer: B
+        explanation: Retries after a crash cannot always tell whether the job already finished. At least once trades a rare duplicate for never losing a job.
+  # ────────────────────────────────────────────────────────────────── 2. Entities
+  - __component: sd.section
+    key: entities
+    title: Core entities.
+    railLabel: Entities
+    intro: "Three nouns, read off the requirements: the job, the schedule that says when it runs, and the executor that runs it."
+  - __component: sd.table
+    key: entities-table
+    columns:
+      - { label: Entity, style: strong }
+      - { label: What it is, style: text }
+    rows:
+      - [Job, "The work to run and its settings: a name, a payload, how many retries it gets."]
+      - [Schedule, "When it runs: now, at one time, or a cron expression that repeats."]
+      - [Executor, "The worker that actually runs a job and reports how it went."]
+  - __component: sd.quiz
+    key: entities-quiz
+    title: Quick check
+    questions:
+      - question: Why is the executor a core entity and not just a detail?
+        optionA: It is not one
+        optionB: The system tracks which executor runs each job, to report status and to notice when one dies
+        optionC: Users log in as executors
+        optionD: It stores the schedule
+        answer: B
+        explanation: Each run records its executor, and a silent executor is how the system detects a crash.
+  # ────────────────────────────────────────────────────────────────── 3. API
+  - __component: sd.section
+    key: api
+    title: API.
+    railLabel: API
+    intro: "One endpoint per thing a user does: create, read the details, read the status, update, cancel, and run now."
+  - __component: sd.endpoint
+    key: create-job
+    method: POST
+    path: /v1/jobs
+    summary: "Creates a job with its schedule. scheduleTime is set for a one-off job, cronExpression for a repeating one; neither means run immediately."
+    requestHeaders: ["Authorization: Bearer <token>"]
+    requestBody:
+      name: clear-staging-table
+      scheduleType: cron
+      scheduleTime: null
+      cronExpression: "0 9 * * 5"
+      payload: { table: staging_events }
+      maxRetries: 3
+    responses:
+      - label: Accepted
+        status: "202"
+        body:
+          jobId: j_8f2c41
+  - __component: sd.endpoint
+    key: get-job
+    method: GET
+    path: "/v1/jobs/{jobId}"
+    summary: "The job's details: who created it, when, its schedule and its settings."
+    responses:
+      - label: Found
+        status: "200"
+        body:
+          jobId: j_8f2c41
+          name: clear-staging-table
+          cronExpression: "0 9 * * 5"
+          status: scheduled
+  - __component: sd.endpoint
+    key: get-status
+    method: GET
+    path: "/v1/jobs/{jobId}/status"
+    summary: The latest run's state, so the dashboard can show it in near real time.
+    responses:
+      - label: Found
+        status: "200"
+        body:
+          status: running
+          attemptNumber: 1
+          startTime: "2026-10-30T09:00:01Z"
+  - __component: sd.endpoint
+    key: update-job
+    method: PUT
+    path: "/v1/jobs/{jobId}"
+    summary: Changes the job's metadata or its schedule.
+    responses:
+      - label: Accepted
+        status: "202"
+        body:
+          jobId: j_8f2c41
+  - __component: sd.endpoint
+    key: cancel-job
+    method: POST
+    path: "/v1/jobs/{jobId}/cancel"
+    summary: Cancels future runs, and stops the job if it is running right now.
+    responses:
+      - label: Accepted
+        status: "202"
+        body:
+          jobId: j_8f2c41
+  - __component: sd.endpoint
+    key: run-now
+    method: POST
+    path: "/v1/jobs/{jobId}/run-now"
+    summary: Starts a run of the job immediately, outside its schedule.
+    responses:
+      - label: Accepted
+        status: "202"
+        body:
+          jobId: j_8f2c41
+  - __component: sd.table
+    key: requirement-to-endpoint
+    title: Requirements to endpoints
+    columns:
+      - { label: Requirement, style: text }
+      - { label: Endpoints, style: mono-strong }
+    rows:
+      - ["Create and schedule a job (now, later, cron)", "POST /v1/jobs, POST /v1/jobs/{jobId}/run-now"]
+      - [Monitor a job, "GET /v1/jobs/{jobId}, GET /v1/jobs/{jobId}/status"]
+      - [Cancel or update a job, "PUT /v1/jobs/{jobId}, POST /v1/jobs/{jobId}/cancel"]
+  - __component: sd.quiz
+    key: api-quiz
+    title: Quick check
+    questions:
+      - question: Why is cancel a POST to /v1/jobs/{jobId}/cancel rather than a DELETE of the job?
+        optionA: DELETE is not allowed in REST
+        optionB: Cancelling is an action on the job, which keeps its history of runs, not the removal of the record
+        optionC: POST is faster
+        optionD: There is no reason
+        answer: B
+        explanation: The job and its runs stay for the dashboard; cancel changes what happens next and may stop a run in progress.
+      - question: Where does the jobId used by the other endpoints come from?
+        optionA: The user invents it
+        optionB: The create call returns it
+        optionC: The executor assigns it later
+        optionD: It is the job's name
+        answer: B
+        explanation: Create answers with the jobId; every later call names the job by it.
+  # ────────────────────────────────────────────────────────────────── 4. High-level design
+  - __component: sd.section
+    key: high-level-design
+    title: High-level design.
+    railLabel: High level
+    intro: "Draw the fewest boxes that meet the functional requirements: clients, a load balancer and API gateway, a job service, a job database, and a job executor that pulls due jobs and records how they went."
+  - __component: sd.component-diagram
+    key: hld-diagram
+    title: The first design
+    direction: LR
+    nodes:
+      - { key: client, details: [create, watch and cancel jobs] }
+      - { key: gateway, details: [authentication and authorization, rate limiting, routing] }
+      - { key: job-service, details: ["every operation in the API, for now"] }
+      - { key: job-db, details: [jobs and their status] }
+      - { key: executor, details: [pulls the jobs that are due, updates each job's status] }
+    edges:
+      - { from: client, to: gateway }
+      - { from: gateway, to: job-service }
+      - { from: job-service, to: job-db, label: save }
+      - { from: executor, to: job-db, label: "pull due jobs, update status" }
+  - __component: sd.rich-text
+    key: hld-flows
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Create: a request reaches the load balancer and API gateway, which authenticates it, rate-limits it and routes it by path to the job service, which saves the job in the job database. Run: the job executor looks in the database for the jobs due now, say everything due at 5:00, runs each one, and writes back whether it succeeded or failed. Monitor: a status request goes through the gateway to the job service, which reads the status the executor wrote."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Every functional requirement is met, and almost every non-functional one is not. How often does the executor look? Scanning the whole table every second does not scale. How do thousands of jobs a second run on one executor? What if it dies mid-job? The low-level design answers those, one at a time."
+  - __component: sd.quiz
+    key: hld-quiz
+    title: Quick check
+    questions:
+      - question: What are the job executor's two responsibilities in the high-level design?
+        optionA: Authenticate users and route requests
+        optionB: Pull the jobs that are due from the database, and update each job's status as it runs
+        optionC: Store the jobs and answer searches
+        optionD: Rate-limit clients
+        answer: B
+        explanation: The executor is the core of the system; everything else accepts and stores work for it.
+  # ────────────────────────────────────────────────────────────────── 5. LLD 1: services and the tables
+  - __component: sd.section
+    key: lld-services
+    title: "Low-level design: split the job service, buffer writes, and the tables."
+    railLabel: LLD, services
+    intro: "Copy the high-level diagram into the low-level section and open it up. First, the job service does too much: reads and writes go to separate services, writes go through Kafka, and the database gets its two tables."
+  - __component: sd.rich-text
+    key: split-services
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "One job service handling every endpoint is a poor split of responsibility. Divide it: a job service for every write (create, edit, cancel, trigger) and a job search service for every read (a job's details, its status). The search service reads the job database directly. It searches only by job id and status, never by free text, so a search engine such as Elasticsearch would add nothing."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Writes come in bursts: ten thousand users may submit jobs in the same second. Instead of every job service instance writing to the database, the job service publishes each create or edit to Kafka, and a consumer service reads the topic and writes the database. Kafka absorbs the burst and the database takes writes at its own pace. The price is that a create is accepted before it is stored, so the job service makes the job id itself and returns it at once (202 Accepted), and the dashboard may show the job a moment later, which the availability requirement allows."
+  - __component: sd.db-schema
+    key: job-tables
+    stores:
+      - key: job-store
+        engine: PostgreSQL
+        component: job-db
+        why: "Flat, structured job records reached by id and by time; a relational database fits."
+        tables:
+          - name: jobs
+            columns:
+              - { name: id, type: text, role: primary }
+              - { name: name, type: text }
+              - { name: schedule_type, type: text, note: "immediate, one-off or cron" }
+              - { name: status, type: text, note: "scheduled, paused or cancelled" }
+              - { name: schedule_time, type: timestamp, note: the next run time }
+              - { name: cron_expression, type: text }
+              - { name: payload, type: jsonb }
+              - { name: max_retries, type: int, note: "3 by default" }
+          - name: job_runs
+            columns:
+              - { name: id, type: bigint, role: primary, note: auto-increment }
+              - { name: job_id, type: text, note: foreign key to jobs }
+              - { name: status, type: text, note: "queued, running, success or failed" }
+              - { name: start_time, type: timestamp }
+              - { name: end_time, type: timestamp }
+              - { name: modified_time, type: timestamp, note: "the last update, every 10 s while running" }
+              - { name: executor_id, type: text }
+              - { name: attempt_number, type: int }
+              - { name: error_message, type: text }
+  - __component: sd.rich-text
+    key: cron-and-runs
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "A cron expression says when a job repeats. The standard one has five fields, minute, hour, day of month, month and day of week: 0 9 * * 5 is nine o'clock every Friday. Some schedulers, Quartz for one, add a seconds field in front. The jobs table holds what the job is; the job runs table holds each time it ran. When a run is picked up its row starts queued with attempt 1; when it starts, running with a start time; every update moves modified_time; at the end, success or failed."
+  - __component: sd.quiz
+    key: services-quiz
+    title: Quick check
+    questions:
+      - question: Why does the job service publish writes to Kafka instead of writing the database?
+        optionA: Kafka is a database
+        optionB: Kafka absorbs bursts of thousands of writes a second, and one consumer service writes the database at its own pace
+        optionC: To make reads faster
+        optionD: Because Postgres cannot store jobs
+        answer: B
+        explanation: The queue decouples the burst from the database. The cost is that a write is accepted before it is stored.
+      - question: Why no Elasticsearch behind the job search service?
+        optionA: It is too expensive
+        optionB: Reads are by job id and status only, which the database's own indexes answer
+        optionC: Elasticsearch cannot store jobs
+        optionD: The gateway does the searching
+        answer: B
+        explanation: A search engine earns its place for free-text search, which nothing here needs.
+      - question: Which table records that a job is running right now, and on which machine?
+        optionA: jobs
+        optionB: job_runs, with its status and executor_id
+        optionC: Neither
+        optionD: The Kafka topic
+        answer: B
+        explanation: jobs describes the job; job_runs has one row per run with its status, times, executor and attempt.
+  # ────────────────────────────────────────────────────────────────── 5. LLD 2: the execution path
+  - __component: sd.section
+    key: lld-execution
+    title: "Low-level design: the watcher, the run queue and the executors."
+    railLabel: LLD, execution
+    intro: "The executor pulling due jobs is the heart of the system, and the high-level box hides all of it. Split it into a watcher that finds the jobs due soon, a queue, a consumer that starts them on time, and many executors that run them."
+  - __component: sd.rich-text
+    key: watcher-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Scanning the job table every second for what is due is not feasible at this size. A watcher service queries far less often, every 10 to 20 seconds, but reads a window ahead: every job due between now and five minutes from now. For each one it adds a job run marked queued and pushes the job onto a Kafka topic named run. The watcher runs nothing; it only moves due jobs from the database to the queue in bulk."
+      - type: paragraph
+        children:
+          - type: text
+            text: "A job consumer service reads the run topic and hands each job, when its time comes, to one of many executor services, which do the actual work: run a script, start a container, update a database. Kafka delivers a message as soon as it is published, not at a chosen time, so it is the job consumer that waits for each job's scheduled time; that wait is how the 2-second target is met. Ten thousand jobs a second are spread over as many executors as it takes."
+      - type: paragraph
+        children:
+          - type: text
+            text: "While a job runs, its executor reports its status every 10 seconds: started, still running, succeeded, failed. Executors do not write the database themselves; they publish the updates to Kafka, and the consumer service, already the database's only writer, applies them to the job runs row, setting start time, status, executor id and modified time. One writer, many reporters."
+  - __component: sd.component-diagram
+    key: execution-diagram
+    title: From the database to an executor
+    direction: LR
+    nodes:
+      - { key: job-db, details: [jobs, job runs] }
+      - { key: watcher, details: ["every 10 to 20 s, jobs due in the next 5 min, marked queued"] }
+      - { key: run-queue, details: [topic run] }
+      - { key: job-consumer, details: [holds each job until its time] }
+      - { key: executor, details: [runs the job, status every 10 s] }
+      - { key: jobs-kafka, details: [status updates] }
+      - { key: consumer, details: [writes job runs] }
+    edges:
+      - { from: watcher, to: job-db, label: read every 20 s }
+      - { from: watcher, to: run-queue, label: due jobs }
+      - { from: job-consumer, to: run-queue, label: reads }
+      - { from: job-consumer, to: executor, label: start the job }
+      - { from: executor, to: jobs-kafka, label: status }
+      - { from: jobs-kafka, to: consumer }
+      - { from: consumer, to: job-db, label: write }
+  - __component: sd.quiz
+    key: execution-quiz
+    title: Quick check
+    questions:
+      - question: Why does the watcher read five minutes ahead every 20 seconds instead of reading what is due every second?
+        optionA: It cannot tell the time
+        optionB: Scanning the table every second is too costly; a wide window read less often moves due jobs to the queue in bulk
+        optionC: Jobs are always five minutes late
+        optionD: Kafka requires it
+        answer: B
+        explanation: Fewer, larger reads keep the database load low, and the queue holds the jobs until they are due.
+      - question: What does the watcher write when it queues a job?
+        optionA: Nothing
+        optionB: A job runs row with status queued and attempt 1
+        optionC: The job's log
+        optionD: A new cron expression
+        answer: B
+        explanation: The run is recorded as queued, so the dashboard shows it and the watcher does not queue it twice.
+      - question: Why do executors send their status through Kafka instead of writing the database?
+        optionA: Executors cannot reach the database
+        optionB: Thousands of executors updating every 10 s would load the database; through Kafka, one consumer service writes them in order
+        optionC: Kafka stores status forever
+        optionD: To hide failures
+        answer: B
+        explanation: Keeping a single writer avoids many services updating the same rows at once.
+  # ────────────────────────────────────────────────────────────────── 5. LLD 3: failures
+  - __component: sd.section
+    key: lld-failures
+    title: "Low-level design: retries, dead letters and dead executors."
+    railLabel: LLD, failures
+    intro: "Two things fail: the job, and the machine running it. A failed job can say so; a dead machine cannot."
+  - __component: sd.rich-text
+    key: retry-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "When a job fails, its executor publishes it to a second topic, retry. The job consumer reads the retry topic as well as the run topic and starts the job again, and a status update through Kafka has the consumer service raise the run's attempt number. When the attempts reach the job's max_retries, three by default, the job goes to a third topic, dead, and is not retried again; the consumer service marks it failed. Without that limit, a job that can never succeed would run forever."
+      - type: paragraph
+        children:
+          - type: text
+            text: "When the executor itself dies mid-job, nothing is published: its job stays running in the table forever. But a live executor moves modified_time every 10 seconds, so a running row whose modified_time is more than 15 seconds old (10 seconds plus some slack) belongs to a dead executor. The watcher adds a second query to its loop: fetch the runs that are running and stale, and push them back to the queue with the attempt number raised. That heartbeat is what makes at least once true."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Both paths can run a job twice. An executor that is only slow, not dead, may still finish after its job was re-queued, and a job that failed after doing half its work runs from the start again. That is the at-least-once promise from the requirements, and the reason jobs should be idempotent."
+  - __component: sd.table
+    key: failure-table
+    title: Two failures, two signals
+    columns:
+      - { label: Failure, style: text }
+      - { label: Signal, style: text }
+      - { label: What happens, style: text }
+    rows:
+      - [The job fails, The executor reports it, "Retry topic, attempt number up; at max_retries, dead topic and failed"]
+      - [The executor dies, "modified_time more than 15 s old while running", "The watcher re-queues it, attempt number up"]
+  - __component: sd.quiz
+    key: failures-quiz
+    title: Quick check
+    questions:
+      - question: How does the system notice that an executor died in the middle of a job?
+        optionA: The executor sends a goodbye message
+        optionB: The run is still running but its modified_time has not moved for more than 15 seconds, and the watcher looks for exactly that
+        optionC: The user reports it
+        optionD: Kafka deletes the job
+        answer: B
+        explanation: Live executors update every 10 seconds; silence past the slack is the signal.
+      - question: What stops a job that always fails from retrying forever?
+        optionA: Nothing
+        optionB: max_retries; past it the job goes to the dead topic and is marked failed
+        optionC: The gateway's rate limit
+        optionD: The cron expression
+        answer: B
+        explanation: The attempt number is compared with the job's limit, three by default.
+  # ────────────────────────────────────────────────────────────────── 5. LLD 4: cancel, run now, the race, indexes
+  - __component: sd.section
+    key: lld-edge-cases
+    title: "Low-level design: cancel a running job, run now, the polling race, and indexes."
+    railLabel: LLD, edge cases
+    intro: "Go back over the requirements and find what the picture still cannot do: stop a job that is already running, run a job immediately, and never miss a job created between two polls. Then make the database fast for the queries the design depends on."
+  - __component: sd.rich-text
+    key: cancel-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Cancelling a future run is a write like any other: the job service publishes it, and the consumer service marks the job cancelled. Stopping a running job needs a way to reach its executor. The job service also writes an entry to a Redis cache, cancel for job 1232, and each executor runs a side thread that checks Redis every 10 seconds for its own job and stops it if the entry is there. Most cancels target jobs that are not running, so every entry gets a TTL of about 30 seconds and expires on its own instead of piling up."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Run now skips the database path. The job service publishes the job straight to the run topic, so the job consumer starts it at once; a status update still records the run. The same shortcut closes a race. The watcher polls at 5:00:00 and again at 5:00:20. A job created at 5:00:05 to run at 5:00:10 is after the first read and before the second one's window starts, so no poll ever picks it up; a one-off job never runs and a cron job waits for its next time. So any job due within about a minute of being created goes straight to the run topic too."
+      - type: paragraph
+        children:
+          - type: text
+            text: "The watcher itself can die. If it restarts without knowing how far it read, it either misses jobs or reads everything again. It keeps its last polled time in Redis and carries on from there, which also makes the watcher stateless: any instance can take over."
+  - __component: sd.table
+    key: index-table
+    title: Indexes for the queries the design runs
+    columns:
+      - { label: Table, style: mono-strong }
+      - { label: Index, style: text }
+      - { label: For, style: text }
+    rows:
+      - [jobs, "primary key on id", "every API call, which names a job by id"]
+      - [jobs, "partitioned by schedule_time, the next run time", "the watcher's window query reads one or two partitions"]
+      - [job_runs, "index on job_id", "the status endpoint"]
+      - [job_runs, "composite index on (status, modified_time)", "the watcher's stale-run query: status running, modified_time older than 15 s"]
+  - __component: sd.rich-text
+    key: index-note
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Put status first in the composite index: the query matches status exactly and modified_time by range, and an index can use a range only on its last column used. A cron job's next run time changes after every run, so its row moves between partitions; that is a cheap update next to scanning the whole table."
+  - __component: sd.quiz
+    key: edge-cases-quiz
+    title: Quick check
+    questions:
+      - question: How does a cancel reach a job that is already running on an executor?
+        optionA: The consumer service kills the machine
+        optionB: The job service writes a cancel entry to Redis, and the executor's side thread checks Redis every 10 seconds and stops the job
+        optionC: Kafka deletes the message
+        optionD: It cannot
+        answer: B
+        explanation: Executors poll a cheap shared cache; a TTL clears entries for jobs that were not running.
+      - question: A job is created at 5:00:05 to run at 5:00:10, and the watcher polls at 5:00:00 and 5:00:20. What goes wrong, and what fixes it?
+        optionA: Nothing goes wrong
+        optionB: No poll picks it up; jobs due within about a minute go straight to the run topic
+        optionC: It runs twice; delete it
+        optionD: It runs at 5:00:20; that is fine
+        answer: B
+        explanation: The job falls between two polls. Bypassing the watcher for anything due very soon removes the gap.
+      - question: Why does the watcher keep its last polled time in Redis?
+        optionA: To cache jobs
+        optionB: So a restarted or replacement watcher knows how far it has read and carries on without missing or rereading jobs
+        optionC: To rate-limit itself
+        optionD: Redis is faster than a clock
+        answer: B
+        explanation: The state lives outside the watcher, so the watcher can die and come back.
+      - question: Which composite index serves the stale-run query?
+        optionA: (modified_time, status)
+        optionB: (status, modified_time)
+        optionC: (error_message)
+        optionD: None is needed
+        answer: B
+        explanation: Equality on status first, then the range on modified_time.
+  # ────────────────────────────────────────────────────────────────── 5. LLD 5: follow-ups
+  - __component: sd.section
+    key: lld-follow-ups
+    title: "Low-level design: follow-ups on queue order and logs."
+    railLabel: LLD, follow-ups
+    intro: "Two follow-ups a senior candidate should expect: what Kafka's ordering does to a job that must run now, and how a user finds out why a job failed."
+  - __component: sd.rich-text
+    key: order-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "The watcher sorts the next five minutes of jobs by time and pushes them to the run topic. A Kafka partition is first in, first out. So when a run-now job arrives behind a hundred jobs already queued for the next five minutes, job 101 is read only after the hundred before it, even though it is due first. Name this limit when you choose Kafka; it cannot be fixed inside Kafka, because Kafka orders a partition by arrival, not by run time."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Two alternatives fix it. A Redis sorted set scored by run time keeps every queued job in time order however late it arrives, and the job consumer takes whatever is due (ZADD to add, a range by score to read). Or a managed queue with delayed delivery, such as Amazon SQS, which hides a message until its delay passes. SQS delays only up to 15 minutes, which is enough for a five-minute window but not for scheduling at any time in the future; for that there are dedicated schedulers such as EventBridge Scheduler. An interviewer may also prefer that you design it rather than plug it in."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Logs: every executor ships its job's output to a logging service, and when a job fails, the run's error_message holds the link to that job's log, so the dashboard can show why."
+  - __component: sd.component-diagram
+    key: final-diagram
+    title: The final design
+    direction: LR
+    nodes:
+      - { key: client }
+      - { key: gateway, details: [authentication, rate limiting, routing] }
+      - { key: job-service, details: ["writes; run now and jobs due within a minute go straight to the run queue"] }
+      - { key: search-service, details: [reads by id and status] }
+      - { key: jobs-kafka, details: [job writes, status updates] }
+      - { key: consumer, details: [the database's only writer] }
+      - { key: job-db, details: [jobs partitioned by next run time, job runs indexed by status and modified time] }
+      - { key: watcher, details: ["due in the next 5 min, and stale running runs"] }
+      - { key: watcher-state, details: [last polled time] }
+      - { key: run-queue, details: [topics run, retry, dead] }
+      - { key: job-consumer, details: [starts each job at its time] }
+      - { key: executor, details: [status every 10 s, checks for a cancel] }
+      - { key: cancel-cache, details: [TTL about 30 s] }
+    edges:
+      - { from: client, to: gateway }
+      - { from: gateway, to: job-service }
+      - { from: gateway, to: search-service }
+      - { from: job-service, to: jobs-kafka, label: submit and edit }
+      - { from: job-service, to: run-queue, label: run now }
+      - { from: job-service, to: cancel-cache, label: cancel }
+      - { from: jobs-kafka, to: consumer }
+      - { from: consumer, to: job-db, label: write }
+      - { from: search-service, to: job-db, label: read }
+      - { from: watcher, to: job-db, label: read every 20 s }
+      - { from: watcher, to: watcher-state, label: last polled time }
+      - { from: watcher, to: run-queue, label: due jobs }
+      - { from: job-consumer, to: run-queue }
+      - { from: job-consumer, to: executor }
+      - { from: executor, to: run-queue, label: "failed, to retry" }
+      - { from: executor, to: jobs-kafka, label: status }
+      - { from: executor, to: cancel-cache, label: check every 10 s }
+  - __component: sd.quiz
+    key: follow-ups-quiz
+    title: Quick check
+    questions:
+      - question: A hundred jobs are queued in Kafka for the next five minutes, and a run-now job arrives. Why might it start late?
+        optionA: Kafka drops it
+        optionB: A partition is read in arrival order, so it waits behind the hundred jobs queued before it
+        optionC: The watcher has not seen it
+        optionD: Run-now jobs are retried first
+        answer: B
+        explanation: Kafka orders by arrival, not by run time; a sorted set or a delay queue orders by time.
+      - question: Can Amazon SQS schedule a job for next Friday?
+        optionA: Yes, at any time
+        optionB: Not by itself; its delay is at most 15 minutes, enough for a five-minute window but not for far-future times
+        optionC: Only for cron jobs
+        optionD: Only with Kafka
+        answer: B
+        explanation: Delay queues and message timers cap at 15 minutes; far-future scheduling needs a scheduler in front.
+      - question: How does a user see why a job failed?
+        optionA: They cannot
+        optionB: Executors ship logs to a logging service, and the run's error_message links to that job's log
+        optionC: By reading Kafka
+        optionD: From the cron expression
+        answer: B
+        explanation: The run record points at the log, and the dashboard shows it.

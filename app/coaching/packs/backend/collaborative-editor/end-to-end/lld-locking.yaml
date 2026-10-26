@@ -1,0 +1,66 @@
+# Collaborative editor interview, low-level design approach 2, a locking protocol, as the video writes it beside the drawing: "2. Locking Protocol", optimistic (git merge) and pessimistic. The video's pessimistic example is banking and ACID; the pack corrects it (ACID is not a kind of lock) and gives checking a file out.
+id: backend/collaborative-editor/end-to-end/lld-locking
+title: "Approach 2: a locking protocol"
+source:
+  hash: "1a6874a969ba"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/collaborative-editor/end-to-end/lld-file-replacement
+  assumes:
+    - "File replacement sends the whole file per change and floods the system with requests."
+  carries:
+    - "Locking lets one writer at a time: pessimistic takes the lock first, optimistic detects the conflict at commit."
+    - "Neither gives simultaneous editing."
+  terms:
+    - term: pessimistic locking
+      means: Take the lock before writing, so nobody else can change it until it is released.
+    - term: optimistic locking
+      means: "Write without a lock and detect a conflicting change at commit time, from a version number."
+board:
+  keep: [title, prompt-desc, nfr, nfr-scale, nfr-cap, nfr-latency, api, api-post, api-get, api-ws, lld-file, f-user-a, f-user-b, f-file, f-editor, f-flaw-size, f-flaw-count, f-a-file, f-file-editor, f-editor-b]
+  elements:
+    - { id: lld-lock, kind: region, label: "Approach 2: locking protocol", at: [54, 32], size: [27, 12] }
+    - { id: l-lock, kind: note, label: "lock for user A, unlock, then user B", at: [56, 35], in: lld-lock }
+    - { id: l-optimistic, kind: note, label: "optimistic, conflict at commit, like git", at: [56, 37], in: lld-lock }
+    - { id: l-pessimistic, kind: note, label: "pessimistic, lock first, like a checkout", at: [56, 38], in: lld-lock }
+    - { id: l-verdict, kind: note, label: "one writer at a time, not simultaneous", at: [56, 40], in: lld-lock }
+  arrows: []
+beats:
+  - point: "A locking protocol lets one writer at a time: the document is locked for user A, and user B can edit only after user A releases it."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Second idea: if two writers are the problem, allow one. When user A starts writing, lock the document for user A; when user A is done, unlock it, and user B can take the lock."
+      - "It is how a ticket booking holds a seat for a few minutes before someone else may book it."
+    draw: [lld-lock, l-lock]
+    check: What does user B experience while user A holds the lock?
+    answer: User B cannot edit until user A releases the document.
+  - point: "Optimistic locking writes without a lock and finds the conflict at commit, like a rejected git push; pessimistic locking takes the lock first, like checking a file out."
+    kind: mechanism
+    weight: supporting
+    teach:
+      - "Two kinds. Optimistic: no lock, everyone works on a copy, and a conflict is found at commit from a version number, like a git push rejected because someone pushed first, then merged by hand."
+      - "Pessimistic: take the lock before writing, like checking a file out. The video's example is banking with ACID; ACID is a property of transactions, not a kind of lock, though banks do lock rows this way."
+    draw: [l-optimistic, l-pessimistic]
+    check: What is the difference between optimistic and pessimistic locking?
+    answer: Pessimistic takes the lock before writing; optimistic takes none and detects a conflicting change when it commits.
+    misconceptions:
+      - "ACID is a type of pessimistic locking -> ACID describes transactions; pessimistic locking is one way to implement isolation."
+  - point: "Locking fails the requirement: one person edits at a time, or conflicts surface late and are merged by hand; neither is simultaneous editing."
+    kind: failure
+    weight: core
+    teach:
+      - "Verdict beside it: with a pessimistic lock only one person types at a time; with an optimistic one they type at once but conflicts surface late and are merged by hand. The requirement was simultaneous editing with changes seen in near real time. Not met."
+    draw: [l-verdict]
+    check: Why does locking not meet our requirements?
+    answer: It lets only one writer at a time, or leaves conflicts to manual merges, so users cannot edit simultaneously and see each other live.
+asks:
+  - ids: [l-verdict]
+    beats: [3]
+    question: "Locking stops two writers clashing. Does it meet our requirements?"
+    hints:
+      - Look at the second functional requirement.
+      - Can user B type while user A holds the lock?

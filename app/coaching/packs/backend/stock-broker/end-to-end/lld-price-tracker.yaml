@@ -1,0 +1,155 @@
+# Stock broker interview, deep dive into the price tracker: under "5. Deep dive: price tracker", the three ways to get prices as notes, then the video's picture left to right: clients, the gateway split into an API gateway and a WebSocket gateway, the price tracker as a WebSocket server, Redis pub/sub under InfluxDB, the price ingester above Kafka, the exchange gateway, and the exchange outside on the right with its sockets note.
+id: backend/stock-broker/end-to-end/lld-price-tracker
+title: "Deep dive: the price tracker"
+source:
+  hash: "ca53380ac039"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/stock-broker/end-to-end/lld-user-payment
+  assumes:
+    - "The price tracker gets prices from the exchange, a black box."
+    - "Price updates must reach the screen in under 50 ms, and viewing prices stays available."
+  carries:
+    - "Polling is rejected; WebSocket beats server-sent events because subscriptions change on the open socket."
+    - "One exchange gateway subscribes to every instrument from the open (illustrative 400 to 500 symbols a socket, about 10 sockets)."
+    - "Ticks go to Kafka topic stock price; a price ingester writes them to InfluxDB and publishes the last traded price to Redis pub/sub."
+    - "The price tracker is a WebSocket server: history from InfluxDB, live prices from Redis; a separate WebSocket gateway holds sticky sessions."
+  terms:
+    - term: WebSocket
+      means: "One long-lived, two-way connection; either side can send at any time."
+    - term: server-sent events
+      means: "A one-way stream of events from server to client over a long-lived HTTP response."
+    - term: time-series database
+      means: "A store built for values over time, such as InfluxDB, queried by symbol and time range."
+board:
+  keep: [title, nfr, nfr-scale, nfr-cap, nfr-view, nfr-latency, nfr-region]
+  elements:
+    - { id: lld-price, kind: region, label: "5. Deep dive: price tracker", at: [2, 21], size: [70, 30] }
+    - { id: pt-poll, kind: note, label: "polling every second, too many paid calls", at: [4, 24], in: lld-price }
+    - { id: pt-sse, kind: note, label: "server-sent events, pushed one way", at: [4, 25], in: lld-price }
+    - { id: pt-ws, kind: note, label: "WebSocket, two way, subscribe on the open socket", at: [4, 26], in: lld-price }
+    - { id: pt-exgw, kind: box, label: Exchange gateway, at: [64, 32], size: [7, 12], in: lld-price }
+    - { id: pt-exchange, kind: box, label: "Exchange, NSE or BSE", at: [78, 32], size: [9, 12], tone: grey }
+    - { id: pt-sockets, kind: note, label: "400 to 500 symbols a socket, about 10 sockets", at: [74, 45] }
+    - { id: pt-open, kind: note, label: subscribe to every stock from the 9:15 open, at: [4, 47], in: lld-price }
+    - { id: pt-kafka, kind: box, label: Kafka, at: [52, 40], size: [9, 3], tone: amber, in: lld-price }
+    - { id: pt-kafka-topic, kind: note, label: "topic, stock price", at: [52, 43], in: lld-price }
+    - { id: pt-ingester, kind: box, label: Price ingester, at: [52, 32], size: [9, 3], in: lld-price }
+    - { id: pt-influx, kind: oval, label: InfluxDB, at: [39, 32], size: [10, 3], tone: amber, in: lld-price }
+    - { id: pt-influx-note, kind: note, label: "every tick, for history", at: [39, 35], in: lld-price }
+    - { id: pt-redis, kind: oval, label: Redis pub/sub, at: [39, 40], size: [10, 4], tone: green, in: lld-price }
+    - { id: pt-redis-note, kind: note, label: last traded price, at: [39, 44], in: lld-price }
+    - { id: pt-tracker, kind: box, label: "Price tracker, WebSocket server", at: [26, 40], size: [10, 4], tone: blue, in: lld-price }
+    - { id: pt-history, kind: note, label: "earlier prices from InfluxDB, live from Redis", at: [4, 46], in: lld-price }
+    - { id: pt-clients, kind: box, label: Clients, at: [4, 40], size: [6, 3], in: lld-price }
+    - { id: pt-apigw, kind: box, label: "API gateway, REST", at: [13, 33], size: [9, 4], in: lld-price }
+    - { id: pt-wsgw, kind: box, label: WebSocket gateway, at: [13, 40], size: [9, 4], tone: blue, in: lld-price }
+    - { id: pt-wsgw-note, kind: note, label: sticky sessions, at: [13, 44], in: lld-price }
+  arrows:
+    - { id: pt-exchange-exgw, from: pt-exchange, to: pt-exgw, label: feed, both: true }
+    - { id: pt-exgw-kafka, from: pt-exgw, to: pt-kafka }
+    - { id: pt-kafka-ingester, from: pt-kafka, to: pt-ingester, label: ticks }
+    - { id: pt-ingester-influx, from: pt-ingester, to: pt-influx }
+    - { id: pt-ingester-redis, from: pt-ingester, to: pt-redis }
+    - { id: pt-redis-tracker, from: pt-redis, to: pt-tracker }
+    - { id: pt-tracker-influx, from: pt-tracker, to: pt-influx }
+    - { id: pt-clients-apigw, from: pt-clients, to: pt-apigw }
+    - { id: pt-clients-wsgw, from: pt-clients, to: pt-wsgw }
+    - { id: pt-wsgw-tracker, from: pt-wsgw, to: pt-tracker, both: true }
+beats:
+  - point: "Polling the exchange for every stock every second is rejected: thousands of paid, limited calls a second through a six-hour session, and prices still up to a second old."
+    kind: failure
+    weight: core
+    teach:
+      - "The heart of the app: live prices. First idea: every second, ask the exchange for the price of all 5 to 10 thousand stocks, page by page, and update the screens."
+      - "Count it over a six-hour session: a flood of calls, and exchange access is licensed and costly. And the price is still up to a second stale. Reject it."
+    draw: [lld-price, pt-poll]
+    check: Why is polling the exchange every second a bad idea?
+    answer: Thousands of costly, limited calls every second all day, and the prices are still up to a second old.
+  - point: "Push instead: server-sent events push one way, but a WebSocket also carries subscribe messages on the same open connection, and subscriptions change all the time, so WebSocket wins."
+    kind: decision
+    weight: core
+    teach:
+      - "Better: let the exchange push each change. Server-sent events do that, one way, over one long-lived response. Many write-ups stop there."
+      - "But who you subscribe to keeps changing: a new user wants another stock. Over a WebSocket that is one message on the open socket. Server-sent events cannot carry it back, so you need a second request or a reopened stream. So WebSocket, towards the exchange and later towards the apps."
+    draw: [pt-sse, pt-ws]
+    check: Prices only flow one way. Why still choose a WebSocket?
+    answer: Subscriptions change constantly, and a WebSocket carries those changes on the same open connection; server-sent events cannot.
+    misconceptions:
+      - "Server-sent events need a whole new connection for every change -> a separate request can change the subscription; the WebSocket just does it on one connection."
+  - point: "One exchange gateway is the broker's only door to the exchange; from the 9:15 open it subscribes to every stock, watched or not, at roughly 400 to 500 symbols a socket, about ten sockets."
+    kind: component
+    weight: core
+    teach:
+      - "Services should not each talk to the exchange. Add an exchange gateway, a proxy like the API gateway in reverse: the exchange sees one client."
+      - "At the open it subscribes to every stock, even ones nobody watches, so history is complete for anyone who opens them later. The video's figure: 400 to 500 symbols a socket, so about ten sockets for 5,000. Illustrative: real feeds come over leased lines in the exchange's own protocols."
+    draw: [pt-exgw, pt-exchange, pt-exchange-exgw, pt-sockets, pt-open]
+    check: Why subscribe to stocks nobody is watching?
+    answer: So their history is recorded and can be charted when someone opens them later.
+  - point: "Thousands of stocks changing every second is a flood, so the gateway writes every tick into Kafka, topic stock price, which buffers the burst."
+    kind: component
+    weight: core
+    teach:
+      - "Every stock can change every second: millions of updates. No single service should take that directly."
+      - "So the gateway writes every tick into Kafka, a durable log, on a topic called stock price. Kafka absorbs the bursts and consumers read at their own pace."
+    draw: [pt-kafka, pt-exgw-kafka, pt-kafka-topic]
+    check: What does Kafka add between the exchange gateway and everything else?
+    answer: A durable buffer for the burst of ticks, read by consumers at their own pace.
+  - point: "A price ingester consumes the topic, writes every tick to InfluxDB, a time-series database, for history, and publishes the last traded price to Redis pub/sub for live fan-out."
+    kind: mechanism
+    weight: core
+    teach:
+      - "A price ingester consumes the topic and does two things with each tick. One: write it to InfluxDB, a time-series database, so history and charts never cost an exchange call."
+      - "Two: publish the last traded price to Redis pub/sub, on that symbol's channel, so whoever is subscribed gets it at once. Pub/sub keeps nothing, which is fine: history is InfluxDB's job."
+    draw: [pt-ingester, pt-kafka-ingester, pt-influx, pt-ingester-influx, pt-influx-note, pt-redis, pt-ingester-redis, pt-redis-note]
+    check: Why does each tick go to two places?
+    answer: InfluxDB keeps every tick for history and charts; Redis pub/sub pushes the latest price to live subscribers right away.
+  - point: "The price tracker becomes a WebSocket server: it subscribes to the Redis channels of the symbols its users watch, and reads the earlier part of the day from InfluxDB."
+    kind: mechanism
+    weight: core
+    teach:
+      - "The price tracker is now a WebSocket server. User 1 says subscribe ICICI Bank; the tracker subscribes to that channel in Redis and pushes each new price down the socket."
+      - "For the chart it needs the morning too: open the app at 2 and the prices from 9:15 to 2 come from InfluxDB, everything after from Redis."
+    draw: [pt-tracker, pt-redis-tracker, pt-tracker-influx, pt-history]
+    check: A user opens a chart at 2 o'clock. Where does each part of it come from?
+    answer: From 9:15 to 2 out of InfluxDB, and every price after that from Redis pub/sub through the WebSocket.
+  - point: "Apps hold one WebSocket each, so split the front door: an API gateway for REST and a dedicated WebSocket gateway with sticky sessions for the long-lived connections."
+    kind: decision
+    weight: core
+    teach:
+      - "The apps connect over WebSockets too, for the same reason: opening Reliance after ICICI is one more subscribe message."
+      - "A WebSocket-heavy app deserves its own gateway: split the front door into an API gateway for REST calls and a WebSocket gateway that holds the sessions and keeps each one stuck to its server."
+    draw: [pt-clients, pt-apigw, pt-clients-apigw, pt-wsgw, pt-clients-wsgw, pt-wsgw-tracker, pt-wsgw-note]
+    check: Why a dedicated WebSocket gateway?
+    answer: Long-lived connections need session handling and sticky routing that a REST gateway is not built around.
+asks:
+  - ids: [pt-exgw]
+    beats: [3]
+    question: "Should every service open its own connection to the exchange? What would you put in between?"
+    hints:
+      - Think of how the API gateway fronts our services.
+      - The exchange should see one client.
+  - ids: [pt-kafka]
+    beats: [4]
+    question: "Millions of price updates arrive every second. What would you put behind the exchange gateway to take them?"
+    hints:
+      - Something durable that absorbs bursts.
+      - Consumers should read at their own pace.
+  - ids: [pt-influx, pt-redis]
+    beats: [5]
+    question: "Each tick has two uses, the chart's history and the live screen. Where would you send it for each?"
+    hints:
+      - One store built for values over time.
+      - One fast way to fan a message out to subscribers.
+  - ids: [pt-wsgw]
+    beats: [7]
+    question: "Every app now holds a long-lived WebSocket. What would you change at the front door?"
+    hints:
+      - Are REST calls and long-lived sessions the same kind of traffic?
+      - What does a session need that a single request does not?
+task:
+  prompt: "Draw the live price path: the exchange and the exchange gateway, Kafka, the price ingester writing to InfluxDB and Redis pub/sub, the price tracker as a WebSocket server, and the WebSocket gateway to the clients."
+  expects: [3, 4, 5, 6, 7]

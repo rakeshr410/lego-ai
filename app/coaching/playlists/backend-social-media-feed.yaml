@@ -1,0 +1,37 @@
+slug: backend-social-media-feed
+title: "The social media feed interview"
+summary: "A backend design interview for a platform like Facebook or Instagram, run step by step on one whiteboard: requirements with numbers, entities, the API, five services, then each service opened up, ending with feed generation by fan-out, a feed cache and backfill."
+outline: "The social media lessons follow the five-step order and the drawings of InterviewWithBunny's System Design 13, Design Social Media like Facebook, Instagram (youtube.com/watch?v=MQOz1yZaC54), section by section; no text is taken from it, and its factual slips are corrected in the article."
+lessons:
+  - slug: social-media-feed
+    title: "The social media interview: the problem, requirements, entities and API"
+    summary: "The problem in one line, five functional and three non-functional requirements side by side, five entities, and the API in three groups."
+    parts:
+      - { title: "The problem, then two lists", minutes: 9, packs: [backend/social-media-feed/end-to-end/problem-statement, backend/social-media-feed/end-to-end/requirements] }
+      - { title: "Entities, then the API", minutes: 9, packs: [backend/social-media-feed/end-to-end/entities, backend/social-media-feed/end-to-end/api] }
+  - slug: social-media-feed-design
+    title: "The social media interview: high-level design, then the user service"
+    summary: "Clients, a gateway and five services with their stores; then the low-level design opens the user service: Postgres, a hashed password and a JWT."
+    parts:
+      - { title: "Five services behind a gateway", minutes: 9, packs: [backend/social-media-feed/end-to-end/high-level-design] }
+      - { title: "The user service", minutes: 4, packs: [backend/social-media-feed/end-to-end/lld-user-service] }
+  - slug: social-media-feed-content
+    title: "The social media interview: the content service"
+    summary: "Posts go through Kafka: a moderator sorts them, a post consumer stores them in Cassandra and S3, and blocked posts notify the author."
+    parts:
+      - { title: "A moderated publishing pipeline", minutes: 12, packs: [backend/social-media-feed/end-to-end/lld-content-service] }
+  - slug: social-media-feed-follower
+    title: "The social media interview: the follower service"
+    summary: "The follow table, its unique pair and two indexes, and why Postgres rather than a graph database."
+    parts:
+      - { title: "Who follows whom", minutes: 6, packs: [backend/social-media-feed/end-to-end/lld-follower-service] }
+  - slug: social-media-feed-engagement
+    title: "The social media interview: the engagement service"
+    summary: "Likes and comments buffered in Kafka, their stores and schemas, idempotent likes for at-least-once delivery, and an aggregated like count."
+    parts:
+      - { title: "Likes and comments at scale", minutes: 8, packs: [backend/social-media-feed/end-to-end/lld-engagement-service] }
+  - slug: social-media-feed-generation
+    title: "The social media interview: generating the feed"
+    summary: "Precomputed feeds: push for ordinary authors, pull for celebrities, a fan-out service and consumer, a bounded feed cache, backfill from Redis, and a followers cache."
+    parts:
+      - { title: "Fan-out, the feed cache and backfill", minutes: 18, packs: [backend/social-media-feed/end-to-end/lld-feed-service] }

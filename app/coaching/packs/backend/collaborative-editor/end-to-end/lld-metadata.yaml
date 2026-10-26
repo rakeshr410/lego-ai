@@ -1,0 +1,81 @@
+# Collaborative editor interview, low-level design of the metadata service, under "5. Low level design" as the video draws it: the metadata service sends its updates to Kafka, a metadata consumer writes a Cassandra database, and the document table is written beside it. The video says the metadata write volume needs the queue; the pack says metadata writes are light and the queue optional.
+id: backend/collaborative-editor/end-to-end/lld-metadata
+title: "Low-level design: the metadata service"
+source:
+  hash: "dcff9dea41a1"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/collaborative-editor/end-to-end/high-level-design
+  assumes:
+    - "The document metadata service creates documents and writes their metadata to a database; the content is in blob storage."
+  carries:
+    - "Metadata changes go to a Kafka topic and a metadata consumer writes the database: a buffer that absorbs bursts and retries."
+    - "Any database fits a flat metadata row: Postgres, MySQL, or Cassandra as the video chooses."
+    - "Document table: id, docId, title, blob URL, createdBy, createdTime, lastModifiedTime, lastModifiedBy."
+  terms:
+    - term: consumer
+      means: A worker that reads events from a queue at its own pace and acts on them, here writing the database.
+board:
+  keep: [title, prompt-desc, fr, fr-crud, fr-together, fr-see, fr-cursor, fr-versions, nfr, nfr-scale, nfr-cap, nfr-latency, entities, ent-user, ent-doc, ent-edit, ent-cursor, api, api-post, api-get, api-ws, hld, hld-c1, hld-c2, hld-c3, hld-gateway, hld-meta, hld-editor, hld-db, hld-blob, hld-why-blob, hld-c1-gw, hld-c2-gw, hld-c3-gw, hld-gw-meta, hld-gw-editor, hld-meta-db, hld-meta-blob, hld-editor-blob]
+  elements:
+    - { id: lld-meta, kind: region, label: "5. Low-level design: metadata service", at: [6, 55], size: [70, 16] }
+    - { id: m-svc, kind: box, label: "Metadata service, every metadata update", at: [8, 59], size: [12, 5], tone: blue, in: lld-meta }
+    - { id: m-kafka, kind: box, label: Kafka queue, at: [31, 60], size: [10, 3], tone: amber, in: lld-meta }
+    - { id: m-consumer, kind: box, label: Metadata consumer, at: [46, 60], size: [11, 3], tone: grey, in: lld-meta }
+    - { id: m-db, kind: oval, label: Cassandra DB, at: [46, 66], size: [11, 4], tone: amber, in: lld-meta }
+    - { id: m-alt, kind: note, label: "or Postgres or MySQL, a flat row", at: [8, 66], in: lld-meta }
+    - { id: m-light, kind: note, label: "metadata writes are light, the queue is optional", at: [8, 68], in: lld-meta }
+    - { id: m-table-1, kind: note, label: "document: id, docId, title, url,", at: [59, 66], in: lld-meta }
+    - { id: m-table-2, kind: note, label: "createdBy, createdTime,", at: [61, 67], in: lld-meta }
+    - { id: m-table-3, kind: note, label: "lastModified time and by", at: [61, 68], in: lld-meta }
+  arrows:
+    - { id: m-svc-kafka, from: m-svc, to: m-kafka, label: metadata change }
+    - { id: m-kafka-consumer, from: m-kafka, to: m-consumer }
+    - { id: m-consumer-db, from: m-consumer, to: m-db }
+beats:
+  - point: "The metadata service puts each metadata change on a Kafka queue, and a metadata consumer reads it and writes the database: a buffer that absorbs bursts and retries failures."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Step five, the low-level design. Copy the high-level picture down and open the boxes one at a time, starting with the document metadata service, which handles every request to change a document's metadata."
+      - "Put a buffer between it and the database: the service writes each change to a Kafka queue and returns; a metadata consumer reads the queue and writes the database at its own pace, retrying on failure."
+    draw: [lld-meta, m-svc, m-kafka, m-svc-kafka, m-consumer, m-kafka-consumer]
+    check: What does the queue between the service and the database buy?
+    answer: The service returns once the change is on the queue; the consumer writes the database at its own pace, absorbing bursts and retrying failures.
+  - point: "The metadata is a flat row per document, so almost any database works: Postgres or MySQL, or a write-friendly store like Cassandra."
+    kind: decision
+    weight: core
+    teach:
+      - "Which database? The metadata is a flat record per document, read by its id. Postgres or MySQL would do; the video picks Cassandra, which takes heavy writes well."
+    draw: [m-db, m-consumer-db, m-alt]
+    check: Why is almost any database fine here?
+    answer: Each document's metadata is one flat row read by its id, with no complex queries.
+  - point: "The document table holds an id, the document id, the title, the URL of its file in blob storage, and who created and last modified it, and when."
+    kind: decision
+    weight: core
+    teach:
+      - "Write the table beside the database: an id, the document id, the title, the URL of the file in blob storage, who created it and when, and who modified it last and when."
+      - "The URL is what ties the row to the content; later it will point at the newest version."
+    draw: [m-table-1, m-table-2, m-table-3]
+    check: Which column connects the metadata row to the document's text?
+    answer: The url, the address of the document's file in blob storage.
+  - point: "Metadata writes are light, so the queue is optional here; the heavy write stream is the edits, which get the same pattern later."
+    kind: rule
+    weight: supporting
+    teach:
+      - "Be precise about the reason. A title change or a last-modified time is a light write, even at billions of documents. The really heavy writes are the edits, a few per keystroke, and the editor service will get the same queue and consumer. Keep this one; it will also carry version events."
+    draw: [m-light]
+    check: Where is the truly heavy write stream in this system?
+    answer: The edit operations from the editor service, many per second per document, not the metadata.
+    misconceptions:
+      - "The metadata database needs a queue because metadata writes are huge -> metadata writes are light; the edit operations are the heavy stream."
+asks:
+  - ids: [m-kafka, m-consumer]
+    beats: [1]
+    question: "Writes from the metadata service can come in bursts. What would you put between it and the database?"
+    hints:
+      - Something that can hold the changes for a moment.
+      - And something that reads them and writes the database at its own pace.

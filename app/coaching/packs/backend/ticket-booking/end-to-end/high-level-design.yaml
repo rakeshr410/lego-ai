@@ -1,0 +1,87 @@
+# Ticket booking interview, high-level design: "4. High level designing" under the API, clients, a tall API gateway (authentication, rate limiting, routing), one booking service and a database, as the video first draws it; then the service split into search, event and booking services, all to the database, as it redraws it (the split is added beside the booking service, since packs cannot erase).
+id: backend/ticket-booking/end-to-end/high-level-design
+title: Clients, gateway, services, database
+source:
+  hash: "03ed1a7ecbae"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/ticket-booking/end-to-end/api
+  assumes:
+    - "Endpoints: search, view an event, reserve and confirm a booking."
+    - "Non-functional: 100M daily active users; available for search and view, consistent for booking."
+  carries:
+    - "Clients reach the services through an API gateway that authenticates, rate limits and routes."
+    - "One service doing everything is split into a search service, an event service and a booking service, each scaled alone."
+    - "In the high-level design all three use one database; the low-level design splits it."
+  terms:
+    - term: API gateway
+      means: "The single entry point that authenticates and authorizes requests, rate limits them, and routes each to its service."
+    - term: separation of concerns
+      means: Each service does one job, so it can be scaled and changed on its own.
+board:
+  keep: [title, prompt-desc, fr, fr-search, fr-view, fr-book, nfr, nfr-scale, nfr-available, nfr-consistent, entities, ent-user, ent-event, ent-venue, ent-ticket, api, api-search, api-event, api-reserve, api-reserve-body, api-confirm, api-confirm-body, api-auth]
+  elements:
+    - { id: hld, kind: region, label: 4. High level designing, at: [6, 36], size: [60, 18] }
+    - { id: hld-clients, kind: box, label: clients, at: [8, 44], size: [7, 3], in: hld }
+    - { id: hld-gateway, kind: box, label: "API gateway, authentication, rate limiting, routing", at: [19, 39], size: [10, 14], in: hld }
+    - { id: hld-booking, kind: box, label: Booking service, at: [34, 49], size: [12, 3], tone: blue, in: hld }
+    - { id: hld-db, kind: oval, label: Database, at: [52, 40], size: [11, 12], tone: amber, in: hld }
+    - { id: hld-search, kind: box, label: Search service, at: [34, 39], size: [12, 3], tone: blue, in: hld }
+    - { id: hld-event, kind: box, label: Event service, at: [34, 44], size: [12, 3], tone: blue, in: hld }
+  arrows:
+    - { id: hld-clients-gateway, from: hld-clients, to: hld-gateway }
+    - { id: hld-gateway-booking, from: hld-gateway, to: hld-booking }
+    - { id: hld-booking-db, from: hld-booking, to: hld-db }
+    - { id: hld-gateway-search, from: hld-gateway, to: hld-search }
+    - { id: hld-gateway-event, from: hld-gateway, to: hld-event }
+    - { id: hld-search-db, from: hld-search, to: hld-db }
+    - { id: hld-event-db, from: hld-event, to: hld-db }
+beats:
+  - point: "At 100 million daily users the work is spread over many machines, so clients reach the backend through an API gateway that authenticates, rate limits and routes each request."
+    kind: component
+    weight: core
+    teach:
+      - "Step four, the high-level design: the requirements as a picture. First the clients, the website and the apps."
+      - "A hundred million daily users is far more than one machine, so the backend runs as many copies. In front of them, an API gateway: it authenticates and authorizes each request, rate limits it, and routes it to the right service."
+    draw: [hld, hld-clients, hld-gateway, hld-clients-gateway]
+    check: Name the three jobs the API gateway does here.
+    answer: Authentication and authorization, rate limiting, and routing each request to the right service.
+  - point: "The simplest backend is one booking service that searches, returns event details and books, with one database holding events and bookings."
+    kind: flow
+    weight: core
+    teach:
+      - "Behind the gateway, start simple: one service, call it the booking service, doing all three jobs: search, view and book."
+      - "And a database with the events and the bookings. A search comes in, the service looks in the database and returns results; a booking is written to the same database."
+    draw: [hld-booking, hld-gateway-booking, hld-db, hld-booking-db]
+    check: Walk me through a search in this first picture.
+    answer: The request passes the gateway to the one service, which searches the database and returns the matching events.
+  - point: "One service with every job must be scaled for all of them at once, so split it by responsibility: a search service, an event service and a booking service, each scaled on its own."
+    kind: decision
+    weight: core
+    teach:
+      - "That one service carries everything, and must be scaled for the sum. Split it by responsibility: a search service and an event service beside the booking service."
+      - "The gateway now routes search requests to search, event requests to the event service, booking requests to booking, and for now all three read the one database. That is separation of concerns, and searching, which is far busier, can grow alone."
+    draw: [hld-search, hld-gateway-search, hld-event, hld-gateway-event, hld-search-db, hld-event-db]
+    check: Why split the one service into three?
+    answer: The jobs have different loads and needs, so each service can be scaled and changed on its own; search is much busier than booking.
+    misconceptions:
+      - "A single service cannot run on more than one machine -> it can be copied too; the split is about scaling and changing each job separately."
+asks:
+  - ids: [hld-booking, hld-db]
+    beats: [2]
+    question: "Behind the gateway, what's the simplest thing that could serve all three requests? Name the boxes and I'll draw them."
+    hints:
+      - Something has to do the work for search, view and book.
+      - And where do the events and bookings live?
+  - ids: [hld-search, hld-event]
+    beats: [3]
+    question: "That one service does search, view and book. How would you break it up so each part can scale?"
+    hints:
+      - One service per requirement.
+      - Which of the three gets the most traffic?
+task:
+  prompt: "Draw the high-level design: clients, an API gateway that authenticates, rate limits and routes, a search service, an event service and a booking service, and the database they use."
+  expects: [1, 2, 3]

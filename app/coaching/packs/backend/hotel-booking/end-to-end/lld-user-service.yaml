@@ -1,0 +1,58 @@
+# Hotel booking interview, low-level design, the user service: the video copies the high-level design under "5. Low level designing" and opens the user service first, writing "UserDB (mysql)" and its columns beside the database; here that opened service sits beside the high-level design.
+id: backend/hotel-booking/end-to-end/lld-user-service
+title: "Low-level design: the user service"
+source:
+  hash: "4d1076f45738"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/hotel-booking/end-to-end/high-level-design
+  assumes:
+    - "The high-level design: a gateway, then user, search, booking, booking info and review services, each with its database."
+  carries:
+    - "The user service signs users up, checks credentials on login and issues a JWT the gateway verifies on later calls."
+    - "UserDB is MySQL (or Postgres): userId, name, email, password hash, phone, metadata."
+  terms:
+    - term: JWT
+      means: "A signed token the client sends with each call, so the gateway can verify who it is without asking the user service."
+board:
+  keep: [title, prompt-desc, fr, fr-account, fr-search, fr-book, fr-pay, fr-past, nfr, nfr-scale, nfr-available, nfr-consistent, entities, ent-user, ent-hotel, ent-room, ent-booking, api, api-register, api-search, api-hotel, api-book, api-past, hld, hld-client-1, hld-client-2, hld-client-3, hld-gateway, hld-gateway-does, hld-user, hld-search, hld-booking, hld-payment, hld-info, hld-review, hld-user-db, hld-hotel-db, hld-booking-db, hld-review-db, hld-c1-gw, hld-c2-gw, hld-c3-gw, hld-gw-user, hld-gw-search, hld-gw-booking, hld-gw-info, hld-gw-review, hld-user-save, hld-search-scan, hld-booking-pay, hld-booking-save, hld-info-read, hld-review-save]
+  elements:
+    - { id: lld-user, kind: region, label: "5. Low-level design: user service", at: [76, 36], size: [42, 14] }
+    - { id: lu-service, kind: box, label: "User service, sign up and log in", at: [78, 39], size: [13, 3], tone: blue, in: lld-user }
+    - { id: lu-db, kind: oval, label: "UserDB, MySQL", at: [100, 39], size: [14, 3], tone: amber, in: lld-user }
+    - { id: lu-schema-1, kind: note, label: "user: userId, name, email,", at: [98, 44], in: lld-user }
+    - { id: lu-schema-2, kind: note, label: "passwordHash, phone, metadata", at: [100, 45], in: lld-user }
+    - { id: lu-jwt, kind: note, label: "on login, check the password hash, issue a JWT", at: [78, 47], in: lld-user }
+  arrows:
+    - { id: lu-save, from: lu-service, to: lu-db, label: "save, verify" }
+beats:
+  - point: "Step five copies the high-level design and opens each service; the user service only saves users on sign-up and, on login, checks the credentials and issues a JWT for later calls."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Step five, the low-level design: take the picture above and open each service in turn, simplest first. The user service saves a new user's details on sign-up."
+      - "On a later login it checks the email and the password hash and issues a JWT, a signed token the client sends on every call so the gateway can verify it without asking us again."
+    draw: [lld-user, lu-service, lu-jwt]
+    check: What does the client get after logging in, and what is it for?
+    answer: A JWT, sent with every later call so the gateway can verify who is calling.
+  - point: "User data is small and relational, one row per user, so UserDB is MySQL: userId, name, email, password hash, phone and metadata."
+    kind: decision
+    weight: core
+    teach:
+      - "The one decision worth stating is the database. One row per user, related data, read by id or email: MySQL, or Postgres."
+      - "Write the columns beside it: user id, name, email, a password hash, never the password itself, phone and other metadata."
+    draw: [lu-db, lu-save, lu-schema-1, lu-schema-2]
+    check: Which database fits the users, and why?
+    answer: A relational one like MySQL, since it is small structured rows read by id or email.
+    misconceptions:
+      - "Store the password so login can compare it -> store a salted hash and compare hashes."
+asks:
+  - ids: [lu-db]
+    beats: [2]
+    question: "Which database would you put the users in, and what goes in a row?"
+    hints:
+      - Is the data structured and related, or loose documents?
+      - What does a login need to look up and compare?

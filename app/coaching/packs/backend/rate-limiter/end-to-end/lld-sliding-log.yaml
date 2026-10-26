@@ -1,0 +1,81 @@
+# Rate limiter interview, deep dive 2: sliding window log. Under "5. Deep dive: 2. Sliding window log": a timestamp kept per request, five stamps in a row inside a 10-second window, the rule (drop stamps older than 10 s, count the rest, allow under 5), the sixth refused and the slide that lets one more in, then the memory cost, as the video demonstrates it.
+id: backend/rate-limiter/end-to-end/lld-sliding-log
+title: "Deep dive, 2: sliding window log"
+source:
+  hash: "5357fec57a53"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/rate-limiter/end-to-end/lld-fixed-window
+  assumes:
+    - "Fixed window counts per clock window and lets twice the limit through at an edge."
+    - "Non-functional: 1M rps, under 5 ms."
+  carries:
+    - "Sliding window log: a timestamp per allowed request; drop those older than the window, allow if fewer than the limit remain."
+    - "It is exact, with no edge burst, but memory grows with every request kept, too costly at 1M rps."
+  terms:
+    - term: sliding window
+      means: "A window that ends at the current moment and moves with time: the last 10 seconds, always."
+board:
+  keep: [title, nfr, nfr-scale, nfr-cap, nfr-latency]
+  elements:
+    - { id: lld-sl, kind: region, label: "5. Deep dive: 2. Sliding window log", at: [4, 24], size: [60, 21] }
+    - { id: sl-idea, kind: note, label: "a timestamp for every allowed request, per client", at: [6, 27], in: lld-sl }
+    - { id: sl-s0, kind: box, label: request at 0 s, at: [6, 29], size: [9, 3], in: lld-sl, tone: amber }
+    - { id: sl-s2, kind: box, label: request at 2 s, at: [17, 29], size: [9, 3], in: lld-sl, tone: amber }
+    - { id: sl-s4, kind: box, label: request at 4 s, at: [28, 29], size: [9, 3], in: lld-sl, tone: amber }
+    - { id: sl-s6, kind: box, label: request at 6 s, at: [39, 29], size: [9, 3], in: lld-sl, tone: amber }
+    - { id: sl-s8, kind: box, label: request at 8 s, at: [50, 29], size: [9, 3], in: lld-sl, tone: amber }
+    - { id: sl-rule, kind: note, label: "on a request, drop stamps older than 10 s, count the rest", at: [6, 34], in: lld-sl }
+    - { id: sl-allow, kind: note, label: "fewer than 5, allow and log it; else 429", at: [6, 35], in: lld-sl }
+    - { id: sl-full, kind: note, label: a sixth at 9 s gets 429, at: [6, 37], in: lld-sl }
+    - { id: sl-slide, kind: note, label: "at 11 s the 0 s stamp expires, one more fits", at: [6, 38], in: lld-sl }
+    - { id: sl-exact, kind: note, label: "exact, no edge burst", at: [6, 40], in: lld-sl }
+    - { id: sl-cost, kind: note, label: memory grows with every request kept, at: [6, 41], in: lld-sl }
+    - { id: sl-verdict, kind: note, label: too costly at 1 million requests a second, at: [6, 42], in: lld-sl }
+  arrows: []
+beats:
+  - point: "The sliding window log keeps a timestamp for every allowed request of each client, so the window can slide with time instead of standing on the clock."
+    kind: mechanism
+    weight: core
+    teach:
+      - "The fixed window leaked at its edges because it stood still. Make it slide: the window is always the last 10 seconds, like the sliding window problems in algorithms practice."
+      - "To know what fell in the last 10 seconds, log the time of every allowed request. A client that sent at 0, 2, 4, 6 and 8 seconds has five stamps."
+    draw: [lld-sl, sl-idea, sl-s0, sl-s2, sl-s4, sl-s6, sl-s8]
+    check: What does the sliding window log keep for each client?
+    answer: "A timestamp for every allowed request still inside the window."
+  - point: "On each request, drop the stamps older than 10 seconds and count the rest: fewer than 5, allow and log it, otherwise 429; as old stamps expire, room opens again."
+    kind: mechanism
+    weight: core
+    teach:
+      - "When a request comes in, first throw away stamps older than 10 seconds, then count. Fewer than 5: allow it and add its stamp. Otherwise 429."
+      - "With those five stamps, a sixth at 9 seconds is refused. At 11 seconds the stamp from 0 seconds has expired, so there are four, and one more fits."
+    draw: [sl-rule, sl-allow, sl-full, sl-slide]
+    check: "Stamps at 0, 2, 4, 6 and 8 seconds, limit 5 per 10 seconds. Does a request at 10.5 seconds pass?"
+    answer: "Yes: the stamp at 0 seconds is older than 10 seconds and is dropped, leaving four, so it is allowed and logged."
+  - point: "It is exact, any 10-second span holds at most 5, but every request is stored until it ages out, so memory grows with the traffic: too costly at a million requests a second."
+    kind: failure
+    weight: core
+    teach:
+      - "It is precise: no span of 10 seconds ever holds more than 5, so the edge burst is gone."
+      - "The price is memory and work: a stored stamp for every request, kept and evicted per client. At a million requests a second that is the bulk of the system, so it is rarely used at this scale."
+    draw: [sl-exact, sl-cost, sl-verdict]
+    check: Why is the sliding window log rarely used at a million requests a second?
+    answer: "It stores a timestamp for every request in the window and must evict them, so memory and work grow with the traffic."
+    misconceptions:
+      - "The log is inaccurate -> it is the exact one; its problem is memory, not accuracy."
+asks:
+  - ids: [sl-idea]
+    beats: [1]
+    question: "The fixed window leaks because it stands still. How could we count exactly what happened in the last 10 seconds, at any moment?"
+    hints:
+      - What would you need to remember about each request?
+      - Then which of those still fall in the last 10 seconds?
+  - ids: [sl-cost]
+    beats: [3]
+    question: "It's exact. So what does it cost us, at a million requests a second?"
+    hints:
+      - What is stored for every single request?
+      - How long does each entry stay, and who removes it?

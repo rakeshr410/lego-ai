@@ -1,0 +1,57 @@
+# Stock broker interview, core entities: "2. Core entity" under the functional list, six lines, as in the video.
+id: backend/stock-broker/end-to-end/entities
+title: Six entities
+source:
+  hash: "08d2d5c188a0"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/stock-broker/end-to-end/requirements
+  assumes:
+    - "Functional: KYC onboarding, live prices and history, orders, watchlists, a dashboard of holdings and P and L."
+  carries:
+    - "The core entities are user, stock, order, trade, portfolio and watchlist."
+    - "An order is what the user asked for; a trade is what the exchange executed."
+  terms:
+    - term: trade
+      means: "What the exchange actually executed for an order, with its trade ID; may be partial or later."
+board:
+  keep: [title, prompt-desc, prompt-example, fr, fr-kyc, fr-prices, fr-orders, fr-watch, fr-dash, nfr, nfr-scale, nfr-cap, nfr-view, nfr-latency, nfr-region]
+  elements:
+    - { id: entities, kind: region, label: 2. Core entities, at: [2, 21], size: [18, 17], dashed: true }
+    - { id: ent-user, kind: note, label: user, at: [3, 23], in: entities }
+    - { id: ent-stock, kind: note, label: stock, at: [3, 25], in: entities }
+    - { id: ent-order, kind: note, label: order, at: [3, 27], in: entities }
+    - { id: ent-trade, kind: note, label: trade, at: [3, 29], in: entities }
+    - { id: ent-portfolio, kind: note, label: "portfolio, profit and loss", at: [3, 31], in: entities }
+    - { id: ent-watchlist, kind: note, label: watchlist, at: [3, 33], in: entities }
+  arrows: []
+  lists:
+    - { id: entity-list, in: entities, at: [3, 23], step: 2, slots: 7, width: 16, items: [ent-user, ent-stock, ent-order, ent-trade, ent-portfolio, ent-watchlist] }
+beats:
+  - point: "Read the entities off the requirements: the user, the stock, the order the user places, and the trade the exchange executes."
+    kind: component
+    weight: core
+    teach:
+      - "Step two, the core entities. Go down the requirements: a user, a stock with its prices, an order the user places."
+      - "And a trade: what the exchange actually executed. It is not the same as the order; twenty shares ordered may fill five now and fifteen later."
+    draw: [entities, ent-user, ent-stock, ent-order, ent-trade]
+    check: Why keep an order and a trade apart?
+    answer: The order is the request; the trade is what the exchange executed, which can be later, partial or never.
+  - point: "Two more: the portfolio, a user's holdings with profit and loss, and the watchlist, a saved list of symbols."
+    kind: component
+    weight: supporting
+    teach:
+      - "The dashboard gives the portfolio, holdings with their profit and loss, and the fourth requirement gives the watchlist."
+    draw: [ent-portfolio, ent-watchlist]
+    check: Which requirement does the portfolio entity serve?
+    answer: The dashboard of holdings, trade history, profit and loss and performance.
+asks:
+  - list: entity-list
+    beats: [1, 2]
+    question: "What are the core entities, the things this system keeps track of?"
+    hints:
+      - Look at the nouns in the five requirements.
+      - Is what the user asks for the same as what the exchange executes?

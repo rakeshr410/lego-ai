@@ -1,0 +1,159 @@
+# Top K leaderboard interview, deep dive 3: the hybrid, and finishing. The video's third picture, the first two merged, drawn fresh under the kept requirements: ingestion through Kafka to both the DB consumer (score DB, Flink, aggregated DB) and the Redis consumer (sorted set), the ranking service reading Redis and the aggregated DB, and the aggregated DB backing Redis; to the right the "3. Hybrid approach" notes, then real time over a WebSocket and the probabilistic variant. The video puts a 90-day TTL on a window key; this pack teaches time-bucket keys, since a TTL drops a whole key.
+id: backend/top-k-leaderboard/end-to-end/lld-hybrid
+title: "Deep dive, 3: the hybrid, and finishing"
+source:
+  hash: "840c74998eb9"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/top-k-leaderboard/end-to-end/lld-precomputed
+  assumes:
+    - "A Redis sorted set gives top K from memory in real time but is fragile and hard to scale."
+    - "Precomputing with Flink into an aggregated DB is durable but minutes stale."
+  carries:
+    - "The hybrid runs both paths from Kafka: Redis for recent windows in real time, the aggregated DB for past windows and as Redis's backup."
+    - "Rolling windows in Redis are time-bucket keys, one per hour or day, each with a TTL; a window is the union of its buckets."
+    - "Live leaderboards get updates from a WebSocket server reading Redis; a probabilistic top K uses a count-min sketch or RedisBloom Top-K."
+  terms:
+    - term: TTL
+      means: "Time to live: a timeout on a whole Redis key, after which the key and everything in it is deleted."
+    - term: time bucket
+      means: "A key holding the scores of one hour or one day; a window is the union of its buckets."
+    - term: count-min sketch
+      means: "A fixed-size table of counters that estimates how often each item occurs, never under-counting, within a bounded error."
+board:
+  keep: [title, nfr, nfr-scale, nfr-cap, nfr-latency, nfr-exact]
+  elements:
+    - { id: h3, kind: region, label: "5. Deep dive, 3. Hybrid", at: [6, 22], size: [64, 29] }
+    - { id: h-clients, kind: box, label: clients, at: [8, 34], size: [6, 3], in: h3 }
+    - { id: h-gateway, kind: box, label: API gateway, at: [18, 27], size: [7, 18], in: h3 }
+    - { id: h-score, kind: box, label: Score service, at: [29, 27], size: [10, 3], in: h3, tone: blue }
+    - { id: h-kafka, kind: box, label: Kafka, at: [43, 27], size: [7, 3], in: h3, tone: amber }
+    - { id: h-dbc, kind: box, label: DB consumer, at: [57, 27], size: [11, 3], in: h3, tone: grey }
+    - { id: h-db, kind: oval, label: Score DB, at: [57, 33], size: [11, 4], in: h3, tone: amber }
+    - { id: h-flink, kind: diamond, label: Flink, at: [57, 41], size: [11, 5], in: h3, tone: grey }
+    - { id: h-agg, kind: oval, label: Aggregated DB, at: [43, 45], size: [11, 4], in: h3, tone: amber }
+    - { id: h-rc, kind: box, label: Redis consumer, at: [43, 33], size: [10, 3], in: h3, tone: grey }
+    - { id: h-zset, kind: oval, label: Redis sorted set, at: [43, 39], size: [10, 3], in: h3, tone: green }
+    - { id: h-ranking, kind: box, label: Ranking service, at: [29, 40], size: [10, 3], in: h3, tone: blue }
+    - { id: h3n, kind: region, label: 3. Hybrid approach, at: [74, 22], size: [27, 16], dashed: true }
+    - { id: h3n-both, kind: note, label: "writes through Kafka fill both stores", at: [75, 25], in: h3n }
+    - { id: h3n-recent, kind: note, label: "Redis keeps recent windows only", at: [75, 26], in: h3n }
+    - { id: h3n-ttl, kind: note, label: "a key per hour or day, each with a TTL", at: [75, 27], in: h3n }
+    - { id: h3n-union, kind: note, label: "30 days is the union of 30 daily keys", at: [75, 28], in: h3n }
+    - { id: h3n-miss, kind: note, label: "a Redis miss means the past, read aggregated", at: [75, 30], in: h3n }
+    - { id: h3n-rebuild, kind: note, label: "Redis lost, rebuild it from the aggregated DB", at: [75, 31], in: h3n }
+    - { id: h3n-ws, kind: note, label: "real time, a WebSocket server reads Redis", at: [75, 33], in: h3n }
+    - { id: h3n-prob, kind: note, label: "probabilistic, count-min sketch or Top-K", at: [75, 35], in: h3n }
+  arrows:
+    - { id: h-clients-gateway, from: h-clients, to: h-gateway }
+    - { id: h-gateway-score, from: h-gateway, to: h-score }
+    - { id: h-score-kafka, from: h-score, to: h-kafka }
+    - { id: h-kafka-dbc, from: h-kafka, to: h-dbc }
+    - { id: h-dbc-db, from: h-dbc, to: h-db }
+    - { id: h-db-flink, from: h-db, to: h-flink }
+    - { id: h-flink-agg, from: h-flink, to: h-agg }
+    - { id: h-kafka-rc, from: h-kafka, to: h-rc }
+    - { id: h-rc-zset, from: h-rc, to: h-zset }
+    - { id: h-gateway-ranking, from: h-gateway, to: h-ranking }
+    - { id: h-ranking-zset, from: h-ranking, to: h-zset }
+    - { id: h-ranking-agg, from: h-ranking, to: h-agg }
+    - { id: h-agg-zset, from: h-agg, to: h-zset }
+beats:
+  - point: "The first approach was fresh but fragile, the second durable but stale; the hybrid merges both pictures, starting from the precomputed path: Kafka, DB consumer, score DB, Flink, aggregated DB."
+    kind: component
+    weight: core
+    teach:
+      - "Third way, and the best: the sorted set was real time but fragile, precomputing durable but stale. Merge the two pictures."
+      - "Start with the durable path, as in approach two: score service, Kafka, the DB consumer into the score database, Flink precomputing into the aggregated database."
+    draw: [h3, h-clients, h-gateway, h-clients-gateway, h-score, h-gateway-score, h-kafka, h-score-kafka, h-dbc, h-kafka-dbc, h-db, h-dbc-db, h-flink, h-db-flink, h-agg, h-flink-agg]
+    check: What did each of the first two approaches lack?
+    answer: "The sorted set lacked durability and global scale; precomputing lacked freshness, its rankings were minutes old."
+  - point: "Add the real-time path back from approach one: a Redis consumer on the same Kafka topic fills the sorted set, and the ranking service reads it."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Now bring back the fast path: the Redis consumer reads the same topic and updates the Redis sorted set as events arrive."
+      - "The ranking service reads the sorted set. Every write now feeds both stores."
+    draw: [h-rc, h-kafka-rc, h-zset, h-rc-zset, h-ranking, h-gateway-ranking, h-ranking-zset, h3n, h3n-both]
+    check: Which stores does one score event reach in the hybrid?
+    answer: "Both: the Redis sorted set through the Redis consumer, and the score DB, then the aggregated DB, through the DB consumer and Flink."
+  - point: "Redis keeps only recent windows, as time-bucket keys, one per hour or day, each with a TTL; a TTL drops a whole key, so the last 30 days is the union of 30 daily keys."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Redis no longer keeps everything forever: only the recent windows, and each key expires with a TTL."
+      - "Careful: a TTL removes a whole key, not old scores inside it. A 90-day TTL on a 90-day key would just delete it on day 90. So keep one key per hour or per day, each expiring, and build the last 30 days as the union of 30 daily keys, ZUNIONSTORE."
+    draw: [h3n-recent, h3n-ttl, h3n-union]
+    check: "You set a 90-day TTL on the 90-day key. What happens?"
+    answer: "On day 90 the whole key, every score in it, is deleted; a rolling window needs time-bucket keys that each expire."
+    misconceptions:
+      - "A TTL on a sorted set removes entries older than the TTL -> it deletes the whole key at once; rolling windows come from bucket keys."
+  - point: "The ranking service asks Redis first; a miss means a past window, last January say, which is already precomputed in the aggregated DB."
+    kind: flow
+    weight: core
+    teach:
+      - "The read path: the ranking service checks the sorted set first. If the key is there, done, in milliseconds."
+      - "A miss only happens for the past: last January's top 10. That is already precomputed, so the ranking service reads the aggregated database. Current data in Redis, past data in the aggregated store."
+    draw: [h-ranking-agg, h3n-miss]
+    check: A user asks for last January's top 10. Where does the answer come from?
+    answer: "The aggregated DB: Redis keeps only recent windows, and past windows are precomputed there."
+  - point: "The aggregated DB is also Redis's backup: if a Redis node is lost, its keys are rebuilt from the precomputed data, not from scratch."
+    kind: failure
+    weight: core
+    teach:
+      - "One more connection, from the aggregated database to Redis. If a Redis node goes down, a service reloads its keys from the precomputed data."
+      - "So Redis gives the near real-time answers, and the aggregated database gives the durability."
+    draw: [h-agg-zset, h3n-rebuild]
+    check: A Redis node dies. How is it brought back?
+    answer: "Its keys are rebuilt from the precomputed rankings in the aggregated DB instead of recomputed from every score."
+  - point: "Real-time updates, the last functional requirement: a live leaderboard keeps a WebSocket to a WebSocket server, which pushes changes it reads from the sorted set."
+    kind: mechanism
+    weight: core
+    teach:
+      - "The follow-up: real-time updates for a live leaderboard. The client opens a WebSocket, the variant of our top K endpoint, to a WebSocket server."
+      - "That server watches the board's sorted set and pushes the new top K when it changes. Trending lists stay plain GETs."
+    draw: [h3n-ws]
+    check: How does a live leaderboard get its updates without polling?
+    answer: "A WebSocket server keeps its connection open and pushes changes it reads from the Redis sorted set."
+  - point: "If the interviewer wants a probabilistic top K instead, use approximate structures in fixed memory, a count-min sketch with a small heap or RedisBloom's Top-K, trading a bounded error for memory."
+    kind: decision
+    weight: supporting
+    teach:
+      - "We chose exact results. If they ask for probabilistic: replace the exact counts with a count-min sketch, a small fixed table of counters, plus a heap of the current top K, or RedisBloom's Top-K."
+      - "They use a fixed amount of memory however many items there are, at the cost of a small, bounded error."
+    draw: [h3n-prob]
+    check: What does a probabilistic top K give up, and what does it gain?
+    answer: "It gives up exactness, a small bounded error, and gains fixed, small memory however many items there are."
+  - point: "Close by reading the non-functional list back: Kafka for a million writes a second, a clustered Redis backed by the aggregated DB for availability, recent top K from memory inside 100 ms, exact counts."
+    kind: rule
+    weight: core
+    teach:
+      - "Finish by reading the right-hand list back against the board. Scale: Kafka absorbs a million writes a second. Availability: Redis is clustered and backed by the aggregated database."
+      - "Latency: recent top K from memory, well inside 100 milliseconds, updates through Kafka within about 500. Accuracy: exact counts in both stores."
+    check: Which part of the board meets the 100 ms top K?
+    answer: "The Redis sorted sets, which answer recent windows from memory; past windows come precomputed from the aggregated DB."
+asks:
+  - ids: [h3n-ttl]
+    beats: [3]
+    question: "Redis should keep only recent windows. How would you lay out the keys so old data leaves on its own?"
+    hints:
+      - Redis can expire a key after a time.
+      - But it expires the whole key. What if each key held one hour or one day?
+  - ids: [h3n-miss]
+    beats: [4]
+    question: "Someone asks for last January's top 10, and Redis doesn't have it. Where should the ranking service look?"
+    hints:
+      - Which store keeps past windows?
+      - It was computed ahead of time.
+  - ids: [h3n-ws]
+    beats: [6]
+    question: "A live game leaderboard wants every change as it happens. How would you deliver that?"
+    hints:
+      - Polling the API would be wasteful.
+      - Remember the second way to call our top K endpoint.
+task:
+  prompt: "Draw the final design: clients, gateway, score service, Kafka feeding a DB consumer (score DB, Flink, aggregated DB) and a Redis consumer (sorted set), the ranking service reading Redis first and the aggregated DB for the past, and the aggregated DB rebuilding Redis."
+  expects: [1, 2, 4, 5]

@@ -1,0 +1,69 @@
+# Rate limiter interview, API: "3. API designing" beside the entities, three admin endpoints, then the 429 response template under them as code lines, as the video pastes it.
+id: backend/rate-limiter/end-to-end/api
+title: Admin endpoints, and the 429
+source:
+  hash: "8d63d363cbb6"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/rate-limiter/end-to-end/entities
+  assumes:
+    - "Functional: rules configurable at runtime; over the limit, answer 429."
+    - "The core entities are the rule, the client and the request counter."
+  carries:
+    - "The API is the admin's: POST /v1/admin/rules, GET /v1/admin/rules?clientId=xyz, GET /v1/admin/rate-limit/metrics?resource=url."
+    - "A blocked client gets 429 with X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset, Retry-After and an error body."
+  terms:
+    - term: Retry-After
+      means: An HTTP header telling the client how many seconds to wait before trying again.
+board:
+  keep: [title, prompt-desc, prompt-example, fr, fr-limit, fr-config, fr-429, fr-burst, fr-tier, nfr, nfr-scale, nfr-cap, nfr-latency, entities, ent-rule, ent-client, ent-counter]
+  elements:
+    - { id: api, kind: region, label: 3. API designing, at: [30, 24], size: [28, 15], dashed: true }
+    - { id: api-create, kind: note, label: "POST /v1/admin/rules, create a rule", at: [31, 26], in: api }
+    - { id: api-get, kind: note, label: "GET /v1/admin/rules?clientId=xyz, read rules", at: [31, 27], in: api }
+    - { id: api-metrics, kind: note, label: "GET /v1/admin/rate-limit/metrics?resource=url", at: [31, 28], in: api }
+    - { id: resp-status, kind: note, label: HTTP/1.1 429 Too Many Requests, at: [31, 30], in: api }
+    - { id: resp-limit, kind: note, label: "X-RateLimit-Limit: 100", at: [31, 31], in: api }
+    - { id: resp-remaining, kind: note, label: "X-RateLimit-Remaining: 0", at: [31, 32], in: api }
+    - { id: resp-reset, kind: note, label: "X-RateLimit-Reset: 1712345708", at: [31, 33], in: api }
+    - { id: resp-retry, kind: note, label: "Retry-After: 30", at: [31, 34], in: api }
+    - { id: resp-body-1, kind: note, label: "{ error: rate_limit_exceeded,", at: [31, 35], in: api }
+    - { id: resp-body-2, kind: note, label: "message: retry after 30 seconds }", at: [33, 36], in: api }
+  arrows: []
+beats:
+  - point: "Clients never call a rate limiter, so its API is the admin's: create a rule, read a client's rules, and read metrics for a resource."
+    kind: flow
+    weight: core
+    teach:
+      - "Step three. First ask whether the interviewer wants endpoints; listing them takes time. If so: the limiter is internal, so no client endpoint. The admin needs three, to keep rules configurable at runtime."
+      - "POST v1 admin rules creates a rule. GET v1 admin rules with a client ID reads that client's rules. GET v1 admin rate limit metrics for a resource feeds dashboards and audits."
+    draw: [api, api-create, api-get, api-metrics]
+    check: Why is there no endpoint for ordinary clients?
+    answer: "The limiter sits inside the request path; clients only meet it through the product's own APIs and the 429 it sends back."
+    misconceptions:
+      - "Clients call the rate limiter to ask if they may proceed -> the gateway calls it on their behalf; clients never see it except as a 429."
+  - point: "A blocked client gets 429 with its limit, the requests remaining, when the window resets, and Retry-After, plus an error body saying why."
+    kind: flow
+    weight: core
+    teach:
+      - "The response matters as much: a blocked client must know it was limited, not broken. Status 429 Too Many Requests."
+      - "Headers: the limit, 100; remaining, 0; the reset time as a Unix timestamp; Retry-After, 30 seconds. And a body: error rate limit exceeded, with a message to retry after 30 seconds, like a chat app saying when you can use it again."
+    draw: [resp-status, resp-limit, resp-remaining, resp-reset, resp-retry, resp-body-1, resp-body-2]
+    check: Which header tells the client when it may try again?
+    answer: "Retry-After, in seconds; X-RateLimit-Reset gives the window's reset time."
+asks:
+  - ids: [api-create, api-get, api-metrics]
+    beats: [1]
+    question: "Who calls this system's API, and what endpoints would they need? Give me the method and the path."
+    hints:
+      - Clients never call a rate limiter directly. Who changes the rules?
+      - They need to create rules, read them, and see how the limits behave.
+  - ids: [resp-status, resp-retry]
+    beats: [2]
+    question: "And when a client is over its limit, what exactly do we send back?"
+    hints:
+      - There is a status code made for this.
+      - What would the client need to know to try again sensibly?

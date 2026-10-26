@@ -1,0 +1,92 @@
+# Cloud storage interview, deep dive, follow-ups: the validator and deduplication services drawn beside S3, as in the video, with the 20 MB and 17 MB chunk example, the content-defined chunking caveat, and the other jobs on the bucket; then the requirements read back.
+id: backend/cloud-storage/end-to-end/lld-optimizations
+title: "Follow-ups: validation, deduplication, post-processing"
+source:
+  hash: "8789d63ce609"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/cloud-storage/end-to-end/lld-download
+  assumes:
+    - "Chunks have one fixed size, 5 MB, and a SHA-256 each."
+    - "Validation compares each stored chunk's hash with the one in Redis."
+  carries:
+    - "Validation runs once, after commit, in a separate validator service reading the bucket asynchronously; S3 can also check a SHA-256 on each PUT."
+    - "Fixed-size chunks make equal content give equal hashes, so a deduplication job keeps one copy."
+    - "An insertion shifts fixed boundaries; content-defined chunking fixes that. Virus scans and thumbnails run on the bucket too."
+  terms:
+    - term: "deduplication"
+      means: "Keeping one stored copy of identical chunks and pointing every file at it."
+    - term: "content-defined chunking"
+      means: "Cutting chunks where the content says, with a rolling hash, so an insertion shifts only nearby boundaries."
+board:
+  keep: [title, desc, fr, fr-account, fr-upload, fr-sync, fr-share, fr-folders, fr-quota, fr-out, nfr, nfr-scale, nfr-cap, nfr-large, nfr-latency, nfr-durable, hld, hld-phone, hld-laptop, hld-tablet, hld-clients, hld-gateway, hld-user-svc, hld-uploader, hld-meta-svc, hld-user-db, hld-blob, hld-meta-db, hld-phone-gw, hld-laptop-gw, hld-tablet-gw, hld-gw-user, hld-gw-uploader, hld-gw-meta, hld-user-db-arrow, hld-blob-arrow, hld-meta-db-arrow, lld-head, lc-client, lc-chunker, lc-upload-mgr, lc-index, lk-gateway, lk-user-svc, lk-users-db, lk-users-1, lk-users-2, lk-client-gw, lk-gw-user, lk-user-db, lk-uploader, s1, s1-post, s1-req-1, s1-req-2, s1-req-3, s1-resp-1, s1-resp-2, s1-resp-3, s1-resp-4, s1-quota, s1-resume-1, s1-resume-2, s1-resume-3, s1-resume-4, lk-gw-uploader, lk-quota, s2, s2-chunk, s3-post, s3-body, s3-sign, s3-resp, s4-upload, lk-s3, lk-redis, lk-redis-1, lk-redis-2, lk-sign, lk-state, s5, s5-commit, s5-validate, s6-save, s6-publish, lk-meta-svc, lk-meta-db, lk-kafka, lk-gw-meta, lk-up-meta, lk-meta-db-arrow, lk-publish, lc-sync-engine, lk-sync, lk-sync-pull, lk-sync-push, lk-tables-head, lk-t-folders, lk-t-files, lk-t-files-2, lk-t-versions, lk-t-vchunks, lk-t-chunks, lk-t-perms, lk-consume, lk-gw-sync, lk-sync-meta, lc-watcher, lv-changed, lv-version, lk-download, lk-dl-perm, lk-dl-urls, lk-gw-download, lk-dl-meta]
+  elements:
+    - { id: "lk-validator", kind: "box", label: "Validator service", at: [68, 47], size: [9, 3], tone: "grey" }
+    - { id: "lk-dedup", kind: "box", label: "Dedup service", at: [68, 57], size: [9, 3], tone: "grey" }
+    - { id: "lo-validate", kind: "note", label: "validate once after commit, off the request path", at: [70, 73] }
+    - { id: "lo-dedup", kind: "note", label: "dedup, fixed 5 MB chunks, same hash, one copy", at: [70, 74] }
+    - { id: "lo-20mb", kind: "note", label: "20 MB file is 5, 5, 5, 5 MB", at: [70, 75] }
+    - { id: "lo-17mb", kind: "note", label: "17 MB file is 5, 5, 5, 2 MB", at: [70, 76] }
+    - { id: "lo-insert", kind: "note", label: "an insert shifts fixed chunks, content-defined chunks fix it", at: [70, 77] }
+    - { id: "lo-jobs", kind: "note", label: "more jobs on the bucket, virus scan, thumbnails", at: [70, 78] }
+  arrows:
+    - { id: "lk-validate", from: "lk-validator", to: "lk-s3" }
+    - { id: "lk-dedupe", from: "lk-dedup", to: "lk-s3" }
+beats:
+  - point: "Re-hashing every chunk as it lands would eat the uploader at millions of chunks, so a separate validator service checks the whole upload once, after commit, asynchronously."
+    kind: decision
+    weight: core
+    teach:
+      - "The follow-up you will get: how would you make it better? Start with validation. Chunks are 5 MB, so a 20 GB file is about 4,000 of them, and millions of users upload. Hashing each one as S3 reports it would consume the uploader."
+      - "So validate once, after commit, in a separate validator service that reads the chunks from the bucket asynchronously. That is the short processing time after an upload. S3 can also check a SHA-256 sent with each PUT and refuse a bad chunk."
+    draw: [lk-validator, lk-validate, lo-validate]
+    check: "Why move validation to a separate service after commit?"
+    answer: "At millions of chunks, hashing each inline consumes the uploader; one asynchronous pass after commit does the same check off the request path."
+    misconceptions:
+      - "Validating chunks is optional at this scale -> it still happens; it moves off the request path, and S3 can check each PUT's checksum."
+  - point: "Because every chunk has one fixed size, identical content cuts into identical chunks with identical hashes, so a deduplication job keeps one copy: a 20 MB file is 5, 5, 5, 5 MB, a 17 MB file 5, 5, 5, 2 MB."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Next, storage. Many users upload the same files. This is why the backend fixes one chunk size: identical content then cuts into identical chunks, and identical chunks have identical SHA-256 hashes."
+      - "A 20 MB file is four 5 MB chunks; a 17 MB file is three 5 MB chunks and one of 2 MB. Wherever two chunks hash the same, a deduplication service, an async job, keeps one copy and points both files at it."
+    draw: [lk-dedup, lk-dedupe, lo-dedup, lo-20mb, lo-17mb]
+    check: "How can the system tell two chunks are duplicates without comparing their bytes?"
+    answer: "They have the same size and the same SHA-256 hash, which the fixed chunk size makes possible."
+  - point: "Fixed boundaries have a limit: one insertion near the start shifts every later chunk, so nothing after it matches; content-defined chunking cuts by content and keeps the rest equal."
+    kind: failure
+    weight: supporting
+    teach:
+      - "Name the limit. Insert a few bytes near the start of a file and every fixed 5 MB boundary after it shifts: no later chunk hashes the same, so neither the edit upload nor dedup saves anything."
+      - "Content-defined chunking cuts where a rolling hash of the content says, so only the chunks around the insertion change."
+    draw: [lo-insert]
+    check: "Why can a small insertion defeat fixed-size chunking?"
+    answer: "It shifts every later boundary, so every later chunk's hash changes even though its content did not."
+  - point: "More async jobs run on the bucket, a virus scan and thumbnails; then read the non-functional list back against the board."
+    kind: rule
+    weight: supporting
+    teach:
+      - "Other jobs run on the bucket the same way: a virus scan, thumbnails, queued through Kafka."
+      - "Close by reading the right-hand list against the board: scale from separate services and bytes straight to S3; availability and eventual sync through Kafka; large files in chunks that resume; latency from parallel chunks; durability from S3 and validated hashes."
+    draw: [lo-jobs]
+    check: "Read one non-functional requirement back against the final board."
+    answer: "For example: large files are met by fixed chunks, signed URLs and resume; durability by S3 and hash validation; sync lag is the eventual consistency through Kafka."
+asks:
+  - ids: [lk-validator]
+    beats: [1]
+    question: "Hashing every one of millions of chunks as they land would swamp the uploader. Where else could validation happen?"
+    hints:
+      - "Does it have to happen per chunk, as it arrives?"
+      - "A separate worker, after the client commits."
+  - ids: [lk-dedup]
+    beats: [2]
+    question: "Many users upload the same files. How could the backend store each piece only once?"
+    hints:
+      - "Every chunk is the same size and has a hash."
+      - "What do two identical chunks have in common?"
+task:
+  prompt: "Draw the final deep dive: the client app with its watcher, local metadata index, chunker, upload manager and sync engine; the gateway; the user, uploader, metadata, download and sync services; Users, S3, Redis, Metadata and Kafka; and the validator and dedup services beside S3."
+  expects: [1, 2]

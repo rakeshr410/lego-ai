@@ -1,0 +1,1037 @@
+# yaml-language-server: $schema=../../../../../lego/content-kit/schema/topic.schema.json
+# provenance: ai-drafted by claude-opus-5-5 on 2026-10-27
+#
+# A whole backend system design interview for a food delivery app like Zomato, Swiggy or Uber Eats, run
+# step by step on one whiteboard. The order and the board follow InterviewWithBunny's System Design 6:
+# requirements, core entities, API, a high-level design with three actors (users, restaurants, delivery
+# partners), then a deep dive that opens each service in turn: the user service, search, the cart, the
+# order flow on Kafka, delivery matching with live driver locations, and the last hops (driver acceptance,
+# live tracking over WebSockets, the food-ready notice). Every latency figure is illustrative.
+# A backend system of lego-ai's own (app/articles/backend): it stands alone and links to no main-site topic.
+catalogVersion: 5
+title: Designing a food delivery app, end to end
+shortTitle: Food delivery interview
+summary: "A 45-minute backend design interview for a food delivery app like Zomato, Swiggy or Uber Eats, on one board: requirements, entities, nine endpoints, a high-level design for users, restaurants and delivery partners, then a deep dive into search, the cart, the order flow on Kafka, delivery matching and live tracking."
+group: design
+order: 6
+xp: 300
+difficulty: intermediate
+tags: [interview, geospatial, search, event-driven, real-time, payments]
+eyebrow: Design
+breadcrumb: [Food delivery, Interview walkthrough]
+lede: "You have about forty-five minutes and one whiteboard to design an app like Zomato or Swiggy: people find nearby restaurants, order and pay, the restaurant accepts, a delivery partner is found and the customer watches the food arrive on a map. Three actors share one system. This walkthrough pins down the requirements, writes the API, draws one service per job, then opens each service in turn, ending with the hard parts: an order flow that never loses a paid order, and matching orders to drivers whose locations change every few seconds."
+reviewStatus: draft
+author: rakeshr410
+provenance: ai-drafted
+sources:
+  - title: "System Design 6: Design Food Delivery Application like Zomato / Swiggy / Uber Eats (InterviewWithBunny, YouTube)"
+    url: https://www.youtube.com/watch?v=rZyAgZuuZiA
+    note: "Order, board and numbers. Corrected: login is a POST; identity from a JWT; CVV never stored; ES is fed by CDC; no Kafka Connect or 'Kafka gateway'; Redis is shared, not local; TTL spans missed pings; CAP under partition."
+  - title: Elasticsearch geo queries (Elastic documentation)
+    url: https://www.elastic.co/guide/en/elasticsearch/reference/current/geo-queries.html
+    note: "geo_distance and related queries: documents within a radius of a point, combined with full-text matching."
+  - title: Redis geospatial indexes (Redis documentation)
+    url: https://redis.io/docs/latest/develop/data-types/geospatial/
+    note: "GEOADD and GEOSEARCH store points by a geohash-based score and find members within a radius."
+  - title: Geohash (Wikipedia)
+    url: https://en.wikipedia.org/wiki/Geohash
+    note: "Encodes a latitude and longitude as a short string; nearby points share a prefix, so a prefix is a cell on the map."
+  - title: Apache Kafka introduction (Apache Kafka documentation)
+    url: https://kafka.apache.org/intro
+    note: "Topics, partitions, producers and consumer groups; each group reads every event of a topic independently."
+  - title: Pattern, transactional outbox (microservices.io)
+    url: https://microservices.io/patterns/data/transactional-outbox.html
+    note: "Write the state change and the event in one database transaction, then relay the event, so neither is lost."
+tutorBrief: >-
+  Interview walkthrough for a food delivery app like Zomato, Swiggy or Uber Eats: an online platform to
+  search restaurants and order food from them. 45 to 50 minutes; requirements, entities and API kept short,
+  most time on the high-level design and the deep dive. Three actors: the user who orders, the restaurant
+  that accepts and cooks, the delivery partner who is assigned and delivers; in a real interview agree which
+  one to design, the walkthrough covers all three. Functional (8): register and log in; list nearby open
+  restaurants by the user's location; search restaurants by title and menu item; show a restaurant's menu;
+  add items to the cart and pay to place the order; once the restaurant accepts, assign a nearby delivery
+  partner (optimise delivery time); near real-time location of the partner after pickup; notifications at
+  every stage and past orders in the profile. Non-functional: scale 50M users and 1M restaurants; CAP chosen
+  per part, highly available for search and browsing, strongly consistent for payment and orders. Entities:
+  user, restaurant, food menu, delivery partner, payment. API (9): POST /v1/users/register (plus login as a
+  POST, logout, update); GET /v1/restaurants/nearby?lat&long&radius (5 or 10 km) returns a page of partial
+  restaurants (id, name, thumbnail); GET /v1/restaurants/search?title&menuItem, paginated; GET
+  /v1/restaurants/{restId}; GET /v1/restaurants/{restId}/menu; POST /v1/cart/items { itemId, qty, restId }
+  returns cartId, user from the JWT, not the body; POST /v1/orders { cartId } returns orderId; POST
+  /v1/payments { payment details, orderId } returns paymentId and status (a failed payment leaves a failed
+  order); GET /v1/delivery/{orderId}/tracking. Restaurant acceptance and partner assignment are internal.
+  High-level design: users, load balancer and API gateway (authentication and authorisation, rate limiting,
+  routing, round-robin load balancing), user service and user DB, search service and restaurant DB, cart
+  service and cart DB, order service with the payment gateway and order DB; restaurants through their own
+  gateway to a restaurant service (writes the restaurant DB) and an order service that pushes new orders and
+  takes accept; delivery matching service reading orders and the driver DB; partners through a gateway to a
+  location update service (every 5 s); live location to the user. Deep dive: user service on MySQL or
+  Postgres (userId, email, password hash, address), login returns a JWT. Search: Elasticsearch for location
+  plus text (geo_distance), fed from the Postgres restaurant DB (restaurant: restId, name, address, status,
+  lat and long, image URLs; menu: menuId, itemId, restId, title, description, image URL, category, price) by
+  a CDC pipeline that joins the two tables into one document per restaurant; images in S3, served by URL
+  through a CDN. Cart: Postgres (cartId, restId, userId, items), one cart per restaurant. Order: order
+  service calls a payment service, which hands card details to the payment gateway (tokenised, CVV never
+  stored) and records the result in a MySQL payment DB (paymentId, userId, orderId, amount, currency,
+  timestamp); then an orderPlaced event on Kafka, read by three consumers: order consumer writes the
+  Postgres order DB (orderId, userId, restId, items, price, currency, time, driverId), notification service
+  tells the user, restaurant acceptance service asks the restaurant through the restaurant-side order service
+  (HTTP long polling or a push). Accept goes back on Kafka (orderStatus confirmed): consumers update the order,
+  notify the user, and the delivery matching service picks it up. Write the order and its event together
+  (transactional outbox); consumers idempotent. Matching: consumer of accepted orders; geohash proximity search
+  for the nearest idle partner; partners send location and status every 5 to 10 s through an ingestion
+  gateway to Kafka; the location update service writes Redis (GEOADD) with a TTL of a few missed pings (about
+  30 s; the video says 10 s), so offline partners drop out; Redis is written through to the driver DB.
+  Matching publishes deliveryPartnerAssigned; order consumer sets driverId. Last hops: delivery acceptance
+  service offers the order to several nearby idle partners through the partner API gateway, first accept
+  wins (a conditional update so only one wins); live tracking over WebSockets: a WebSocket gateway and
+  manager hold users' connections and push the partner's location after pickup; an order confirmation
+  service reads the food-ready event and tells the assigned partner to come.
+components:
+  - key: client
+    name: User app
+    tone: sand
+    kind: client
+    summary: The customer's app or site; browses, orders, pays and watches the delivery.
+    owns: [nothing durable]
+    talksTo: [api-gateway, websocket-gateway]
+  - key: api-gateway
+    name: Load balancer and API gateway
+    tone: blue
+    kind: gateway
+    summary: Authenticates and authorises each request, rate-limits, routes by path and balances across service instances round robin.
+    owns: [routes, rate limits]
+    talksTo: [user-service, search-service, cart-service, order-service]
+  - key: user-service
+    name: User service
+    tone: blue
+    kind: service
+    summary: Registers users, checks credentials at login and issues a JWT for later calls.
+    owns: [accounts]
+    talksTo: [user-db]
+  - key: user-db
+    name: User DB
+    tone: yellow
+    kind: datastore
+    summary: MySQL or Postgres; one row per user.
+    owns: [users]
+    talksTo: []
+  - key: search-service
+    name: Search service
+    tone: blue
+    kind: service
+    summary: Answers the nearby list and title or menu searches by querying the Elasticsearch index.
+    owns: [nothing durable]
+    talksTo: [elasticsearch]
+  - key: elasticsearch
+    name: Elasticsearch
+    tone: orange
+    kind: datastore
+    summary: A search index of one document per restaurant with its menu, queried by distance and by text.
+    owns: [restaurant documents]
+    talksTo: []
+  - key: restaurant-service
+    name: Restaurant service
+    tone: blue
+    kind: service
+    summary: Takes restaurants' details, menus and images from their owners and writes them to the restaurant DB and S3.
+    owns: [restaurant listings]
+    talksTo: [restaurant-db, image-store]
+  - key: restaurant-db
+    name: Restaurant DB
+    tone: yellow
+    kind: datastore
+    summary: Postgres; the restaurant and menu tables, the source of truth the search index is built from.
+    owns: [restaurant, menu]
+    talksTo: [elasticsearch]
+  - key: image-store
+    name: S3 bucket
+    tone: yellow
+    kind: datastore
+    summary: Object storage for restaurant and food photos, served to apps by URL through a CDN.
+    owns: [images]
+    talksTo: []
+  - key: cart-service
+    name: Cart service
+    tone: blue
+    kind: service
+    summary: Keeps each user's cart for one restaurant, so it survives closing the app.
+    owns: [carts]
+    talksTo: [cart-db]
+  - key: cart-db
+    name: Cart DB
+    tone: yellow
+    kind: datastore
+    summary: Postgres; one cart per user and restaurant.
+    owns: [carts]
+    talksTo: []
+  - key: order-service
+    name: Order service
+    tone: green
+    kind: service
+    summary: Runs checkout. Takes payment through the payment service, then publishes the order as an event instead of calling every next step itself.
+    owns: [checkout]
+    talksTo: [payment-service, kafka]
+  - key: payment-service
+    name: Payment service
+    tone: green
+    kind: service
+    summary: Hands the card details to the payment gateway and records the result.
+    owns: [payment records]
+    talksTo: [payment-gateway, payment-db]
+  - key: payment-gateway
+    name: Payment gateway
+    tone: gray
+    kind: external
+    summary: A third party that charges the card with the bank and answers success or failure.
+    owns: [card data]
+    talksTo: []
+  - key: payment-db
+    name: Payment DB
+    tone: yellow
+    kind: datastore
+    summary: MySQL; one row per payment attempt, written in a transaction.
+    owns: [payments]
+    talksTo: []
+  - key: kafka
+    name: Kafka
+    tone: purple
+    kind: queue
+    summary: The event log between services; topics such as orderPlaced, orderStatus and deliveryPartnerAssigned.
+    owns: [order events]
+    talksTo: [order-consumer, notification-service, restaurant-acceptance, matching-service, order-ready]
+  - key: order-consumer
+    name: Order consumer
+    tone: green
+    kind: worker
+    summary: Reads order events and writes each order's state to the order DB.
+    owns: [nothing]
+    talksTo: [order-db]
+  - key: order-db
+    name: Order DB
+    tone: yellow
+    kind: datastore
+    summary: Postgres; one row per order with its items, price, status and assigned driver.
+    owns: [orders]
+    talksTo: []
+  - key: notification-service
+    name: Notification service
+    tone: blue
+    kind: service
+    summary: Tells the user what happened at each stage (placed, accepted, picked up).
+    owns: [nothing]
+    talksTo: [client]
+  - key: restaurant-acceptance
+    name: Restaurant acceptance service
+    tone: green
+    kind: worker
+    summary: Reads new orders and asks the restaurant to accept or decline through the restaurant-side order service.
+    owns: [nothing]
+    talksTo: [restaurant-orders]
+  - key: restaurant-orders
+    name: Restaurant order service
+    tone: green
+    kind: service
+    summary: Holds restaurants' connections, shows them new orders, and publishes accept and food-ready events.
+    owns: [pending offers]
+    talksTo: [restaurant-app, kafka]
+  - key: restaurant-app
+    name: Restaurant app
+    tone: sand
+    kind: client
+    summary: The restaurant's tablet or dashboard; edits the listing, accepts orders, marks food ready.
+    owns: [nothing]
+    talksTo: [restaurant-service, restaurant-orders]
+  - key: matching-service
+    name: Delivery matching service
+    tone: green
+    kind: worker
+    summary: Reads accepted orders and finds the nearest idle delivery partners with a geohash search on live locations.
+    owns: [nothing]
+    talksTo: [location-cache, delivery-acceptance, kafka]
+  - key: partner-app
+    name: Delivery partner app
+    tone: sand
+    kind: client
+    summary: The rider's phone; sends location and status every few seconds, accepts offers, streams location after pickup.
+    owns: [nothing]
+    talksTo: [location-gateway]
+  - key: location-gateway
+    name: Location gateway
+    tone: blue
+    kind: gateway
+    summary: Takes partners' location pings and writes them straight to a Kafka topic, so a burst never waits on a database.
+    owns: [nothing]
+    talksTo: [kafka]
+  - key: location-service
+    name: Location update service
+    tone: blue
+    kind: worker
+    summary: Consumes location pings and writes each partner's latest position and status to Redis with a TTL.
+    owns: [nothing]
+    talksTo: [location-cache]
+  - key: location-cache
+    name: Redis location store
+    tone: orange
+    kind: cache
+    summary: Latest position of every online partner in a geo index; an entry expires when the partner stops sending.
+    owns: [live locations]
+    talksTo: [driver-db]
+  - key: driver-db
+    name: Driver DB
+    tone: yellow
+    kind: datastore
+    summary: Partners' profiles and last known location and status, written through from Redis.
+    owns: [partners]
+    talksTo: []
+  - key: delivery-acceptance
+    name: Delivery acceptance service
+    tone: green
+    kind: service
+    summary: Offers an order to several nearby partners at once and assigns the first who accepts.
+    owns: [open offers]
+    talksTo: [partner-app, kafka]
+  - key: websocket-gateway
+    name: WebSocket gateway
+    tone: blue
+    kind: gateway
+    summary: Holds users' open WebSocket connections, with a manager that tracks which server holds whom, and pushes the partner's location.
+    owns: [open connections]
+    talksTo: [client]
+  - key: order-ready
+    name: Order confirmation service
+    tone: green
+    kind: worker
+    summary: Reads the restaurant's food-ready event and tells the assigned partner to come for pickup.
+    owns: [nothing]
+    talksTo: [partner-app]
+content:
+  # ────────────────────────────────────────────────────────────────── Problem statement
+  - __component: sd.section
+    key: problem-statement
+    title: Understanding the problem.
+    railLabel: Problem
+    intro: "The prompt is one line: design a food delivery app like Zomato, Swiggy or Uber Eats. Say what it does in a sentence and agree it with the interviewer before anything else."
+  - __component: sd.rich-text
+    key: problem-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "It is an online platform where a user searches restaurants and orders food from them. That sentence hides three actors, each with its own app: the user who places the order, the restaurant that accepts it and cooks, and the delivery partner who is assigned once the order is accepted and carries the food from the restaurant to the user."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Covering all three in depth takes far longer than an interview, so ask which one the interviewer wants: the ordering flow, the restaurant flow or the delivery flow. This walkthrough covers all three, because you cannot know which you will get. The steps are the usual five, numbered on the board as you reach them: requirements, core entities, API, high-level design, then a deep dive into each service."
+  - __component: sd.quiz
+    key: problem-quiz
+    title: Quick check
+    questions:
+      - question: Who are the three actors of a food delivery app?
+        optionA: User, admin, database
+        optionB: The user who orders, the restaurant that accepts and cooks, and the delivery partner who delivers
+        optionC: Frontend, backend, payment gateway
+        optionD: User, Kafka, Redis
+        answer: B
+        explanation: Each actor has its own app and its own flow; an interviewer often asks for one of them.
+  # ────────────────────────────────────────────────────────────────── 1. Requirements
+  - __component: sd.section
+    key: requirements
+    title: Requirements.
+    railLabel: Requirements
+    intro: "Functional requirements on the left, the system's qualities on the right. Keep it brisk: the interesting part of this design is the order and delivery flow, and it needs the time."
+  - __component: sd.subsection
+    key: functional-sub
+    title: Functional requirements
+    railLabel: Functional
+  - __component: sd.checklist
+    key: functional
+    idPrefix: FR-
+    items:
+      - text: Users register and log in.
+      - text: "List the nearby open restaurants, by the user's location."
+        note: The home page. Nearby means within a radius, say 5 or 10 km.
+      - text: Search restaurants by title and by menu item.
+      - text: "Show a restaurant's menu."
+      - text: Add items to a cart and pay to place the order.
+      - text: "When the restaurant accepts the order, assign a nearby delivery partner, keeping delivery time short."
+      - text: "Once the partner picks the order up, show the user the partner's location in near real time."
+      - text: Notify the user at every stage, and keep past orders in the profile.
+  - __component: sd.subsection
+    key: non-functional-sub
+    title: Non-functional requirements
+    railLabel: Non-functional
+  - __component: sd.requirement-table
+    key: non-functional
+    rows:
+      - area: Scale
+        requirement: A large consumer marketplace.
+        targets: [50M users, 1M restaurants]
+        note: Ask for the numbers; they are why the design is split into services and why search gets its own index.
+      - area: Availability
+        requirement: Browsing and searching always answer.
+        targets: [highly available for search and browsing]
+        note: A slightly stale restaurant list is fine; an empty home page is not.
+      - area: Consistency
+        requirement: Payments and orders are never lost or doubled.
+        targets: [strongly consistent for payment and orders]
+        note: A charge without an order, or two charges for one order, is a real failure.
+  - __component: sd.rich-text
+    key: cap-split
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "At this scale the data sits on many machines, and CAP says that when the network between them splits, each part of the system must choose: answer anyway, or refuse until the copies agree. The choice is made per part, not once for the app. Search and browsing choose availability: a restaurant that opened a minute ago can show up a moment late. Payment and ordering choose consistency: a paid order must exist exactly once, even if that means an error and a retry during a failure."
+  - __component: sd.quiz
+    key: requirements-quiz
+    title: Quick check
+    questions:
+      - question: How does the design treat the CAP trade-off?
+        optionA: The whole app picks availability
+        optionB: The whole app picks consistency
+        optionC: Per part, available for search and browsing, consistent for payment and orders
+        optionD: CAP does not apply to microservices
+        answer: C
+        explanation: Different parts fail differently. A stale restaurant list costs nothing; a lost or doubled payment costs real money.
+      - question: Which is a functional requirement?
+        optionA: 50M users
+        optionB: Show the user the partner's location after pickup
+        optionC: Strong consistency for orders
+        optionD: High availability for search
+        answer: B
+        explanation: Functional lines say what the system does; the others are qualities.
+  # ────────────────────────────────────────────────────────────────── 2. Entities
+  - __component: sd.section
+    key: entities
+    title: Core entities.
+    railLabel: Entities
+    intro: "Read the nouns off the functional requirements."
+  - __component: sd.table
+    key: entities-table
+    columns:
+      - { label: Entity, style: strong }
+      - { label: What it is, style: text }
+    rows:
+      - [User, The customer who searches and orders; has an address and past orders.]
+      - [Restaurant, "A listing with a location, an open or closed status and photos."]
+      - [Food menu, "The items a restaurant sells: title, price, category, photo."]
+      - [Delivery partner, "The rider; has a live location and is idle or busy."]
+      - [Payment, "One attempt to pay for an order, with its amount and result."]
+  - __component: sd.quiz
+    key: entities-quiz
+    title: Quick check
+    questions:
+      - question: Why is the delivery partner an entity of its own rather than a field of the order?
+        optionA: It is not; it is just a name on the order
+        optionB: "It has state of its own, a live location and idle or busy, that matching reads before any order points at it"
+        optionC: Because partners pay for food
+        optionD: For the search index
+        answer: B
+        explanation: Matching searches partners by location and status; the order only records which one was assigned.
+  # ────────────────────────────────────────────────────────────────── 3. API
+  - __component: sd.section
+    key: api
+    title: API.
+    railLabel: API
+    intro: "Mostly one endpoint per functional requirement, with two exceptions: showing a restaurant takes two calls, and placing an order takes three (cart, order, payment). Restaurant acceptance and partner assignment are internal calls, not public endpoints."
+  - __component: sd.endpoint
+    key: register
+    method: POST
+    path: /v1/users/register
+    summary: "Creates an account from the user's details. Login, logout and update come with it; login is a POST too, so the password travels in the body, never in a URL."
+    requestBody:
+      name: user 1
+      email: user1@example.com
+      password: "********"
+      address: "12 Park Road"
+    responses:
+      - label: Created
+        status: "201"
+        body:
+          userId: u_1
+  - __component: sd.endpoint
+    key: nearby
+    method: GET
+    path: "/v1/restaurants/nearby?lat=12.97&long=77.59&radius=5km&page=1"
+    summary: "The home page. The app sends the user's position and a radius; the answer is one page of open restaurants with only what a card needs (id, name, thumbnail), because hundreds may match."
+    responses:
+      - label: OK
+        status: "200"
+        body:
+          restaurants: "[{ restId: r_17, name: Spice Route, thumbnail: url }]"
+          nextPage: 2
+  - __component: sd.endpoint
+    key: search
+    method: GET
+    path: "/v1/restaurants/search?title=spice&menuItem=biryani&page=1"
+    summary: "Looks the same as nearby but matches text: restaurants whose title or menu matches. Also paginated, also partial."
+    responses:
+      - label: OK
+        status: "200"
+        body:
+          restaurants: "[{ restId: r_17, name: Spice Route, thumbnail: url }]"
+          nextPage: 2
+  - __component: sd.endpoint
+    key: restaurant
+    method: GET
+    path: "/v1/restaurants/{restId}"
+    summary: "A restaurant's details. Its menu is a second call, GET /v1/restaurants/{restId}/menu, returning the food items available now."
+    responses:
+      - label: OK
+        status: "200"
+        body:
+          restId: r_17
+          name: Spice Route
+          status: open
+  - __component: sd.endpoint
+    key: add-to-cart
+    method: POST
+    path: /v1/cart/items
+    summary: "Adds an item to the cart: the item, how many plates and which restaurant. Who is adding comes from the JWT in the Authorization header, never from the body. Update and delete come with it."
+    requestHeaders: ["Authorization: Bearer <token>"]
+    requestBody:
+      itemId: i_42
+      qty: 3
+      restId: r_17
+    responses:
+      - label: OK
+        status: "200"
+        body:
+          cartId: c_9
+  - __component: sd.endpoint
+    key: place-order
+    method: POST
+    path: /v1/orders
+    summary: "Places the order for a cart and returns its id. The order service then takes payment, POST /v1/payments with the payment details and the orderId, which returns a paymentId and a status; a failed payment leaves the order marked failed."
+    requestBody:
+      cartId: c_9
+    responses:
+      - label: Created
+        status: "201"
+        body:
+          orderId: o_501
+  - __component: sd.endpoint
+    key: tracking
+    method: GET
+    path: "/v1/delivery/{orderId}/tracking"
+    summary: "The order's progress (accepted, cooking, picked up) and, once picked up, where the partner is. The live map itself comes over a WebSocket in the deep dive."
+    responses:
+      - label: OK
+        status: "200"
+        body:
+          status: picked_up
+          partner: "{ lat: 12.96, long: 77.60 }"
+  - __component: sd.table
+    key: requirement-to-endpoint
+    title: Requirements to endpoints
+    columns:
+      - { label: Requirement, style: text }
+      - { label: Endpoints, style: mono-strong }
+    rows:
+      - [Register and log in, "POST /v1/users/register (login, logout, update)"]
+      - [Nearby restaurants, "GET /v1/restaurants/nearby"]
+      - [Search by title and menu, "GET /v1/restaurants/search"]
+      - [A restaurant and its menu, "GET /v1/restaurants/{restId}, GET /v1/restaurants/{restId}/menu"]
+      - [Cart and paying, "POST /v1/cart/items, POST /v1/orders, POST /v1/payments"]
+      - [Track the delivery, "GET /v1/delivery/{orderId}/tracking"]
+  - __component: sd.quiz
+    key: api-quiz
+    title: Quick check
+    questions:
+      - question: Where does the cart call get the user's identity from?
+        optionA: A userId field in the body
+        optionB: The JWT in the Authorization header, checked by the gateway
+        optionC: The restaurant id
+        optionD: A cookie with the user id in plain text
+        answer: B
+        explanation: Anything in the body can be forged; the signed token says who is calling.
+      - question: Why do nearby and search return partial restaurants, a page at a time?
+        optionA: To hide data
+        optionB: Hundreds may match, and a list card needs only an id, a name and a thumbnail
+        optionC: Because GET has no body
+        optionD: Elasticsearch cannot return more
+        answer: B
+        explanation: Full details are a second call when the user opens one restaurant.
+  # ────────────────────────────────────────────────────────────────── 4. High-level design
+  - __component: sd.section
+    key: high-level-design
+    title: High-level design.
+    railLabel: High level
+    intro: "One service per job, behind one gateway, for each of the three actors in turn: the user's flow first, then the restaurant's, then the delivery partner's. How each service works is left for the deep dive."
+  - __component: sd.component-diagram
+    key: hld-diagram
+    title: The first design
+    direction: LR
+    nodes:
+      - { key: client }
+      - { key: api-gateway, details: [auth, rate limiting, routing, round robin] }
+      - { key: user-service }
+      - { key: user-db }
+      - { key: search-service }
+      - { key: restaurant-db }
+      - { key: cart-service }
+      - { key: cart-db }
+      - { key: order-service }
+      - { key: payment-gateway }
+      - { key: order-db }
+      - { key: restaurant-app }
+      - { key: restaurant-service }
+      - { key: restaurant-orders, details: [push new orders, take accept] }
+      - { key: matching-service }
+      - { key: driver-db }
+      - { key: location-service, details: [every 5 s] }
+      - { key: partner-app }
+    edges:
+      - { from: client, to: api-gateway }
+      - { from: api-gateway, to: user-service }
+      - { from: api-gateway, to: search-service }
+      - { from: api-gateway, to: cart-service }
+      - { from: api-gateway, to: order-service }
+      - { from: user-service, to: user-db }
+      - { from: search-service, to: restaurant-db }
+      - { from: cart-service, to: cart-db }
+      - { from: order-service, to: payment-gateway, label: pay first }
+      - { from: order-service, to: order-db }
+      - { from: restaurant-app, to: restaurant-service }
+      - { from: restaurant-service, to: restaurant-db, label: listing and menu }
+      - { from: order-db, to: restaurant-orders, label: new order }
+      - { from: restaurant-orders, to: restaurant-app, label: accept? }
+      - { from: matching-service, to: order-db, label: accepted orders }
+      - { from: matching-service, to: driver-db, label: nearby partners }
+      - { from: partner-app, to: location-service, label: location }
+      - { from: location-service, to: driver-db }
+      - { from: partner-app, to: client, label: live location }
+  - __component: sd.rich-text
+    key: hld-flows
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "The user's side. Every request reaches a load balancer and API gateway, which authenticates and authorises it, rate-limits, routes it by path to the right service and spreads load across that service's instances round robin. Four services sit behind it, each with its own database: the user service and the user DB for accounts; the search service, which reads restaurant data for the nearby list and searches; the cart service and the cart DB, so a cart survives closing the app; and the order service, which calls a third-party payment gateway first and writes the order to the order DB only after the gateway answers, a failed payment saved as a failed order."
+      - type: paragraph
+        children:
+          - type: text
+            text: "The restaurant's side. Restaurants have their own app and come through their own gateway. A restaurant service lets owners upload their details and menus into the restaurant DB that search reads. A restaurant-side order service learns of new orders and asks the restaurant to accept; this is why a user sees the order placed and, a minute or two later, accepted."
+      - type: paragraph
+        children:
+          - type: text
+            text: "The partner's side. A delivery matching service reads accepted orders without a partner, looks in the driver DB for partners near the restaurant who are idle, and assigns one. The driver DB is kept current by partners' phones sending their location and status, say every 5 seconds, through a gateway to a location update service. After pickup, the partner's location reaches the user. Say out loud what this picture still lacks: how the partner learns the food is ready, how the user is notified at each stage, and how all these hand-offs happen without losing an order. The deep dive fills them in."
+  - __component: sd.quiz
+    key: hld-quiz
+    title: Quick check
+    questions:
+      - question: What does the API gateway do in this design?
+        optionA: Stores the orders
+        optionB: Authentication and authorisation, rate limiting, routing to services, and load balancing round robin
+        optionC: Finds nearby partners
+        optionD: Charges the card
+        answer: B
+        explanation: It is the single front door for the user app; services behind it stay simple.
+      - question: Why does the order service call the payment gateway before writing the order as placed?
+        optionA: It does not need to
+        optionB: An order counts only once it is paid; a failed payment is still recorded, as a failed order
+        optionC: The payment gateway stores orders
+        optionD: To find a partner
+        answer: B
+        explanation: Ordering is a two-step process, pay then confirm, and both outcomes are kept.
+  # ────────────────────────────────────────────────────────────────── 5. Deep dive: user service
+  - __component: sd.section
+    key: lld-user
+    title: "Deep dive: the user service."
+    railLabel: Deep dive, users
+    intro: "Copy the high-level design into the deep dive section and open each service in turn, starting with the simplest: users."
+  - __component: sd.rich-text
+    key: user-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "The user service registers new customers and logs them in. At login it checks the credentials against the user DB and, if they match, returns a JWT, a signed token the app sends with every later request; the gateway verifies it without asking the user service each time. Accounts are relational rows with a unique email, so MySQL or Postgres is the plain choice. Store a salted password hash, never the password."
+  - __component: sd.db-schema
+    key: user-tables
+    stores:
+      - key: user-store
+        engine: MySQL or Postgres
+        component: user-db
+        why: Account rows read by id or by unique email.
+        tables:
+          - name: users
+            columns:
+              - { name: user_id, type: bigint, role: primary }
+              - { name: email, type: text, note: unique }
+              - { name: password_hash, type: text, note: "salted hash, never the password" }
+              - { name: address, type: text }
+              - { name: metadata, type: jsonb }
+  - __component: sd.quiz
+    key: user-quiz
+    title: Quick check
+    questions:
+      - question: What does a successful login return, and why?
+        optionA: The user row
+        optionB: A signed JWT the app sends on every later call, so the gateway can verify the caller without the user service
+        optionC: The password, encrypted
+        optionD: A cart id
+        answer: B
+        explanation: The token carries the identity; every service behind the gateway trusts the verified token, not a field in the body.
+  # ────────────────────────────────────────────────────────────────── 5. Deep dive: search
+  - __component: sd.section
+    key: lld-search
+    title: "Deep dive: search and the restaurant data."
+    railLabel: Deep dive, search
+    intro: "Search has two jobs, the nearby list and the title or menu search, and both mix a location with text. That is what a search engine is for."
+  - __component: sd.rich-text
+    key: search-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Put Elasticsearch between the search service and the data. It answers \"open restaurants within 5 km of this point\" with a geo-distance filter and \"title or menu matches biryani\" with full-text matching, in one query, ranked. Be ready to justify it against the alternatives: a quadtree or Postgres with a geospatial extension answers the nearby list well, but not the text search alongside it."
+      - type: paragraph
+        children:
+          - type: text
+            text: "The source of truth stays a relational database, because restaurants and menu items are related rows: Postgres with a restaurant table and a menu table. Owners write it through the restaurant service. Photos of restaurants and dishes are files, not rows, so they go to an S3 bucket, and the tables keep only their URLs; the app loads the images by URL, through a CDN, not through the search service."
+      - type: paragraph
+        children:
+          - type: text
+            text: "The search service never queries the restaurant DB, and Elasticsearch does not query it either: it holds its own copy. A change data capture (CDC) pipeline reads every change from the database's log, and its consumer joins a restaurant with its menu items into one document and writes it to the index. The index is a moment behind the database, which the availability-first choice for search allows."
+  - __component: sd.db-schema
+    key: restaurant-tables
+    stores:
+      - key: restaurant-store
+        engine: Postgres
+        component: restaurant-db
+        why: Restaurants and their menu items are related rows; the source of truth the index is built from.
+        tables:
+          - name: restaurant
+            columns:
+              - { name: rest_id, type: bigint, role: primary }
+              - { name: name, type: text }
+              - { name: address, type: text }
+              - { name: status, type: text, note: "open, closed, under maintenance" }
+              - { name: lat, type: double }
+              - { name: long, type: double }
+              - { name: image_urls, type: "text[]", note: S3 locations }
+          - name: menu
+            columns:
+              - { name: item_id, type: bigint, role: primary }
+              - { name: menu_id, type: bigint }
+              - { name: rest_id, type: bigint, note: the restaurant }
+              - { name: title, type: text }
+              - { name: description, type: text }
+              - { name: image_url, type: text }
+              - { name: category, type: text }
+              - { name: price, type: numeric }
+  - __component: sd.component-diagram
+    key: search-diagram
+    title: Search, fed by CDC
+    direction: LR
+    nodes:
+      - { key: search-service }
+      - { key: elasticsearch, details: [one document per restaurant] }
+      - { key: restaurant-db }
+      - { key: restaurant-service }
+      - { key: image-store }
+    edges:
+      - { from: search-service, to: elasticsearch, label: geo and text query }
+      - { from: restaurant-db, to: elasticsearch, label: CDC }
+      - { from: restaurant-service, to: restaurant-db }
+      - { from: restaurant-service, to: image-store, label: photos }
+  - __component: sd.quiz
+    key: search-quiz
+    title: Quick check
+    questions:
+      - question: How does a new menu item reach search results?
+        optionA: Elasticsearch queries the restaurant DB on every search
+        optionB: The search service reads the restaurant DB directly
+        optionC: A CDC pipeline reads the change from the database log and rewrites the restaurant's document in the index
+        optionD: The restaurant uploads it to Elasticsearch
+        answer: C
+        explanation: The index is a copy kept current by CDC; the search path never touches the database.
+      - question: Where do food photos live?
+        optionA: In the menu table as blobs
+        optionB: In an S3 bucket, with only their URLs in the tables, loaded by the app through a CDN
+        optionC: In Elasticsearch
+        optionD: In the cart DB
+        answer: B
+        explanation: Files go to object storage; rows keep a pointer.
+  # ────────────────────────────────────────────────────────────────── 5. Deep dive: cart
+  - __component: sd.section
+    key: lld-cart
+    title: "Deep dive: the cart."
+    railLabel: Deep dive, cart
+    intro: "The cart is a small service with one rule worth saying."
+  - __component: sd.rich-text
+    key: cart-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "The cart service keeps the cart in Postgres, so it is still there when the user comes back. A cart holds items from one restaurant only: switch restaurants and the app starts a new cart. That is why the cart row carries the restaurant id, and why an order can never mix two kitchens."
+  - __component: sd.db-schema
+    key: cart-tables
+    stores:
+      - key: cart-store
+        engine: Postgres
+        component: cart-db
+        why: A few rows per user, read and rewritten as the cart changes.
+        tables:
+          - name: cart
+            columns:
+              - { name: cart_id, type: bigint, role: primary }
+              - { name: rest_id, type: bigint, note: one restaurant per cart }
+              - { name: user_id, type: bigint }
+              - { name: items, type: jsonb, note: "item id and quantity" }
+              - { name: metadata, type: jsonb }
+  - __component: sd.quiz
+    key: cart-quiz
+    title: Quick check
+    questions:
+      - question: Why does the cart row carry a restaurant id?
+        optionA: For search
+        optionB: A cart belongs to one restaurant, so items from two restaurants can never be ordered together
+        optionC: To find a partner
+        optionD: It does not need one
+        answer: B
+        explanation: Switching restaurants starts a new cart.
+  # ────────────────────────────────────────────────────────────────── 5. Deep dive: order
+  - __component: sd.section
+    key: lld-order
+    title: "Deep dive: the order flow."
+    railLabel: Deep dive, orders
+    intro: "Where the story starts. Checkout is payment first, then several things must happen for one order, and none may be lost: so the order service publishes an event instead of calling them all."
+  - __component: sd.rich-text
+    key: payment-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Split payment out. The order service calls a payment service, which passes the card details to a third-party payment gateway, where the charge happens with the bank. The card number goes to the gateway, which returns a token; the CVV is never stored, by our database or anyone's. The gateway answers success or failure, and the payment service records the attempt in a payment DB. Payments must be strongly consistent, so this is a relational database with transactions, MySQL."
+  - __component: sd.db-schema
+    key: payment-tables
+    stores:
+      - key: payment-store
+        engine: MySQL
+        component: payment-db
+        why: Money needs transactions and exactly one row per attempt.
+        tables:
+          - name: payment
+            columns:
+              - { name: payment_id, type: bigint, role: primary }
+              - { name: user_id, type: bigint }
+              - { name: order_id, type: bigint }
+              - { name: amount, type: numeric }
+              - { name: currency, type: text }
+              - { name: created_at, type: timestamp }
+  - __component: sd.rich-text
+    key: kafka-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Once paid, three things must happen: record the order, tell the user, and tell the restaurant. Calling three services one after another makes checkout as slow and as fragile as the slowest of them. Instead the order service puts one orderPlaced event on a Kafka topic, and three consumers read it on their own: an order consumer writes the order DB, the notification service tells the user, and a restaurant acceptance service asks the restaurant. This is event-driven design, not a commit protocol: write the order and its event in one database transaction (a transactional outbox), and make every consumer idempotent, because Kafka delivers at least once."
+      - type: paragraph
+        children:
+          - type: text
+            text: "The restaurant acceptance service does not call the restaurant's tablet itself. It hands the order to the restaurant-side order service, which holds the restaurants' connections, by HTTP long polling or a push, and shows the order. When the restaurant accepts, that service puts an orderStatus confirmed event on Kafka. It is the same Kafka; the board draws it twice only for room. Two things follow from it: the order consumer marks the order confirmed and the notification service tells the user, and the order now waits for a delivery partner."
+  - __component: sd.db-schema
+    key: order-tables
+    stores:
+      - key: order-store
+        engine: Postgres
+        component: order-db
+        why: One row per order, updated as events arrive; strongly consistent like payments.
+        tables:
+          - name: orders
+            columns:
+              - { name: order_id, type: bigint, role: primary }
+              - { name: user_id, type: bigint }
+              - { name: rest_id, type: bigint }
+              - { name: items, type: jsonb }
+              - { name: price, type: numeric }
+              - { name: currency, type: text }
+              - { name: status, type: text, note: "placed, failed, confirmed, picked up, delivered" }
+              - { name: driver_id, type: bigint, note: set when a partner is assigned }
+              - { name: created_at, type: timestamp }
+  - __component: sd.component-diagram
+    key: order-diagram
+    title: Checkout and the order events
+    direction: LR
+    nodes:
+      - { key: order-service }
+      - { key: payment-service }
+      - { key: payment-gateway }
+      - { key: payment-db }
+      - { key: kafka, details: [orderPlaced, orderStatus] }
+      - { key: order-consumer }
+      - { key: notification-service }
+      - { key: restaurant-acceptance }
+      - { key: restaurant-orders }
+      - { key: order-db }
+    edges:
+      - { from: order-service, to: payment-service }
+      - { from: payment-service, to: payment-gateway, label: charge }
+      - { from: payment-service, to: payment-db }
+      - { from: order-service, to: kafka, label: orderPlaced }
+      - { from: kafka, to: order-consumer }
+      - { from: kafka, to: notification-service }
+      - { from: kafka, to: restaurant-acceptance }
+      - { from: order-consumer, to: order-db }
+      - { from: restaurant-acceptance, to: restaurant-orders }
+      - { from: restaurant-orders, to: kafka, label: confirmed }
+  - __component: sd.quiz
+    key: order-quiz
+    title: Quick check
+    questions:
+      - question: Why publish orderPlaced to Kafka instead of calling the order DB, the notifier and the restaurant in turn?
+        optionA: Kafka is faster than a database
+        optionB: Each consumer works on its own, so checkout does not wait on, or fail with, the slowest step, and none of them is lost
+        optionC: Kafka replaces the payment gateway
+        optionD: To avoid needing an order DB
+        answer: B
+        explanation: One event, many independent readers. Pair it with an outbox and idempotent consumers.
+      - question: What must the payment service never store?
+        optionA: The amount
+        optionB: The order id
+        optionC: The card's CVV
+        optionD: The currency
+        answer: C
+        explanation: Card details go to the payment gateway, which returns a token; the CVV is stored by no one after authorisation.
+      - question: How does the restaurant's accept get back into the flow?
+        optionA: The restaurant writes the order DB
+        optionB: The restaurant-side order service publishes an orderStatus confirmed event on Kafka, which the consumers act on
+        optionC: The user refreshes
+        optionD: The payment gateway reports it
+        answer: B
+        explanation: The same event log carries every step of the order's life.
+  # ────────────────────────────────────────────────────────────────── 5. Deep dive: delivery matching
+  - __component: sd.section
+    key: lld-matching
+    title: "Deep dive: matching a delivery partner."
+    railLabel: Deep dive, matching
+    intro: "An accepted order needs the nearest idle partner, and partners move: their locations change every few seconds, for every partner at once."
+  - __component: sd.rich-text
+    key: matching-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "The delivery matching service is a consumer of the accepted-order events: it reads orders that have no partner yet. To find partners near the restaurant it uses a proximity search on geohashes: a geohash turns a latitude and longitude into a short string where nearby points share a prefix, so the cells around the restaurant are a handful of prefixes to look up. Only idle partners count; one already carrying an order is not offered another until it is delivered."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Now the writes. Partners' phones send their location and status every 5 to 10 seconds. Thousands of partners doing that is a stream no single server or relational table should absorb row by row. So the pings go through an ingestion gateway that writes them straight to a Kafka topic, and the location update service consumes the topic and writes each partner's latest position to Redis, a shared in-memory store with a geo index (GEOADD, then GEOSEARCH by radius). The matching service reads Redis, not the driver DB. Redis is written through to the driver DB, which keeps profiles and the last known position."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Each Redis entry gets a TTL. A partner whose phone loses signal stops sending, the entry expires, and matching stops offering them orders. Set the TTL to a few missed pings, about 30 seconds for a 10-second interval, not exactly one interval, or a single late ping takes a partner offline. When a partner is found, matching publishes deliveryPartnerAssigned to Kafka, and the order consumer writes the driver id on the order."
+  - __component: sd.component-diagram
+    key: matching-diagram
+    title: Live locations and matching
+    direction: LR
+    nodes:
+      - { key: partner-app }
+      - { key: location-gateway }
+      - { key: kafka }
+      - { key: location-service }
+      - { key: location-cache, details: [GEOADD, TTL about 30 s] }
+      - { key: driver-db }
+      - { key: matching-service, details: [geohash, idle only] }
+    edges:
+      - { from: partner-app, to: location-gateway, label: every 5 to 10 s }
+      - { from: location-gateway, to: kafka }
+      - { from: kafka, to: location-service }
+      - { from: location-service, to: location-cache }
+      - { from: location-cache, to: driver-db, label: write through }
+      - { from: matching-service, to: location-cache, label: nearest idle }
+  - __component: sd.quiz
+    key: matching-quiz
+    title: Quick check
+    questions:
+      - question: Why do location pings go through Kafka to Redis rather than straight into the driver DB?
+        optionA: Redis is more consistent
+        optionB: A constant stream of small writes is absorbed by the log and kept in memory, where matching reads it fast; the database gets it written through
+        optionC: The driver DB cannot store coordinates
+        optionD: Kafka finds nearby partners
+        answer: B
+        explanation: Kafka buffers bursts, Redis answers radius queries in memory, the database keeps the durable copy.
+      - question: What does the TTL on a partner's Redis entry do?
+        optionA: Deletes the partner's account
+        optionB: Drops a partner who stopped sending, so matching never offers an order to someone offline
+        optionC: Speeds up GEOSEARCH
+        optionD: Limits the number of orders
+        answer: B
+        explanation: Make it a few intervals long so one late ping does not take a partner offline.
+      - question: Two partners' geohashes share a long prefix. What does that tell you?
+        optionA: They have the same order
+        optionB: They are close to each other
+        optionC: They joined on the same day
+        optionD: Nothing
+        answer: B
+        explanation: Nearby points share a prefix; a prefix is a cell on the map.
+  # ────────────────────────────────────────────────────────────────── 5. Deep dive: last hops
+  - __component: sd.section
+    key: lld-tracking
+    title: "Deep dive: acceptance, live tracking and pickup."
+    railLabel: Deep dive, tracking
+    intro: "Three pieces are still missing: partners choosing to take an order, the user's live map, and the partner learning the food is ready."
+  - __component: sd.rich-text
+    key: tracking-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Partners are offered orders, not ordered. The matching service passes its list of nearby idle partners to a delivery acceptance service, which sends the offer to all of them at once through an API gateway for partners' apps. The first to accept gets the order: the acceptance is a conditional update (assign only if no partner is set yet), so two quick taps cannot both win. The acceptance goes to Kafka, and the order consumer writes the driver id, exactly as for the restaurant's accept."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Live tracking. After pickup the user's app opens a WebSocket to a WebSocket gateway, and the partner's location, already flowing in every few seconds, is pushed down it. Open connections cost memory on the server that holds them, so a WebSocket manager tracks which gateway server holds which user's connection, routes each update there, and closes connections when the order is delivered."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Food ready. When the kitchen finishes, the restaurant marks the order ready; the restaurant-side order service puts that on Kafka, and an order confirmation service reads it and tells the assigned partner to come for pickup. The design now covers every requirement: read the list back. In an interview you would be asked for one actor's flow in this depth, not all three."
+  - __component: sd.component-diagram
+    key: final-diagram
+    title: The last hops
+    direction: LR
+    nodes:
+      - { key: matching-service }
+      - { key: delivery-acceptance, details: [first accept wins] }
+      - { key: partner-app }
+      - { key: kafka }
+      - { key: order-ready }
+      - { key: websocket-gateway, details: [manager tracks connections] }
+      - { key: client }
+    edges:
+      - { from: matching-service, to: delivery-acceptance, label: nearby idle partners }
+      - { from: delivery-acceptance, to: partner-app, label: offer }
+      - { from: delivery-acceptance, to: kafka, label: accepted }
+      - { from: kafka, to: order-ready, label: food ready }
+      - { from: order-ready, to: partner-app, label: come for pickup }
+      - { from: partner-app, to: websocket-gateway, label: location }
+      - { from: websocket-gateway, to: client, label: live map }
+  - __component: sd.quiz
+    key: tracking-quiz
+    title: Quick check
+    questions:
+      - question: Five partners get the same offer and two tap accept at once. Who gets it?
+        optionA: Both
+        optionB: The first whose conditional update finds no partner set; the other is told it was taken
+        optionC: The closest one, always
+        optionD: Neither
+        answer: B
+        explanation: Assign only if unassigned, in one atomic step, so exactly one wins.
+      - question: How does the user's map move in near real time?
+        optionA: The app polls the order DB every second
+        optionB: The app holds a WebSocket to the gateway, which pushes each new partner location
+        optionC: The partner emails the location
+        optionD: The payment gateway sends it
+        answer: B
+        explanation: A WebSocket lets the server push; the manager routes updates to the server holding the connection.
+      - question: How does the partner learn the food is ready?
+        optionA: They wait at the restaurant
+        optionB: The restaurant marks it ready, the event goes on Kafka, and the order confirmation service notifies the assigned partner
+        optionC: The user calls them
+        optionD: The matching service guesses
+        answer: B
+        explanation: The same event log carries the kitchen's status to the partner.

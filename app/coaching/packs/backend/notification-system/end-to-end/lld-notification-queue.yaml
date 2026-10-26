@@ -1,0 +1,114 @@
+# Notification system interview, deep dive 3: providers, and a queue between them. In the middle band of the deep-dive region, as in the video: the notification service, the notification queue (Kafka), a column of SMS, email and in-app providers, and the external senders on the right (Twilio or MSG91, SendGrid or Amazon SES, FCM or APNS), with the topic list under the service.
+id: backend/notification-system/end-to-end/lld-notification-queue
+title: "Deep dive: providers and the notification queue"
+source:
+  hash: "bdabaad54705"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/notification-system/end-to-end/lld-preferences
+  assumes:
+    - "Preference changes go through a Kafka topic and a consumer into the preference DB."
+    - "Non-functional: 1M+ notifications a minute; OTPs near real time, promotional within 5 to 10 s."
+  carries:
+    - "The provider is split into SMS, email and in-app provider services, each calling an external sender: Twilio or MSG91, SendGrid or Amazon SES, FCM or APNs."
+    - "The notification service publishes to a Kafka notification queue; each provider consumes only its topics."
+    - "Topics are priority times channel, nine in all, plus bulk, retry with backoff, and a DLQ."
+  terms:
+    - term: FCM and APNs
+      means: "Firebase Cloud Messaging, Google's push service for Android, and the Apple Push Notification service for iPhones."
+    - term: dead letter queue
+      means: "Where messages that keep failing are parked for people to inspect."
+board:
+  keep: [title, fr, fr-channels, fr-templates, fr-prefs, fr-schedule, fr-status, nfr, nfr-scale, nfr-cap, nfr-latency, hld, hld-clients, hld-gw, hld-tpl-svc, hld-tpl-db, hld-pref-svc, hld-pref-db, hld-notif-svc, hld-provider, hld-provider-note, hld-clients-gw, hld-gw-tpl, hld-tpl-db-arrow, hld-gw-pref, hld-pref-db-arrow, hld-gw-notif, hld-notif-provider, hld-notif-pref, lld, lld-clients, lld-gw, gw-jobs-1, gw-jobs-2, tpl-svc, tpl-db, tpl-table-1, tpl-table-2, tpl-table-3, lld-clients-gw, gw-tpl, tpl-svc-db, pref-svc, pref-scale, pref-kafka, pref-consumer, pref-db, pref-table-1, pref-table-2, pref-table-3, gw-pref, pref-svc-kafka, pref-kafka-consumer, pref-consumer-db]
+  elements:
+    - { id: notif-svc, kind: box, label: Notification service, at: [21, 70], size: [9, 3] }
+    - { id: sms-prov, kind: box, label: SMS provider, at: [47, 66], size: [9, 3], tone: blue }
+    - { id: email-prov, kind: box, label: Email provider, at: [47, 70], size: [9, 3], tone: blue }
+    - { id: inapp-prov, kind: box, label: In-app provider, at: [47, 74], size: [9, 3], tone: blue }
+    - { id: twilio, kind: box, label: Twilio or MSG91, at: [60, 66], size: [10, 3], tone: grey }
+    - { id: sendgrid, kind: box, label: SendGrid or Amazon SES, at: [60, 70], size: [10, 3], tone: grey }
+    - { id: fcm, kind: box, label: FCM or APNS, at: [60, 74], size: [10, 3], tone: grey }
+    - { id: fcm-note, kind: note, label: "FCM is Android, APNS is Apple", at: [55, 77], in: lld }
+    - { id: queue, kind: box, label: "Notification queue, Kafka", at: [33, 70], size: [10, 3], tone: amber }
+    - { id: topic-critical, kind: note, label: "critical: email, sms, push", at: [21, 74], in: lld }
+    - { id: topic-standard, kind: note, label: "standard: email, sms, push", at: [21, 75], in: lld }
+    - { id: topic-promo, kind: note, label: "promotional: email, sms, push", at: [21, 76], in: lld }
+    - { id: topic-bulk, kind: note, label: "bulk email, bulk SMS", at: [21, 77], in: lld }
+    - { id: topic-retry, kind: note, label: "retry with backoff, then DLQ", at: [21, 78], in: lld }
+  arrows:
+    - { id: gw-notif, from: lld-gw, to: notif-svc }
+    - { id: sms-twilio, from: sms-prov, to: twilio }
+    - { id: email-sendgrid, from: email-prov, to: sendgrid }
+    - { id: inapp-fcm, from: inapp-prov, to: fcm }
+    - { id: notif-queue, from: notif-svc, to: queue }
+    - { id: queue-sms, from: queue, to: sms-prov }
+    - { id: queue-email, from: queue, to: email-prov }
+    - { id: queue-inapp, from: queue, to: inapp-prov }
+beats:
+  - point: "The black-boxed provider becomes three microservices, one per channel: an SMS provider, an email provider and an in-app provider."
+    kind: component
+    weight: core
+    teach:
+      - "Now the core: the notification service. A client's send request reaches it through the gateway. Open the notification provider we black-boxed."
+      - "Split it into three services so each has one job: an SMS provider, an email provider, an in-app provider. A request goes to the one for its channel."
+    draw: [notif-svc, gw-notif, sms-prov, email-prov, inapp-prov]
+    check: Why split the provider by channel?
+    answer: "Each channel has its own protocol and sender, so one service per channel separates the responsibilities and scales each on its own."
+  - point: "No provider reaches a phone itself: SMS goes through Twilio or MSG91, email through SendGrid, Amazon SES or SMTP, and push through FCM for Android and APNs for Apple."
+    kind: component
+    weight: core
+    teach:
+      - "The providers can't deliver by themselves; each calls an external sender. SMS through Twilio or MSG91. Email through SendGrid, which Twilio owns, Amazon SES, or an SMTP server like Gmail's."
+      - "In-app push through FCM, Firebase Cloud Messaging, for Android, and APNS, Apple's push notification service, for iPhones."
+    draw: [twilio, sms-twilio, sendgrid, email-sendgrid, fcm, inapp-fcm, fcm-note]
+    check: Which external sender reaches an iPhone with a push?
+    answer: "APNs, the Apple Push Notification service; FCM covers Android."
+  - point: "Routing a million requests a minute from the notification service straight to three providers is a bottleneck; a Kafka notification queue in between lets the service publish and move on while each provider consumes."
+    kind: mechanism
+    weight: core
+    teach:
+      - "But the service would have to route a million requests a minute, about sixteen thousand a second, across three servers and wait on each. That is the bottleneck."
+      - "Put a Kafka broker in between, the notification queue. The service drops every request in, whatever the channel, and moves on. Each provider is a consumer reading only what is meant for it."
+    draw: [queue, notif-queue, queue-sms, queue-email, queue-inapp]
+    check: What does the queue buy the notification service?
+    answer: "It publishes and returns instead of calling providers synchronously, and each provider consumes at its own pace and scales separately."
+  - point: "Topics are priority times channel: critical, standard and promotional, each for email, SMS and push, nine in all, plus bulk email and bulk SMS; the SMS provider subscribes only to the SMS topics."
+    kind: mechanism
+    weight: core
+    teach:
+      - "How does a provider know what is its? Topics. The priority in the API, high, medium, low, becomes critical, standard, promotional: OTPs, ordinary events, campaigns."
+      - "Each has the three channels, so nine topics, plus bulk email and bulk SMS for mass sends. The SMS provider subscribes to the SMS topics only."
+    draw: [topic-critical, topic-standard, topic-promo, topic-bulk]
+    check: How many priority and channel topics are there, and why?
+    answer: "Nine: three priorities, critical, standard and promotional, times three channels, email, SMS and push."
+  - point: "A failed message goes to a retry topic and is tried again after an exponentially growing wait; after two or three failures it lands in a dead letter queue for the support team."
+    kind: failure
+    weight: supporting
+    teach:
+      - "Two more topics. A message that fails goes to retry and is tried again after a growing wait, exponential backoff."
+      - "After two or three failures it goes to the dead letter queue: it couldn't be sent, and support has to look at why."
+    draw: [topic-retry]
+    check: Why not retry a failing message forever?
+    answer: "A permanently broken message would loop and waste capacity; after a few tries it goes to the DLQ for people to inspect."
+asks:
+  - ids: [sms-prov, email-prov, inapp-prov]
+    beats: [1]
+    question: "Let's open the notification provider. How would you break it into services?"
+    hints:
+      - Think about the three ways a message can reach someone.
+      - One service per what?
+  - ids: [queue]
+    beats: [3]
+    question: "The service has to hand a million messages a minute to these providers. What would you put between them?"
+    hints:
+      - We used one for preferences already.
+      - Something the service can drop messages into and the providers read from.
+  - ids: [topic-critical, topic-standard, topic-promo]
+    beats: [4]
+    question: "How would each provider pick out only its messages, and keep OTPs apart from promotions?"
+    hints:
+      - Kafka splits messages into named topics.
+      - Think about the priority and the channel together.

@@ -1,0 +1,55 @@
+# Food delivery interview, deep dive 3, the cart: the cart service and its Postgres cart DB with the schema beside it, and the one-restaurant-per-cart rule, as in the video.
+id: backend/food-delivery/end-to-end/lld-cart
+title: "Deep dive: the cart"
+source:
+  hash: "7dd34595c995"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/food-delivery/end-to-end/lld-search
+  assumes:
+    - "POST /v1/cart/items with itemId, qty and restId returns a cartId."
+  carries:
+    - "The cart lives in Postgres (cartId, restId, userId, items), so it survives closing the app."
+    - "A cart holds one restaurant's items; switching restaurants starts a new cart."
+  terms:
+    - term: cart
+      means: "The items a user has picked from one restaurant, kept until they order."
+board:
+  keep: [title, prompt-desc, nfr, nfr-scale, nfr-available, nfr-consistent, lld-search, s-svc, s-es, s-es-note, s-db, s-restsvc, s-owners, s-s3, s-s3-note, s-tbl-rest, s-tbl-menu, s-cdc-note, s-query, s-cdc, s-owners-in, s-write, s-photos]
+  elements:
+    - { id: lld-cart, kind: region, label: "5. Deep dive, the cart", at: [2, 54], size: [70, 10] }
+    - { id: c-svc, kind: box, label: Cart service, at: [4, 58], size: [12, 3], in: lld-cart, tone: blue }
+    - { id: c-db, kind: oval, label: "Cart DB, Postgres", at: [24, 58], size: [16, 3], in: lld-cart, tone: amber }
+    - { id: c-schema, kind: note, label: "cart: cartId, restId, userId, items, metadata", at: [44, 58], in: lld-cart }
+    - { id: c-rule, kind: note, label: "one cart per restaurant; switch, and a new cart starts", at: [44, 60], in: lld-cart }
+  arrows:
+    - { id: c-save, from: c-svc, to: c-db }
+beats:
+  - point: "The cart service keeps carts in Postgres so a cart survives closing the app: cartId, restId, userId, the items and metadata."
+    kind: component
+    weight: core
+    teach:
+      - "The cart is simple: a cart service and a Postgres cart DB, so what the user picked is still there when they come back."
+      - "The table: cart id, the restaurant it is for, the user, the list of items with quantities, and metadata."
+    draw: [lld-cart, c-svc, c-db, c-save, c-schema]
+    check: Why persist the cart in a database at all?
+    answer: So it survives the user closing the app and coming back later.
+  - point: "A cart belongs to one restaurant: switching restaurants starts a new cart, which is why the row carries the restaurant id and why an order never mixes kitchens."
+    kind: rule
+    weight: core
+    teach:
+      - "Notice how the apps behave: add something from a second restaurant and the cart empties and starts again. You cannot mix two restaurants in one order."
+      - "That is why the cart carries a restaurant id: one cart per restaurant."
+    draw: [c-rule]
+    check: What happens when a user adds an item from a different restaurant?
+    answer: A new cart is started for that restaurant; one cart, and so one order, never mixes two restaurants.
+asks:
+  - ids: [c-rule]
+    beats: [2]
+    question: "The cart row has a restaurant id. Why would a cart need that?"
+    hints:
+      - Can you order from two restaurants in one go on these apps?
+      - What happens to your cart when you switch restaurants?

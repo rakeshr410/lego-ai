@@ -1,0 +1,74 @@
+# Payment gateway interview, deep dive 1: the payment intent. Under "5. Deep dive design" the high-level picture is redrawn and opened in the order a payment uses it: the merchant, the tall API gateway and load balancer, the payment intent service writing to a PostgreSQL payment intent DB, with the table's columns beside it and the response above, as in the video.
+id: backend/payment-gateway/end-to-end/lld-payment-intent
+title: "Deep dive, 1: the payment intent"
+source:
+  hash: "1a3469359eae"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/payment-gateway/end-to-end/high-level-design
+  assumes:
+    - "The high-level design: merchant, API gateway and load balancer, intent, session and processor services, external processor."
+    - "Non-functional: consistency over availability."
+  carries:
+    - "The payment intent service writes to PostgreSQL, chosen for consistency and transactions."
+    - "The intent row: id, amount, currency, merchant, customer, order id, payment method type, metadata; the response is the intent id."
+  terms:
+    - term: deep dive
+      means: "The high-level boxes opened one by one, in the order a payment uses them."
+board:
+  keep: [title, prompt-desc, nfr, nfr-scale, nfr-cap, nfr-latency, nfr-security, hld, hld-users, hld-client, hld-gateway, hld-intent, hld-intent-db, hld-session, hld-page, hld-processor, hld-external, hld-recon, hld-users-client, hld-client-gateway, hld-gateway-intent, hld-intent-save, hld-gateway-session, hld-gateway-processor, hld-processor-external]
+  elements:
+    - { id: dd-title, kind: note, label: 5. Deep dive design, at: [2, 48] }
+    - { id: dd-merchant, kind: box, label: merchant, at: [1, 58], size: [8, 3] }
+    - { id: dd-gateway, kind: box, label: "API gateway, auth, routing and load balancing", at: [13, 50], size: [8, 27] }
+    - { id: dd-intent-resp, kind: note, label: returns the payment intent id, at: [26, 49] }
+    - { id: dd-intent, kind: box, label: Payment intent service, at: [26, 51], size: [13, 3], tone: blue }
+    - { id: dd-intent-db, kind: oval, label: Payment intent DB, at: [44, 50], size: [11, 4], tone: amber }
+    - { id: dd-postgres, kind: note, label: "Postgres, consistency first", at: [57, 54] }
+    - { id: dd-intent-row-1, kind: note, label: "payment intent: id, amount, currency,", at: [57, 50] }
+    - { id: dd-intent-row-2, kind: note, label: "merchant, customer, order id,", at: [59, 51] }
+    - { id: dd-intent-row-3, kind: note, label: "payment method type, metadata", at: [59, 52] }
+  arrows:
+    - { id: dd-merchant-gateway, from: dd-merchant, to: dd-gateway }
+    - { id: dd-gateway-intent, from: dd-gateway, to: dd-intent }
+    - { id: dd-intent-save, from: dd-intent, to: dd-intent-db }
+beats:
+  - point: "The deep dive redraws the high-level picture and opens it one call at a time; the merchant still reaches an API gateway and load balancer that authenticate, route and balance."
+    kind: component
+    weight: core
+    teach:
+      - "Step five. Copy the high-level design down the board and open each box in the order a payment uses it."
+      - "The front stays: the merchant who onboarded us, then the API gateway and load balancer, doing authentication and authorization, routing and load balancing."
+    draw: [dd-title, dd-merchant, dd-gateway, dd-merchant-gateway]
+    check: What does the API gateway do for every call, before any service sees it?
+    answer: "Authenticates and authorizes the merchant, routes the call to its service and balances the load."
+  - point: "The payment intent service stores the intent in PostgreSQL: the system chose consistency, and a payment wants transactions that commit whole or not at all."
+    kind: decision
+    weight: core
+    teach:
+      - "Buy now sends the intent to the payment intent service, which writes the metadata to the payment intent DB."
+      - "Which database? We put consistency first, and a payment wants transactions that either commit whole or not at all, so a relational database: Postgres, or MySQL."
+    draw: [dd-intent, dd-gateway-intent, dd-intent-db, dd-intent-save, dd-postgres]
+    check: Why a relational database for payment intents?
+    answer: "Consistency was chosen over availability, and relational databases give transactions that commit whole or not at all."
+    misconceptions:
+      - "Any database is fine because the data is small -> the choice follows the consistency requirement: transactions matter more than size here."
+  - point: "The intent row holds a generated id, the amount, currency, merchant, customer, order id, payment method type and metadata; the response is only the payment intent id."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Write the columns beside the database: the payment intent id we generate, the amount and currency, the merchant, the customer, the order id, the payment method type, and more metadata to check the order against later."
+      - "The answer to the merchant is just the payment intent id. That is all this service does."
+    draw: [dd-intent-row-1, dd-intent-row-2, dd-intent-row-3, dd-intent-resp]
+    check: What does the merchant get back from the intent call?
+    answer: The payment intent id; the metadata stays in the gateway's database.
+asks:
+  - ids: [dd-intent-db]
+    beats: [2]
+    question: "The intent service has to keep each intent. What kind of database would you pick, given what we said about CAP?"
+    hints:
+      - We put one of consistency or availability first. Which?
+      - What gives you transactions that commit whole or not at all?

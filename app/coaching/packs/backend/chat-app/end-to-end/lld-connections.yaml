@@ -1,0 +1,87 @@
+# Chat app interview, low-level design, connections: before the chat service, the video lists "1. HTTP 2. Long Polling 3. Server Sent Event (SSE) 4. Websocket" under the diagram and weighs each for chat; here the list, with each one's verdict beside it. The video says an SSE notification makes the client fetch the message; corrected: an event can carry the message, the problem is that sending still needs HTTP.
+id: backend/chat-app/end-to-end/lld-connections
+title: "Low-level design: four ways to connect"
+source:
+  hash: "a03fd908af6b"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/chat-app/end-to-end/lld-user-group
+  assumes:
+    - "Non-functional: under 300 ms sender to receiver, 1 billion users."
+    - "Sending a message is written WS in the API."
+  carries:
+    - "HTTP: the server cannot speak first, so chat would poll forever."
+    - "Long polling: held open until data or a timeout, about 30 s, then reopened."
+    - "Server-sent events: the server pushes one way; every send still needs an HTTP request."
+    - "WebSocket: one persistent full-duplex connection for sending, receiving and receipts; chosen."
+  terms:
+    - term: long polling
+      means: "The server holds the client's request open until it has data or a timeout, then the client asks again."
+    - term: server-sent events
+      means: "A one-way stream of events from server to client over HTTP."
+    - term: full duplex
+      means: Both sides can send at the same time on one connection.
+board:
+  keep: [title, nfr, nfr-scale, nfr-volume, nfr-cap, nfr-latency, nfr-reliable]
+  elements:
+    - { id: conn, kind: region, label: "5. Low-level design: how the chat service connects", at: [6, 22], size: [58, 15] }
+    - { id: conn-http, kind: note, label: "HTTP, the client asks, the server answers", at: [7, 24], in: conn }
+    - { id: v-http, kind: note, label: replies mean polling with GETs forever, at: [40, 24], in: conn }
+    - { id: conn-long, kind: note, label: "long polling, held open until data or timeout", at: [7, 26], in: conn }
+    - { id: v-long, kind: note, label: reopened every 30 s while a friend is quiet, at: [40, 26], in: conn }
+    - { id: conn-sse, kind: note, label: "server-sent events, the server pushes one way", at: [7, 28], in: conn }
+    - { id: v-sse, kind: note, label: "receives, but each send needs an HTTP call", at: [40, 28], in: conn }
+    - { id: conn-ws, kind: note, label: "WebSocket, full duplex, stays open", at: [7, 30], in: conn }
+    - { id: v-ws, kind: note, label: "one connection both ways, chosen", at: [40, 30], in: conn }
+  arrows: []
+  lists:
+    - { id: conn-list, in: conn, at: [7, 24], step: 2, slots: 6, width: 30, items: [conn-http, conn-long, conn-sse, conn-ws] }
+beats:
+  - point: "Plain HTTP is request and response: the server cannot speak first, so to see replies the client would send GETs forever, mostly finding nothing."
+    kind: failure
+    weight: core
+    teach:
+      - "The chat service is the heart, so before designing it, list the ways a client and server can talk. First, plain HTTP: the client sends a request, the server answers. One direction at a time."
+      - "For chat that means a POST to send, then GET after GET to see if the friend replied. If they never reply, every one of those calls is wasted."
+    draw: [conn, conn-http, v-http]
+    check: Why does plain HTTP fit chat badly?
+    answer: "The server cannot push, so the client must keep polling with GETs, most of which find nothing."
+  - point: "Long polling holds the request open until data arrives or a timeout, say 30 seconds, then the client asks again: it works, but a quiet friend means a new request every 30 seconds."
+    kind: failure
+    weight: supporting
+    teach:
+      - "Long polling: the client asks, and the server keeps the request open until it has something or a timeout, say 30 seconds."
+      - "It can work. But nobody knows when the friend will reply, so the client reopens every 30 seconds, and sending is still a separate POST."
+    draw: [conn-long, v-long]
+    check: What happens with long polling when your friend does not reply for ten minutes?
+    answer: "The request times out about every 30 seconds and the client opens a new one, around twenty requests for nothing."
+  - point: "Server-sent events let the server push a one-way stream to the client, and an event can carry the message itself; but every message sent still needs its own HTTP request."
+    kind: failure
+    weight: core
+    teach:
+      - "Server-sent events: the server pushes events to the client, one way. A new message can arrive in an event, message and all."
+      - "The other direction is the problem: each message the user sends is still a separate HTTP call. Two channels for one conversation, at a billion users."
+    draw: [conn-sse, v-sse]
+    check: What is the real limitation of server-sent events for chat?
+    answer: "They only flow from server to client, so every sent message still needs its own HTTP request."
+    misconceptions:
+      - "An SSE event only says new data exists, so the client must fetch it -> an event can carry the message itself; the gap is sending, which SSE cannot do."
+  - point: "A WebSocket is one persistent, full-duplex connection: sending, receiving and receipts all ride it, so the chat service runs on WebSockets."
+    kind: decision
+    weight: core
+    teach:
+      - "WebSocket: after a handshake, the connection stays open and both sides send whenever they like, even at the same moment. Full duplex."
+      - "One connection does the sending, the receiving and the ticks, with no polling and no waiting. That is why the chat service runs on WebSockets."
+    draw: [conn-ws, v-ws]
+    check: Why choose a WebSocket for the chat service?
+    answer: "One persistent two-way connection carries sends, receives and receipts at once, with no polling."
+asks:
+  - list: conn-list
+    beats: [1, 2, 3, 4]
+    question: "What ways do you know for a client and a server to talk? Start from plain HTTP and give me as many as you can."
+    hints:
+      - "There's a trick where the server holds a request open, and another where it streams events."
+      - And one where both sides keep a connection open and talk freely.

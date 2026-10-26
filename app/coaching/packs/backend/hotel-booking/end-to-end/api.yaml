@@ -1,0 +1,78 @@
+# Hotel booking interview, API: "3. Api designing" beside the entities, five numbered endpoints written one per line as code, one per functional requirement, as in the video.
+id: backend/hotel-booking/end-to-end/api
+title: Five endpoints
+source:
+  hash: "c6753ae04310"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/hotel-booking/end-to-end/entities
+  assumes:
+    - "Functional: accounts, search hotels by location, name and date, book an available room, pay, past bookings."
+    - "The core entities are the user, the hotel, the room and the booking."
+  carries:
+    - "POST /v1/user/registry with the user's metadata; login, logout and update named, not designed."
+    - "GET /v1/hotels/search with name, location and date returns one page of hotel summaries."
+    - "GET /v1/hotels/{hotelId}/{date} returns details and the rooms free that date with their price."
+    - "POST /v1/booking with hotelId, roomId and date returns a booking id after payment; GET /v1/bookings/{userId} lists past bookings."
+  terms:
+    - term: pagination
+      means: Returning a long result one page at a time, with a cursor for the next page.
+board:
+  keep: [title, prompt-desc, fr, fr-account, fr-search, fr-book, fr-pay, fr-past, nfr, nfr-scale, nfr-available, nfr-consistent, entities, ent-user, ent-hotel, ent-room, ent-booking]
+  elements:
+    - { id: api, kind: region, label: 3. API designing, at: [26, 21], size: [40, 13], dashed: true }
+    - { id: api-register, kind: note, label: "POST /v1/user/registry, user metadata, plus login, logout", at: [27, 23], in: api }
+    - { id: api-search, kind: note, label: "GET /v1/hotels/search?q={name}&l={location}&d={date}", at: [27, 25], in: api }
+    - { id: api-hotel, kind: note, label: "GET /v1/hotels/{hotelId}/{date}, details and free rooms", at: [27, 27], in: api }
+    - { id: api-book, kind: note, label: "POST /v1/booking, hotelId, roomId, date, a booking id", at: [27, 29], in: api }
+    - { id: api-past, kind: note, label: "GET /v1/bookings/{userId}, the past bookings", at: [27, 31], in: api }
+  arrows: []
+beats:
+  - point: "Registering is a POST to /v1/user/registry with the user's metadata; login, logout and update exist but are only named, to save time for the core."
+    kind: flow
+    weight: supporting
+    teach:
+      - "Step three, the API, one endpoint per requirement. Accounts first: a POST to v1 user registry, with the user's name, email, password and phone in the body."
+      - "Login, logout and update are needed too. Name them and move on; designing auxiliary endpoints eats the time the core needs."
+    draw: [api, api-register]
+    check: Why not design login, logout and update in detail?
+    answer: They are auxiliary; the time goes to search and booking, which the interviewer is judging.
+  - point: "Search is a GET with the name, location and date as query parameters, returning a paginated list of hotel summaries, not just ids."
+    kind: flow
+    weight: core
+    teach:
+      - "Search reads, so a GET on v1 hotels search, with q for the name, which may be blank, l for the location and d for the date."
+      - "It returns a list, so paginate it: a city can match thousands of hotels. And return summaries, a thumbnail, title and rating, so the results page renders at once."
+    draw: [api-search]
+    check: Why paginate the search results?
+    answer: A search can match thousands of hotels; sending them all is slow to transfer and slow to render.
+  - point: "A hotel's page is a GET on the hotel id and the date, because its details are fixed but which rooms are free, and their price, change by date."
+    kind: flow
+    weight: core
+    teach:
+      - "Picking a hotel opens its details: GET v1 hotels, the hotel id, then the date. It returns the description, amenities, reviews and the rooms free that date with that date's price."
+      - "The date is there because the hotel's details never change but its free rooms and prices do."
+    draw: [api-hotel]
+    check: Why does the hotel details call take a date?
+    answer: Availability and price are per room per date, so the answer depends on the date.
+  - point: "Booking is a POST to /v1/booking with the hotel, room and date, the user taken from the auth token, returning a booking id only after payment; past bookings are a GET by user."
+    kind: flow
+    weight: core
+    teach:
+      - "Booking writes: a POST to v1 booking with the hotel id, room id and date. Who is booking comes from the auth token in the header, not the body."
+      - "It returns a booking id, but only once payment succeeds; behind it is a two-step flow we design later. Last, GET v1 bookings with the user id lists past bookings."
+    draw: [api-book, api-past]
+    check: Where should the booking call carry the user's identity, and why?
+    answer: In the Authorization header as a verified token, so nobody can book as someone else by changing a body field.
+    misconceptions:
+      - "The booking call can return the booking id straight away -> it is confirmed only after payment succeeds."
+asks:
+  - ids: [api-search, api-hotel, api-book, api-past]
+    beats: [2, 3, 4]
+    question: "Going down the requirements, what endpoints do we need for search, a hotel's page, booking and past bookings? Method and path, and I'll write them."
+    hints:
+      - Which of these read data, and which write it?
+      - What would a search need to know besides the place?

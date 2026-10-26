@@ -1,0 +1,46 @@
+# OTT streaming interview, core entities: "2. Identify Core Entity" under the functional list, four lines, as in the video.
+id: backend/ott-streaming/end-to-end/entities
+title: Four entities
+source:
+  hash: "66177aff260b"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/ott-streaming/end-to-end/requirements
+  assumes:
+    - "Functional: create an account and subscribe, search titles, watch at a chosen resolution."
+  carries:
+    - "The core entities are the user, the user's metadata (plan, status, expiry), the video, and the video's metadata (title, description, thumbnail)."
+  terms:
+    - term: core entity
+      means: A noun the system stores and moves.
+board:
+  keep: [title, prompt-desc, fr, fr-account, fr-search, fr-watch, fr-out, nfr, nfr-scale, nfr-cap, nfr-buffer, nfr-micro]
+  elements:
+    - { id: entities, kind: region, label: 2. Identify core entities, at: [2, 21], size: [30, 12], dashed: true }
+    - { id: ent-user, kind: note, label: user, at: [3, 23], in: entities }
+    - { id: ent-user-meta, kind: note, label: "user metadata, plan and expiry", at: [3, 25], in: entities }
+    - { id: ent-video, kind: note, label: video, at: [3, 27], in: entities }
+    - { id: ent-video-meta, kind: note, label: "video metadata, title, description, thumbnail", at: [3, 29], in: entities }
+  arrows: []
+  lists:
+    - { id: entity-list, in: entities, at: [3, 23], step: 2, slots: 5, width: 26, items: [ent-user, ent-user-meta, ent-video, ent-video-meta] }
+beats:
+  - point: "Four core entities: the user, the user's metadata such as the plan and its expiry, the video, and the video's metadata, title, description and thumbnail."
+    kind: component
+    weight: core
+    teach:
+      - "Step two, the core entities, read off the requirements. The user who watches, and the user's metadata: the plan, the status, when it expires."
+      - "The video itself, and its metadata: title, description, and the thumbnail. The home page is mostly a grid of thumbnails, so they matter as much as the film."
+    draw: [entities, ent-user, ent-user-meta, ent-video, ent-video-meta]
+    check: Why name the video metadata separately from the video?
+    answer: Titles, descriptions and thumbnails are what browsing and search read, far more often than the video, and they are stored differently.
+asks:
+  - list: entity-list
+    beats: [1]
+    question: "What are the core entities, the things this system keeps track of?"
+    hints:
+      - Who uses it, and what do we need to know about them?
+      - What is being watched, and what is shown before it plays?

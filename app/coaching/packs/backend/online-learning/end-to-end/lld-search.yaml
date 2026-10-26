@@ -1,0 +1,90 @@
+# Online learning interview, deep dive 1: the user service and course search. Under "5. Deep dive design", the part of the copied picture the video opens first: the user service with the user table beside its database, then course search reading Elasticsearch, fed by an aggregator CDC pipeline from the course DB, laid out as the video grows it (search, Elasticsearch, aggregator, course DB in a row). Passwords are taught as hashed, not encrypted.
+id: backend/online-learning/end-to-end/lld-search
+title: "Deep dive, 1: users and course search"
+source:
+  hash: "9628c8956c95"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/online-learning/end-to-end/high-level-design
+  assumes:
+    - "The high-level design has a user service with a user DB, and a course search service reading the course DB."
+    - "Users search by text and filter by category, difficulty, rating and price."
+  carries:
+    - "The user DB is relational, Postgres or MySQL: userId, name, email or phone, password hash, status."
+    - "Course search asks Elasticsearch, not the course DB, because it needs full text and many filters."
+    - "An aggregator CDC pipeline joins the course tables into one JSON document per course and indexes it."
+  terms:
+    - term: Elasticsearch
+      means: A search engine that indexes documents for full-text queries with filters and ranking.
+    - term: change data capture
+      means: Reading a database's changes as they happen and passing them on, here to the search index.
+board:
+  keep: [title, prompt-desc, prompt-actors, prompt-scope, fr, fr-account, fr-search, fr-enroll, fr-assess, fr-progress, fr-review, fr-onboard, fr-create, nfr, nfr-scale, nfr-avail, nfr-consistent, nfr-files, nfr-latency, entities, ent-user, ent-course, ent-payment, ent-review, ent-progress, api, api-courses-h, api-search, api-course, api-create, api-publish, api-progress-h, api-progress-post, api-progress-get, api-enroll-h, api-enroll, api-entitle, api-mine, hld, hld-students, hld-lb, hld-user, hld-review, hld-search, hld-playback, hld-progress, hld-enroll, hld-payment, hld-userdb, hld-coursedb, hld-blob, hld-progressdb, hld-enrolldb, hld-paymentdb, hld-catalog, hld-uploader, hld-lb2, hld-instructors]
+  elements:
+    - { id: dd, kind: region, label: "5. Deep dive: users and course search", at: [2, 81], size: [66, 16] }
+    - { id: dd-user, kind: box, label: "User service, sign-up and login", at: [3, 83], size: [14, 3], in: dd }
+    - { id: dd-userdb, kind: oval, label: "User DB, Postgres", at: [20, 83], size: [12, 3], in: dd, tone: amber }
+    - { id: dd-user-row-1, kind: note, label: "user: userId, name, email or phone,", at: [35, 83], in: dd }
+    - { id: dd-user-row-2, kind: note, label: "passwordHash, status, metadata", at: [37, 84], in: dd }
+    - { id: dd-hash, kind: note, label: "a slow salted hash, never encryption", at: [35, 85], in: dd }
+    - { id: dd-search, kind: box, label: "Course search, text and filters", at: [3, 88], size: [14, 3], in: dd }
+    - { id: dd-es, kind: box, label: Elasticsearch, at: [20, 88], size: [11, 3], in: dd, tone: amber }
+    - { id: dd-agg, kind: box, label: Aggregator CDC pipeline, at: [34, 88], size: [14, 3], in: dd, tone: grey }
+    - { id: dd-coursedb, kind: oval, label: "Course DB, many tables", at: [51, 88], size: [13, 3], in: dd, tone: amber }
+    - { id: dd-joins, kind: note, label: "filters sit in separate tables; a join per query is slow", at: [3, 92], in: dd }
+    - { id: dd-doc, kind: note, label: "the pipeline joins them into one JSON document per course", at: [3, 93], in: dd }
+    - { id: dd-sync, kind: note, label: "CDC keeps the index in step with the course DB", at: [3, 94], in: dd }
+  arrows:
+    - { id: dd-user-userdb, from: dd-user, to: dd-userdb }
+    - { id: dd-search-es, from: dd-search, to: dd-es }
+    - { id: dd-coursedb-agg, from: dd-coursedb, to: dd-agg }
+    - { id: dd-agg-es, from: dd-agg, to: dd-es }
+beats:
+  - point: "The deep dive opens the design service by service; the user service keeps flat profile rows in a relational user DB, Postgres or MySQL, with the password stored as a slow salted hash."
+    kind: decision
+    weight: core
+    teach:
+      - "Step five, the deep dive. We copy the high-level picture down and open each service: how it talks to the others and stores its data. First the user service."
+      - "It keeps the user's id, name, email or phone, password, account status and profile metadata: flat relational rows, so Postgres or MySQL."
+      - "The password is hashed, with a slow salted hash like bcrypt, not encrypted: nothing should be able to turn it back."
+    draw: [dd, dd-user, dd-userdb, dd-user-userdb, dd-user-row-1, dd-user-row-2, dd-hash]
+    check: How should the password column be stored, and why not encrypted?
+    answer: As a slow salted hash such as bcrypt or Argon2; encryption can be reversed by whoever holds the key, a hash cannot.
+    misconceptions:
+      - "Encrypt the passwords -> encryption is reversible; store a slow salted hash and compare hashes at login."
+  - point: "Search needs free text over titles plus filters on category, difficulty, rating and price, so the course search service asks Elasticsearch instead of the course DB."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Course search: users filter by category, difficulty, rating and price, and type any text into the title box. Text search is not a plain database query."
+      - "So decouple: the course search service no longer queries the course DB; it asks Elasticsearch, a search engine built for text with filters."
+    draw: [dd-search, dd-es, dd-search-es]
+    check: Why put a search engine in front, rather than querying the course DB?
+    answer: Free-text search over titles with many filters needs a search engine; a database query does it poorly.
+  - point: "The filters live in separate tables and joining them on every query is slow, so an aggregator CDC pipeline reads course DB changes, joins them into one JSON document per course, and indexes it in Elasticsearch."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Elasticsearch cannot work alone; it needs the data. And the data is spread out: ratings in one table, prices in another, titles and metadata in a third. Joining them on every search would make each one slow."
+      - "So precompute. Plain CDC would copy rows across; here an aggregator CDC pipeline reads each change from the course DB, joins the course's tables into one JSON document, and posts it to Elasticsearch. Every search then reads a ready-made document."
+    draw: [dd-coursedb, dd-agg, dd-coursedb-agg, dd-agg-es, dd-joins, dd-doc, dd-sync]
+    check: What does the aggregator add over a plain CDC pipeline?
+    answer: It joins the course's separate tables into one JSON document per course before indexing, so no search has to join.
+    misconceptions:
+      - "Join the tables at query time; the database is fast enough -> a join on every search grows slow with the catalogue; precompute the document once per change."
+asks:
+  - ids: [dd-es]
+    beats: [2]
+    question: "Students type free text and add filters. What would you put behind the course search service?"
+    hints:
+      - Is a relational query good at free-text search?
+      - Think of an engine built for searching documents.
+  - ids: [dd-agg]
+    beats: [3]
+    question: "The search engine needs the course data, but it is spread over several tables. How would you get it there, ready to search?"
+    hints:
+      - Joining at query time is slow; when else could you join?
+      - Something could watch the course DB for changes.

@@ -165,8 +165,8 @@ type BuildOptions = {
 
 /**
  * lego-ai's own articles: topic files in the main site's format under app/articles/<system>/<slug>.yaml
- * (frontend) or app/articles/backend/<system>/<slug>.yaml (backend, the snapshot's backendTopics), for an
- * existing system of content/. They are written for the coaching playlists (docs/coaching.md)
+ * for an existing system of content/ (frontend), or app/articles/backend/<system>/<slug>.yaml for a system of
+ * lego-ai's own (backend, the snapshot's backendTopics). They are written for the coaching playlists (docs/coaching.md)
  * and live only in this app's snapshot: the main site does not list or serve them, and they are left
  * out of the systems' interview plans and drills. Each is validated and linted as content/'s topics
  * are; one with an error is skipped and reported.
@@ -181,19 +181,24 @@ export function readOwnArticles(dir: string, systems: readonly SystemEntry[], ta
   const problems = new Map<string, string[]>();
   if (!existsSync(dir)) return { topics, problems };
   const skip = (file: string, message: string) => problems.set(file, [...(problems.get(file) ?? []), message]);
-  // articles/<system>/ are frontend articles, beside content/'s topics; articles/backend/<system>/ are backend ones,
-  // kept apart (the snapshot's backendTopics), so they may share a system and a slug with a frontend article.
+  // articles/<system>/ are frontend articles, beside content/'s topics, for a system of content/; articles/backend/<system>/
+  // are backend ones, kept apart (the snapshot's backendTopics), each folder a system of lego-ai's own: it need not be in
+  // content/systems.yaml, and may share a slug with one there or with a frontend article.
   const read = (root: string, prefix: string, backend: boolean, clash: ReadonlySet<string>) => {
     for (const system of readdirSync(root).sort()) {
       const full = join(root, system);
       if (system.startsWith('.') || !statSync(full).isDirectory()) continue;
       if (!backend && system === BACKEND) continue;
-      const entry = systems.find((s) => s.slug === system);
+      if (backend && !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(system)) {
+        skip(`${prefix}/${system}`, `${prefix}/${system}: a backend system's folder is a lowercase-kebab-case slug`);
+        continue;
+      }
+      const entry = backend ? null : systems.find((s) => s.slug === system);
       for (const name of readdirSync(full).sort()) {
         if (!name.endsWith('.yaml')) continue;
         const slug = name.slice(0, -'.yaml'.length);
         const file = `${prefix}/${system}/${name}`;
-        if (!entry) {
+        if (!entry && !backend) {
           skip(file, `${file}: no system "${system}" in the main site's content/systems.yaml`);
           continue;
         }
@@ -213,7 +218,8 @@ export function readOwnArticles(dir: string, systems: readonly SystemEntry[], ta
           skip(file, `${file}:\n${formatIssues(r.issues.map((i) => ({ ...i, file })))}`);
           continue;
         }
-        const errors = errorsOf(lintTopic(r.data, { groups: entry.groups }));
+        // A backend system has no groups to check the topic's group against.
+        const errors = errorsOf(lintTopic(r.data, { groups: entry?.groups }));
         if (errors.length) {
           skip(file, formatLint(errors.map((i) => ({ ...i, file }))));
           continue;

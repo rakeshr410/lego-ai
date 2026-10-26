@@ -1,0 +1,63 @@
+# Notification system interview, core entities: "2. Core entities" under the functional list, five lines, and beside them the client (a company) and the user (a person), as in the video.
+id: backend/notification-system/end-to-end/entities
+title: Six entities, and client versus user
+source:
+  hash: "b9a4ce159c01"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/notification-system/end-to-end/requirements
+  assumes:
+    - "Functional: channels, templates, user preferences, immediate or scheduled sends, delivery status."
+  carries:
+    - "Core entities: user and client, notification preference, notification content, template, delivery status."
+    - "The client is the calling company; the user is the person; preferences belong to the person, per client."
+  terms:
+    - term: client
+      means: "A company or application, like Amazon or Uber, that calls the service's open API."
+    - term: user
+      means: "A person using a client's app, who receives the notifications."
+board:
+  keep: [title, prompt-desc, prompt-example, fr, fr-channels, fr-templates, fr-prefs, fr-schedule, fr-status, nfr, nfr-scale, nfr-cap, nfr-latency]
+  elements:
+    - { id: entities, kind: region, label: 2. Core entities, at: [6, 25], size: [34, 15], dashed: true }
+    - { id: ent-user, kind: note, label: client and user, at: [7, 27], in: entities }
+    - { id: ent-pref, kind: note, label: notification preference, at: [7, 29], in: entities }
+    - { id: ent-content, kind: note, label: notification content, at: [7, 31], in: entities }
+    - { id: ent-template, kind: note, label: template, at: [7, 33], in: entities }
+    - { id: ent-status, kind: note, label: delivery status, at: [7, 35], in: entities }
+    - { id: ent-client-is, kind: note, label: "client, a company like Amazon", at: [24, 27], in: entities }
+    - { id: ent-user-is, kind: note, label: "user, a person using that app", at: [24, 28], in: entities }
+  arrows: []
+  lists:
+    - { id: entity-list, in: entities, at: [7, 27], step: 2, slots: 6, width: 14, items: [ent-user, ent-pref, ent-content, ent-template, ent-status] }
+beats:
+  - point: "Reading the functional lines gives the entities: the user, the notification preference, the notification content, the template and the delivery status."
+    kind: component
+    weight: core
+    teach:
+      - "Step two: the core entities, read straight off the functional requirements."
+      - "The user; the preference the user sets; the notification content, the text that is sent; the template, its format; and the delivery status."
+    draw: [entities, ent-user, ent-pref, ent-content, ent-template, ent-status]
+    check: Which requirement gives us the delivery status entity?
+    answer: Tracking delivery status for the reporting dashboard.
+  - point: "There is one more: the client. The client is a company like Amazon calling the API, the user is a person using its app, and preferences belong to the person."
+    kind: component
+    weight: core
+    teach:
+      - "In earlier designs client and user were the same. Not here: the client is an organisation, Amazon or Flipkart, using our open API; the user is a person using that app."
+      - "Why keep both? Amazon will not store how each customer wants to be reached; that is the person's choice, so we keep it per client and per user."
+    draw: [ent-client-is, ent-user-is]
+    check: Why must the service know both the client and the user?
+    answer: "The client is who calls and pays; the user is who receives, and the preference is the person's own choice, kept per client."
+    misconceptions:
+      - "The client stores its users' preferences -> the person sets them through the client's app, and this service keeps them per client and user."
+asks:
+  - list: entity-list
+    beats: [1]
+    question: "Looking at the requirements, what are the core entities, the things this system keeps track of?"
+    hints:
+      - Go down the functional list line by line.
+      - Who receives, what do they choose, what is sent, in what format, and what happens to it?

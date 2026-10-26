@@ -1,0 +1,144 @@
+# Ticket booking interview, low-level design 4: Redis holds that expire, and finishing. Under "5. Low level designing", the picture redrawn without the cron job (the video erases it), a Redis cluster below Postgres with the booking service pointing at it, the paid and unpaid paths as notes, the requirements read back with reads far outnumbering writes, and Kafka as a waiting queue under the gateway for traffic peaks, as the video draws them. The video checks Redis and then sets the key; this pack teaches one atomic set-if-absent with a TTL, and Postgres's unique key as the last guard.
+id: backend/ticket-booking/end-to-end/lld-booking-redis
+title: "Low-level design, 4: Redis holds, and finishing"
+source:
+  hash: "dc6a78d6d587"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/ticket-booking/end-to-end/lld-booking-cron
+  assumes:
+    - "A reserve holds seats for 10 minutes while the user pays; a payment gateway confirms."
+    - "The cron approach scans every seat every minute and frees holds late."
+  carries:
+    - "Each held seat is a Redis key set only if absent, with a 10-minute TTL, in one atomic command; one user wins."
+    - "Paid: commit in PostgreSQL with a unique key on event and seat, delete the hold, update Cassandra. Unpaid: the key expires."
+    - "Reads far outnumber bookings, so search and event services are scaled out more than booking."
+    - "For a traffic peak, a waiting queue such as Kafka admits users to booking in batches."
+  terms:
+    - term: TTL
+      means: "Time to live: a key deletes itself when it runs out, here after 10 minutes."
+    - term: set if absent
+      means: "A write that succeeds only when the key does not exist yet (SET with NX), checked and written in one step."
+    - term: waiting queue
+      means: "A virtual waiting room that lines users up and lets them into booking in order, in batches it can serve."
+board:
+  keep: [title, nfr, nfr-scale, nfr-available, nfr-consistent]
+  elements:
+    - { id: lld-redis, kind: region, label: "5. Low level designing: 4. Booking, Redis holds", at: [6, 22], size: [70, 37] }
+    - { id: r-clients, kind: box, label: client apps, at: [7, 33], size: [7, 3], in: lld-redis }
+    - { id: r-gateway, kind: box, label: API gateway, at: [17, 25], size: [9, 20], in: lld-redis }
+    - { id: r-search, kind: box, label: Search, at: [30, 26], size: [12, 3], tone: blue, in: lld-redis }
+    - { id: r-event, kind: box, label: Event details, at: [30, 33], size: [12, 3], tone: blue, in: lld-redis }
+    - { id: r-booking, kind: box, label: Booking, at: [30, 40], size: [12, 3], tone: blue, in: lld-redis }
+    - { id: r-es, kind: oval, label: Elasticsearch, at: [46, 25], size: [14, 4], tone: amber, in: lld-redis }
+    - { id: r-cassandra, kind: oval, label: Cassandra, at: [46, 33], size: [14, 4], tone: amber, in: lld-redis }
+    - { id: r-postgres, kind: oval, label: MySQL or Postgres, at: [46, 39], size: [14, 5], tone: amber, in: lld-redis }
+    - { id: r-movie, kind: note, label: "Spider-Man, seats L12 and L13", at: [7, 53], in: lld-redis }
+    - { id: r-users, kind: note, label: "user 1 first, then user 2", at: [7, 54], in: lld-redis }
+    - { id: r-redis, kind: oval, label: Redis cluster, at: [46, 46], size: [14, 4], tone: green, in: lld-redis }
+    - { id: r-hold, kind: note, label: "hold: set the seat key if absent, TTL 10 minutes", at: [46, 52], in: lld-redis }
+    - { id: r-payment, kind: box, label: Payment gateway, at: [30, 48], size: [12, 3], in: lld-redis }
+    - { id: r-cdc-note, kind: note, label: "CDC, change data capture", at: [55, 30], in: lld-redis }
+    - { id: r-paid, kind: note, label: "paid: commit in Postgres, update Cassandra", at: [46, 53], in: lld-redis }
+    - { id: r-guard, kind: note, label: "unique event and seat in Postgres, the last guard", at: [46, 54], in: lld-redis }
+    - { id: r-unpaid, kind: note, label: "unpaid: the key expires, the seat is free", at: [46, 55], in: lld-redis }
+    - { id: r-reads, kind: note, label: "reads far outnumber bookings, scale search most", at: [7, 56], in: lld-redis }
+    - { id: r-kafka, kind: box, label: "Kafka, waiting queue", at: [17, 49], size: [9, 3], dashed: true, tone: grey, in: lld-redis }
+  arrows:
+    - { id: r-clients-gateway, from: r-clients, to: r-gateway }
+    - { id: r-gateway-search, from: r-gateway, to: r-search }
+    - { id: r-gateway-event, from: r-gateway, to: r-event }
+    - { id: r-gateway-booking, from: r-gateway, to: r-booking }
+    - { id: r-search-es, from: r-search, to: r-es }
+    - { id: r-event-cassandra, from: r-event, to: r-cassandra }
+    - { id: r-booking-postgres, from: r-booking, to: r-postgres }
+    - { id: r-booking-redis, from: r-booking, to: r-redis }
+    - { id: r-booking-payment, from: r-booking, to: r-payment, label: pay }
+    - { id: r-booking-cassandra, from: r-booking, to: r-cassandra }
+    - { id: r-cdc, from: r-cassandra, to: r-es, label: CDC }
+    - { id: r-gateway-kafka, from: r-gateway, to: r-kafka, dashed: true }
+    - { id: r-kafka-booking, from: r-kafka, to: r-booking, dashed: true }
+beats:
+  - point: "Drop the cron job: the picture is the same without it, and the holds move to a store that expires them by itself."
+    kind: rule
+    weight: supporting
+    teach:
+      - "Same picture as before, with the cron job gone: no more scanning every seat every minute."
+      - "Instead, the holds will live somewhere that forgets them on time, by itself."
+    draw: [lld-redis, r-clients, r-gateway, r-clients-gateway, r-search, r-gateway-search, r-event, r-gateway-event, r-booking, r-gateway-booking, r-es, r-search-es, r-cassandra, r-event-cassandra, r-postgres, r-booking-postgres]
+    check: What was wrong with the cron job we are removing?
+    answer: It scanned every seat every minute and freed holds late, so it was heavy and not real time.
+  - point: "Each held seat becomes a key in a Redis cluster, set only if absent with a 10-minute TTL in one atomic command, so of two users asking at once exactly one gets the seat."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Add a Redis cluster. When user 1 asks for L12 and L13, the booking service sets a key per seat, only if it is absent, with a 10-minute time to live, in one atomic command."
+      - "If the set succeeds, nobody else is paying for that seat, and user 1 goes to pay. If the key already exists, someone is, and user 2 is told the seat is taken."
+    draw: [r-redis, r-booking-redis, r-movie, r-users, r-hold]
+    check: Why must the hold be one set-if-absent command rather than a check followed by a set?
+    answer: Two users could both check, both see no key, and both set it; one atomic set-if-absent lets exactly one win.
+    misconceptions:
+      - "First check whether the key is in Redis, then store it -> two requests can pass the check together; use one atomic SET with NX and a TTL."
+  - point: "When the payment succeeds, the booking service commits the booking in PostgreSQL, deletes the hold, and updates the seat in Cassandra, which change data capture shows to everyone; a unique key on event and seat is the last guard."
+    kind: flow
+    weight: core
+    teach:
+      - "User 1 pays through the payment gateway. On success, the booking service commits the booking in Postgres, deletes the hold keys, and marks the seats taken in Cassandra; change data capture carries that to search."
+      - "One more guard: a unique key on event and seat in Postgres. If a slow payment outlived its hold and someone else took the seat, the second commit fails and that payment is refunded."
+    draw: [r-payment, r-booking-payment, r-paid, r-booking-cassandra, r-cdc, r-cdc-note, r-guard]
+    check: A payment took 12 minutes and the hold expired meanwhile. What stops two bookings of one seat?
+    answer: The unique key on event and seat in PostgreSQL rejects the second commit, and that payment is refunded.
+  - point: "If the payment fails or the user leaves, the key expires after 10 minutes and the seat is free again, with no job to run."
+    kind: mechanism
+    weight: core
+    teach:
+      - "If the payment fails, or the user walks away, nothing has to happen: after 10 minutes the key deletes itself."
+      - "The next user who asks finds no key and can hold the seat. No cron job, and the seat comes back on time."
+    draw: [r-unpaid]
+    check: Who frees the seat when a user abandons the payment?
+    answer: Nobody has to; the Redis key's 10-minute TTL expires and the seat is free.
+  - point: "Read the functional requirements back: search by title, location and date on Elasticsearch, details and seats from Cassandra kept fresh by change data capture, booking with Redis holds and PostgreSQL."
+    kind: rule
+    weight: supporting
+    teach:
+      - "Go back to the requirements at the top. Search by title, location and date: Elasticsearch. Viewing details and seats: Cassandra, kept fresh in search by change data capture."
+      - "Booking: Redis holds the seats while the user pays, and Postgres records the booking."
+    check: Which part of the design answers the search requirement?
+    answer: The search service querying Elasticsearch, fed from Cassandra by change data capture.
+  - point: "Read the non-functional lines back: reads far outnumber bookings, so search and event services are scaled out more than booking; Cassandra keeps search available, Redis and PostgreSQL keep booking consistent."
+    kind: decision
+    weight: core
+    teach:
+      - "Scale: far more people browse than buy, so reads far outnumber writes. Each service is its own fleet, so run many more search and event copies than booking ones."
+      - "CAP: Cassandra and Elasticsearch keep searching and viewing available; the Redis holds and Postgres keep booking consistent."
+    draw: [r-reads]
+    check: Which service gets the most copies, and why?
+    answer: Search, and the event service, because reads far outnumber bookings.
+  - point: "A follow-up: for a huge sale, such as an international concert, put a waiting queue, for example on Kafka, in front of booking, letting users in in order and in batches it can serve."
+    kind: decision
+    weight: core
+    teach:
+      - "If time is left, expect a follow-up: how do you survive a peak, an international concert going on sale with millions arriving at once?"
+      - "Like the queue you wait in on the real sites: a waiting queue, for example on Kafka, in front of booking. Users join the line; when their turn comes they reserve and pay as usual, and booking sees a steady flow, not the spike."
+    draw: [r-kafka, r-gateway-kafka, r-kafka-booking]
+    check: How does the waiting queue protect the booking service during a peak?
+    answer: Users wait in line and are let into booking in order, in batches it can handle, so it sees a steady flow instead of the spike.
+asks:
+  - ids: [r-redis]
+    beats: [2]
+    question: "We dropped the cron job. Where could we keep each hold so it disappears on its own after 10 minutes?"
+    hints:
+      - An in-memory store where a key can carry an expiry.
+      - And it must let only one user set the key for a seat.
+  - ids: [r-kafka]
+    beats: [7]
+    question: "A huge concert goes on sale and millions hit booking in the same minute. What would you put in front of the booking service?"
+    hints:
+      - Think of the line you wait in on the real ticket sites.
+      - Something that lets users in a batch at a time.
+task:
+  prompt: "Draw the final design: client apps, the API gateway, search on Elasticsearch fed from Cassandra by change data capture, event details on Cassandra, and the booking service with Redis holds, the payment gateway and MySQL or Postgres, plus a waiting queue in front of booking for peaks."
+  expects: [2, 3, 4, 7]

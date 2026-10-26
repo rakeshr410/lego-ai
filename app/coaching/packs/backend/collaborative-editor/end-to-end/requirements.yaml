@@ -1,0 +1,102 @@
+# Collaborative editor interview, requirements: "1. Functional requirements" on the left, five lines, and "Non-functional requirements" on the right, three lines, under the title, as the video lays them out. The video calls live co-editing strongly consistent; the pack teaches convergence instead.
+id: backend/collaborative-editor/end-to-end/requirements
+title: Two lists, functional and non-functional
+source:
+  hash: "434cc6cfc1d9"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/collaborative-editor/end-to-end/problem-statement
+  assumes:
+    - "Google Docs is an online word processor that several people can edit together in near real time."
+  carries:
+    - "Functional: create, update and delete documents; several users edit one document at once; see each other's changes in near real time; see cursors and presence; versions."
+    - "Non-functional: millions of users and billions of documents; availability over consistency, eventual is fine; edits reach collaborators in about 100 ms."
+    - "Live co-editing needs convergence, every copy ending identical, not strong consistency."
+  terms:
+    - term: functional requirement
+      means: What the system does.
+    - term: non-functional requirement
+      means: "A quality of the system (scale, availability, latency), stated with a number and where it applies."
+    - term: convergence
+      means: "Every copy of a document reaches the same text once all edits have arrived, though each user saw their own edit first."
+    - term: presence
+      means: Who has the document open right now.
+board:
+  keep: [title, prompt-desc]
+  elements:
+    - { id: fr, kind: region, label: 1. Functional requirements, at: [6, 5], size: [34, 14], dashed: true }
+    - { id: fr-crud, kind: note, label: "create, update and delete documents", at: [7, 7], in: fr }
+    - { id: fr-together, kind: note, label: many users edit one document at once, at: [7, 9], in: fr }
+    - { id: fr-see, kind: note, label: see each other's changes in near real time, at: [7, 11], in: fr }
+    - { id: fr-cursor, kind: note, label: see others' cursors and who is present, at: [7, 13], in: fr }
+    - { id: fr-versions, kind: note, label: versions of each document, at: [7, 15], in: fr }
+    - { id: nfr, kind: region, label: Non-functional requirements, at: [44, 5], size: [34, 14], dashed: true }
+    - { id: nfr-scale, kind: note, label: "scale, millions of users, billions of documents", at: [45, 7], in: nfr }
+    - { id: nfr-cap, kind: note, label: "availability over consistency, eventual", at: [45, 9], in: nfr }
+    - { id: nfr-latency, kind: note, label: "edits reach collaborators in about 100 ms", at: [45, 11], in: nfr }
+  arrows: []
+  lists:
+    - { id: fr-list, in: fr, at: [7, 7], step: 2, slots: 6, width: 32, items: [fr-crud, fr-together, fr-see, fr-cursor, fr-versions] }
+    - { id: nfr-list, in: nfr, at: [45, 7], step: 2, slots: 6, width: 32, items: [nfr-scale, nfr-cap, nfr-latency] }
+beats:
+  - point: "The core functional requirements: users create, update and delete documents, and several users can edit the same document at once, or one alone."
+    kind: requirement
+    weight: core
+    teach:
+      - "Step one, on the left: functional requirements, what the system does. First, a user can create, update and delete a document."
+      - "Second, the one that makes it Google Docs: several users can edit the same document at the same time, and one user can edit alone."
+    draw: [fr, fr-crud, fr-together]
+    check: Which requirement turns an online word processor into Google Docs?
+    answer: Several users editing the same document at the same time.
+  - point: "Collaboration needs three more: each user sees the others' changes in near real time, sees their cursors and who is present, and documents keep versions."
+    kind: requirement
+    weight: core
+    teach:
+      - "When several people edit, each must see the others' changes in near real time, and see where their cursors are and who is in the document right now."
+      - "And versions: like a wiki page, a document keeps earlier versions you can open."
+    draw: [fr-see, fr-cursor, fr-versions]
+    check: What does presence mean here?
+    answer: Seeing who has the document open and is active in it right now, with their cursor positions.
+  - point: "Non-functional, first the scale: millions of users and billions of documents."
+    kind: metric
+    weight: core
+    teach:
+      - "On the right, the non-functional requirements. Ask for the scale first; without it you cannot size anything. Millions of users, and billions of documents stored."
+    draw: [nfr, nfr-scale]
+    check: Why ask for the scale before designing?
+    answer: Because the scale decides the architecture; a design for a thousand documents fails at billions.
+  - point: "Availability over consistency: for a document edited alone, a reader seeing a change a second late is fine, so eventual consistency is enough."
+    kind: requirement
+    weight: core
+    teach:
+      - "Then CAP. With the data spread over many machines, when the network splits we choose. For a document one person edits, choose availability: if someone else opens it and sees the change a second or two late, nothing is lost."
+    draw: [nfr-cap]
+    check: Why is eventual consistency fine for a document one person edits?
+    answer: A reader seeing the latest change a second or two late loses nothing, while being unavailable would stop everyone.
+  - point: "Edits reach collaborators within about 100 ms, and live co-editing gets there by convergence, not strong consistency: each client shows its own edit at once and all copies end up identical."
+    kind: metric
+    weight: core
+    teach:
+      - "Latency: an edit should reach the other collaborators within about 100 milliseconds."
+      - "It is tempting to say live co-editing must be strongly consistent. It cannot be: waiting for every copy to agree before showing a keystroke would blow the 100 milliseconds. Each client shows its own edit at once, and the system guarantees every copy converges to the same text. That is what the deep dive builds."
+    draw: [nfr-latency]
+    check: Two people type into one paragraph. Why not make every keystroke wait until both copies agree?
+    answer: That costs a round trip per keystroke and breaks the 100 ms; instead each shows its own edit at once and the copies converge.
+    misconceptions:
+      - "Collaborative editing needs strong consistency -> it needs convergence: local edits show at once, and every copy ends up identical once the edits arrive."
+asks:
+  - list: fr-list
+    beats: [1, 2]
+    question: "So what should this editor let users do? Give me the features one at a time, and I'll write them down."
+    hints:
+      - Start with what a user does to a document on their own.
+      - Then think about two people in the same document. What do they need to see?
+  - list: nfr-list
+    beats: [3, 4, 5]
+    question: "Now the qualities. How big, how available, how fast? A number if you have one."
+    hints:
+      - How many users and documents are we talking about?
+      - And how quickly should one person's typing reach the others?

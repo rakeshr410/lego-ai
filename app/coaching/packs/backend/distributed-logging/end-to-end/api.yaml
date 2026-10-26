@@ -1,0 +1,113 @@
+# Distributed logging interview, API: "3. API design" beside the entities. First the video's drawing of how a log leaves a service (Log4j, stdout and stderr, a file on the node, the Fluent Bit agent, the platform), then the endpoints in its four groups as code lines: agent, API ingestion, file ingestion, search. The video says kubectl writes the node file and calls Fluent Bit Splunk's agent; the pack says the container runtime and names Fluent Bit as one agent among several.
+id: backend/distributed-logging/end-to-end/api
+title: How a log travels, then the endpoints
+source:
+  hash: "4c78e30726d8"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/distributed-logging/end-to-end/entities
+  assumes:
+    - "Functional: ingest from many sources, streamed or in batches; validate, parse and normalize; search in a dashboard."
+    - "The core entities are the log event, the ingestion job and the source or agent."
+  carries:
+    - "A service logs to stdout and stderr; the node's container runtime writes them to a file; an agent such as Fluent Bit tails it and ships it to the platform."
+    - "Endpoints in four groups: agent (register, edit, config, heartbeat, logs), API ingestion, file upload with status, and search with live tail."
+    - Write only the endpoints the interviewer asks for; the design matters more.
+  terms:
+    - term: stdout and stderr
+      means: "A process's standard output and error streams; libraries like Log4j write logs to them."
+    - term: live tail
+      means: Watching new log lines appear as they arrive.
+board:
+  keep: [title, prompt-desc, prompt-example, fr, fr-ingest, fr-modes, fr-normalize, fr-dashboard, nfr, nfr-scale, nfr-latency, nfr-cap, nfr-reliable, entities, ent-event, ent-job, ent-agent]
+  elements:
+    - { id: api, kind: region, label: 3. API design, at: [26, 21], size: [70, 26], dashed: true }
+    - { id: api-app, kind: box, label: microservice using Log4j, at: [28, 24], size: [10, 3], in: api }
+    - { id: api-stream, kind: box, label: stdout and stderr, at: [28, 30], size: [10, 3], in: api }
+    - { id: api-raw, kind: box, label: raw.logs file on the node, at: [28, 36], size: [10, 3], in: api, tone: amber }
+    - { id: api-agent, kind: box, label: Fluent Bit agent, at: [28, 42], size: [10, 3], in: api }
+    - { id: api-platform, kind: box, label: our logging platform, at: [43, 42], size: [11, 3], in: api }
+    - { id: api-agent-head, kind: note, label: "agent ingestion, Fluent Bit or our agent", at: [58, 24], in: api }
+    - { id: api-agent-1, kind: note, label: POST /agents/register, at: [58, 25], in: api }
+    - { id: api-agent-2, kind: note, label: "PUT /agents/{agentId}", at: [58, 26], in: api }
+    - { id: api-agent-3, kind: note, label: "GET /agents/{agentId}/config", at: [58, 27], in: api }
+    - { id: api-agent-4, kind: note, label: "POST /agents/{agentId}/heartbeat", at: [58, 28], in: api }
+    - { id: api-agent-5, kind: note, label: "POST /agents/{agentId}/logs", at: [58, 29], in: api }
+    - { id: api-direct-head, kind: note, label: "API ingestion, from microservices", at: [58, 31], in: api }
+    - { id: api-direct-1, kind: note, label: POST /logs/ingest, at: [58, 32], in: api }
+    - { id: api-direct-2, kind: note, label: POST /logs/batch, at: [58, 33], in: api }
+    - { id: api-direct-3, kind: note, label: "GET /logs/status/{requestId}", at: [58, 34], in: api }
+    - { id: api-file-head, kind: note, label: "file ingestion, offline or legacy", at: [78, 24], in: api }
+    - { id: api-file-1, kind: note, label: POST /files/upload, at: [78, 25], in: api }
+    - { id: api-file-2, kind: note, label: "GET /files/{fileId}/status", at: [78, 26], in: api }
+    - { id: api-search-head, kind: note, label: "search, for the dashboard", at: [78, 28], in: api }
+    - { id: api-search-1, kind: note, label: "POST /logs/search, paged", at: [78, 29], in: api }
+    - { id: api-search-2, kind: note, label: "full text, regex, filters, time range", at: [78, 30], in: api }
+    - { id: api-search-3, kind: note, label: "GET /logs/{logId}", at: [78, 31], in: api }
+    - { id: api-search-4, kind: note, label: "GET /logs/tail, live tail", at: [78, 32], in: api }
+    - { id: api-search-5, kind: note, label: WS /logs/tail/ws, at: [78, 33], in: api }
+  arrows:
+    - { id: api-app-stream, from: api-app, to: api-stream }
+    - { id: api-stream-raw, from: api-stream, to: api-raw }
+    - { id: api-agent-raw, from: api-agent, to: api-raw }
+    - { id: api-agent-platform, from: api-agent, to: api-platform, label: ships }
+beats:
+  - point: "A service never calls the platform per log line: Log4j writes to stdout and stderr, the node's container runtime saves them to a file, and an agent such as Fluent Bit tails that file and ships it to the platform."
+    kind: flow
+    weight: core
+    teach:
+      - "Step three, the API. But first, how does a log reach us at all? A microservice logs with a library like Log4j, which writes to the standard streams, stdout for information and stderr for errors."
+      - "On Kubernetes, the container runtime on the node captures those streams and writes them to a log file on the node. Then an agent on the node, such as Fluent Bit, reads that file and ships new lines to our platform in near real time. Splunk's own agent is its Universal Forwarder; the idea is the same."
+    draw: [api, api-app, api-stream, api-app-stream, api-raw, api-stream-raw, api-agent, api-agent-raw, api-platform, api-agent-platform]
+    check: Who actually sends a service's logs to the platform?
+    answer: An agent on the node, such as Fluent Bit, which tails the log file the container runtime wrote from stdout and stderr.
+    misconceptions:
+      - "kubectl captures the logs and writes the node file -> the container runtime on the node does; kubectl logs only reads those files."
+  - point: "So the agent is our real client, and it needs endpoints: register, edit, fetch its config, send a heartbeat, and post its batches of logs."
+    kind: flow
+    weight: core
+    teach:
+      - "The agent is our real client, so it has to be onboarded and trusted. It registers, can be edited, fetches its configuration, sends a heartbeat so we know it is alive, and posts its logs."
+      - "That last one is the hot endpoint: a POST to agents, agent ID, logs, carrying a batch of new lines."
+    draw: [api-agent-head, api-agent-1, api-agent-2, api-agent-3, api-agent-4, api-agent-5]
+    check: Why does the agent send a heartbeat?
+    answer: So the platform knows which agents are alive and can notice one that has stopped sending.
+  - point: "Two more ways in: microservices can post logs straight to the API, and offline or legacy clients upload a file and check its status."
+    kind: flow
+    weight: core
+    teach:
+      - "A service may skip the agent and post logs itself: ingest, batch, and a status check for a request."
+      - "And the batch requirement: an offline or legacy client uploads a file, then checks the upload's status. That status is the ingestion job entity."
+    draw: [api-direct-head, api-direct-1, api-direct-2, api-direct-3, api-file-head, api-file-1, api-file-2]
+    check: Which endpoint serves a device that reconnects with a day of logs?
+    answer: POST /files/upload, then GET /files/{fileId}/status to follow the ingestion job.
+  - point: "The dashboard's endpoints: a paged search with full text, regex, filters and a time range, one log by ID, and live tail by polling or over a WebSocket."
+    kind: flow
+    weight: core
+    teach:
+      - "For the dashboard: a POST to logs search, paged, taking full text, regex, filters and a time range. A GET for one log by its ID."
+      - "And live tail, two ways: a GET the page calls repeatedly, and a WebSocket. We come back to the difference at the end."
+    draw: [api-search-head, api-search-1, api-search-2, api-search-3, api-search-4, api-search-5]
+    check: Why is search a POST rather than a GET?
+    answer: Its query, with full text, regex, filters and a time range, is too rich for a query string, so it goes in a body.
+  - point: "In a 45-minute interview name the groups and write only what is asked; the time belongs to the design."
+    kind: rule
+    weight: supporting
+    teach:
+      - "Fourteen endpoints is far too many to write on the day. Name the groups, write the log submission and the search, and write the rest only if the interviewer asks."
+asks:
+  - ids: [api-agent]
+    beats: [1]
+    question: "Before the endpoints: when a service writes a log line, how do you think it gets to a platform like this?"
+    hints:
+      - Does the service call the platform for every single line?
+      - Where do stdout and stderr end up on a Kubernetes node, and what could read them?
+  - ids: [api-agent-head, api-direct-head, api-file-head, api-search-head]
+    beats: [2, 3, 4]
+    question: "So what groups of endpoints do we need? Name them, and the main call in each, and I'll write them."
+    hints:
+      - Think of each way logs come in, and the agent's own needs.
+      - And what does the dashboard call?

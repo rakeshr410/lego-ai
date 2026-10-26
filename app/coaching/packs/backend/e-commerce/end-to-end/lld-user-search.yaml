@@ -1,0 +1,148 @@
+# E-commerce interview, low-level design: users and search. Under "5. Low Level Design", the high-level picture copied and grown as in the video: the user DB as MySQL with its fields, Elasticsearch beside the search service, CDC from the product DB (MongoDB) to Elasticsearch, S3 for images replicated to a CDN the users load them from; the stores' fields and decisions written to the right. The video's "an index still has to scan" is corrected: a title index can't do keyword search, an inverted index can.
+id: backend/e-commerce/end-to-end/lld-user-search
+title: "Low-level design: users and search"
+source:
+  hash: "f9565915f10c"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/e-commerce/end-to-end/high-level-design
+  assumes:
+    - "One microservice per requirement behind a load balancer and API gateway, each with its database."
+    - "Non-functional: search highly available and about 200 ms."
+  carries:
+    - "User service on MySQL (name, email, password hash, mobile, addresses); login returns a JWT the gateway checks."
+    - "Search queries Elasticsearch, an inverted index, fed from the product DB by CDC through Kafka."
+    - "Product DB is MongoDB for flexible fields per category; images in S3, URLs in the product, served from a CDN."
+  terms:
+    - term: JWT
+      means: A signed token the user service issues at login; the gateway checks it on each later call.
+    - term: inverted index
+      means: A map from each word to the products containing it, what a search engine answers keyword queries from.
+    - term: change data capture
+      means: "A connector reads a database's change log and streams each change, here through Kafka, to a copy such as a search index."
+    - term: CDN
+      means: A content delivery network, copies of static files at locations near the users.
+board:
+  keep: [title, prompt-desc, prompt-scope, fr, fr-search, fr-details, fr-cart, fr-pay, fr-status, fr-limited, nfr, nfr-scale, nfr-available, nfr-consistent, nfr-latency, hld, hld-u1, hld-u2, hld-u3, hld-u4, hld-gw, hld-user, hld-search, hld-product, hld-cart, hld-status, hld-checkout, hld-payment, hld-pg, hld-userdb, hld-productdb, hld-cartdb, hld-orderdb, hld-paymentdb, hld-u1-gw, hld-u2-gw, hld-u3-gw, hld-u4-gw, hld-gw-user, hld-gw-search, hld-gw-product, hld-gw-cart, hld-gw-status, hld-gw-checkout, hld-user-db, hld-search-db, hld-product-db, hld-cart-db, hld-status-db, hld-checkout-db, hld-checkout-payment, hld-payment-db, hld-payment-pg]
+  elements:
+    - { id: lld1, kind: region, label: "5. Low-level design: users and search", at: [2, 66], size: [64, 30] }
+    - { id: l1-users, kind: box, label: users, at: [4, 77], size: [8, 3], in: lld1 }
+    - { id: l1-gw, kind: box, label: "API gateway, checks the JWT", at: [16, 69], size: [10, 20], tone: blue, in: lld1 }
+    - { id: l1-user, kind: box, label: "User service, login", at: [30, 69], size: [13, 3], tone: blue, in: lld1 }
+    - { id: l1-userdb, kind: oval, label: "User DB, MySQL", at: [48, 68], size: [12, 4], tone: amber, in: lld1 }
+    - { id: l1-search, kind: box, label: "Search service, keywords", at: [30, 77], size: [13, 3], tone: blue, in: lld1 }
+    - { id: l1-es, kind: oval, label: Elasticsearch, at: [48, 76], size: [14, 4], tone: amber, in: lld1 }
+    - { id: l1-product, kind: box, label: "Product service, adds items", at: [30, 85], size: [13, 3], tone: blue, in: lld1 }
+    - { id: l1-productdb, kind: oval, label: "Product DB, MongoDB", at: [48, 84], size: [14, 4], tone: amber, in: lld1 }
+    - { id: l1-s3, kind: oval, label: "S3 bucket, images", at: [30, 91], size: [13, 3], tone: amber, in: lld1 }
+    - { id: l1-cdn, kind: oval, label: CDN, at: [4, 91], size: [9, 3], tone: green, in: lld1 }
+    - { id: notes1, kind: region, label: Stores and decisions, at: [70, 66], size: [30, 29], dashed: true }
+    - { id: n1-user, kind: note, label: "user: name, email, password hash, mobile, addresses", at: [71, 69], in: notes1 }
+    - { id: n1-jwt, kind: note, label: "login returns a JWT, the gateway checks it", at: [71, 70], in: notes1 }
+    - { id: n1-scan, kind: note, label: a scan of every product per search is slow, at: [71, 73], in: notes1 }
+    - { id: n1-index, kind: note, label: "a title index misses keywords, typos, ranking", at: [71, 74], in: notes1 }
+    - { id: n1-es, kind: note, label: "Elasticsearch, an inverted index of words", at: [71, 77], in: notes1 }
+    - { id: n1-cdc, kind: note, label: "CDC, a connector streams changes through Kafka", at: [71, 80], in: notes1 }
+    - { id: n1-product-1, kind: note, label: "product: productId, name, description, category,", at: [71, 84], in: notes1 }
+    - { id: n1-product-2, kind: note, label: "qty, price, currency, image URLs", at: [73, 85], in: notes1 }
+    - { id: n1-mongo, kind: note, label: "MongoDB, flexible fields per category", at: [71, 86], in: notes1 }
+    - { id: n1-s3, kind: note, label: "images in S3, about 2 MB each, URLs in the product", at: [71, 91], in: notes1 }
+    - { id: n1-cdn, kind: note, label: the CDN serves them near the shopper, at: [71, 92], in: notes1 }
+  arrows:
+    - { id: l1-users-gw, from: l1-users, to: l1-gw }
+    - { id: l1-gw-user, from: l1-gw, to: l1-user }
+    - { id: l1-user-db, from: l1-user, to: l1-userdb }
+    - { id: l1-gw-search, from: l1-gw, to: l1-search }
+    - { id: l1-gw-product, from: l1-gw, to: l1-product }
+    - { id: l1-product-db, from: l1-product, to: l1-productdb }
+    - { id: l1-search-es, from: l1-search, to: l1-es }
+    - { id: l1-cdc, from: l1-productdb, to: l1-es, label: CDC }
+    - { id: l1-product-s3, from: l1-product, to: l1-s3 }
+    - { id: l1-s3-cdn, from: l1-s3, to: l1-cdn, label: replicated }
+    - { id: l1-users-cdn, from: l1-users, to: l1-cdn, label: images }
+beats:
+  - point: "The user service stores simple account rows that must be right, so MySQL: name, email, password hash, mobile, addresses; login returns a JWT the gateway checks on every later call."
+    kind: decision
+    weight: core
+    teach:
+      - "Step five, the low-level design. Copy the picture down and open one service at a time, starting where a shopper starts: the user service."
+      - "The data is simple and must be consistent, so MySQL. A user has a name, an email, a password, stored as a salted hash, a mobile and a list of delivery addresses."
+      - "On login it checks the credentials and returns a JWT. Every later call carries it, and the gateway checks it before routing."
+    draw: [lld1, l1-users, l1-gw, l1-users-gw, l1-user, l1-gw-user, l1-userdb, l1-user-db, notes1, n1-user, n1-jwt]
+    check: Who checks the JWT on a call to, say, the cart service?
+    answer: The API gateway, before it routes the request; the user service only issues it at login.
+  - point: "Searching the product database directly means a scan per search, and an index on the title only helps exact or prefix matches, not keywords, typos or ranking."
+    kind: failure
+    weight: core
+    teach:
+      - "Next, search, which must be highly available and answer in about 200 milliseconds. Today the search service queries the product DB, and the product service writes it."
+      - "Without help, every search scans every product, top to bottom. An index on the title helps an exact or prefix match, but shoppers type words in any order, misspelled, and want the best match first. A normal index cannot do that."
+    draw: [l1-search, l1-gw-search, l1-product, l1-gw-product, l1-productdb, l1-product-db, n1-scan, n1-index]
+    check: Why doesn't an index on the title fix search?
+    answer: It helps exact or prefix matches only, not keywords anywhere in the text, typos or ranking by relevance.
+    misconceptions:
+      - "An index makes the database scan the whole table anyway -> an index is a direct look-up; it just answers the wrong question for keyword search."
+  - point: "The search service queries Elasticsearch instead: an inverted index from each word to the products containing it, built for keyword search with ranking."
+    kind: mechanism
+    weight: core
+    teach:
+      - "So bring in a search engine, Elasticsearch, and point the search service at it instead of the database."
+      - "It keeps an inverted index, a map from every word to the products containing it, so a keyword search is a look-up, ranked by relevance, typos tolerated."
+    draw: [l1-es, l1-search-es, n1-es]
+    check: What structure lets Elasticsearch answer keyword searches fast?
+    answer: An inverted index, from each word to the documents that contain it.
+  - point: "Elasticsearch is kept in step with the product DB by change data capture: a connector reads the database's change log and streams each change through Kafka to the index."
+    kind: mechanism
+    weight: core
+    teach:
+      - "New problem: how does Elasticsearch see new products, price changes, stock? The product DB is the source."
+      - "Use a CDC pipeline. A connector captures every change in the product DB's log and pushes it to Kafka, and from Kafka it is applied to Elasticsearch, within seconds. Search can be a moment stale, which availability allows."
+    draw: [l1-cdc, n1-cdc]
+    check: Why use CDC rather than having the product service write to both stores?
+    answer: Two writes can half-fail and drift; CDC copies whatever the database committed, from its log, so the index follows the truth.
+  - point: "The product DB is MongoDB, a document per product, because a phone, a shirt and a book carry different fields: productId, name, description, category, qty, price, currency, image URLs."
+    kind: decision
+    weight: core
+    teach:
+      - "Which database for products? A phone, a shirt and a book have different details, so a document database, MongoDB: each product a JSON document with whatever fields its category needs."
+      - "Every product has a product id, name, description, category, quantity, price, currency, and the URLs of its images. Speed of search comes from Elasticsearch, not from Mongo."
+    draw: [n1-mongo, n1-product-1, n1-product-2]
+    check: Why a document database for products?
+    answer: Products of different categories have different fields, and a document per product holds them without a fixed schema.
+  - point: "Images go to an S3 bucket, with only their URLs in the product document, and S3 is replicated to a CDN so the browser loads them from nearby."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Images: say 2 MB each and seven or eight per product. Millions of those in the database is far too much data. Put them in an S3 bucket and keep only their URLs in the product."
+      - "Better, replicate S3 to a CDN. Search returns the CDN URLs, and the browser loads each image straight from the copy nearest the shopper, so the page renders fast."
+    draw: [l1-s3, l1-product-s3, l1-cdn, l1-s3-cdn, l1-users-cdn, n1-s3, n1-cdn]
+    check: When a search result shows ten products, where do their images come from?
+    answer: The browser fetches them from the CDN using the URLs in the results; the services never carry the image bytes.
+asks:
+  - ids: [l1-es]
+    beats: [3]
+    question: "Scanning the product DB is too slow and an index doesn't help keywords. What would you put the search service on instead?"
+    hints:
+      - Think of a system built only for searching text.
+      - It maps words to the products that contain them.
+  - ids: [n1-cdc]
+    beats: [4]
+    question: "Now Elasticsearch has to see every product change. How would you keep it in step with the product DB?"
+    hints:
+      - The database already logs every change it makes.
+      - Something could read that log and stream it on.
+  - ids: [n1-mongo]
+    beats: [5]
+    question: "What kind of database would you choose for the products, and why?"
+    hints:
+      - Does a shirt have the same details as a phone?
+      - Which kind of database doesn't force one schema on every row?
+  - ids: [l1-s3, l1-cdn]
+    beats: [6]
+    question: "Every product has seven or eight 2 MB images. Where would you keep them, and how do they reach the shopper fast?"
+    hints:
+      - Large files rarely belong in the database.
+      - Static files can be copied close to the user.

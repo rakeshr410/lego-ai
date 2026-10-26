@@ -1,0 +1,129 @@
+# Payment gateway interview, deep dive 4: routing to a processor. As in the video, the orchestrator service to the right of the checkout backend, the merchant preference DB beside it, three connectors fanning out to a tall processor gateway with the processors behind it, the payment processor DB the orchestrator writes first, the collector callback service under the processor gateway, and the hosted page polling for the status.
+id: backend/payment-gateway/end-to-end/lld-orchestrator
+title: "Deep dive, 4: routing and the status"
+source:
+  hash: "d6f21c834675"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/payment-gateway/end-to-end/lld-checkout-backend
+  assumes:
+    - "The checkout backend validates the pay call and gets a card token from the PCI zone."
+    - "Non-functional: consistency over availability."
+  carries:
+    - "The orchestrator reads the merchant preference DB for the processor the merchant chose at onboarding."
+    - "One connector per processor (adapter pattern) calls it through the processor's gateway, which is outside the design."
+    - "The orchestrator records the transaction as sent before the call, and is the only writer of its status; results arrive at a collector callback service."
+    - "The hosted page polls the checkout backend for the status; the merchant gets a webhook."
+  terms:
+    - term: orchestrator
+      means: "The service that picks the processor, records the transaction, makes the call and owns the transaction's status."
+    - term: adapter pattern
+      means: "One common interface in front of several incompatible ones; here a connector per processor."
+board:
+  keep: [title, prompt-desc, nfr, nfr-scale, nfr-cap, nfr-latency, nfr-security, dd-title, dd-merchant, dd-gateway, dd-intent-resp, dd-intent, dd-intent-db, dd-postgres, dd-intent-row-1, dd-intent-row-2, dd-intent-row-3, dd-merchant-gateway, dd-gateway-intent, dd-intent-save, dd-session, dd-redis, dd-ttl, dd-json-1, dd-json-2, dd-buyer, dd-lb, dd-frontend, dd-page-url, dd-page-html, dd-gateway-session, dd-session-redis, dd-buyer-merchant, dd-buyer-lb, dd-lb-frontend, dd-backend, dd-check-1, dd-check-2, dd-check-3, dd-token, pci, dd-tokenize, dd-hsm, dd-vault, dd-step-1, dd-step-2, dd-step-3, dd-step-4, dd-gateway-backend, dd-backend-redis, dd-backend-tokenize, dd-tokenize-hsm, dd-tokenize-vault]
+  elements:
+    - { id: dd-orch, kind: box, label: Orchestrator service, at: [62, 71], size: [12, 3], tone: blue }
+    - { id: dd-prefs, kind: oval, label: Merchant preference DB, at: [62, 62], size: [13, 5], tone: amber }
+    - { id: dd-razorpay, kind: box, label: Razorpay connector, at: [79, 67], size: [11, 3] }
+    - { id: dd-payu, kind: box, label: PayU connector, at: [79, 71], size: [11, 3] }
+    - { id: dd-fiserv, kind: box, label: Fiserv connector, at: [79, 75], size: [11, 3] }
+    - { id: dd-proc-gw, kind: box, label: Processor gateway, at: [94, 66], size: [7, 13], tone: grey, dashed: true }
+    - { id: dd-processors, kind: box, label: card processors and banks, at: [105, 69], size: [12, 6], tone: grey, dashed: true }
+    - { id: dd-txn-db, kind: oval, label: Payment processor DB, at: [62, 80], size: [12, 5], tone: amber }
+    - { id: dd-txn-row-1, kind: note, label: "transaction: id, intent id,", at: [62, 86] }
+    - { id: dd-txn-row-2, kind: note, label: "status sent then done, amount,", at: [62, 87] }
+    - { id: dd-txn-row-3, kind: note, label: "merchant, method, card token", at: [62, 88] }
+    - { id: dd-callback, kind: box, label: Collector callback service, at: [94, 87], size: [12, 3], tone: green }
+    - { id: dd-poll, kind: note, label: the page polls the backend for the status, at: [26, 104] }
+    - { id: dd-webhook, kind: note, label: the merchant gets a webhook with the result, at: [26, 105] }
+  arrows:
+    - { id: dd-backend-orch, from: dd-backend, to: dd-orch, label: card token }
+    - { id: dd-orch-prefs, from: dd-orch, to: dd-prefs }
+    - { id: dd-orch-razorpay, from: dd-orch, to: dd-razorpay }
+    - { id: dd-orch-payu, from: dd-orch, to: dd-payu }
+    - { id: dd-orch-fiserv, from: dd-orch, to: dd-fiserv }
+    - { id: dd-razorpay-gw, from: dd-razorpay, to: dd-proc-gw }
+    - { id: dd-payu-gw, from: dd-payu, to: dd-proc-gw }
+    - { id: dd-fiserv-gw, from: dd-fiserv, to: dd-proc-gw }
+    - { id: dd-gw-processors, from: dd-proc-gw, to: dd-processors }
+    - { id: dd-orch-txn, from: dd-orch, to: dd-txn-db, label: status }
+    - { id: dd-gw-callback, from: dd-proc-gw, to: dd-callback, label: result }
+beats:
+  - point: "Each merchant chose its processor at onboarding, often on fees; the checkout backend hands the token to an orchestrator service, which reads that choice from a merchant preference DB."
+    kind: component
+    weight: core
+    teach:
+      - "The backend holds a token. Which processor gets the payment? The merchant chose when it onboarded, often on price: one processor takes 1 percent, another 2."
+      - "So the backend hands the token to an orchestrator service, which first reads the merchant preference DB: this merchant goes to Razorpay, say."
+    draw: [dd-orch, dd-backend-orch, dd-prefs, dd-orch-prefs]
+    check: How does the gateway know which processor to send a merchant's payment to?
+    answer: "The orchestrator reads the merchant preference DB, where the merchant's choice from onboarding is stored."
+  - point: "Every processor wants a different request, so the orchestrator talks to them through connectors, one per processor, the adapter pattern."
+    kind: decision
+    weight: core
+    teach:
+      - "Each processor's request body is different. Use the adapter pattern: a connector per processor. A Razorpay connector only calls Razorpay, a PayU connector only PayU, a Fiserv connector only Fiserv."
+      - "The orchestrator builds one internal request; the connector turns it into its processor's format. A new processor is a new connector, not a change to the orchestrator."
+    draw: [dd-razorpay, dd-orch-razorpay, dd-payu, dd-orch-payu, dd-fiserv, dd-orch-fiserv]
+    check: What does adding a new processor cost with connectors?
+    answer: "One new connector that speaks its format; the orchestrator does not change."
+  - point: "Connectors call the processor's gateway, which reaches the processors and the banks; from there on it is outside the design."
+    kind: flow
+    weight: supporting
+    teach:
+      - "Each connector calls the processor's gateway, an external system; behind it the processors talk to the banks."
+      - "Draw it dashed: up to the connectors is ours, the rest is out of scope."
+    draw: [dd-proc-gw, dd-razorpay-gw, dd-payu-gw, dd-fiserv-gw, dd-processors, dd-gw-processors]
+    check: Where does our system end?
+    answer: "At the connectors; the processor gateway and the processors behind it are external."
+  - point: "Before calling, the orchestrator records the transaction in the payment processor DB with status sent: id, intent id, status, amount, currency, merchant, method and the card token."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Something I skipped: before the call, the orchestrator saves the transaction in the payment processor DB, the core table of every payment, relational too."
+      - "The row: transaction id, intent id, status, amount and currency, merchant, payment method, and the card token, never the card. Status starts as sent."
+    draw: [dd-txn-db, dd-orch-txn, dd-txn-row-1, dd-txn-row-2, dd-txn-row-3]
+    check: Why write the transaction before calling the processor?
+    answer: "So the payment is on record as sent even if the call or the answer is lost; it can then be matched to the result."
+  - point: "The result comes back later to a collector callback service, because an outside party cannot answer at once and many methods finish asynchronously; only the orchestrator writes the status, so nothing races, and it becomes done."
+    kind: mechanism
+    weight: core
+    teach:
+      - "We cannot expect an outside system to answer in zero seconds; 3-D Secure, UPI and bank redirects finish later. So the result comes back to a collector callback service, thousands of them."
+      - "Who updates the status? Only the orchestrator. If other services wrote it too, two could race and leave it duplicated or inconsistent. One writer: sent, then done, succeeded or failed."
+    draw: [dd-callback, dd-gw-callback]
+    check: Why is the orchestrator the only service that writes the status?
+    answer: "One writer means no two services race on the row, so the status can't end up duplicated or inconsistent."
+    misconceptions:
+      - "The callback service should write the status itself, it gets the result first -> several writers race; one owner keeps it consistent."
+  - point: "The hosted page polls the checkout backend for the payment's status and shows success or failure when it changes; the merchant learns by webhook."
+    kind: flow
+    weight: core
+    teach:
+      - "How does the buyer's page find out? It polls the checkout backend with the payment id, and the backend reads the status from the payment processor DB. When it changes, the page says success or failed."
+      - "The merchant gets the result by webhook, server to server."
+    draw: [dd-poll, dd-webhook]
+    check: How does the card page learn that the payment went through?
+    answer: "It keeps polling the checkout backend, which reads the status from the payment processor DB."
+asks:
+  - ids: [dd-orch]
+    beats: [1]
+    question: "The backend now has a token. What would decide which processor gets this payment, and call it?"
+    hints:
+      - The merchant chose a processor when it signed up.
+      - "A service whose job is to direct the payment, like a conductor."
+  - ids: [dd-razorpay, dd-payu, dd-fiserv]
+    beats: [2]
+    question: "Razorpay, PayU and Fiserv each want a different request. How would you keep the orchestrator from knowing all of them?"
+    hints:
+      - Is there a design pattern for wrapping incompatible interfaces?
+      - One small piece per processor.
+  - ids: [dd-callback]
+    beats: [5]
+    question: "The processor won't answer in the same call. How would the result get back to us?"
+    hints:
+      - The processor calls us back.
+      - Something has to be listening for those calls.

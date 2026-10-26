@@ -1,0 +1,72 @@
+# Notification system interview, deep dive 2: preferences behind a buffer. At the bottom of the deep-dive region, as in the video (which moves the user preference service down): the preference service, a Kafka topic user_preference, a preference consumer and the preference DB, left to right, with the Postgres table under them.
+id: backend/notification-system/end-to-end/lld-preferences
+title: "Deep dive: preferences through Kafka"
+source:
+  hash: "0f06488f17f8"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/notification-system/end-to-end/lld-template
+  assumes:
+    - "The gateway authenticates, routes, rate-limits and balances round robin."
+    - "Non-functional: 1M+ notifications a minute; availability over consistency."
+  carries:
+    - "Preference changes are published to a Kafka topic, user_preference; a preference consumer writes them to the preference DB at its own pace."
+    - "The preference DB is Postgres: id, client_id, external_user_id, preferences, updated_at."
+  terms:
+    - term: Kafka
+      means: "A durable, partitioned log that producers publish to and consumers read from at their own pace."
+    - term: publish and subscribe
+      means: "Producers write to a topic without knowing who reads it; each consumer reads what it subscribes to."
+board:
+  keep: [title, fr, fr-channels, fr-templates, fr-prefs, fr-schedule, fr-status, nfr, nfr-scale, nfr-cap, nfr-latency, hld, hld-clients, hld-gw, hld-tpl-svc, hld-tpl-db, hld-pref-svc, hld-pref-db, hld-notif-svc, hld-provider, hld-provider-note, hld-clients-gw, hld-gw-tpl, hld-tpl-db-arrow, hld-gw-pref, hld-pref-db-arrow, hld-gw-notif, hld-notif-provider, hld-notif-pref, lld, lld-clients, lld-gw, gw-jobs-1, gw-jobs-2, tpl-svc, tpl-db, tpl-table-1, tpl-table-2, tpl-table-3, lld-clients-gw, gw-tpl, tpl-svc-db]
+  elements:
+    - { id: pref-svc, kind: box, label: Preference service, at: [21, 86], size: [9, 3] }
+    - { id: pref-scale, kind: note, label: "about half of millions of users change them", at: [21, 90], in: lld }
+    - { id: pref-kafka, kind: box, label: "Kafka, user preference", at: [33, 86], size: [10, 3], tone: amber }
+    - { id: pref-consumer, kind: box, label: Preference consumer, at: [47, 86], size: [9, 3], tone: grey }
+    - { id: pref-db, kind: oval, label: Preference DB, at: [60, 86], size: [10, 3], tone: amber }
+    - { id: pref-table-1, kind: note, label: "user preference: id, client id,", at: [50, 90], in: lld }
+    - { id: pref-table-2, kind: note, label: "external user id, preferences,", at: [52, 91], in: lld }
+    - { id: pref-table-3, kind: note, label: "updated at, in Postgres", at: [52, 92], in: lld }
+  arrows:
+    - { id: gw-pref, from: lld-gw, to: pref-svc }
+    - { id: pref-svc-kafka, from: pref-svc, to: pref-kafka }
+    - { id: pref-kafka-consumer, from: pref-kafka, to: pref-consumer }
+    - { id: pref-consumer-db, from: pref-consumer, to: pref-db }
+beats:
+  - point: "Thousands of clients, each with millions of users, and roughly half of them changing preferences, means millions of writes a minute; written straight into the database, that does not hold."
+    kind: failure
+    weight: core
+    teach:
+      - "Next box: the user preference service; I'll move it to the bottom. Thousands of clients, each with millions of users, and the video reckons 40 to 60 percent of them change their preferences."
+      - "That is millions of requests a minute. Each one updating the database directly is not feasible."
+    draw: [pref-svc, gw-pref, pref-scale]
+    check: What goes wrong if the preference service writes every change straight to the database?
+    answer: "Millions of writes a minute arrive in bursts, more than the database should take synchronously."
+  - point: "So the service publishes each change to a Kafka topic, user_preference, and a preference consumer reads it and updates the database at a steady pace."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Put a buffer in between: a Kafka broker with a topic, user preference. The service publishes the change and answers at once."
+      - "A preference consumer reads the topic and slowly updates the preference DB. Publish and subscribe: the bursts wait in Kafka, not in the database. The change lands a moment later, which availability over consistency allows."
+    draw: [pref-kafka, pref-svc-kafka, pref-consumer, pref-kafka-consumer, pref-db, pref-consumer-db]
+    check: What does the user give up by going through Kafka?
+    answer: "Their change applies a moment later rather than instantly: eventual consistency, which the requirements accept."
+  - point: "The preference table is a small structured record in Postgres: id, client id, external user id, the preferences per channel, and an updated time."
+    kind: decision
+    weight: supporting
+    teach:
+      - "The record is small and structured, so Postgres. Columns: an id, the client id, Amazon or Uber, the external user id, the preferences, email true, SMS false, and updated at."
+    draw: [pref-table-1, pref-table-2, pref-table-3]
+    check: Which two columns identify whose preference a row is?
+    answer: "The client id and the external user id together."
+asks:
+  - ids: [pref-kafka, pref-consumer]
+    beats: [2]
+    question: "Millions of preference changes a minute. How would you get them into the database without overloading it?"
+    hints:
+      - What if the service didn't write the database itself?
+      - Something in between that holds the changes until they can be written.

@@ -1,0 +1,112 @@
+# Email delivery interview, deep dive into the checks, as the video grows its picture: Kafka feeding the outbox delivery orchestrator, the spam and malware filter and the policy check below it, the validation DB they write to with its columns beside it, and the attachment chain (S3, attachment scanner, S3 validation DB, attachment check service) along the top right.
+id: backend/email-delivery/end-to-end/lld-validation
+title: "Deep dive: checking the email"
+source:
+  hash: "7308ac4bed4d"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/email-delivery/end-to-end/lld-outbox
+  assumes:
+    - "Each sent email is saved in the outbox table and published to Kafka by the outbox consumer, at least once."
+    - "Attachments are uploaded to S3 before the send."
+  carries:
+    - "An outbox delivery orchestrator consumes each email and runs the spam and malware filter, the policy check and the attachment check in parallel."
+    - "Results go into a validation DB row per email (pass, fail, pending), so a slow or down checker holds only its own emails."
+    - "Attachments are scanned on upload by a scanner triggered from S3; at send time the attachment check only reads the stored verdict."
+  terms:
+    - term: orchestrator
+      means: A service that drives the steps of a flow, calling the others and tracking where each item is.
+    - term: policy check
+      means: "An enterprise's own rules on mail, such as no sensitive documents leaving the company."
+board:
+  keep: [title, nfr, nfr-scale, nfr-available, nfr-signup, nfr-durable]
+  elements:
+    - { id: lld-checks, kind: region, label: "5. Deep dive: checking the email", at: [6, 22], size: [70, 31] }
+    - { id: v-kafka, kind: box, label: Kafka, at: [8, 26], size: [10, 3], tone: grey }
+    - { id: v-orch, kind: box, label: Outbox delivery orchestrator, at: [24, 26], size: [14, 4], tone: blue }
+    - { id: v-spam, kind: box, label: Spam and malware filter, at: [8, 36], size: [13, 4] }
+    - { id: v-policy, kind: box, label: Policy check, at: [42, 36], size: [12, 3] }
+    - { id: v-att-check, kind: box, label: Attachment check service, at: [44, 26], size: [12, 3] }
+    - { id: v-parallel, kind: note, label: "checks run in parallel, not one by one", at: [8, 32], in: lld-checks }
+    - { id: v-vdb, kind: oval, label: Validation DB, at: [25, 42], size: [12, 4], tone: amber }
+    - { id: v-down, kind: note, label: a down checker holds only its own emails, at: [40, 41], in: lld-checks }
+    - { id: v-retry, kind: note, label: retried through a delay queue, at: [40, 42], in: lld-checks }
+    - { id: v-cols-1, kind: note, label: "validation: messageId, sender, recipient, domain,", at: [8, 48], in: lld-checks }
+    - { id: v-cols-2, kind: note, label: "route type internal or external,", at: [10, 49], in: lld-checks }
+    - { id: v-cols-3, kind: note, label: "spam, policy, attachment: pass, fail, pending", at: [10, 50], in: lld-checks }
+    - { id: v-s3, kind: oval, label: S3 bucket, at: [61, 40], size: [14, 3], tone: amber }
+    - { id: v-scanner, kind: box, label: Attachment scanner, at: [61, 33], size: [14, 3], tone: grey }
+    - { id: v-scan-db, kind: oval, label: S3 validation DB, at: [61, 26], size: [14, 4], tone: amber }
+    - { id: v-scan-when, kind: note, label: "scanned on upload, read at send", at: [56, 45], in: lld-checks }
+  arrows:
+    - { id: v-kafka-orch, from: v-kafka, to: v-orch, label: consume }
+    - { id: v-orch-spam, from: v-orch, to: v-spam }
+    - { id: v-orch-policy, from: v-orch, to: v-policy }
+    - { id: v-orch-att, from: v-orch, to: v-att-check }
+    - { id: v-orch-vdb, from: v-orch, to: v-vdb, label: pending row }
+    - { id: v-spam-vdb, from: v-spam, to: v-vdb }
+    - { id: v-policy-vdb, from: v-policy, to: v-vdb }
+    - { id: v-s3-scanner, from: v-s3, to: v-scanner }
+    - { id: v-scanner-db, from: v-scanner, to: v-scan-db }
+    - { id: v-att-db, from: v-att-check, to: v-scan-db, label: reads }
+beats:
+  - point: "Nothing the client sent has been checked yet, so an outbox delivery orchestrator consumes each email from Kafka and drives the checks."
+    kind: component
+    weight: core
+    teach:
+      - "The email on Kafka has not been checked at all: it may carry spam or a virus. Before it goes anywhere, it must pass a set of checks."
+      - "Something has to run them: an outbox delivery orchestrator, the heart of the pipeline. It consumes each email from Kafka."
+    draw: [lld-checks, v-kafka, v-orch, v-kafka-orch]
+    check: Why are checks needed at this point at all?
+    answer: Nothing the client sent has been checked yet; the email could contain spam, malware or something the company's policy forbids.
+  - point: "The checks are a spam and malware filter, a policy check for an enterprise's rules and an attachment check, called in parallel, because one after another would add each one's time to every send."
+    kind: mechanism
+    weight: core
+    teach:
+      - "The checkers: a spam and malware filter that blocks infected mail; a policy check, say a company that forbids sensitive documents leaving; and an attachment check."
+      - "The orchestrator calls them in parallel, not one by one. In series, every send would wait for the sum of them."
+    draw: [v-spam, v-orch-spam, v-policy, v-orch-policy, v-att-check, v-orch-att, v-parallel]
+    check: Why call the checkers in parallel?
+    answer: In series, each send would wait for the sum of all the checks; in parallel, only for the slowest.
+  - point: "Each email gets a validation DB row with every check pending, and each checker writes its own pass or fail, so a policy check down for 15 minutes holds only the emails waiting on it, retried later, not every thread."
+    kind: failure
+    weight: core
+    teach:
+      - "The flaw: if the orchestrator waits in memory and the policy check is down for 15 minutes, every email and every thread is stuck behind it."
+      - "So it writes a row per email to a validation DB, every check marked pending, and each checker updates its own column when it finishes. The orchestrator moves on and returns when the row is complete. A down checker still delays its emails, retried through a delay queue, but nothing else waits."
+    draw: [v-vdb, v-orch-vdb, v-spam-vdb, v-policy-vdb, v-down, v-retry, v-cols-1, v-cols-2, v-cols-3]
+    check: The policy check is down for 15 minutes. What does the validation DB change?
+    answer: Each check's result is recorded per email, so the orchestrator does not hold every email waiting; only emails still pending policy wait and are retried.
+    misconceptions:
+      - "With the validation DB a down checker delays nothing -> its emails still wait for its verdict; the others are no longer blocked."
+  - point: "Scanning a file is slow, so it happens on upload: the S3 upload event triggers an attachment scanner that stores its verdict in an S3 validation DB, and at send time the attachment check only reads it."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Scanning an attachment is slow, so do not do it at send time. Every upload to the S3 bucket raises an event; that triggers an attachment scanner, which writes its verdict to an S3 validation DB."
+      - "By the time the user presses send, the scan is long done. The attachment check service just reads the precomputed result."
+    draw: [v-s3, v-scanner, v-s3-scanner, v-scan-db, v-scanner-db, v-att-db, v-scan-when]
+    check: Why does the attachment check service not scan the file itself?
+    answer: Scanning is slow; it was done when the file was uploaded, so at send time the service only reads the stored verdict.
+asks:
+  - ids: [v-orch]
+    beats: [1]
+    question: "The email is on Kafka but nothing has checked it for spam or viruses. What would you put here to run those checks?"
+    hints:
+      - Something consumes from Kafka.
+      - And calls each checker, then decides what happens next.
+  - ids: [v-vdb]
+    beats: [3]
+    question: "If the policy check goes down for 15 minutes, every email waits on it. How would you stop one slow checker blocking everything?"
+    hints:
+      - What if each result were written down instead of waited for?
+      - One record per email, one field per check.
+  - ids: [v-scanner]
+    beats: [4]
+    question: "Scanning a big attachment is slow. How could the scan be finished before the user even presses send?"
+    hints:
+      - When does the file reach us?
+      - S3 can raise an event on every upload.

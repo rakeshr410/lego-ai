@@ -1,0 +1,147 @@
+# Ride-sharing interview, low-level design, driver matching: as the video draws it, the gateway on the left, the driver matching service with geohash proximity search, the ride and drivers databases on the right with the driver and location tables, the five nearby drivers under it and the notification service below; then, under it all, ZooKeeper's driver lock: a persistent znode with an ephemeral child per locked driver, and the lock rules written to its right. Corrected here: ephemeral znodes go when their session times out (heartbeats), and a persistent znode stays until explicitly deleted.
+id: backend/ride-sharing/end-to-end/lld-matching
+title: "Low-level design: matching, and the ZooKeeper lock"
+source:
+  hash: "9fafa203057b"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/ride-sharing/end-to-end/lld-fare
+  assumes:
+    - "Driver matching finds nearby drivers in the drivers database and offers the ride through the notification service."
+    - "Non-functional: strong consistency in matching, no driver assigned two rides at once."
+  carries:
+    - "Matching uses geohash proximity search to list free drivers within 5 to 10 km of the pick-up."
+    - "Drivers database in PostgreSQL: a driver table (driverId, name, vehicleInfo, rating, mobileNum, status) and a location table (driverId or userId, latitude, longitude, modifiedTS)."
+    - "Two matching servers can offer one driver two rides; a lock per driver prevents it."
+    - "ZooKeeper lock: an ephemeral znode per driver under a persistent driver-lock znode; a second create fails with NodeExistsException; deleted on deny, timeout, or when the holder's session ends."
+  terms:
+    - term: geohash
+      means: "A location written as a short string whose shared prefix means nearby cells, so a search reads a few cells instead of every driver."
+    - term: znode
+      means: "A node in ZooKeeper's tree; persistent ones stay until deleted, ephemeral ones go when their client's session ends."
+    - term: lock
+      means: A claim only one server can hold at a time; here, the right to offer a ride to one driver.
+board:
+  keep: [title, nfr, nfr-scale, nfr-rider, nfr-match, nfr-latency]
+  elements:
+    - { id: lld-matching, kind: region, label: "5. Low-level design: driver matching", at: [6, 20], size: [70, 33] }
+    - { id: m-gateway, kind: box, label: API gateway, at: [8, 24], size: [10, 10] }
+    - { id: m-matching, kind: box, label: "Driver matching service, geohash proximity search", at: [24, 24], size: [16, 4], tone: blue }
+    - { id: m-ride, kind: oval, label: Ride DB, at: [46, 22], size: [10, 3], tone: amber }
+    - { id: m-drivers, kind: oval, label: Drivers DB, at: [46, 27], size: [12, 3], tone: amber }
+    - { id: m-driver-1, kind: note, label: "driver: driverId, name,", at: [60, 27], in: lld-matching }
+    - { id: m-driver-2, kind: note, label: "vehicleInfo, rating, mobileNum,", at: [61, 28], in: lld-matching }
+    - { id: m-driver-3, kind: note, label: status IDLE or DRIVING, at: [61, 29], in: lld-matching }
+    - { id: m-loc-1, kind: note, label: "location: driverId or userId,", at: [60, 31], in: lld-matching }
+    - { id: m-loc-2, kind: note, label: "latitude, longitude, modifiedTS", at: [61, 32], in: lld-matching }
+    - { id: m-list, kind: note, label: "drivers 1 to 5, nearby and idle", at: [24, 30], in: lld-matching }
+    - { id: m-notify, kind: box, label: Notification service, at: [8, 37], size: [12, 3] }
+    - { id: m-race-1, kind: note, label: "two servers, same pick-up, same five drivers", at: [24, 32], in: lld-matching }
+    - { id: m-race-2, kind: note, label: one driver could accept two rides, at: [24, 33], in: lld-matching, tone: red }
+    - { id: m-zk-what, kind: note, label: "ZooKeeper, a replicated coordination service", at: [24, 36], in: lld-matching }
+    - { id: m-zk-root, kind: oval, label: "driver lock, persistent", at: [30, 39], size: [16, 3], tone: grey }
+    - { id: m-zk-1, kind: oval, label: driverId 001, at: [24, 45], size: [12, 3], tone: grey, dashed: true }
+    - { id: m-zk-2, kind: oval, label: driverId 002, at: [38, 45], size: [12, 3], tone: grey, dashed: true }
+    - { id: m-zk-3, kind: oval, label: driverId 003, at: [54, 45], size: [12, 3], tone: grey, dashed: true }
+    - { id: m-ephemeral, kind: note, label: "ephemeral node, one per locked driver", at: [24, 49], in: lld-matching }
+    - { id: m-zk-exists, kind: note, label: a second create gets NodeExistsException, at: [50, 36], in: lld-matching }
+    - { id: m-zk-release, kind: note, label: holder deletes it on deny or timeout, at: [50, 37], in: lld-matching }
+    - { id: m-zk-crash, kind: note, label: "holder dies, session times out, node deleted", at: [50, 38], in: lld-matching }
+    - { id: m-redis-alt, kind: note, label: a Redis lock with a TTL also works, at: [50, 49], in: lld-matching }
+  arrows:
+    - { id: m-gw-matching, from: m-gateway, to: m-matching, label: book }
+    - { id: m-matching-drivers, from: m-matching, to: m-drivers, label: nearby }
+    - { id: m-matching-ride, from: m-matching, to: m-ride }
+    - { id: m-matching-notify, from: m-matching, to: m-notify, label: offer }
+    - { id: m-matching-zk, from: m-matching, to: m-zk-root, label: lock first }
+    - { id: m-zk-root-1, from: m-zk-root, to: m-zk-1 }
+    - { id: m-zk-root-2, from: m-zk-root, to: m-zk-2 }
+    - { id: m-zk-root-3, from: m-zk-root, to: m-zk-3 }
+beats:
+  - point: "Driver matching finds the free drivers within 5 or 10 km of the pick-up with geohash proximity search, instead of scanning every driver."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Now the core, the driver matching service. The booking arrives through the gateway with the rider's pick-up location."
+      - "It finds nearby drivers with geohash proximity search: every location becomes a short string whose shared prefix means nearby, so it reads a few cells, within 5 or 10 kilometres, not millions of rows."
+    draw: [lld-matching, m-gateway, m-matching, m-gw-matching]
+    check: How does geohashing avoid scanning every driver?
+    answer: Nearby locations share a geohash prefix, so the search reads only the cells around the pick-up.
+  - point: "The drivers database is PostgreSQL: a driver table with driverId, name, vehicle, rating, mobile number and status, and a location table with latitude, longitude and modified time for drivers and riders."
+    kind: decision
+    weight: core
+    teach:
+      - "What matching reads. The drivers database holds metadata, so PostgreSQL: a driver table, driver ID, name, vehicle info, rating, mobile number, and a status, idle or driving."
+      - "And a location table: a driver ID or user ID, latitude, longitude and when it was modified, for drivers and riders alike. For now assume those locations are fresh; the next lesson makes that true. The ride database sits beside it."
+    draw: [m-drivers, m-matching-drivers, m-driver-1, m-driver-2, m-driver-3, m-loc-1, m-loc-2, m-ride, m-matching-ride]
+    check: Which column tells matching a driver is free?
+    answer: The status in the driver table, idle rather than driving.
+  - point: "The search returns, say, drivers 1 to 5, and matching offers the ride through the notification service."
+    kind: flow
+    weight: supporting
+    teach:
+      - "Say the search near this rider finds five idle drivers, driver 1 to driver 5. Matching sends them the offer through the notification service."
+    draw: [m-list, m-notify, m-matching-notify]
+    check: How does the offer reach a driver's phone?
+    answer: Through the notification service, as a push notification.
+  - point: "Matching runs on many servers: two riders at the same corner get the same idle drivers, so two servers can offer one driver two rides, and the driver could accept both."
+    kind: failure
+    weight: core
+    teach:
+      - "Here is the catch. Matching is a service with many instances. Two riders at the same pick-up get the same five idle drivers."
+      - "Server one and server two both offer driver 1 a ride at the same moment; the driver accepts both, and one driver is assigned two rides, exactly what our consistency line forbids."
+    draw: [m-race-1, m-race-2]
+    check: Why does this happen even though each server is correct on its own?
+    answer: Both see the same idle drivers at the same time and nothing shared stops them offering the same one.
+  - point: "So lock a driver before offering: in ZooKeeper, a persistent driver-lock znode, and a matching server locks driver 001 by creating an ephemeral child named for that driver."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Lock the driver before the offer and hold it until the driver answers. Use ZooKeeper, a replicated coordination service. It has two kinds of node: persistent, which stays until someone deletes it, and ephemeral, which belongs to the session that made it."
+      - "Make one persistent node, driver lock. To lock driver 001, a server creates an ephemeral child named driver ID 001 under it. If the create succeeds, it holds the lock and sends the offer."
+    draw: [m-zk-what, m-zk-root, m-matching-zk, m-zk-1, m-zk-root-1, m-zk-2, m-zk-root-2, m-zk-3, m-zk-root-3, m-ephemeral]
+    check: What does a matching server do in ZooKeeper to lock driver 001?
+    answer: It creates an ephemeral znode for driver 001 under the persistent driver-lock znode.
+  - point: "A second server trying the same driver gets NodeExistsException and waits or moves on; on deny or timeout the holder deletes the node and the driver is free."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Server two tries to create the same node and ZooKeeper refuses: node already exists. So driver 1 is under offer; server two waits, with a watch, or tries another driver."
+      - "If driver 1 declines or does not answer in time, server one deletes the node, and the driver is free for server two."
+    draw: [m-zk-exists, m-zk-release]
+    check: What does server two get when driver 1 is already locked?
+    answer: A NodeExistsException, so it waits with a watch or moves to another driver.
+  - point: "If the holder crashes, its session times out and ZooKeeper deletes its ephemeral nodes, so no lock is stuck; a Redis lock with a TTL is the other common way."
+    kind: failure
+    weight: core
+    teach:
+      - "What if server one dies holding the lock? Its heartbeats stop, its session times out, and ZooKeeper deletes its ephemeral nodes itself. The lock never outlives its owner."
+      - "The same job can be done with a Redis lock that has an expiry; the video uses ZooKeeper here, and either is a fine answer if you name the crash case."
+    draw: [m-zk-crash, m-redis-alt]
+    check: A server crashes holding the lock on driver 001. What happens?
+    answer: Its session times out and ZooKeeper deletes the ephemeral node, releasing the driver.
+    misconceptions:
+      - "A crashed server's lock stays forever -> ephemeral nodes are deleted when their session ends."
+      - "Persistent znodes can never be deleted -> they stay until explicitly deleted; ephemeral ones also go with their session."
+asks:
+  - ids: [m-race-2]
+    beats: [4]
+    question: "Matching runs on many servers. Two riders book at the same corner at the same moment. What could go wrong?"
+    hints:
+      - Which drivers would each server find?
+      - What if the same driver gets two offers and taps accept twice?
+  - ids: [m-zk-root]
+    beats: [5]
+    question: "How would you make sure only one server can offer a ride to a given driver at a time?"
+    hints:
+      - Something every server checks before sending an offer.
+      - A shared lock, held until the driver answers.
+  - ids: [m-zk-crash]
+    beats: [7]
+    question: "Say the server holding a driver's lock crashes. How do we stop that driver being locked forever?"
+    hints:
+      - What does ZooKeeper notice when a client stops sending heartbeats?
+      - Which kind of node disappears with its session?

@@ -1,0 +1,110 @@
+# Social media interview, requirements: "1. Functional requirements" on the left, five lines, and "Non-functional requirements" on the right, three lines, under the title, as the video lays them out.
+id: backend/social-media-feed/end-to-end/requirements
+title: Five features, three qualities
+source:
+  hash: "08c6fa3c3f7e"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/social-media-feed/end-to-end/problem-statement
+  assumes:
+    - "A social platform lets users share posts with friends and followers and see a feed."
+  carries:
+    - "Functional: sign up and log in; create and share posts (text, image, video); follow each other; like and comment; see a feed of posts from the people you follow."
+    - "Out of scope: stories, reels, messaging."
+    - "Non-functional: 500M daily active users; availability over consistency, eventual is fine; about 500 ms to upload a post."
+  terms:
+    - term: functional requirement
+      means: What the system does.
+    - term: non-functional requirement
+      means: "A quality of the system, with a number and where it applies."
+    - term: eventual consistency
+      means: "A new post may reach followers a little later, but it gets there."
+board:
+  keep: [title, prompt-desc]
+  elements:
+    - { id: fr, kind: region, label: "1. Functional requirements", at: [2, 5], size: [36, 16], dashed: true }
+    - { id: fr-login, kind: note, label: "sign up and log in", at: [3, 7], in: fr }
+    - { id: fr-post, kind: note, label: "create and share posts, text, image or video", at: [3, 9], in: fr }
+    - { id: fr-follow, kind: note, label: "follow each other", at: [3, 11], in: fr }
+    - { id: fr-engage, kind: note, label: "like and comment on posts", at: [3, 13], in: fr }
+    - { id: fr-feed, kind: note, label: "see a feed of posts from people they follow", at: [3, 15], in: fr }
+    - { id: nfr, kind: region, label: Non-functional requirements, at: [50, 5], size: [38, 13], dashed: true }
+    - { id: nfr-scale, kind: note, label: "scale, 500M daily active users", at: [51, 7], in: nfr }
+    - { id: nfr-cap, kind: note, label: "availability over consistency, eventual", at: [51, 9], in: nfr }
+    - { id: nfr-latency, kind: note, label: "low latency, 500 ms to upload a post", at: [51, 11], in: nfr }
+  arrows: []
+  lists:
+    - { id: fr-list, in: fr, at: [3, 7], step: 2, slots: 6, width: 32, items: [fr-login, fr-post, fr-follow, fr-engage, fr-feed] }
+    - { id: nfr-list, in: nfr, at: [51, 7], step: 2, slots: 5, width: 34, items: [nfr-scale, nfr-cap, nfr-latency] }
+beats:
+  - point: "Users sign up and log in, and create and share posts as text, an image or a video."
+    kind: requirement
+    weight: core
+    teach:
+      - "Step one, on the left: functional requirements, what the platform does. First, onboarding: users sign up and log in."
+      - "Second, posting: users create and share a post, and since this is a general platform, a post can be text, an image or a video."
+    draw: [fr, fr-login, fr-post]
+    check: What kinds of content can a post hold in this design?
+    answer: "Text, an image or a video."
+  - point: "Users follow each other, and like and comment on posts."
+    kind: requirement
+    weight: core
+    teach:
+      - "Third, users follow each other. Facebook also has friend requests; to keep it simple we only build following."
+      - "Fourth, the interactions: users like and comment on posts."
+    draw: [fr-follow, fr-engage]
+    check: Facebook has friend requests as well as follows. What do we build here?
+    answer: Only following, to keep it simple; a status column could later hold a pending friend request.
+  - point: "The most important requirement: users see a feed of posts from the people they follow; stories, reels and messaging are out of scope."
+    kind: requirement
+    weight: core
+    teach:
+      - "Fifth, and the one this whole design is about: open the app and see a feed of the most relevant posts from the people you follow."
+      - "Then say what is out: stories, reels and messaging. A chat service is a design of its own."
+    draw: [fr-feed]
+    check: Which requirement will most of the design time go to, and what is left out?
+    answer: "The feed; stories, reels and messaging are out of scope."
+  - point: "The scale is 500 million daily active users, which is why the backend is distributed."
+    kind: metric
+    weight: core
+    teach:
+      - "On the right, the non-functional requirements. First ask for the scale: 500 million daily active users."
+      - "A number like that decides the architecture: many services, many machines."
+    draw: [nfr, nfr-scale]
+    check: What scale are we designing for?
+    answer: 500 million daily active users.
+  - point: "Availability over consistency: a post may reach followers a minute or an hour late, but an app that is down is a bad experience; CAP is the choice made during a network partition."
+    kind: requirement
+    weight: core
+    teach:
+      - "Then CAP. A distributed system must choose, when the network between machines splits, between answering with possibly stale data and refusing until the copies agree. With no partition it can have both."
+      - "Here a post need not reach every follower in the first second; a minute or even an hour later is fine. An app that will not open is far worse. So availability wins, and eventual consistency is enough."
+    draw: [nfr-cap]
+    check: Why is eventual consistency fine for the feed?
+    answer: A post reaching followers a little late harms no one, while downtime is felt by every user.
+    misconceptions:
+      - "CAP means a system can never be both consistent and available -> the trade-off is forced only during a network partition."
+  - point: "Latency: uploading a text or image post takes about 500 ms."
+    kind: metric
+    weight: supporting
+    teach:
+      - "Last, latency, and say where it applies: the upload. Publishing a text or image post should take about 500 milliseconds."
+    draw: [nfr-latency]
+    check: Where does the 500 ms latency target apply?
+    answer: To uploading a text or image post.
+asks:
+  - list: fr-list
+    beats: [1, 2, 3]
+    question: "So what should this platform let people do? Tell me the features one at a time, and I'll write them down."
+    hints:
+      - Think of what you do on Instagram, from opening an account onwards.
+      - And what do you see first when you open the app?
+  - list: nfr-list
+    beats: [4, 5, 6]
+    question: "Now the qualities. How big, how reliable, how fast should it be? A number if you have one."
+    hints:
+      - How many people use it every day?
+      - When machines fail, what matters more, staying up or every follower seeing a post at once?

@@ -1,0 +1,160 @@
+# Online learning interview, high-level design: "4. High-level design" under the API, as the video draws it left to right: students, a tall load balancer and API gateway, a column of one service per requirement, a column of stores, then the instructor side mirrored on the right (catalog and media uploader, the instructors' own gateway, the instructors).
+id: backend/online-learning/end-to-end/high-level-design
+title: A student side and an instructor side
+source:
+  hash: "2f685d7fa206"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/online-learning/end-to-end/api
+  assumes:
+    - "Functional: accounts, search, enrollment, quizzes, progress, reviews; instructor onboarding and course creation."
+    - "Payment and enrollment must be strongly consistent; the rest favours availability."
+  carries:
+    - "Students reach the services through a load balancer and API gateway that spreads load, routes and authenticates; instructors have their own on the right."
+    - "Student services: user, course search, comment and review, video playback, user progress, enrollment, payment, each with its store."
+    - "A paid enrollment writes the payment DB and grants access in the course enrollment DB: two writes for one purchase."
+    - "Instructor services: catalog writes course metadata to the course DB; media uploader puts videos and heavy files in blob storage."
+  terms:
+    - term: API gateway
+      means: "The front door to the services: spreads the traffic, routes each path to its service, and checks authentication."
+    - term: blob storage
+      means: Object storage for large flat files such as videos and images, kept out of the database.
+board:
+  keep: [title, prompt-desc, prompt-actors, prompt-scope, fr, fr-account, fr-search, fr-enroll, fr-assess, fr-progress, fr-review, fr-onboard, fr-create, nfr, nfr-scale, nfr-avail, nfr-consistent, nfr-files, nfr-latency, entities, ent-user, ent-course, ent-payment, ent-review, ent-progress, api, api-courses-h, api-search, api-course, api-create, api-publish, api-progress-h, api-progress-post, api-progress-get, api-enroll-h, api-enroll, api-entitle, api-mine]
+  elements:
+    - { id: hld, kind: region, label: "4. High-level design", at: [2, 45], size: [70, 34] }
+    - { id: hld-students, kind: box, label: students, at: [2, 60], size: [6, 3], in: hld }
+    - { id: hld-lb, kind: box, label: "LB and API gateway", at: [11, 49], size: [4, 27], in: hld }
+    - { id: hld-user, kind: box, label: User service, at: [18, 49], size: [10, 3], in: hld }
+    - { id: hld-review, kind: box, label: Comment and review service, at: [18, 53], size: [10, 3], in: hld }
+    - { id: hld-search, kind: box, label: Course search service, at: [18, 57], size: [10, 3], in: hld }
+    - { id: hld-playback, kind: box, label: Video playback service, at: [18, 61], size: [10, 3], in: hld }
+    - { id: hld-progress, kind: box, label: User progress service, at: [18, 65], size: [10, 3], in: hld }
+    - { id: hld-enroll, kind: box, label: Enrollment service, at: [18, 69], size: [10, 3], in: hld }
+    - { id: hld-payment, kind: box, label: Payment service, at: [18, 73], size: [10, 3], in: hld }
+    - { id: hld-userdb, kind: oval, label: User DB, at: [31, 48], size: [10, 3], in: hld, tone: amber }
+    - { id: hld-coursedb, kind: oval, label: Course DB, at: [31, 55], size: [10, 3], in: hld, tone: amber }
+    - { id: hld-blob, kind: oval, label: Blob storage, at: [31, 61], size: [10, 3], in: hld, tone: amber }
+    - { id: hld-progressdb, kind: oval, label: Progress DB, at: [31, 65], size: [10, 3], in: hld, tone: amber }
+    - { id: hld-enrolldb, kind: oval, label: Course enrollment DB, at: [31, 69], size: [13, 3], in: hld, tone: amber }
+    - { id: hld-paymentdb, kind: oval, label: Payment DB, at: [31, 74], size: [10, 3], in: hld, tone: amber }
+    - { id: hld-catalog, kind: box, label: Catalog service, at: [44, 55], size: [10, 3], in: hld }
+    - { id: hld-uploader, kind: box, label: Media uploader service, at: [44, 61], size: [10, 3], in: hld }
+    - { id: hld-lb2, kind: box, label: "Instructor LB and gateway", at: [57, 53], size: [4, 13], in: hld }
+    - { id: hld-instructors, kind: box, label: instructors, at: [64, 58], size: [7, 3], in: hld }
+  arrows:
+    - { id: hld-students-lb, from: hld-students, to: hld-lb }
+    - { id: hld-lb-user, from: hld-lb, to: hld-user }
+    - { id: hld-user-userdb, from: hld-user, to: hld-userdb }
+    - { id: hld-lb-search, from: hld-lb, to: hld-search }
+    - { id: hld-search-coursedb, from: hld-search, to: hld-coursedb }
+    - { id: hld-lb-enroll, from: hld-lb, to: hld-enroll }
+    - { id: hld-enroll-enrolldb, from: hld-enroll, to: hld-enrolldb }
+    - { id: hld-lb-payment, from: hld-lb, to: hld-payment }
+    - { id: hld-payment-paymentdb, from: hld-payment, to: hld-paymentdb }
+    - { id: hld-payment-enrolldb, from: hld-payment, to: hld-enrolldb }
+    - { id: hld-lb-playback, from: hld-lb, to: hld-playback }
+    - { id: hld-playback-blob, from: hld-playback, to: hld-blob }
+    - { id: hld-lb-progress, from: hld-lb, to: hld-progress }
+    - { id: hld-progress-progressdb, from: hld-progress, to: hld-progressdb }
+    - { id: hld-lb-review, from: hld-lb, to: hld-review }
+    - { id: hld-review-coursedb, from: hld-review, to: hld-coursedb }
+    - { id: hld-instructors-lb2, from: hld-instructors, to: hld-lb2 }
+    - { id: hld-lb2-catalog, from: hld-lb2, to: hld-catalog }
+    - { id: hld-catalog-coursedb, from: hld-catalog, to: hld-coursedb }
+    - { id: hld-lb2-uploader, from: hld-lb2, to: hld-uploader }
+    - { id: hld-uploader-blob, from: hld-uploader, to: hld-blob }
+beats:
+  - point: "Students reach the backend through a load balancer and API gateway, which spreads the traffic, routes each request to its service, and checks authentication."
+    kind: component
+    weight: core
+    teach:
+      - "Step four, the high-level design. Students on the left. Since this is a set of services, a load balancer and API gateway sits in front of them all."
+      - "It does three jobs: spreads the load evenly, routes each request to the right service, and handles authentication and authorization."
+    draw: [hld, hld-students, hld-lb, hld-students-lb]
+    check: What three jobs does the load balancer and API gateway do?
+    answer: Spread the traffic evenly, route each request to its service, and authenticate and authorize it.
+  - point: "Each functional requirement gets a service: a user service onboards users into a user DB, and a course search service queries the course DB, the master copy of every course."
+    kind: component
+    weight: core
+    teach:
+      - "Now one service per requirement, in order. Users must sign up: a user service, saving their details in a user DB."
+      - "Users browse and filter courses: a course search service. It needs the data, so a course DB, the master database of every course."
+    draw: [hld-user, hld-lb-user, hld-userdb, hld-user-userdb, hld-search, hld-lb-search, hld-coursedb, hld-search-coursedb]
+    check: Where does the course search service read from in this first design?
+    answer: The course DB, the master database that holds every course.
+  - point: "Enrolling has two paths: a free course goes through the enrollment service into the course enrollment DB; a paid one goes through the payment service, which records the payment in a payment DB and grants access in the enrollment DB."
+    kind: flow
+    weight: core
+    teach:
+      - "Enroll and track progress get separate services. Enrollment first. A free course: the enrollment service saves who joined which course in a course enrollment DB."
+      - "A paid course needs a payment service. It sends the student to the payment gateway, records the payment in a payment DB, and updates the enrollment DB so the student has access. Two writes for one purchase: remember that."
+    draw: [hld-enroll, hld-lb-enroll, hld-enrolldb, hld-enroll-enrolldb, hld-payment, hld-lb-payment, hld-paymentdb, hld-payment-paymentdb, hld-payment-enrolldb]
+    check: What does a paid enrollment write, and where?
+    answer: The payment in the payment DB, and the student's access in the course enrollment DB.
+  - point: "A video playback service serves the course's videos from blob storage, where heavy files like video and images are kept."
+    kind: component
+    weight: core
+    teach:
+      - "Once enrolled, the student opens the course. Most Udemy courses are video, so a video playback service."
+      - "Videos and images are heavy files; they live in blob storage, and the playback service fetches from there."
+    draw: [hld-playback, hld-lb-playback, hld-blob, hld-playback-blob]
+    check: Why are videos in blob storage rather than the course DB?
+    answer: They are large flat files; blob storage holds them, and the database keeps only rows about them.
+  - point: "A user progress service saves how far each student is into a progress DB, and a comment and review service writes reviews into the course DB, so everything about a course is in one place."
+    kind: component
+    weight: core
+    teach:
+      - "Two requirements left on the student side. Progress: a user progress service records that I have done seventy percent of a course, thirty percent of a video, in a progress DB."
+      - "Reviews: a comment and review service. Reviews belong to a course, so they go into the course DB, beside everything else about it."
+    draw: [hld-progress, hld-lb-progress, hld-progressdb, hld-progress-progressdb, hld-review, hld-lb-review, hld-review-coursedb]
+    check: Why does the comment and review service write to the course DB?
+    answer: Reviews belong to a course, so keeping them with the course lets everything about it be read from one place.
+  - point: "Instructors have their own load balancer and gateway: a catalog service writes course metadata, questions and assignments to the course DB, and a media uploader service puts videos and heavy files into blob storage."
+    kind: component
+    weight: core
+    teach:
+      - "Now the instructor side, mirrored on the right, with its own load balancer and gateway. An instructor does two things."
+      - "Creates the course: a catalog service writes its metadata, description, questions and assignments into the course DB. And uploads videos and big files: a media uploader service puts them in blob storage. The gateway routes by path between the two."
+    draw: [hld-instructors, hld-lb2, hld-instructors-lb2, hld-catalog, hld-lb2-catalog, hld-catalog-coursedb, hld-uploader, hld-lb2-uploader, hld-uploader-blob]
+    check: Which instructor service writes to blob storage, and which to the course DB?
+    answer: The media uploader writes videos and heavy files to blob storage; the catalog service writes course metadata to the course DB.
+  - point: "One course end to end: the instructor creates it and uploads its videos, a moderator approves it, a student signs up, finds it, enrolls free or pays, watches, and progress is tracked. The picture hides how upload, playback, search and payment really work."
+    kind: flow
+    weight: supporting
+    teach:
+      - "Walk one course through the picture: created through the catalog, videos through the uploader, approved by a moderator, then found by a student through search, enrolled or paid for, watched through playback, progress recorded."
+      - "Then say what is abstracted: how a large video really gets into storage and to a player, how search works across many tables, how scaling works. That is the deep dive."
+    check: Name one thing this high-level picture deliberately hides.
+    answer: "Any of: how large videos are uploaded and streamed, how search works across many tables, how a payment reliably becomes access, how the stores scale."
+asks:
+  - ids: [hld-user, hld-search]
+    beats: [2]
+    question: "Behind the gateway, which services does a student need first? Go by the first requirements: signing up and finding a course."
+    hints:
+      - One service per requirement.
+      - And each needs somewhere to keep its data.
+  - ids: [hld-enroll, hld-payment]
+    beats: [3]
+    question: "A course can be free or paid. What would you add for enrolling?"
+    hints:
+      - A free course only needs a record of who joined it.
+      - A paid one has to take money first.
+  - ids: [hld-playback, hld-blob]
+    beats: [4]
+    question: "The student is enrolled and opens a video. Which service serves it, and where is the video kept?"
+    hints:
+      - Video files are large; where do large files usually live?
+      - Something has to fetch it for the player.
+  - ids: [hld-catalog, hld-uploader]
+    beats: [6]
+    question: "Now the instructor side. What services does an instructor need to get a course online?"
+    hints:
+      - There is text, a course's description and quizzes, and there are big video files.
+      - Should both go through the same service and store?
+task:
+  prompt: "Draw the high-level design: students and a load balancer and API gateway on the left, one service per requirement with its store, and the instructors with their own gateway, catalog and media uploader on the right."
+  expects: [1, 2, 3, 4, 5, 6]

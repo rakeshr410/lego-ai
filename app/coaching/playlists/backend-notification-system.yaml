@@ -1,0 +1,47 @@
+slug: backend-notification-system
+title: "The notification system interview"
+summary: "A backend design interview for a notification service other companies call, run step by step on one whiteboard: requirements with numbers, entities, the API, a high-level design, then a deep dive that opens each box until the design is durable and fast where it must be."
+outline: "The notification system lessons follow the five-step order and the drawings of InterviewWithBunny's System Design 15, Design Scalable Notifications System (youtube.com/watch?v=Yv9q8d11Y7k), section by section; no text is taken from it, and its factual slips are corrected in the article."
+lessons:
+  - slug: notification-system
+    title: "The notification system interview: the problem, requirements, entities and API"
+    summary: "The problem at the top of the board, functional and non-functional requirements side by side, the entities with client versus user, and the endpoints."
+    parts:
+      - { title: "The problem, then two lists", minutes: 10, packs: [backend/notification-system/end-to-end/problem-statement, backend/notification-system/end-to-end/requirements] }
+      - { title: "Entities, then the API", minutes: 9, packs: [backend/notification-system/end-to-end/entities, backend/notification-system/end-to-end/api] }
+  - slug: notification-system-design
+    title: "The notification system interview: high-level design, then templates"
+    summary: "Clients, a gateway and three services with a black-box provider; then the deep dive opens the gateway and the template service."
+    parts:
+      - { title: "Gateway, three services, a black box", minutes: 7, packs: [backend/notification-system/end-to-end/high-level-design] }
+      - { title: "The gateway and templates", minutes: 7, packs: [backend/notification-system/end-to-end/lld-template] }
+  - slug: notification-system-preferences
+    title: "The notification system interview: preferences through Kafka"
+    summary: "Millions of preference changes a minute, buffered in a Kafka topic and written by a consumer."
+    parts:
+      - { title: "Preferences through Kafka", minutes: 7, packs: [backend/notification-system/end-to-end/lld-preferences] }
+  - slug: notification-system-queue
+    title: "The notification system interview: providers and the queue"
+    summary: "One provider per channel with its external senders, a Kafka queue in between, nine priority and channel topics, retry and DLQ."
+    parts:
+      - { title: "Providers and the notification queue", minutes: 12, packs: [backend/notification-system/end-to-end/lld-notification-queue] }
+  - slug: notification-system-status
+    title: "The notification system interview: status and reporting"
+    summary: "A notifications DB, status events through a second topic and one delivery consumer, a reporting service, and a BigQuery events table."
+    parts:
+      - { title: "Status and reporting", minutes: 12, packs: [backend/notification-system/end-to-end/lld-delivery-status] }
+  - slug: notification-system-preference-cache
+    title: "The notification system interview: checking preferences"
+    summary: "Every provider checks the user's preference before sending, through a cache in front of the preference DB."
+    parts:
+      - { title: "Checking preferences, through a cache", minutes: 5, packs: [backend/notification-system/end-to-end/lld-preference-cache] }
+  - slug: notification-system-outbox
+    title: "The notification system interview: the transactional outbox"
+    summary: "Never lose an accepted message: the notification and an outbox row in one transaction, and CDC to Kafka."
+    parts:
+      - { title: "The transactional outbox", minutes: 9, packs: [backend/notification-system/end-to-end/lld-outbox] }
+  - slug: notification-system-priority
+    title: "The notification system interview: OTPs first, and finishing"
+    summary: "Critical messages skip the outbox, an OTP service on its own topics scaled out, provider webhooks, rate limits, and the requirements read back."
+    parts:
+      - { title: "OTPs first, then the follow-ups", minutes: 14, packs: [backend/notification-system/end-to-end/lld-priority] }

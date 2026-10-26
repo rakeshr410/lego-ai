@@ -1,0 +1,869 @@
+# yaml-language-server: $schema=../../../../../lego/content-kit/schema/topic.schema.json
+# provenance: ai-drafted by claude-opus-5-5 on 2026-10-27
+#
+# A whole backend system design interview for a stock broker like Zerodha, Groww or Upstox, run
+# step by step on one whiteboard. The order and the board follow InterviewWithBunny's System Design 12:
+# requirements, core entities, API (six groups of endpoints), a high-level design of one gateway and six
+# services, then a deep dive service by service: the user and payment services, the price tracker (polling,
+# server-sent events, WebSocket; exchange gateway, Kafka, an ingester, InfluxDB, Redis pub/sub, a
+# WebSocket gateway), the watchlist, and the order flow (Kafka topics, a validator, the order service,
+# an order tracker, the order and trade tables, the portfolio). The exchange itself is a black box.
+# A backend system of lego-ai's own (app/articles/backend): it stands alone and links to no main-site topic.
+catalogVersion: 5
+title: Designing a stock broker, end to end
+shortTitle: Stock broker interview
+summary: "A backend design interview for a stock broker like Zerodha, Groww or Upstox, step by step on one board: requirements with numbers, six entities, six groups of endpoints, a gateway in front of six services, then a deep dive into users and payments, live prices, watchlists and the order flow."
+group: design
+order: 12
+xp: 300
+difficulty: advanced
+tags: [interview, real-time, websockets, kafka, consistency, time-series]
+eyebrow: Design
+breadcrumb: [Stock broker, Interview walkthrough]
+lede: "You have about an hour and one whiteboard to design the app people use to buy and sell shares, a broker like Zerodha, Groww or Upstox. It is not the exchange: the exchange matches buyers and sellers, and the broker is the platform in front of it, onboarding users, streaming prices, checking orders and showing profit and loss. This walkthrough runs the interview in five steps and spends the deep dive on the two hard parts: getting live prices to millions of screens, and getting an order to the exchange and its result back, consistently."
+reviewStatus: draft
+author: rakeshr410
+provenance: ai-drafted
+sources:
+  - title: "System Design 12: Design Stock Broker Trading Application like Zerodha, Groww, Upstox (InterviewWithBunny, YouTube)"
+    url: https://www.youtube.com/watch?v=W5FJnSywmLE
+    note: "Order, sections and drawings. Corrected: brokers are low-cost, not commission-free; orders go via the exchange gateway, not the payment gateway; a modify endpoint is added; SSE needs no reconnect per change; exchange feeds are leased lines."
+  - title: "RFC 6455, The WebSocket Protocol"
+    url: https://www.rfc-editor.org/rfc/rfc6455
+    note: "A full-duplex channel over one TCP connection, opened by an HTTP upgrade."
+  - title: "Server-sent events (HTML Living Standard)"
+    url: https://html.spec.whatwg.org/multipage/server-sent-events.html
+    note: "A one-way stream of events from the server over a long-lived HTTP response."
+  - title: Redis Pub/Sub (Redis documentation)
+    url: https://redis.io/docs/latest/develop/interact/pubsub/
+    note: "Fire-and-forget fan-out to channel subscribers; a message is delivered to those listening at that moment and not stored."
+  - title: Apache Kafka documentation
+    url: https://kafka.apache.org/documentation/
+    note: "A durable, partitioned log; producers append to topics and consumer groups read at their own pace."
+tutorBrief: >-
+  Interview walkthrough for a stock broker (trading platform) like Zerodha, Groww or Upstox. A broker is
+  not an exchange: the exchange (NSE or BSE in India) matches orders and allocates shares and is a black
+  box behind its own interfaces; the broker onboards users, streams prices, validates and forwards orders,
+  and shows holdings and P and L. Brokers are low-cost, not free: Zerodha charges no brokerage on equity
+  delivery but does on intraday and F and O. Five numbered steps, top to bottom: 1 requirements (functional
+  left, non-functional right), 2 core entities, 3 API, 4 high-level design, 5 deep dive (low-level design).
+  Functional: register, log in and pass KYC; see near-real-time prices and history (a day, a week, a year);
+  place, modify and cancel market and limit orders with status updates; watchlists with live prices; a
+  dashboard of holdings, trade history, P and L and performance. Non-functional: millions of users,
+  millions of trades a day, 8 to 10 thousand instruments (India lists about 5 to 6 thousand on NSE and BSE);
+  consistency over availability for orders and money (a wrong balance, a duplicate trade or a booked order
+  with no shares is a real loss), while viewing prices should stay highly available; latency under 100 ms
+  to place an order and under 50 ms for a price update; the platform serves one country, so every server
+  and cache sits in one region, which makes those numbers reachable. Entities: user, stock, order, trade,
+  portfolio, watchlist. API: users POST /auth/signup, /auth/login, /auth/verify-kyc; market data GET
+  /api/v1/stocks (paginated), /api/v1/stocks/{symbol}, /api/v1/stocks/{symbol}/history (live prices
+  really go over a WebSocket, the video's own correction at the end); funds POST /api/v1/funds/deposit,
+  /withdraw, GET /history; trading POST /api/v1/orders with symbol, side, order type, quantity and limit
+  price, GET /api/v1/orders, GET, PATCH (modify, added here) and DELETE /api/v1/orders/{orderId}; portfolio
+  GET /api/v1/portfolio, /holdings, /positions, /performance (the user comes from the auth token, not the
+  path); watchlists GET and POST /api/v1/watchlists, POST /api/v1/watchlists/{watchlistId}/symbols. In an
+  interview, focus on market data, trading and portfolio. High-level design: clients (web, iOS, Android),
+  a load balancer and API gateway (authentication and authorization, rate limiting, routing by URL, round
+  robin), then user service (user DB, third-party KYC), price tracker (to the exchange), watchlist service
+  (watch DB), order service (validator, then the exchange; order DB), portfolio service (reads orders),
+  payment service (payment DB, payment gateway). Deep dive: user table in Postgres (userId, email, phone,
+  name, isKycVerified, metadata); the KYC provider keeps PAN and Aadhaar, the broker keeps a flag (or
+  encrypts them if it must store them). Payment table in Postgres (transactionId, userId, amount,
+  currency, timestamp). Price tracker: polling every instrument every second is too many costly calls;
+  server-sent events push one way; WebSocket is two way, so a subscription can change on the open
+  connection. An exchange gateway is the single proxy to the exchange; the feed is subscribed for every
+  instrument from the 9:15 open, whether anyone watches it or not, so history is complete; the video's
+  figure is 400 to 500 symbols a socket, about 10 sockets for 5,000 (illustrative: real feeds come over
+  leased lines in the exchange's own protocols). The burst goes into Kafka (topic stock price); a price
+  ingester consumes it, writes every tick to InfluxDB (time series) and publishes the last traded price
+  to Redis pub/sub; the price tracker is a WebSocket server subscribed to the symbols its users watch, it
+  reads the day's earlier prices from InfluxDB and streams new ones from Redis. The gateway is split into
+  an API gateway (REST) and a WebSocket gateway (long-lived sessions, sticky). Watchlist: Postgres, one
+  user to many watchlists (watchlistId the primary key, userId indexed), each with a list of symbols; its
+  live prices come from the price tracker. Orders: requests go into Kafka topic raw orders; a validator
+  checks KYC, an active account, funds and margin, market hours (reads the user and payment DBs; it should
+  hold the funds when it accepts an order) and publishes to verified or rejected orders; the order service
+  consumes both, writes every order to the order DB (orderId, userId, stockId, orderType market or limit,
+  price, quantity, tradeId null until filled, status pending) and sends only verified ones to the exchange
+  through the exchange gateway. Market orders fill at once; limit orders may wait; fills may be partial (20
+  ordered, 5 now, 15 later). Exchange acknowledgements come back on the same feed into Kafka topic order
+  status; an order tracker consumes it, updates the order DB (status, tradeId), writes the trade DB (only
+  orders the exchange accepted, same columns) and notifies the user through a notification service. The
+  trade DB is reconciled with the exchange at the close; the portfolio service reads the trade DB and live
+  prices from the price tracker to compute P and L. Follow-up: settling money between broker and exchange.
+components:
+  - key: client
+    name: Clients
+    tone: sand
+    kind: client
+    summary: The web, iOS and Android apps, calling REST endpoints and holding one WebSocket for live prices.
+    owns: [nothing of its own]
+    talksTo: [api-gateway, websocket-gateway]
+  - key: api-gateway
+    name: Load balancer and API gateway
+    tone: blue
+    kind: gateway
+    summary: Authenticates and authorizes each request, rate-limits it, routes it to a service by its URL and spreads load round robin.
+    owns: [routes, rate limits]
+    talksTo: [user-service, watchlist-service, order-queue, portfolio-service, payment-service]
+  - key: websocket-gateway
+    name: WebSocket gateway
+    tone: blue
+    kind: gateway
+    summary: Holds the clients' long-lived WebSocket sessions, authenticates them and keeps each one stuck to its server.
+    owns: [open sessions]
+    talksTo: [price-tracker]
+  - key: user-service
+    name: User service
+    tone: blue
+    kind: service
+    summary: Signs users up and in, and records the KYC result the provider returns.
+    owns: [user rows]
+    talksTo: [user-db, kyc-provider]
+  - key: kyc-provider
+    name: KYC provider
+    tone: gray
+    kind: external
+    summary: A licensed third party that verifies identity documents and keeps them; it answers verified or not.
+    owns: [identity documents]
+    talksTo: []
+  - key: price-tracker
+    name: Price tracker
+    tone: green
+    kind: service
+    summary: A WebSocket server that streams the prices of the symbols each user watches, the day's history from InfluxDB and live ticks from Redis.
+    owns: [who watches which symbol]
+    talksTo: [redis-pubsub, influxdb]
+  - key: exchange-gateway
+    name: Exchange gateway
+    tone: blue
+    kind: gateway
+    summary: The single proxy between the broker and the exchange; it holds the feed subscriptions and sends orders.
+    owns: [exchange sessions]
+    talksTo: [exchange, market-kafka]
+  - key: exchange
+    name: Exchange (NSE or BSE)
+    tone: gray
+    kind: external
+    summary: Matches orders and allocates shares; a black box that streams prices and order acknowledgements.
+    owns: [the order book]
+    talksTo: []
+  - key: market-kafka
+    name: Kafka, market events
+    tone: yellow
+    kind: queue
+    summary: Buffers the exchange feed; topic stock price for ticks and topic order status for acknowledgements.
+    owns: [stock price topic, order status topic]
+    talksTo: []
+  - key: price-ingester
+    name: Price ingester
+    tone: blue
+    kind: worker
+    summary: Consumes the stock price topic, writes every tick to InfluxDB and publishes the last traded price to Redis.
+    owns: [nothing durable]
+    talksTo: [market-kafka, influxdb, redis-pubsub]
+  - key: influxdb
+    name: InfluxDB
+    tone: yellow
+    kind: datastore
+    summary: A time-series database of every price tick, read for charts and history.
+    owns: [price history]
+    talksTo: []
+  - key: redis-pubsub
+    name: Redis pub/sub
+    tone: orange
+    kind: cache
+    summary: One channel per symbol carrying the last traded price to whoever is subscribed at that moment.
+    owns: [symbol channels]
+    talksTo: []
+  - key: watchlist-service
+    name: Watchlist service
+    tone: blue
+    kind: service
+    summary: Creates watchlists and adds symbols; asks the price tracker for their live prices.
+    owns: [watchlists]
+    talksTo: [watch-db, price-tracker]
+  - key: order-queue
+    name: Kafka, order events
+    tone: yellow
+    kind: queue
+    summary: Topics raw orders, verified orders and rejected orders, so a burst of orders is buffered and nothing is lost.
+    owns: [raw, verified and rejected order topics]
+    talksTo: []
+  - key: validator
+    name: Validator
+    tone: blue
+    kind: worker
+    summary: Checks each raw order (KYC, account active, funds and margin, market hours) and publishes it as verified or rejected.
+    owns: [validation rules]
+    talksTo: [order-queue, user-db, payment-db]
+  - key: order-service
+    name: Order service
+    tone: blue
+    kind: service
+    summary: Records every order and sends the verified ones to the exchange through the exchange gateway.
+    owns: [order rows]
+    talksTo: [order-queue, order-db, exchange-gateway, notification-service]
+  - key: order-tracker
+    name: Order tracker
+    tone: blue
+    kind: worker
+    summary: Consumes the exchange's acknowledgements, updates the order and trade tables and notifies the user.
+    owns: [nothing durable]
+    talksTo: [market-kafka, order-db, trade-db, notification-service]
+  - key: notification-service
+    name: Notification service
+    tone: gray
+    kind: service
+    summary: Tells the user an order was placed, filled or rejected.
+    owns: [nothing durable]
+    talksTo: []
+  - key: portfolio-service
+    name: Portfolio service
+    tone: blue
+    kind: service
+    summary: Computes holdings, positions and P and L from confirmed trades and live prices.
+    owns: [nothing durable]
+    talksTo: [trade-db, price-tracker]
+  - key: payment-service
+    name: Payment service
+    tone: blue
+    kind: service
+    summary: Moves money into and out of the trading wallet through a payment gateway and records each transaction.
+    owns: [payment rows]
+    talksTo: [payment-gateway, payment-db]
+  - key: payment-gateway
+    name: Payment gateway
+    tone: gray
+    kind: external
+    summary: A third party that talks to the banks and answers success or failure.
+    owns: [bank connections]
+    talksTo: []
+  - key: user-db
+    name: User DB
+    tone: yellow
+    kind: datastore
+    summary: Postgres; one row per user with a KYC flag.
+    owns: [user]
+    talksTo: []
+  - key: watch-db
+    name: Watch DB
+    tone: yellow
+    kind: datastore
+    summary: Postgres; watchlists and their symbols.
+    owns: [watchlist, watchlist_symbol]
+    talksTo: []
+  - key: order-db
+    name: Order DB
+    tone: yellow
+    kind: datastore
+    summary: Postgres; every order, verified or rejected, with its status and trade ID.
+    owns: [orders]
+    talksTo: []
+  - key: trade-db
+    name: Trade DB
+    tone: yellow
+    kind: datastore
+    summary: Postgres; only the orders the exchange accepted, reconciled with the exchange at the close.
+    owns: [trades]
+    talksTo: []
+  - key: payment-db
+    name: Payment DB
+    tone: yellow
+    kind: datastore
+    summary: Postgres; one row per wallet transaction.
+    owns: [payment]
+    talksTo: []
+content:
+  # ────────────────────────────────────────────────────────────────── Problem statement
+  - __component: sd.section
+    key: problem-statement
+    title: Understanding the problem.
+    railLabel: Problem
+    intro: "Design a stock trading platform like Zerodha, Groww or Upstox. First make sure which system is meant: a broker, not an exchange. Then the interview runs in five steps."
+  - __component: sd.rich-text
+    key: broker-not-exchange
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "A stock broker is an online, low-cost platform for trading and monitoring stocks. It is not the exchange. The exchange, NSE or BSE in India, keeps the order book, matches buyers with sellers and allocates the shares. The broker sits in front of it: it onboards users, shows prices, takes orders, checks them, forwards them to the exchange and shows what came back. In this design the exchange is a black box reached through the interfaces it offers."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Listen for which one the interviewer wants. Designing an exchange is a different problem, about a matching engine and an order book. Designing a broker is about streaming prices to millions of screens and moving an order and its result safely between the user and the exchange."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Run it in five steps and number them on the board as you go: requirements, core entities, API, high-level design, and a deep dive into each service."
+  - __component: sd.quiz
+    key: problem-quiz
+    title: Quick check
+    questions:
+      - question: Which job belongs to the exchange, not the broker?
+        optionA: Checking that the user passed KYC
+        optionB: Matching buy and sell orders and allocating the shares
+        optionC: Streaming prices to the app
+        optionD: Showing profit and loss
+        answer: B
+        explanation: The broker validates and forwards orders; the exchange matches them. Here it is a black box.
+  # ────────────────────────────────────────────────────────────────── 1. Requirements
+  - __component: sd.section
+    key: requirements
+    title: Requirements.
+    railLabel: Requirements
+    intro: "Functional on the left, five lines; non-functional on the right, each with a number or a reason."
+  - __component: sd.subsection
+    key: functional-sub
+    title: Functional requirements
+    railLabel: Functional
+  - __component: sd.checklist
+    key: functional
+    idPrefix: FR-
+    items:
+      - text: Users register, log in and pass KYC verification before they can trade.
+      - text: "Users see stock prices in near real time, and the history over any range: a day, a week, a year."
+      - text: Users place, modify and cancel market and limit orders, with accurate status updates.
+        note: "A market order takes the current price; a limit order names the price to buy or sell at."
+      - text: Users keep watchlists that show live prices.
+      - text: "A dashboard shows current holdings, trade history, profit and loss, and performance."
+  - __component: sd.subsection
+    key: non-functional-sub
+    title: Non-functional requirements
+    railLabel: Non-functional
+  - __component: sd.requirement-table
+    key: non-functional
+    rows:
+      - area: Scale
+        requirement: High-frequency trading by a large user base.
+        targets: [millions of users, millions of trades a day, 8 to 10 thousand stocks]
+        note: India lists about 5 to 6 thousand stocks on NSE and BSE, so 10 thousand is the ceiling.
+      - area: Consistency
+        requirement: Orders and money are always correct.
+        targets: [consistency over availability for orders and funds]
+        note: "A wrong balance, a duplicate trade, or money taken with no shares booked is a real loss. A few minutes of downtime is better."
+      - area: Availability
+        requirement: Viewing prices stays up.
+        targets: [price views highly available]
+        note: A slightly stale price on screen is better than no price at all.
+      - area: Latency
+        requirement: Orders and prices feel instant.
+        targets: [order placement under 100 ms, price updates under 50 ms]
+        note: "Aggressive for a distributed system, but reachable because a broker serves one country: every server and cache sits in one region."
+  - __component: sd.rich-text
+    key: cap-choice
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "CAP is a choice made per path, for the moment the network splits. On the order and money path the broker refuses rather than risk two copies disagreeing about a balance or a trade. On the price path it keeps serving the last price it has. Say both, because they shape two different halves of the design."
+  - __component: sd.quiz
+    key: requirements-quiz
+    title: Quick check
+    questions:
+      - question: Why does the order path choose consistency over availability?
+        optionA: Because prices change often
+        optionB: A wrong balance or a paid order with no shares booked costs real money, while a short outage only delays trading
+        optionC: Because Postgres cannot be available
+        optionD: It does not; brokers choose availability everywhere
+        answer: B
+        explanation: Money and trades must agree everywhere. Viewing prices is the opposite case and stays available.
+      - question: Why are under 100 ms and under 50 ms realistic here?
+        optionA: Exchanges are fast
+        optionB: The platform serves one country, so all servers and caches sit in one region close to the users and the exchange
+        optionC: Kafka makes everything fast
+        optionD: They are not realistic
+        answer: B
+        explanation: A national broker does not need to cross oceans, which removes most of the network delay.
+  # ────────────────────────────────────────────────────────────────── 2. Entities
+  - __component: sd.section
+    key: entities
+    title: Core entities.
+    railLabel: Entities
+    intro: "Read them off the functional requirements: six nouns."
+  - __component: sd.table
+    key: entities-table
+    columns:
+      - { label: Entity, style: strong }
+      - { label: What it is, style: text }
+    rows:
+      - [User, "An account, with its KYC state and wallet."]
+      - [Stock, "An instrument on the exchange, by symbol, with its price over time."]
+      - [Order, "A request to buy or sell: symbol, side, type, quantity, price, status."]
+      - [Trade, "What the exchange actually executed for an order, with its trade ID."]
+      - [Portfolio, "A user's holdings and positions, with profit and loss."]
+      - [Watchlist, "A named list of symbols a user follows."]
+  - __component: sd.quiz
+    key: entities-quiz
+    title: Quick check
+    questions:
+      - question: Why are order and trade separate entities?
+        optionA: They are the same thing
+        optionB: An order is what the user asked for; a trade is what the exchange executed, which may be later, partial, or never
+        optionC: Trades are only for limit orders
+        optionD: To use two databases
+        answer: B
+        explanation: Twenty shares ordered may fill five now and fifteen later. Profit and loss is computed from trades.
+  # ────────────────────────────────────────────────────────────────── 3. API
+  - __component: sd.section
+    key: api
+    title: API.
+    railLabel: API
+    intro: "Each functional requirement maps to one or more endpoints, here in six groups: users, market data, funds, trading, portfolio and watchlists. There are too many to design in an interview; agree with the interviewer to go deep on market data, trading and portfolio."
+  - __component: sd.table
+    key: api-groups
+    title: Six groups of endpoints
+    columns:
+      - { label: Group, style: strong }
+      - { label: Endpoints, style: mono }
+    rows:
+      - [Users, "POST /auth/signup, POST /auth/login, POST /auth/verify-kyc"]
+      - [Market data, "GET /api/v1/stocks (paginated), GET /api/v1/stocks/{symbol}, GET /api/v1/stocks/{symbol}/history"]
+      - [Funds, "POST /api/v1/funds/deposit, POST /api/v1/funds/withdraw, GET /api/v1/funds/history"]
+      - [Trading, "POST /api/v1/orders, GET /api/v1/orders, GET /api/v1/orders/{orderId}, PATCH /api/v1/orders/{orderId}, DELETE /api/v1/orders/{orderId}"]
+      - [Portfolio, "GET /api/v1/portfolio, /holdings, /positions, /performance"]
+      - [Watchlists, "GET /api/v1/watchlists, POST /api/v1/watchlists, POST /api/v1/watchlists/{watchlistId}/symbols"]
+  - __component: sd.endpoint
+    key: place-order
+    method: POST
+    path: /api/v1/orders
+    summary: "Places a buy or sell order. The user comes from the token in the header, never from the path or the body."
+    requestHeaders: ["Authorization: Bearer <token>"]
+    requestBody:
+      symbol: RELIANCE
+      side: BUY
+      orderType: LIMIT
+      quantity: 20
+      limitPrice: 2850.5
+    responses:
+      - label: Accepted
+        status: "202"
+        body:
+          orderId: o_81231
+          status: PENDING
+  - __component: sd.rich-text
+    key: api-notes
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Placing an order answers 202 with a pending status: the exchange decides later, and the status changes as it fills. Modifying a pending order, for instance its limit price or quantity, is a PATCH on the order; cancelling is a DELETE. The portfolio endpoints carry no user ID in the path; the gateway reads the user from the token, so no one can ask for someone else's holdings."
+      - type: paragraph
+        children:
+          - type: text
+            text: "The stock list is paginated, since there are up to 10 thousand symbols. Live prices are the exception to plain REST: the history comes from a GET, but the current price is streamed over a WebSocket the app keeps open, as the deep dive explains."
+  - __component: sd.quiz
+    key: api-quiz
+    title: Quick check
+    questions:
+      - question: Why does GET /api/v1/portfolio have no user ID in its path?
+        optionA: There is only one user
+        optionB: The user is taken from the authenticated token in the header, so a caller cannot read another user's portfolio
+        optionC: To keep URLs short
+        optionD: The portfolio is public
+        answer: B
+        explanation: Identity comes from authentication, not from a parameter the caller controls.
+      - question: Which requirement needs PATCH /api/v1/orders/{orderId}?
+        optionA: Cancelling an order
+        optionB: Modifying a pending order, such as its limit price or quantity
+        optionC: Listing orders
+        optionD: Depositing funds
+        answer: B
+        explanation: Place, modify and cancel are three requirements and three endpoints. DELETE cancels.
+  # ────────────────────────────────────────────────────────────────── 4. High-level design
+  - __component: sd.section
+    key: high-level-design
+    title: High-level design.
+    railLabel: High level
+    intro: "With millions of users and many features, use microservices behind one gateway: one service per functional requirement, each with its own store, and the exchange as a black box on the right."
+  - __component: sd.component-diagram
+    key: hld-diagram
+    title: The first design
+    direction: LR
+    nodes:
+      - { key: client, details: [web, iOS, Android] }
+      - { key: api-gateway, details: [authentication and authorization, rate limiting, routing, round robin] }
+      - { key: user-service, details: [sign-up, login, KYC] }
+      - { key: kyc-provider }
+      - { key: user-db }
+      - { key: price-tracker, details: [prices from the exchange] }
+      - { key: exchange }
+      - { key: watchlist-service }
+      - { key: watch-db }
+      - { key: order-service, details: [takes orders] }
+      - { key: validator, details: [checks before the exchange] }
+      - { key: order-db }
+      - { key: portfolio-service, details: [reads orders] }
+      - { key: payment-service, details: [wallet top-ups] }
+      - { key: payment-db }
+      - { key: payment-gateway }
+    edges:
+      - { from: client, to: api-gateway }
+      - { from: api-gateway, to: user-service }
+      - { from: api-gateway, to: price-tracker }
+      - { from: api-gateway, to: watchlist-service }
+      - { from: api-gateway, to: order-service }
+      - { from: api-gateway, to: portfolio-service }
+      - { from: api-gateway, to: payment-service }
+      - { from: user-service, to: kyc-provider }
+      - { from: user-service, to: user-db }
+      - { from: price-tracker, to: exchange }
+      - { from: watchlist-service, to: watch-db }
+      - { from: order-service, to: validator }
+      - { from: validator, to: exchange }
+      - { from: order-service, to: order-db }
+      - { from: portfolio-service, to: order-db }
+      - { from: payment-service, to: payment-db }
+      - { from: payment-service, to: payment-gateway }
+  - __component: sd.rich-text
+    key: hld-flows
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "The gateway does four jobs: authentication and authorization, rate limiting, routing each request to a service by its URL, and spreading load round robin. The user service signs users up and hands KYC to a licensed third party rather than integrating with the government's identity service itself. The price tracker fetches prices from the exchange. The watchlist service stores favourites in its own database."
+      - type: paragraph
+        children:
+          - type: text
+            text: "An order goes from the gateway to the order service, which records it, then through a validator before the exchange. Validating first matters twice: exchange access is licensed and limited, so a bad order should never cost a call, and the exchange is an external hop, so a request that will fail should fail here. The portfolio service reads the orders for profit and loss, and the payment service tops up the wallet through a payment gateway."
+      - type: paragraph
+        children:
+          - type: text
+            text: "This covers every functional requirement, but it hides two hard parts: an order is not simply accepted or rejected at once (20 shares may fill 5 now and 15 ten minutes later), and nothing yet says how prices reach the screen in near real time. The deep dive answers both."
+  - __component: sd.quiz
+    key: hld-quiz
+    title: Quick check
+    questions:
+      - question: Why does the validator sit before the exchange?
+        optionA: The exchange cannot validate orders
+        optionB: Exchange access is licensed and limited and is an external hop, so orders that would fail (no KYC, no funds, market closed) are stopped inside the broker
+        optionC: To make orders slower
+        optionD: Validation is optional
+        answer: B
+        explanation: Every call to the exchange is costly; a rejected order should never reach it.
+  # ────────────────────────────────────────────────────────────────── 5. Deep dive: user and payment
+  - __component: sd.section
+    key: lld-user-payment
+    title: "Deep dive: the user and payment services."
+    railLabel: Users and payments
+    intro: "Copy the high-level design down and open the simple services first. Their logic is thin; what matters is what they store and what they must not store."
+  - __component: sd.db-schema
+    key: user-payment-tables
+    stores:
+      - key: user-store
+        engine: PostgreSQL
+        component: user-db
+        why: Plain account metadata, read by key.
+        tables:
+          - name: user
+            columns:
+              - { name: user_id, type: bigint, role: primary }
+              - { name: email, type: text, role: unique }
+              - { name: phone, type: text }
+              - { name: name, type: text }
+              - { name: is_kyc_verified, type: bool }
+              - { name: metadata, type: jsonb }
+      - key: payment-store
+        engine: PostgreSQL
+        component: payment-db
+        why: Money must be consistent, so a transactional relational database.
+        tables:
+          - name: payment
+            columns:
+              - { name: transaction_id, type: text, role: primary }
+              - { name: user_id, type: bigint, role: index }
+              - { name: amount, type: numeric }
+              - { name: currency, type: text }
+              - { name: status, type: text }
+              - { name: created_at, type: timestamp }
+  - __component: sd.rich-text
+    key: user-payment-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "The user table holds the user ID, email, phone, name and metadata, plus one flag: is KYC verified. The KYC provider keeps the PAN, the Aadhaar number and the signature, and answers true or false; the broker stores the answer, not the documents. If it must keep a document number, it stores it encrypted, never as plain text."
+      - type: paragraph
+        children:
+          - type: text
+            text: "The payment service sends each deposit or withdrawal through the payment gateway, which talks to the banks and answers success or failure, and writes the transaction to the payment table: transaction ID, user ID, amount, currency, timestamp and status. Money needs consistency, so this is Postgres or MySQL too."
+  - __component: sd.quiz
+    key: user-payment-quiz
+    title: Quick check
+    questions:
+      - question: What does the broker store about a user's identity documents?
+        optionA: Scans of the PAN and Aadhaar in the user table
+        optionB: A KYC-verified flag from the provider, and any document number it must keep only in encrypted form
+        optionC: Nothing at all about KYC
+        optionD: The documents in Redis
+        answer: B
+        explanation: Sensitive documents stay with the licensed provider; the broker keeps the result.
+  # ────────────────────────────────────────────────────────────────── 5. Deep dive: price tracker
+  - __component: sd.section
+    key: lld-price-tracker
+    title: "Deep dive: the price tracker."
+    railLabel: Price tracker
+    intro: "The heart of the app: every price change on the exchange should reach every screen watching that stock in under 50 ms. Start with how the broker gets prices at all, then how it fans them out."
+  - __component: sd.table
+    key: feed-options
+    title: Three ways to get prices from the exchange
+    columns:
+      - { label: Approach, style: strong }
+      - { label: How, style: text }
+      - { label: Verdict, style: text }
+    rows:
+      - [Polling, "Ask the exchange for every instrument's price every second, page by page, all session long.", "Rejected: thousands of costly calls a second, and still a second stale."]
+      - [Server-sent events, "The exchange pushes each change over one long-lived HTTP response, one way.", "Pushes in near real time, but the subscription is fixed when the stream opens; changing it needs a second channel."]
+      - [WebSocket, "One full-duplex connection: prices flow in, and subscribe or unsubscribe messages flow out on the same socket.", "Chosen, both towards the exchange and towards the apps."]
+  - __component: sd.rich-text
+    key: price-pipeline
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Put one exchange gateway between the broker and the exchange, the way the API gateway sits in front of the services: the exchange sees a single client, and only this gateway holds its sessions. From the 9:15 open it subscribes to every instrument, watched or not, so tomorrow anyone can chart a stock nobody looked at today. The video's estimate is 400 to 500 symbols a socket, so about ten sockets for 5,000 stocks; treat it as illustrative, since real exchange feeds reach brokers over leased lines in the exchange's own protocols."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Thousands of instruments changing every second is a flood no single service should take directly, so the gateway writes every tick to Kafka, topic stock price, which buffers bursts. A price ingester consumes the topic and does two things with each tick: it writes it to InfluxDB, a time-series database, for history and charts, and it publishes the latest traded price to Redis pub/sub, on the symbol's channel."
+      - type: paragraph
+        children:
+          - type: text
+            text: "The price tracker becomes a WebSocket server. An app opens one WebSocket and says subscribe ICICI Bank; the tracker subscribes to that symbol's Redis channel and pushes each new price down the socket. To draw the chart it first reads the day's earlier prices from InfluxDB: a user opening the app at 2 o'clock gets 9:15 to 2 from InfluxDB and everything after from Redis. Redis pub/sub keeps nothing, which is fine here because history lives in InfluxDB."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Why WebSocket and not server-sent events, when prices only flow one way? Because the subscription changes all the time: the user opens Reliance next, then a watchlist of five. Over a WebSocket that is one more message on the open socket. Over server-sent events the stream cannot carry the change, so the app needs a separate request to change it, or reopens the stream with the new list. The same holds for the gateway's sockets to the exchange. Finally, split the front door: an API gateway for REST calls and a dedicated WebSocket gateway for the long-lived sessions, which need sticky routing and their own session handling."
+  - __component: sd.component-diagram
+    key: price-diagram
+    title: Live prices, end to end
+    direction: LR
+    nodes:
+      - { key: client }
+      - { key: websocket-gateway, details: [sticky sessions] }
+      - { key: price-tracker, details: [WebSocket server] }
+      - { key: redis-pubsub, details: [last traded price per symbol] }
+      - { key: influxdb, details: [every tick] }
+      - { key: price-ingester }
+      - { key: market-kafka, details: [topic stock price] }
+      - { key: exchange-gateway, details: [subscribed to every instrument] }
+      - { key: exchange }
+    edges:
+      - { from: client, to: websocket-gateway, label: WebSocket }
+      - { from: websocket-gateway, to: price-tracker }
+      - { from: redis-pubsub, to: price-tracker, label: push }
+      - { from: price-tracker, to: influxdb, label: earlier prices }
+      - { from: price-ingester, to: influxdb, label: write tick }
+      - { from: price-ingester, to: redis-pubsub, label: publish }
+      - { from: market-kafka, to: price-ingester }
+      - { from: exchange-gateway, to: market-kafka }
+      - { from: exchange, to: exchange-gateway, label: feed }
+  - __component: sd.quiz
+    key: price-quiz
+    title: Quick check
+    questions:
+      - question: Why not poll the exchange every second?
+        optionA: Polling is not allowed by HTTP
+        optionB: It means thousands of costly, limited calls a second for 8 to 10 thousand instruments, and prices are still up to a second stale
+        optionC: Polling loses data in Kafka
+        optionD: It is the best approach
+        answer: B
+        explanation: Pushing changes as they happen is both cheaper and fresher.
+      - question: Prices only flow to the user. Why is a WebSocket still the better choice?
+        optionA: Server-sent events cannot carry text
+        optionB: The user keeps changing which symbols to watch, and a WebSocket carries those subscribe messages on the same open connection
+        optionC: WebSockets are always faster
+        optionD: Browsers do not support server-sent events
+        answer: B
+        explanation: With server-sent events the subscription change needs another request or a reopened stream.
+      - question: A user opens a chart at 2 o'clock. Where do the prices since 9:15 come from?
+        optionA: Redis pub/sub
+        optionB: InfluxDB, the time-series store the ingester writes every tick to; new prices then come from Redis
+        optionC: The exchange, by a new request
+        optionD: The order database
+        answer: B
+        explanation: Pub/sub keeps nothing; history is InfluxDB's job, and asking the exchange again would cost a call.
+      - question: Why subscribe to every instrument at the open, even unwatched ones?
+        optionA: The exchange requires it
+        optionB: So the history in InfluxDB is complete for any stock someone opens later
+        optionC: To fill Kafka
+        optionD: To test the sockets
+        answer: B
+        explanation: A stock nobody watched today still needs a chart tomorrow.
+  # ────────────────────────────────────────────────────────────────── 5. Deep dive: watchlist
+  - __component: sd.section
+    key: lld-watchlist
+    title: "Deep dive: the watchlist."
+    railLabel: Watchlist
+    intro: "A watchlist is a saved list of symbols. Storing it is simple; showing it live means asking the price tracker, not the stores behind it."
+  - __component: sd.db-schema
+    key: watch-tables
+    stores:
+      - key: watch-store
+        engine: PostgreSQL
+        component: watch-db
+        why: Relational data, one user to many watchlists, each with many symbols.
+        tables:
+          - name: watchlist
+            columns:
+              - { name: watchlist_id, type: bigint, role: primary, note: generated }
+              - { name: user_id, type: bigint, role: index }
+              - { name: name, type: text }
+          - name: watchlist_symbol
+            columns:
+              - { name: watchlist_id, type: bigint, roles: [primary] }
+              - { name: symbol, type: text, roles: [primary] }
+  - __component: sd.rich-text
+    key: watch-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "One user may keep several watchlists, a finance list, a pharma list, so the watchlist table maps a user to many watchlist IDs, each generated, and a second table lists the symbols in each. It is relational, so Postgres. When the user opens a list of five stocks, the watchlist service asks the price tracker for those five: earlier prices from InfluxDB and live ones from Redis, all over the one WebSocket. Only the price tracker reads InfluxDB and Redis; any service that needs live prices goes through it."
+  - __component: sd.quiz
+    key: watch-quiz
+    title: Quick check
+    questions:
+      - question: How does an open watchlist get its live prices?
+        optionA: The watchlist service polls the exchange
+        optionB: It asks the price tracker, which streams the symbols over the user's WebSocket from InfluxDB and Redis
+        optionC: It reads Redis directly
+        optionD: Watchlists show yesterday's close only
+        answer: B
+        explanation: One owner for the price stores keeps every live view consistent.
+  # ────────────────────────────────────────────────────────────────── 5. Deep dive: orders
+  - __component: sd.section
+    key: lld-orders
+    title: "Deep dive: the order flow."
+    railLabel: Orders
+    intro: "Millions of users placing orders at the open is more than one service can take at once, and no order may be lost. Put a queue in front, validate, record everything, and treat the exchange's answer as an event that may come later."
+  - __component: sd.rich-text
+    key: order-flow
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Every buy or sell goes first into Kafka, topic raw orders, which absorbs the burst. The validator consumes it and checks each order: the user passed KYC, the account is active, the funds and margin cover it, the market is open. It reads the user and payment databases for this, and it should hold the funds as it accepts an order, so two orders cannot both spend the same balance. It publishes each order to verified orders or rejected orders."
+      - type: paragraph
+        children:
+          - type: text
+            text: "The order service consumes both topics. It writes every order to the order table, and sends only the verified ones to the exchange, through the exchange gateway, the one door to the exchange. A new order is stored with status pending and an empty trade ID, and the user is notified it was placed."
+      - type: paragraph
+        children:
+          - type: text
+            text: "A market order fills at once at the current price; a limit order may wait minutes or never fill, and either may fill in parts: 20 shares ordered, 5 now, 15 later. So the result is not a reply but an event. The exchange sends its acknowledgements over the same feed, into Kafka, topic order status. An order tracker consumes them, updates the order row's status and trade ID, writes the trade table, and notifies the user through the notification service."
+  - __component: sd.db-schema
+    key: order-tables
+    stores:
+      - key: order-store
+        engine: PostgreSQL
+        component: order-db
+        why: Orders are money; transactions and constraints matter.
+        tables:
+          - name: orders
+            columns:
+              - { name: order_id, type: bigint, role: primary }
+              - { name: user_id, type: bigint, role: index }
+              - { name: stock_id, type: text }
+              - { name: order_type, type: text, note: "MARKET or LIMIT" }
+              - { name: price, type: numeric }
+              - { name: quantity, type: int }
+              - { name: trade_id, type: text, nullable: true, note: "empty until the exchange confirms" }
+              - { name: status, type: text, note: "PENDING, then FILLED, PARTIAL, REJECTED or CANCELLED" }
+      - key: trade-store
+        engine: PostgreSQL
+        component: trade-db
+        why: Only what the exchange executed; reconciled with the exchange at the close.
+        tables:
+          - name: trades
+            columns:
+              - { name: order_id, type: bigint, role: primary }
+              - { name: user_id, type: bigint, role: index }
+              - { name: stock_id, type: text }
+              - { name: order_type, type: text }
+              - { name: price, type: numeric }
+              - { name: quantity, type: int }
+              - { name: trade_id, type: text, role: unique }
+              - { name: status, type: text }
+  - __component: sd.component-diagram
+    key: order-diagram
+    title: The order flow
+    direction: LR
+    nodes:
+      - { key: api-gateway }
+      - { key: order-queue, details: [raw orders, verified orders, rejected orders] }
+      - { key: validator, details: [KYC, active account, funds and margin, market hours] }
+      - { key: order-service, details: [records every order, sends verified ones] }
+      - { key: order-db }
+      - { key: exchange-gateway }
+      - { key: market-kafka, details: [topic order status] }
+      - { key: order-tracker }
+      - { key: trade-db }
+      - { key: notification-service }
+      - { key: portfolio-service, details: [P and L from trades and live prices] }
+      - { key: price-tracker }
+    edges:
+      - { from: api-gateway, to: order-queue, label: raw order }
+      - { from: order-queue, to: validator, label: raw }
+      - { from: validator, to: order-queue, label: verified or rejected }
+      - { from: order-queue, to: order-service, label: verified and rejected }
+      - { from: order-service, to: order-db, label: every order }
+      - { from: order-service, to: exchange-gateway, label: verified only }
+      - { from: order-service, to: notification-service, label: placed }
+      - { from: exchange-gateway, to: market-kafka, label: acknowledgement }
+      - { from: market-kafka, to: order-tracker, label: order status }
+      - { from: order-tracker, to: order-db, label: status and trade ID }
+      - { from: order-tracker, to: trade-db, label: accepted trades }
+      - { from: order-tracker, to: notification-service, label: filled or rejected }
+      - { from: portfolio-service, to: trade-db, label: reads }
+      - { from: portfolio-service, to: price-tracker, label: live prices }
+  - __component: sd.rich-text
+    key: trade-table-why
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Why two tables with the same columns? The order table holds everything the user asked for, rejected orders included. The trade table holds only what the exchange accepted, so at the close it can be reconciled row by row with the exchange's own records, and so the portfolio service, which reads the trade table, computes profit and loss only from shares the user really holds, priced with live prices from the price tracker."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Close by reading the non-functional list back: scale from Kafka in front of orders and prices; consistency from validating, holding funds and reconciling trades; availability of prices from the feed, Redis and InfluxDB; latency from one region and push all the way to the screen. A follow-up the interviewer may raise is settling money between the broker and the exchange, a reconciliation job of its own."
+  - __component: sd.quiz
+    key: orders-quiz
+    title: Quick check
+    questions:
+      - question: Why put Kafka in front of the validator and the order service?
+        optionA: Kafka validates orders
+        optionB: It absorbs the burst of orders at the open and keeps every order durably until a consumer handles it
+        optionC: To talk to the exchange
+        optionD: To store profit and loss
+        answer: B
+        explanation: Millions of orders arriving together would overwhelm a service called directly; a log buffers them and loses none.
+      - question: An order for 20 shares fills 5 now and 15 in ten minutes. How does the broker learn this?
+        optionA: The exchange's reply to the order request contains all fills
+        optionB: The exchange sends acknowledgements on its feed into the order status topic, and the order tracker updates the order and trade tables as each arrives
+        optionC: The order service polls the exchange
+        optionD: The user refreshes the page
+        answer: B
+        explanation: The result is a stream of events, not one reply.
+      - question: Why does the portfolio service read the trade table, not the order table?
+        optionA: The order table is too big
+        optionB: The trade table holds only what the exchange executed, so profit and loss counts only shares actually held
+        optionC: The trade table has more columns
+        optionD: No reason
+        answer: B
+        explanation: Rejected and pending orders are in the order table; they are not holdings.
+      - question: Where should the order service send a verified order?
+        optionA: To the payment gateway
+        optionB: To the exchange gateway, the single door to the exchange
+        optionC: To Redis
+        optionD: Straight to the client
+        answer: B
+        explanation: The payment gateway moves money to and from banks; orders go to the exchange.
+      - question: Why should the validator hold the funds when it accepts an order?
+        optionA: To pay the exchange early
+        optionB: Otherwise two orders validated at the same moment could both spend the same balance
+        optionC: It should not; the exchange checks funds
+        optionD: To speed up the order
+        answer: B
+        explanation: Checking a balance and spending it must be one step, or consistency is lost.

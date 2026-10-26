@@ -1,0 +1,103 @@
+# Email delivery interview, requirements: "1. Functional requirements" on the left and "Non functional requirements" on the right, as the video lays them out, with the CAP choice made per part (available for mail, consistent at sign-up).
+id: backend/email-delivery/end-to-end/requirements
+title: Two lists, functional and non-functional
+source:
+  hash: "ed3b49fd24cd"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/email-delivery/end-to-end/problem-statement
+  assumes:
+    - "An email platform lets users send, receive, store, search and manage email across devices."
+  carries:
+    - "Functional: create an account; compose and send to one or more recipients; folders (inbox, sent, drafts, spam, trash, custom); search by subject, body, sender; attachments; replies grouped in threads."
+    - "Non-functional: 1.8 billion plus users and billions of emails; available over consistent for mail, eventual is fine; strongly consistent at sign-up; reliable and durable."
+  terms:
+    - term: functional requirement
+      means: What the system does.
+    - term: non-functional requirement
+      means: "A quality of the system, scale, availability, durability, ideally with a number."
+    - term: eventual consistency
+      means: "A sent email may take a moment to show up in the recipient's inbox, but it gets there."
+board:
+  keep: [title, prompt-desc]
+  elements:
+    - { id: fr, kind: region, label: 1. Functional requirements, at: [6, 5], size: [28, 17], dashed: true }
+    - { id: fr-account, kind: note, label: create a mailing account, at: [7, 7], in: fr }
+    - { id: fr-send, kind: note, label: compose and send to one or more recipients, at: [7, 9], in: fr }
+    - { id: fr-folders, kind: note, label: "inbox, sent, drafts, spam, trash, own folders", at: [7, 11], in: fr }
+    - { id: fr-search, kind: note, label: "search by subject, body and sender", at: [7, 13], in: fr }
+    - { id: fr-attach, kind: note, label: "attachments, images, documents, PDFs", at: [7, 15], in: fr }
+    - { id: fr-threads, kind: note, label: replies grouped into one conversation, at: [7, 17], in: fr }
+    - { id: nfr, kind: region, label: Non-functional requirements, at: [40, 5], size: [28, 13], dashed: true }
+    - { id: nfr-scale, kind: note, label: "scale, 1.8B plus users, billions of emails", at: [41, 7], in: nfr }
+    - { id: nfr-available, kind: note, label: "mail available over consistent, eventual", at: [41, 9], in: nfr }
+    - { id: nfr-signup, kind: note, label: "sign-up consistent, no shared email ID", at: [41, 11], in: nfr }
+    - { id: nfr-durable, kind: note, label: "reliable and durable, no email lost", at: [41, 13], in: nfr }
+  arrows: []
+  lists:
+    - { id: fr-list, in: fr, at: [7, 7], step: 2, slots: 7, width: 25, items: [fr-account, fr-send, fr-folders, fr-search, fr-attach, fr-threads] }
+    - { id: nfr-list, in: nfr, at: [41, 7], step: 2, slots: 5, width: 25, items: [nfr-scale, nfr-available, nfr-signup, nfr-durable] }
+beats:
+  - point: "The core functional requirements: a user can create a mailing account, and compose and send email to one or more recipients."
+    kind: requirement
+    weight: core
+    teach:
+      - "Step one, on the left: functional requirements, what the system does. First, onboarding: without an account nobody can send or receive anything."
+      - "Second, compose and send an email, to one person or to many at once."
+    draw: [fr, fr-account, fr-send]
+    check: Why is creating an account the first requirement?
+    answer: Nobody can send or receive mail until they are onboarded with an address.
+  - point: "Then the mailbox: folders (inbox, sent, drafts, spam, trash and custom ones), search by subject, body and sender, attachments, and replies grouped into a conversation."
+    kind: requirement
+    weight: core
+    teach:
+      - "Third, view the mail: inbox, sent, drafts, spam, trash, and folders of your own; each email lands in one by its category or status."
+      - "Fourth, search by keyword across subject, body and sender. Fifth, attachments: images, documents, PDFs. Sixth, replies are grouped together, so the system keeps threads."
+    draw: [fr-folders, fr-search, fr-attach, fr-threads]
+    check: Which requirement means the system must store threads?
+    answer: Replies grouped together into one conversation.
+  - point: "The scale is huge, 1.8 billion plus users and billions of emails, so the system is distributed, a set of services."
+    kind: metric
+    weight: core
+    teach:
+      - "On the right, non-functional requirements, the qualities. Ask for the scale: a Gmail-sized service has well over a billion users, say 1.8 billion plus, and billions of emails."
+      - "At that size one server is out of the question: it is a distributed system of services."
+    draw: [nfr, nfr-scale]
+    check: What does a scale of over a billion users tell you about the design?
+    answer: It has to be distributed, many services and many copies of each, not one server.
+  - point: "CAP is chosen per part: sending mail stays available and may be eventually consistent, but sign-up must be strongly consistent so no two users share an email ID."
+    kind: decision
+    weight: core
+    teach:
+      - "CAP is a choice made when the network between replicas splits: answer anyway, or wait until the copies agree. For mail, stay available: an email arriving a minute late harms nobody, an outage does."
+      - "Sign-up is different. If two replicas could each accept the same new address during a split, two people would own one email ID. So sign-up chooses consistency."
+    draw: [nfr-available, nfr-signup]
+    check: Why is sign-up treated differently from sending mail?
+    answer: Two users must never get one email ID, so sign-up must be consistent; a late email is harmless, so sending favours availability.
+    misconceptions:
+      - "A system is either available or consistent as a whole -> the choice is made per part, and only matters during a partition."
+  - point: "Reliable and durable: once an email is sent it is never lost. Keep the list to what shapes the design; requirements fit inside a 45 to 50 minute interview."
+    kind: requirement
+    weight: supporting
+    teach:
+      - "Last, reliability and durability: an email that was sent is never lost or deleted on its own."
+      - "You could add encryption or a latency target, but in 45 to 50 minutes keep to what changes the design, and move on."
+    draw: [nfr-durable]
+    check: Which requirement will force us to save an email before doing anything else with it?
+    answer: Reliability and durability, no sent email may be lost.
+asks:
+  - list: fr-list
+    beats: [1, 2]
+    question: "So what should this email platform let a user do? Tell me the features one at a time, and I'll write them down."
+    hints:
+      - What does a new user need before anything else?
+      - And once mail arrives, how do they find, organise and reply to it?
+  - list: nfr-list
+    beats: [3, 4, 5]
+    question: "Now the qualities. How big is it, and what matters when machines fail?"
+    hints:
+      - Think about how many people use Gmail.
+      - Is it worse for an email to arrive late, or for two people to get the same address?

@@ -1,0 +1,47 @@
+# Job scheduler interview, the problem statement: the title and what a job scheduler does, written at the top of the board as the video does, then the five steps said once (said, not drawn).
+id: backend/job-scheduler/end-to-end/problem-statement
+title: The problem, and the five steps
+source:
+  hash: "a78ea293012a"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: null
+  assumes: []
+  carries:
+    - "A job scheduler runs jobs automatically at set times or intervals: repetitive tasks, maintenance, batch jobs."
+    - "A job is some work plus when to run it: now, at a time, or on a repeating cron schedule."
+    - "The interview runs in five steps: requirements, core entities, API, high-level design, low-level design."
+  terms:
+    - term: job
+      means: "Some work to run (a script, a container, a database task) and when to run it."
+    - term: distributed
+      means: "Run across many machines, so it can start thousands of jobs a second and survive a machine dying."
+board:
+  keep: []
+  elements:
+    - { id: title, kind: note, label: Distributed job scheduler like Airflow or Temporal, at: [27, 0] }
+    - { id: prompt-desc, kind: note, label: runs jobs automatically at set times or intervals, at: [8, 2] }
+    - { id: prompt-use, kind: note, label: "for repetitive tasks, maintenance and batch jobs", at: [8, 3] }
+  arrows: []
+beats:
+  - point: "A job scheduler runs jobs automatically at set times or intervals, for repetitive tasks, scheduled maintenance and batch processing; distributed means on many machines."
+    kind: rule
+    weight: core
+    teach:
+      - "Write the title: a distributed job scheduler, like Airflow or Temporal. Under it, what it does: it runs jobs automatically at set times or intervals."
+      - "Then what people use it for: repetitive tasks, scheduled maintenance, batch jobs. Clear a staging table every Friday at nine; rebuild an index right now."
+      - "Distributed: many machines, because one cannot start thousands of jobs a second, and because the scheduler must keep going when a machine dies."
+    draw: [title, prompt-desc, prompt-use]
+    check: What does the scheduler need to know about every job?
+    answer: "The work to run and when to run it: now, at a set time, or on a repeating schedule."
+  - point: "The interview runs in five steps: gather the requirements, identify the core entities, design the API, draw the high-level design, then the low-level design."
+    kind: rule
+    weight: core
+    teach:
+      - "Say the plan once: requirements, functional and non-functional; the core entities; the API; a high-level design; then the low-level design, where most of the hour goes."
+      - "Said, not written; each step gets its number on the board when we reach it."
+    check: Which step comes straight after the requirements?
+    answer: Identifying the core entities, then the API.

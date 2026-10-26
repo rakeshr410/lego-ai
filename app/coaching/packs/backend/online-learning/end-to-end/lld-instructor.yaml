@@ -1,0 +1,156 @@
+# Online learning interview, deep dive 2: instructors, uploads and moderation. Under "5. Deep dive", the instructor side of the video's picture as it grows it, read right to left: instructors and the admin on the right, their gateway, then the user service (with the identity check), catalog, course moderator and media uploader, and the stores on the left (course DB, quiz DB, S3); the tables written below, as the video writes them beside the picture. The video calls UIDAI directly; this pack goes through a licensed KYC agency.
+id: backend/online-learning/end-to-end/lld-instructor
+title: "Deep dive, 2: instructors, uploads and moderation"
+source:
+  hash: "f79dc3524c8e"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/online-learning/end-to-end/lld-search
+  assumes:
+    - "Instructors have their own gateway, a catalog service writing the course DB, and a media uploader writing blob storage."
+    - "Course search reads a precomputed document per course from Elasticsearch."
+  carries:
+    - "Instructors sign up through the same user service into an instructor_profile table with a verification status from an identity check."
+    - "Catalog writes courses, pricing and stats to the course DB, and quizzes and questions to a quiz DB."
+    - "The media uploader hands out signed URLs; chunks go straight to S3, transcoded into several resolutions."
+    - "A course moderator service lets an admin check the course DB, quiz DB and S3, then publish."
+  terms:
+    - term: signed URL
+      means: A time-limited link that lets the client upload straight to storage without the server carrying the bytes.
+    - term: transcoding
+      means: Re-encoding a video into several resolutions and bitrates, so the player can pick one to suit the bandwidth.
+board:
+  keep: [title, nfr, nfr-scale, nfr-avail, nfr-consistent, nfr-files, nfr-latency]
+  elements:
+    - { id: inst, kind: region, label: "5. Deep dive: instructors, uploads and moderation", at: [2, 26], size: [66, 34] }
+    - { id: inst-uidai, kind: box, label: UIDAI identity check, at: [3, 29], size: [11, 3], in: inst, tone: grey }
+    - { id: inst-user, kind: box, label: "User service, instructor sign-up", at: [19, 29], size: [13, 3], in: inst }
+    - { id: inst-coursedb, kind: oval, label: Course DB, at: [3, 34], size: [11, 3], in: inst, tone: amber }
+    - { id: inst-catalog, kind: box, label: Catalog service, at: [19, 34], size: [13, 3], in: inst, tone: blue }
+    - { id: inst-quizdb, kind: oval, label: Quiz DB, at: [3, 39], size: [11, 3], in: inst, tone: amber }
+    - { id: inst-moderator, kind: box, label: Course moderator service, at: [19, 39], size: [13, 3], in: inst, tone: blue }
+    - { id: inst-s3, kind: oval, label: S3, at: [3, 44], size: [11, 3], in: inst, tone: amber }
+    - { id: inst-uploader, kind: box, label: Media uploader service, at: [19, 44], size: [13, 3], in: inst, tone: blue }
+    - { id: inst-lb, kind: box, label: "LB and API gateway", at: [36, 29], size: [4, 18], in: inst }
+    - { id: inst-admin, kind: box, label: admin or moderator, at: [43, 31], size: [9, 3], in: inst }
+    - { id: inst-instructors, kind: box, label: instructors, at: [43, 40], size: [9, 3], in: inst }
+    - { id: inst-s3-holds, kind: note, label: "S3: video chunks at several resolutions, thumbnails, files", at: [36, 49], in: inst }
+    - { id: inst-signed, kind: note, label: "the client uploads chunks straight to S3 by signed URL", at: [36, 50], in: inst }
+    - { id: inst-profile-1, kind: note, label: "instructor_profile: userId, name, verificationStatus,", at: [3, 49], in: inst }
+    - { id: inst-profile-2, kind: note, label: "avgRating, studentsCount, courseCount, status", at: [5, 50], in: inst }
+    - { id: inst-kyc, kind: note, label: "Aadhaar checks go through a licensed KYC agency", at: [3, 51], in: inst }
+    - { id: inst-courses-1, kind: note, label: "courses: courseId, ownerInstructorId, title, description,", at: [3, 53], in: inst }
+    - { id: inst-courses-2, kind: note, label: "categoryId, level, thumbnailUrl, status", at: [5, 54], in: inst }
+    - { id: inst-pricing, kind: note, label: "course_pricing: courseId, priceAmount, currency", at: [3, 55], in: inst }
+    - { id: inst-stats, kind: note, label: "course_stats, denormalized: courseId, avgRating, ratingCount", at: [3, 56], in: inst }
+    - { id: inst-status, kind: note, label: "status: draft, in review, published, rejected, archived", at: [3, 57], in: inst }
+    - { id: inst-quizzes, kind: note, label: "quizzes: quizId, courseId, lessonId, title, passScore", at: [36, 53], in: inst }
+    - { id: inst-questions, kind: note, label: "questions: questionId, quizId, type, points", at: [36, 54], in: inst }
+    - { id: inst-db-choice, kind: note, label: "Postgres or MySQL; search reads a joined copy", at: [36, 56], in: inst }
+  arrows:
+    - { id: inst-instructors-lb, from: inst-instructors, to: inst-lb }
+    - { id: inst-lb-user, from: inst-lb, to: inst-user }
+    - { id: inst-user-uidai, from: inst-user, to: inst-uidai, label: verify }
+    - { id: inst-lb-catalog, from: inst-lb, to: inst-catalog }
+    - { id: inst-catalog-coursedb, from: inst-catalog, to: inst-coursedb }
+    - { id: inst-lb-uploader, from: inst-lb, to: inst-uploader }
+    - { id: inst-uploader-s3, from: inst-uploader, to: inst-s3 }
+    - { id: inst-catalog-quizdb, from: inst-catalog, to: inst-quizdb }
+    - { id: inst-admin-lb, from: inst-admin, to: inst-lb }
+    - { id: inst-lb-moderator, from: inst-lb, to: inst-moderator }
+    - { id: inst-moderator-coursedb, from: inst-moderator, to: inst-coursedb }
+    - { id: inst-moderator-quizdb, from: inst-moderator, to: inst-quizdb }
+    - { id: inst-moderator-s3, from: inst-moderator, to: inst-s3 }
+beats:
+  - point: "Instructors sign up through the same user service as students, into an instructor_profile table that adds a verification status, average rating, and student and course counts."
+    kind: decision
+    weight: core
+    teach:
+      - "Follow the content in before going further on the student side. An instructor logs in too, so their sign-up reaches the same user service through their gateway; two services would work, one is simpler."
+      - "But the user table cannot tell an instructor from a student. Add an instructor_profile table: name, contact, password hash, average rating, student count, course count, status, and a verification status, the numbers an instructor's page shows."
+    draw: [inst, inst-instructors, inst-lb, inst-instructors-lb, inst-user, inst-lb-user, inst-profile-1, inst-profile-2]
+    check: Why a separate instructor_profile table?
+    answer: The user table cannot tell instructors from students, and instructors carry their own fields such as verification status, rating and counts.
+  - point: "Verification checks a government ID through an identity service and stores the result as the verification status; in India Aadhaar is checked through a licensed KYC agency that talks to UIDAI."
+    kind: mechanism
+    weight: core
+    teach:
+      - "This came up as a follow-up in the real interview: how do you verify an instructor? The field alone does nothing; something must check an ID document."
+      - "The user service sends the ID details to an identity check and keeps the flag it returns. In India that is Aadhaar, run by UIDAI; only registered authentication and KYC agencies may call it, so go through one. Students skip this."
+    draw: [inst-uidai, inst-user-uidai, inst-kyc]
+    check: Where does the verification status come from?
+    answer: From an identity check against a government ID, through a licensed KYC agency for Aadhaar, whose answer the user service stores.
+    misconceptions:
+      - "Any app can call UIDAI's API to verify Aadhaar -> only registered authentication and KYC agencies can; use one as the provider."
+  - point: "The catalog service writes a course and its lessons to the course DB: courses with their status, course_pricing, and a denormalized course_stats for ratings."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Creating a course: the instructor creates, say, a system design course with a description, then its lessons one by one. The catalog service writes all that text into the course DB."
+      - "Three tables: courses, with owner, title, description, category, level, thumbnail and status; course_pricing, with the amount and currency; and course_stats, denormalized, with the average rating and how many ratings."
+    draw: [inst-catalog, inst-lb-catalog, inst-coursedb, inst-catalog-coursedb, inst-courses-1, inst-courses-2, inst-pricing, inst-stats]
+    check: Why keep course_stats as a denormalized table?
+    answer: The rating figures are read on every course page and search, so they are kept precomputed instead of being worked out from every review each time.
+  - point: "Videos go through the media uploader, which hands out a signed URL so the instructor's client uploads the chunks straight to S3, where they are transcoded into several resolutions beside thumbnails and attachments."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Then the video. The media uploader service does not carry the bytes: the video is split into chunks, the service gives the client a signed URL, and the client uploads each chunk straight to S3."
+      - "In S3 the chunks are transcoded into several resolutions, so the player can switch with the bandwidth, next to thumbnails and attachments. The interviewer may say assume the uploader exists; do not spend time on chunking unless asked."
+    draw: [inst-uploader, inst-lb-uploader, inst-s3, inst-uploader-s3, inst-s3-holds, inst-signed]
+    check: Why does the client upload to S3 directly instead of through the uploader service?
+    answer: The signed URL lets the large file go straight to storage, so the service never carries the bytes and does not become the bottleneck.
+  - point: "Quizzes go through the catalog service into a quiz DB: a quizzes table per lesson and a questions table, one quiz to many questions."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Courses also have quizzes and assignments, and they need a home: a quiz DB, written by the same catalog service."
+      - "Two tables: quizzes, with the course, the lesson, a title and a pass score; and questions, with the quiz, a type such as multiple choice or true or false, and points. One quiz has many questions."
+    draw: [inst-quizdb, inst-catalog-quizdb, inst-quizzes, inst-questions]
+    check: How are quizzes and questions related?
+    answer: One to many; each question carries its quiz's id.
+  - point: "Nothing is public yet: an admin or moderator uses a course moderator service that reads the course DB, the videos in S3 and the quiz DB, and publishes or rejects the course."
+    kind: flow
+    weight: core
+    teach:
+      - "Udemy checks every course before it goes out, for bad content or language. Add a course moderator service, used by a new actor, the admin or moderator, through the same gateway."
+      - "It reads the course's metadata in the course DB, its videos in S3 and its quizzes in the quiz DB; once satisfied, the moderator publishes. The status moves from draft, to in review, to published, or rejected, or later archived."
+    draw: [inst-admin, inst-admin-lb, inst-moderator, inst-lb-moderator, inst-moderator-coursedb, inst-moderator-quizdb, inst-moderator-s3, inst-status]
+    check: What does the moderator service read before a course is published?
+    answer: The course rows in the course DB, the videos in S3 and the quizzes in the quiz DB.
+  - point: "The course and quiz data is flat and relational, so Postgres or MySQL; the joins a course page needs are why search reads a precomputed copy."
+    kind: decision
+    weight: supporting
+    teach:
+      - "Which database? Flat, relational rows, so Postgres or MySQL. And now you can see why the aggregator exists: a whole course is spread over these tables, and search reads the joined document instead."
+    draw: [inst-db-choice]
+    check: Why does this table layout explain the aggregator pipeline?
+    answer: A course's data is spread over several tables; the aggregator joins them once so search never has to.
+asks:
+  - ids: [inst-uidai]
+    beats: [2]
+    question: "The interviewer asks how you would verify that an instructor is who they say. What would you add?"
+    hints:
+      - A flag alone proves nothing; something has to check a document.
+      - Think of a government ID service, or a company that checks it for you.
+  - ids: [inst-uploader]
+    beats: [4]
+    question: "An instructor uploads an hour of video. How would you get it into S3 without your servers carrying it?"
+    hints:
+      - Could the client write to storage directly, if allowed?
+      - What kind of link grants a time-limited upload?
+  - ids: [inst-quizdb]
+    beats: [5]
+    question: "Courses also have quizzes. Where would you keep them?"
+    hints:
+      - Questions are structured rows, not files.
+      - One quiz, many questions.
+  - ids: [inst-moderator]
+    beats: [6]
+    question: "Udemy checks every course before students see it. What would you add for that?"
+    hints:
+      - Someone has to look at everything the instructor uploaded.
+      - Which stores would they need to read?

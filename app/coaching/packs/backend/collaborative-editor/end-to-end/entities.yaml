@@ -1,0 +1,48 @@
+# Collaborative editor interview, core entities: "2. Core entities" under the functional list, four lines, as in the video.
+id: backend/collaborative-editor/end-to-end/entities
+title: Four entities
+source:
+  hash: "f2059eacef3e"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/collaborative-editor/end-to-end/requirements
+  assumes:
+    - "Functional: CRUD on documents, several users editing one document at once, changes in near real time, cursors and presence, versions."
+  carries:
+    - "The core entities are the user (editor), the document, the edit and the cursor."
+  terms:
+    - term: core entity
+      means: A noun the system stores and moves.
+    - term: edit
+      means: "One change to a document's content, such as inserting a character at a position."
+board:
+  keep: [title, prompt-desc, fr, fr-crud, fr-together, fr-see, fr-cursor, fr-versions, nfr, nfr-scale, nfr-cap, nfr-latency]
+  elements:
+    - { id: entities, kind: region, label: 2. Core entities, at: [6, 21], size: [17, 12], dashed: true }
+    - { id: ent-user, kind: note, label: "user, the editor", at: [7, 23], in: entities }
+    - { id: ent-doc, kind: note, label: document, at: [7, 25], in: entities }
+    - { id: ent-edit, kind: note, label: edit, at: [7, 27], in: entities }
+    - { id: ent-cursor, kind: note, label: cursor, at: [7, 29], in: entities }
+  arrows: []
+  lists:
+    - { id: entity-list, in: entities, at: [7, 23], step: 2, slots: 5, width: 14, items: [ent-user, ent-doc, ent-edit, ent-cursor] }
+beats:
+  - point: "Reading the requirements gives four core entities: the user who edits, the document, the edit, and the cursor."
+    kind: component
+    weight: core
+    teach:
+      - "Step two, the core entities: read the requirements and pick out the nouns. The user, or editor, making changes. The document being changed."
+      - "Because several users change one document at once, each change matters on its own: the edit. And each user's position in the text: the cursor. More will turn up during the design."
+    draw: [entities, ent-user, ent-doc, ent-edit, ent-cursor]
+    check: Why is an edit an entity of its own and not just part of the document?
+    answer: Several users change one document at once, so each change is sent, ordered, merged and logged by itself.
+asks:
+  - list: entity-list
+    beats: [1]
+    question: "What are the core entities here, the things this system keeps track of?"
+    hints:
+      - Who is doing the work, and on what?
+      - Several people change one document at once. What are they each producing, and where is each of them in the text?

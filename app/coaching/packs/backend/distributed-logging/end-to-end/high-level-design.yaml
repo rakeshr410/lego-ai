@@ -1,0 +1,93 @@
+# Distributed logging interview, high-level design: "4. High-level design" under the API, as in the video: clients, a tall load balancer and API gateway, then client onboarding, ingestion and search services in a column, the client DB beside onboarding and one log DB shared by ingestion and search.
+id: backend/distributed-logging/end-to-end/high-level-design
+title: Clients, gateway, three services
+source:
+  hash: "a079ee787479"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/distributed-logging/end-to-end/api
+  assumes:
+    - "Agents tail the services' log files and post batches to the platform."
+    - "Endpoints in four groups: agent, API ingestion, file ingestion, search."
+  carries:
+    - "High-level design: clients, a load balancer and API gateway, a client onboarding service with a client DB, an ingestion service and a search service sharing a log DB."
+    - "The ingestion service does too much: both kinds of traffic, every processing step and the writes."
+  terms:
+    - term: API gateway
+      means: "The front door: checks who is calling, limits how fast, and routes each path to its service."
+board:
+  keep: [title, prompt-desc, prompt-example, fr, fr-ingest, fr-modes, fr-normalize, fr-dashboard, nfr, nfr-scale, nfr-latency, nfr-cap, nfr-reliable, entities, ent-event, ent-job, ent-agent, api, api-app, api-stream, api-raw, api-agent, api-platform, api-agent-head, api-agent-1, api-agent-2, api-agent-3, api-agent-4, api-agent-5, api-direct-head, api-direct-1, api-direct-2, api-direct-3, api-file-head, api-file-1, api-file-2, api-search-head, api-search-1, api-search-2, api-search-3, api-search-4, api-search-5, api-app-stream, api-stream-raw, api-agent-raw, api-agent-platform]
+  elements:
+    - { id: hld, kind: region, label: 4. High-level design, at: [4, 49], size: [66, 17] }
+    - { id: hld-clients, kind: box, label: clients, at: [6, 55], size: [8, 3], in: hld }
+    - { id: hld-gw, kind: box, label: load balancer and API gateway, at: [18, 52], size: [10, 12], in: hld }
+    - { id: hld-onboard, kind: box, label: client onboarding service, at: [34, 52], size: [14, 3], in: hld, tone: blue }
+    - { id: hld-clientdb, kind: oval, label: Client DB, at: [54, 51], size: [10, 4], in: hld, tone: amber }
+    - { id: hld-ingest, kind: box, label: ingestion service, at: [34, 57], size: [14, 3], in: hld, tone: blue }
+    - { id: hld-logdb, kind: oval, label: Log DB, at: [54, 59], size: [10, 4], in: hld, tone: amber }
+    - { id: hld-search, kind: box, label: search service, at: [34, 62], size: [14, 3], in: hld, tone: blue }
+  arrows:
+    - { id: hld-clients-gw, from: hld-clients, to: hld-gw }
+    - { id: hld-gw-onboard, from: hld-gw, to: hld-onboard, label: onboard }
+    - { id: hld-onboard-db, from: hld-onboard, to: hld-clientdb, label: save }
+    - { id: hld-gw-ingest, from: hld-gw, to: hld-ingest, label: logs }
+    - { id: hld-ingest-db, from: hld-ingest, to: hld-logdb, label: write }
+    - { id: hld-gw-search, from: hld-gw, to: hld-search, label: search }
+    - { id: hld-search-db, from: hld-search, to: hld-logdb, label: read }
+beats:
+  - point: "Clients send everything through a load balancer and an API gateway, because each module is a microservice that scales on its own."
+    kind: component
+    weight: core
+    teach:
+      - "Step four, the high-level design, and it is small. On the left the clients, the services and devices our logs come from."
+      - "At millions of events an hour each module must scale on its own, so these are microservices, and microservices sit behind a load balancer and an API gateway that routes each path to its service."
+    draw: [hld, hld-clients, hld-gw, hld-clients-gw]
+    check: Why does a microservice design need the gateway in front?
+    answer: One entry point that routes each path to the right service, and checks and limits callers, while the services scale independently.
+  - point: "A client onboarding service registers each client first, and keeps it in a client DB; without it no agent may send logs."
+    kind: component
+    weight: core
+    teach:
+      - "The first service: client onboarding. The agent cannot send anything until its client is known and trusted, so onboarding comes first."
+      - "What it records goes in a client DB. Which database and which columns, we decide in the deep dive."
+    draw: [hld-onboard, hld-gw-onboard, hld-clientdb, hld-onboard-db]
+    check: Why does onboarding come before any log is accepted?
+    answer: The agent's requests must be authenticated as a known client before the platform takes its logs.
+  - point: "The ingestion service takes the agents' logs, normalizes them and writes them to a log DB."
+    kind: component
+    weight: core
+    teach:
+      - "Next, the most important one: the ingestion service. Agents post their logs, and it validates, parses and normalizes them."
+      - "Then it writes the final form to a log DB that holds every log we get."
+    draw: [hld-ingest, hld-gw-ingest, hld-logdb, hld-ingest-db]
+    check: Walk me through a log from the agent to storage in this design.
+    answer: The agent posts it through the gateway to the ingestion service, which normalizes it and writes it to the log DB.
+  - point: "The dashboard is a search service reading the same log DB: a search bar that returns matching logs."
+    kind: component
+    weight: core
+    teach:
+      - "Last, the dashboard. Open Splunk and there is a search bar: type, and matching logs come back. So the dashboard is a search service."
+      - "It reads from the same log DB the ingestion service writes to. That meets every functional requirement."
+    draw: [hld-search, hld-gw-search, hld-search-db]
+    check: Where does the search service read from?
+    answer: The log DB that the ingestion service writes to.
+  - point: "The weak box is the ingestion service: both kinds of traffic, every processing step and every write at millions an hour; the deep dive splits it."
+    kind: failure
+    weight: supporting
+    teach:
+      - "Name the problem before moving on. The ingestion service takes real-time and batch traffic, validates, parses, normalizes and writes, all at millions of events an hour. One service doing all that is a bottleneck that will crash."
+    check: Which box will break first, and why?
+    answer: The ingestion service, because it does every step and every write for all the traffic.
+asks:
+  - ids: [hld-onboard, hld-ingest, hld-search]
+    beats: [2, 3, 4]
+    question: "Behind the gateway, what services do we need to meet the four requirements? Name them and I'll draw them."
+    hints:
+      - Before an agent sends anything, someone must know who the client is.
+      - Then logs have to come in, and people have to read them.
+task:
+  prompt: "Draw the high-level design: clients, a load balancer and API gateway, a client onboarding service with its client DB, and an ingestion service and a search service sharing one log DB."
+  expects: [1, 2, 3, 4]

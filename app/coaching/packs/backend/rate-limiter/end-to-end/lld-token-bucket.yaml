@@ -1,0 +1,123 @@
+# Rate limiter interview, deep dive 4: token bucket. Under "5. Deep dive: 4. Token bucket": the three settings (capacity 10, refill 1 a second, cost 1), then the bucket with its refiller above, incoming requests on the left taking tokens, the backend on the right for the allowed ones and the 429 below for an empty bucket, then the burst, Retry-After, and the state kept in Redis, as the video demonstrates it.
+id: backend/rate-limiter/end-to-end/lld-token-bucket
+title: "Deep dive, 4: token bucket"
+source:
+  hash: "6f982f43e4b1"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/rate-limiter/end-to-end/lld-sliding-counter
+  assumes:
+    - "Counters live in one shared Redis, updated atomically."
+    - "Functional: handle bursts. Fixed window leaks at edges; the log costs memory; the sliding counter approximates."
+  carries:
+    - "Token bucket: capacity 10, refill 1 token a second, cost 1 a request; a request takes a token or gets 429."
+    - "A full bucket lets a burst of 10 through, then 1 a second; Retry-After is the time to the next token."
+    - "State per client in Redis: tokens left and last refill time, refilled lazily, read and updated in one atomic Lua script."
+  terms:
+    - term: token
+      means: "A permit to make one request; requests spend them, the refiller adds them at a fixed rate."
+    - term: capacity
+      means: "The most tokens the bucket holds, and so the largest burst."
+board:
+  keep: [title, nfr, nfr-scale, nfr-cap, nfr-latency]
+  elements:
+    - { id: lld-tb, kind: region, label: "5. Deep dive: 4. Token bucket", at: [4, 24], size: [64, 43] }
+    - { id: tb-capacity, kind: note, label: "capacity, 10 tokens", at: [6, 27], in: lld-tb }
+    - { id: tb-refill-rate, kind: note, label: "refill rate, 1 token a second", at: [6, 28], in: lld-tb }
+    - { id: tb-cost, kind: note, label: "cost, 1 token a request", at: [6, 29], in: lld-tb }
+    - { id: tb-refill, kind: box, label: token refiller, at: [30, 33], size: [12, 3], in: lld-tb, tone: grey }
+    - { id: tb-bucket, kind: box, label: "bucket, 10 tokens", at: [30, 41], size: [12, 5], in: lld-tb, tone: amber }
+    - { id: tb-req, kind: box, label: incoming requests, at: [8, 42], size: [12, 3], in: lld-tb }
+    - { id: tb-backend, kind: box, label: backend service, at: [54, 42], size: [12, 3], in: lld-tb, tone: green }
+    - { id: tb-reject, kind: box, label: "empty, answer 429", at: [30, 52], size: [12, 3], in: lld-tb, tone: red }
+    - { id: tb-burst, kind: note, label: "full bucket, 10 at once, then 1 a second", at: [6, 57], in: lld-tb }
+    - { id: tb-retry, kind: note, label: "Retry-After, time to the next token, 1 s", at: [6, 58], in: lld-tb }
+    - { id: tb-state, kind: note, label: "per client in Redis: tokens left, last refill time", at: [6, 60], in: lld-tb }
+    - { id: tb-lazy, kind: note, label: "on each request add elapsed seconds times rate, up to 10", at: [6, 61], in: lld-tb }
+    - { id: tb-atomic, kind: note, label: "one Lua script, so two gateways never spend one token", at: [6, 62], in: lld-tb }
+    - { id: tb-verdict, kind: note, label: "burst friendly and cheap, the usual choice", at: [6, 64], in: lld-tb }
+  arrows:
+    - { id: tb-refill-bucket, from: tb-refill, to: tb-bucket, label: adds }
+    - { id: tb-req-bucket, from: tb-req, to: tb-bucket, label: takes a token }
+    - { id: tb-bucket-backend, from: tb-bucket, to: tb-backend, label: allowed }
+    - { id: tb-bucket-reject, from: tb-bucket, to: tb-reject, label: no token }
+  lists:
+    - { id: tb-params, in: lld-tb, at: [6, 27], step: 1, slots: 4, width: 26, items: [tb-capacity, tb-refill-rate, tb-cost] }
+beats:
+  - point: "The token bucket has three settings: the capacity, 10 tokens; the refill rate, 1 token a second; and the cost of a request, normally 1 token."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Of the five, interviewers ask most about the token bucket and the leaky bucket, so explain both well. The token bucket needs three numbers."
+      - "Capacity, the most tokens the bucket holds: 10. Refill rate, how fast tokens come back: 1 a second. And cost per request, 1 token by default."
+    draw: [lld-tb, tb-capacity, tb-refill-rate, tb-cost]
+    check: What are the token bucket's three settings?
+    answer: "Its capacity, its refill rate, and the cost in tokens of one request."
+  - point: "A refiller drips tokens into the bucket at the refill rate and stops when it is full, so the bucket never holds more than its capacity."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Draw the bucket, and above it the refiller adding one token a second."
+      - "The bucket cannot overflow: at 10 tokens, new ones are thrown away. A quiet client's bucket fills up and stays full."
+    draw: [tb-refill, tb-bucket, tb-refill-bucket]
+    check: A client sends nothing for a minute. How many tokens does its bucket hold?
+    answer: "10, the capacity; refilling stops when the bucket is full."
+  - point: "Each request takes a token and goes on to the backend; a request that finds the bucket empty gets 429."
+    kind: flow
+    weight: core
+    teach:
+      - "Requests come in from the left. Each takes one token and goes on to the backend."
+      - "If the bucket is empty, there is no token to take: the request is refused with 429. Two flows run at once, tokens spent by requests and tokens added by the refiller."
+    draw: [tb-req, tb-req-bucket, tb-backend, tb-bucket-backend, tb-reject, tb-bucket-reject]
+    check: What decides whether a request passes?
+    answer: "Whether the bucket has a token for it; with one, it takes it and passes, with none it gets 429."
+  - point: "A full bucket lets a burst of 10 through at once, then one request a second as tokens return, which meets the burst requirement within a cap; Retry-After is the time to the next token."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Send ten requests at once into a full bucket: all ten pass. The eleventh finds it empty and gets 429. Stop, and a token comes back each second, so one more passes each second."
+      - "That is the burst requirement met with a cap: a client may save up to 10 and spend them together, but never more than 1 a second over time. And the 429's Retry-After is simply the time until the next token, 1 second here."
+    draw: [tb-burst, tb-retry]
+    check: "Capacity 10, refill 1 a second, full bucket. Fifteen requests arrive at once. What happens?"
+    answer: "Ten pass and five get 429; after that one passes each second as tokens return."
+    misconceptions:
+      - "The token bucket smooths bursts out evenly -> it lets a burst through up to the capacity; smoothing is the leaky bucket."
+  - point: "Nothing drips on a timer: each client's state in Redis is tokens left and the last refill time, topped up on each request by the elapsed time times the rate, in one atomic Lua script."
+    kind: mechanism
+    weight: core
+    teach:
+      - "The refiller is a picture, not a process per client. Store two numbers per client in Redis: tokens left and when we last refilled."
+      - "On each request, add the elapsed seconds times the refill rate, capped at 10, then take a token if there is one. Do the read and the update in one Lua script, or two gateways can spend the same token."
+    draw: [tb-state, tb-lazy, tb-atomic]
+    check: How do tokens get refilled without a timer for every client?
+    answer: "Lazily: on each request, compute the tokens earned since the last refill from the elapsed time and the rate, capped at the capacity."
+  - point: "Burst friendly, two numbers per client, one Redis call per decision: the token bucket is the algorithm most production limiters choose."
+    kind: decision
+    weight: supporting
+    teach:
+      - "Write the verdict: burst friendly and cheap. It fits all three non-functional lines, which is why it is the common choice in industry."
+    draw: [tb-verdict]
+    check: Why does the token bucket fit this system's requirements?
+    answer: "It allows bursts within a cap, keeps two numbers per client, and decides in one fast Redis call."
+asks:
+  - list: tb-params
+    beats: [1]
+    question: "A bucket of tokens, one spent per request. What numbers would you need to configure it?"
+    hints:
+      - How many tokens can it hold at most?
+      - How fast do they come back, and how many does a request use?
+  - ids: [tb-reject]
+    beats: [3]
+    question: "A request arrives and the bucket is empty. What happens to it?"
+    hints:
+      - Is there a token for it to take?
+      - What did we promise to answer when a client is over its limit?
+  - ids: [tb-state]
+    beats: [5]
+    question: "We can't run a timer for every client. What would you store per client in Redis so the refill still works?"
+    hints:
+      - You need to know how many tokens are left.
+      - And how long it has been since you last added any.

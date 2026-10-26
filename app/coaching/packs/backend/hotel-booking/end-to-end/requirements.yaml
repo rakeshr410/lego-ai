@@ -1,0 +1,94 @@
+# Hotel booking interview, requirements: "1. Functional requirements" on the left, five lines, and "2. Non-functional requirements" on the right, the scale and a CAP choice split between searching and booking, as the video lays them out.
+id: backend/hotel-booking/end-to-end/requirements
+title: Two lists, functional and non-functional
+source:
+  hash: "bf229a103e15"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/hotel-booking/end-to-end/problem-statement
+  assumes:
+    - "A hotel booking system lets a guest search hotels by location, date and availability, and book a room."
+  carries:
+    - "Functional: create an account and log in; search hotels by location and name for a date; book an available room; pay to confirm; see past bookings."
+    - "Non-functional: 50M users and 1M hotels; search highly available; booking highly consistent, no two users book the same room on the same date."
+    - "CAP is a choice made during a network partition, and it can differ by operation."
+  terms:
+    - term: functional requirement
+      means: What the system does.
+    - term: non-functional requirement
+      means: "A quality of the system, such as scale, availability or consistency, with a number where there is one."
+    - term: CAP
+      means: "During a network partition, an operation either answers with possibly stale data (available) or refuses until copies agree (consistent)."
+board:
+  keep: [title, prompt-desc]
+  elements:
+    - { id: fr, kind: region, label: 1. Functional requirements, at: [2, 5], size: [36, 14], dashed: true }
+    - { id: fr-account, kind: note, label: create an account and log in, at: [3, 7], in: fr }
+    - { id: fr-search, kind: note, label: "search hotels by location and name, for a date", at: [3, 9], in: fr }
+    - { id: fr-book, kind: note, label: book a room available on the chosen date, at: [3, 11], in: fr }
+    - { id: fr-pay, kind: note, label: "pay, and the payment confirms the booking", at: [3, 13], in: fr }
+    - { id: fr-past, kind: note, label: see past bookings in the profile, at: [3, 15], in: fr }
+    - { id: nfr, kind: region, label: 2. Non-functional requirements, at: [44, 5], size: [40, 14], dashed: true }
+    - { id: nfr-scale, kind: note, label: "scale, 50M users and 1M hotels", at: [45, 7], in: nfr }
+    - { id: nfr-available, kind: note, label: highly available for searching, at: [45, 9], in: nfr }
+    - { id: nfr-consistent, kind: note, label: "highly consistent for booking, no double booking", at: [45, 11], in: nfr }
+  arrows: []
+  lists:
+    - { id: fr-list, in: fr, at: [3, 7], step: 2, slots: 6, width: 32, items: [fr-account, fr-search, fr-book, fr-pay, fr-past] }
+    - { id: nfr-list, in: nfr, at: [45, 7], step: 2, slots: 6, width: 34, items: [nfr-scale, nfr-available, nfr-consistent] }
+beats:
+  - point: "The core functional requirements: search hotels by location and name for a date, and book a room that is available on that date."
+    kind: requirement
+    weight: core
+    teach:
+      - "Step one, on the left: what the system does. A guest searches hotels by location and name, for a date."
+      - "Then, having found one, sees its details and books a room that is free on that date. These two are the heart of it."
+    draw: [fr, fr-search, fr-book]
+    check: What are the two things a hotel booking system cannot do without?
+    answer: Search hotels by location, name and date, and book a room available on that date.
+  - point: "Around them: create an account and log in, pay so that only a successful payment confirms the booking, and see past bookings in the profile."
+    kind: requirement
+    weight: supporting
+    teach:
+      - "Before searching, a user creates an account and logs in."
+      - "Booking is not done until the guest pays: the payment confirms it. And afterwards the guest can see past bookings in their profile."
+    draw: [fr-account, fr-pay, fr-past]
+    check: When is a booking confirmed?
+    answer: Only when the payment succeeds.
+  - point: "The scale is 50 million users and 1 million hotels, a global service whose numbers rule out a single monolith."
+    kind: metric
+    weight: core
+    teach:
+      - "On the right, the non-functional requirements. Ask for the scale first: say 50 million users and a million hotels, worldwide."
+      - "That number drives the architecture later: one server or one monolith will not carry it."
+    draw: [nfr, nfr-scale]
+    check: Why ask for the scale before designing?
+    answer: Because it decides the architecture and the data volumes; a design for thousands fails at 50 million users.
+  - point: "CAP splits by operation: search stays highly available, while booking stays highly consistent, so no two users book the same room on the same date."
+    kind: requirement
+    weight: core
+    teach:
+      - "Then CAP. When the network between machines splits, each operation either answers anyway or waits for the copies to agree. It is a choice under a partition, and here it differs by operation."
+      - "Search must stay up: a slightly stale result is caught at booking time. Booking must be consistent: two guests holding one room on one night is the failure we cannot have. Everything later is measured against that line."
+    draw: [nfr-available, nfr-consistent]
+    check: Why can search favour availability while booking favours consistency?
+    answer: A stale search result is caught when booking, but two guests booked into one room on one night is a real failure.
+    misconceptions:
+      - "CAP means a system can never be consistent and available -> it forces the choice only during a network partition, and each operation can choose differently."
+      - "The whole system must be strongly consistent -> only booking needs it; search can serve slightly stale data."
+asks:
+  - list: fr-list
+    beats: [1, 2]
+    question: "So what should this booking system do? Give me the features one at a time, and I'll write them down."
+    hints:
+      - Think of what you do on a booking site, from opening it to having a reservation.
+      - And after you've booked, what might you want to look at later?
+  - list: nfr-list
+    beats: [3, 4]
+    question: "Now the qualities. How big is it, and where does it need to stay up versus stay exact?"
+    hints:
+      - How many users and hotels are we talking about?
+      - What is the one thing that must never happen when two people book at once?

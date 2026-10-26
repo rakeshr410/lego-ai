@@ -1,0 +1,1125 @@
+# yaml-language-server: $schema=../../../../../lego/content-kit/schema/topic.schema.json
+# provenance: ai-drafted by claude-opus-5-5 on 2026-10-27
+#
+# A whole backend system design interview for an online learning platform like Udemy or Coursera, run
+# step by step on one whiteboard. The order and the board follow InterviewWithBunny's System Design 19:
+# requirements, core entities, API, a high-level design with a student side and an instructor side, then
+# a deep dive that opens one part of the picture at a time, in the video's order: the user service and
+# course search, the instructor's upload and moderation flow, paid enrollment with an outbox, playback
+# behind an access check and a CDN, and progress tracking, closing with the interviewer's enterprise
+# follow-up. The video's numbers are kept; there are no latency figures beyond its 2-second start target.
+# A backend system of lego-ai's own (app/articles/backend): it stands alone and links to no main-site topic.
+catalogVersion: 5
+title: Designing an online learning platform, end to end
+shortTitle: Online learning design
+summary: "A backend design interview for a course marketplace like Udemy or Coursera, step by step on one board: requirements with numbers, entities, the API, a high-level design for students and instructors, then a deep dive into search, uploads and moderation, paid enrollment with an outbox, playback through a CDN, and progress tracking."
+group: design
+order: 19
+xp: 280
+difficulty: intermediate
+tags: [interview, search, outbox-pattern, video-streaming, event-driven, access-control]
+eyebrow: Design
+breadcrumb: [Online learning, Interview walkthrough]
+lede: "You have about forty-five minutes to design a platform like Udemy, where instructors upload courses of videos and quizzes, moderators approve them, and millions of students search, pay, watch and pick up where they left off. Many actors means many flows, so the first move is to agree which ones you will design. This walkthrough designs the student flow and the instructor's upload flow, then goes deep on the parts an interviewer probes: search across many tables, large uploads, a payment that must always grant access, video that starts in two seconds, and progress that is saved without drowning the database."
+reviewStatus: draft
+author: rakeshr410
+provenance: ai-drafted
+sources:
+  - title: "System Design 19: Design of Online Learning Platform, Udemy, Coursera (InterviewWithBunny, YouTube)"
+    url: https://www.youtube.com/watch?v=PUf-Q7lNtv8
+    note: "Order, sections, drawings. Corrected: passwords hashed, not encrypted; outbox, not outlook, fixes a dual write; access lands in seconds, idempotently; entitlements is the caller's own access; Aadhaar via a licensed agency; subdomains, not subnets."
+  - title: "Pattern: Transactional outbox (microservices.io)"
+    url: https://microservices.io/patterns/data/transactional-outbox.html
+    note: "Write the business row and the message in one local transaction; a relay publishes the message afterwards."
+  - title: Outbox Event Router (Debezium documentation)
+    url: https://debezium.io/documentation/reference/stable/transformations/outbox-event-router.html
+    note: "Change data capture that reads outbox rows from the database log and routes them to Kafka topics."
+  - title: Password Storage Cheat Sheet (OWASP)
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html
+    note: "Store passwords with a slow, salted hash such as Argon2id or bcrypt, never reversible encryption."
+  - title: "RFC 8216, HTTP Live Streaming"
+    url: https://www.rfc-editor.org/rfc/rfc8216
+    note: "The manifest (playlist) format that lists media segments at several bitrates for adaptive playback."
+  - title: Uploading objects with presigned URLs (Amazon S3 documentation)
+    url: https://docs.aws.amazon.com/AmazonS3/latest/userguide/PresignedUrlUploadObject.html
+    note: "A time-limited URL that lets a client upload straight to the bucket without the server in the path."
+tutorBrief: >-
+  Interview walkthrough for an online learning platform like Udemy or Coursera (InterviewWithBunny,
+  System Design 19). Actors: students, instructors, and admins or moderators who approve content before it
+  is published; scope agreed with the interviewer: the student flow and the instructor upload flow. Board
+  steps: 1 requirements (functional left, non-functional right), 2 core entities, 3 API, 4 high-level
+  design, 5 deep dive. Functional: create an account; browse, search and filter courses by category,
+  difficulty, rating, price; enroll in courses; assessments (quizzes, assignments); progress tracking and
+  completion; reviews and ratings; instructor onboarding and verification; instructors create courses
+  with videos, quizzes, assignments, resources. Non-functional: 100K+ courses, millions of enrolled
+  students (about 1M said); availability over consistency for browsing and streaming, strong consistency
+  for payments and enrollment; large files (hour-long videos); video starts within 2 seconds. Entities:
+  user or instructor, course, payment, review, progress. API: GET /courses?query=&category=&price=&rating=&level=&sort=;
+  GET /courses/{courseId}; POST /instructor/courses; POST /instructor/courses/{courseId}/publish;
+  POST /progress/events (batched); GET /me/courses/{courseId}/progress; POST /courses/{courseId}/enroll
+  (free); GET /me/entitlements?courseId= (does the caller have access); GET /me/enrollments. The video's
+  interviewer allowed skipping the API. High level: students and instructors each behind a load balancer
+  and API gateway (spread load, route, authenticate). Student side: user service to user DB, course search
+  to course DB, comment and review service to course DB, video playback to blob storage, user progress
+  service to progress DB, enrollment service to course enrollment DB, payment service to payment DB and the
+  enrollment DB. Instructor side: catalog service to course DB, media uploader to blob storage. Deep dive:
+  (1) user DB in Postgres or MySQL (userId, name, email or phone, password hash, status); search needs
+  full text and many filters over separate tables, so Elasticsearch, fed by an aggregator CDC pipeline
+  that joins the course tables into one JSON document per course. (2) instructors sign up through the
+  same user service into an instructor_profile table (verification status, average rating, student and
+  course counts); verification against Aadhaar goes through a licensed KYC or authentication agency that
+  talks to UIDAI. Catalog writes course rows (courses, course_pricing, course_stats denormalized) to the
+  course DB and quizzes and questions (one to many; types MCQ, multi-select, true-false, text) to a quiz
+  DB. Media uploader hands out signed URLs and the client uploads video chunks straight to S3, where they
+  are transcoded into several resolutions; thumbnails and attachments live there too. A course moderator
+  service, used by admins through the gateway, reads the course DB, quiz DB and S3 and publishes the
+  course (status draft, in review, published, rejected, archived). (3) Free courses are enrolled
+  directly. Paid: payment service calls the payment gateway; on success it writes the payment row and an
+  outbox row in one atomic transaction in the payment DB (orders: orderId, userId, currency, amountTotal,
+  status); CDC publishes outbox rows to Kafka; a notification service emails the receipt and a permission
+  sync service writes the access row (accessId, userId, courseId, scope lifetime or subscription, status
+  active, revoked or expired, purchaseDate) into the course enrollment DB. Writing two databases, or the
+  DB and Kafka, separately is a dual write that can half-fail; the outbox makes delivery at least once, so
+  permission sync is idempotent (keyed by order). Access lands within seconds, not instantly. (4) Video
+  playback checks the access row, then returns a manifest listing the chunks at each resolution; the
+  player fetches chunks from a CDN edge, which fills from S3 on a miss, meeting the 2 s start. An
+  assignment service saves answers to the quiz DB. (5) Comments and reviews go to the course DB. The
+  player sends a progress event every 10 to 15 s; events go to Kafka and a user tracking consumer writes
+  only the latest position about once a minute to the progress DB (userId, courseId, videoId,
+  durationSec, maxPositionSec, lastPositionSec, completed); the progress service reads it to resume.
+  Follow-up asked in the real interview: an enterprise version. Onboard organisations; a landing page
+  template per organisation stored as JSON, picked from the SSO token; data isolated per tenant by
+  sharding on organisation; a subdomain per organisation, routed by DNS and the Host header.
+components:
+  - key: students
+    name: Students
+    tone: sand
+    kind: client
+    summary: Browsers and apps of learners who search, enroll, watch, take quizzes and leave reviews.
+    owns: [nothing of their own]
+    talksTo: [student-gateway, cdn]
+  - key: instructors
+    name: Instructors and admins
+    tone: sand
+    kind: client
+    summary: Course creators who upload content, and the admins or moderators who approve it.
+    owns: [nothing of their own]
+    talksTo: [instructor-gateway]
+  - key: student-gateway
+    name: Load balancer and API gateway
+    tone: blue
+    kind: gateway
+    summary: Spreads student traffic across the services, routes each path to its service, and checks who is calling.
+    owns: [routes, auth checks]
+    talksTo: [user-service, search-service, review-service, playback-service, progress-service, enrollment-service, payment-service, assignment-service]
+  - key: instructor-gateway
+    name: Instructor gateway
+    tone: blue
+    kind: gateway
+    summary: The same job for instructors and moderators, in front of the catalog, uploader and moderator services.
+    owns: [routes, auth checks]
+    talksTo: [user-service, catalog-service, uploader-service, moderator-service]
+  - key: user-service
+    name: User service
+    tone: blue
+    kind: service
+    summary: Signs up and logs in students and instructors; verifies instructors through an identity check.
+    owns: [accounts]
+    talksTo: [user-db, identity-check]
+  - key: search-service
+    name: Course search service
+    tone: blue
+    kind: service
+    summary: Answers text queries with filters by asking Elasticsearch, never joining the course tables at query time.
+    owns: [nothing durable]
+    talksTo: [elasticsearch]
+  - key: review-service
+    name: Comment and review service
+    tone: blue
+    kind: service
+    summary: Saves comments and ratings for a course and keeps its rating figures up to date.
+    owns: [nothing durable]
+    talksTo: [course-db]
+  - key: enrollment-service
+    name: Enrollment service
+    tone: blue
+    kind: service
+    summary: Enrolls a student in a free course by writing an access row.
+    owns: [nothing durable]
+    talksTo: [enrollment-db]
+  - key: payment-service
+    name: Payment service
+    tone: blue
+    kind: service
+    summary: Charges through the payment gateway and records the payment and an outbox row in one transaction.
+    owns: [orders]
+    talksTo: [payment-gateway, payment-db]
+  - key: playback-service
+    name: Video playback service
+    tone: blue
+    kind: service
+    summary: Checks the student's access, then returns the video's manifest.
+    owns: [nothing durable]
+    talksTo: [enrollment-db, blob-store]
+  - key: progress-service
+    name: User progress service
+    tone: blue
+    kind: service
+    summary: Takes the player's progress events and serves the last position to resume from.
+    owns: [nothing durable]
+    talksTo: [kafka, progress-db]
+  - key: assignment-service
+    name: Assignment service
+    tone: blue
+    kind: service
+    summary: Saves a student's answers to quizzes and assignments.
+    owns: [nothing durable]
+    talksTo: [quiz-db]
+  - key: catalog-service
+    name: Catalog service
+    tone: blue
+    kind: service
+    summary: Lets instructors create courses, lessons, prices and quizzes.
+    owns: [nothing durable]
+    talksTo: [course-db, quiz-db]
+  - key: uploader-service
+    name: Media uploader service
+    tone: blue
+    kind: service
+    summary: Hands out signed URLs so instructors upload video chunks and files straight to blob storage.
+    owns: [upload sessions]
+    talksTo: [blob-store]
+  - key: moderator-service
+    name: Course moderator service
+    tone: blue
+    kind: service
+    summary: Shows an admin everything a course holds and publishes or rejects it.
+    owns: [nothing durable]
+    talksTo: [course-db, quiz-db, blob-store]
+  - key: aggregator
+    name: Aggregator CDC pipeline
+    tone: gray
+    kind: worker
+    summary: Reads course table changes, joins them into one JSON document per course and indexes it in Elasticsearch.
+    owns: [nothing]
+    talksTo: [course-db, elasticsearch]
+  - key: permission-sync
+    name: Permission sync service
+    tone: gray
+    kind: worker
+    summary: Consumes purchase events and writes the access row, once per order.
+    owns: [nothing]
+    talksTo: [kafka, enrollment-db]
+  - key: notification-service
+    name: Notification service
+    tone: gray
+    kind: worker
+    summary: Consumes purchase events and emails or texts the receipt.
+    owns: [nothing]
+    talksTo: [kafka]
+  - key: progress-consumer
+    name: User tracking consumer
+    tone: gray
+    kind: worker
+    summary: Reads progress events in batches and writes only the latest position per student and video.
+    owns: [nothing]
+    talksTo: [kafka, progress-db]
+  - key: kafka
+    name: Kafka
+    tone: purple
+    kind: queue
+    summary: The event log between the payment outbox and its consumers, and between the player and the progress store.
+    owns: [purchase events, progress events]
+    talksTo: []
+  - key: elasticsearch
+    name: Elasticsearch
+    tone: orange
+    kind: datastore
+    summary: A search index of one precomputed document per course, for text search with filters.
+    owns: [course documents]
+    talksTo: []
+  - key: cdn
+    name: CDN
+    tone: green
+    kind: cache
+    summary: Edge servers near students that cache video chunks and fill from blob storage on a miss.
+    owns: [cached chunks]
+    talksTo: [blob-store]
+  - key: user-db
+    name: User DB
+    tone: yellow
+    kind: datastore
+    summary: PostgreSQL or MySQL; the user and instructor_profile tables.
+    owns: [user, instructor_profile]
+    talksTo: []
+  - key: course-db
+    name: Course DB
+    tone: yellow
+    kind: datastore
+    summary: PostgreSQL or MySQL; courses, prices, stats, comments and reviews.
+    owns: [courses, course_pricing, course_stats]
+    talksTo: []
+  - key: quiz-db
+    name: Quiz DB
+    tone: yellow
+    kind: datastore
+    summary: Quizzes, their questions, and students' answers.
+    owns: [quizzes, questions, answers]
+    talksTo: []
+  - key: enrollment-db
+    name: Course enrollment DB
+    tone: yellow
+    kind: datastore
+    summary: Who may open which course; the access table.
+    owns: [access]
+    talksTo: []
+  - key: payment-db
+    name: Payment DB
+    tone: yellow
+    kind: datastore
+    summary: Orders and payments, and the outbox of events still to publish.
+    owns: [orders, payment, payment_outbox]
+    talksTo: []
+  - key: progress-db
+    name: Progress DB
+    tone: yellow
+    kind: datastore
+    summary: MySQL; the last position and completion per student, course and video.
+    owns: [progress]
+    talksTo: []
+  - key: blob-store
+    name: S3 blob storage
+    tone: yellow
+    kind: datastore
+    summary: Video chunks transcoded at several resolutions, thumbnails and attachments.
+    owns: [video chunks, thumbnails, attachments]
+    talksTo: []
+  - key: payment-gateway
+    name: Payment gateway
+    tone: gray
+    kind: external
+    summary: The third party that moves the money with the bank and reports success or failure.
+    owns: [the transaction with the bank]
+    talksTo: []
+  - key: identity-check
+    name: Identity check
+    tone: gray
+    kind: external
+    summary: A licensed KYC provider that verifies an instructor's government ID, such as Aadhaar through UIDAI.
+    owns: [verification result]
+    talksTo: []
+content:
+  # ────────────────────────────────────────────────────────────────── Problem statement
+  - __component: sd.section
+    key: problem-statement
+    title: Understanding the problem.
+    railLabel: Problem
+    intro: "The prompt: design an online learning and teaching platform like Udemy or Coursera. It sounds easy, but it has several actors and many flows, so agree with the interviewer which ones you will design before you draw anything."
+  - __component: sd.rich-text
+    key: problem-what
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "The platform is a global marketplace of on-demand courses. Instructors anywhere upload videos, quizzes and assignments; once a student buys or joins a course, they can watch it and work through its material. Write that in one line under the title, so you and the interviewer agree on what is being built."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Then name the actors, because each brings its own flows: students who learn, instructors who upload, and admins or moderators who check every course before it is published. Designing all of them in forty-five minutes is not possible. Say which you will cover; here, the two core ones: the student flow (find, enroll, watch, track progress) and the instructor flow (how courses and videos get into the backend)."
+      - type: paragraph
+        children:
+          - type: text
+            text: "The interview then runs in five numbered steps on the board: requirements, core entities, API, high-level design, and a deep dive that opens one part of the design at a time."
+  - __component: sd.card-grid
+    key: board-steps
+    title: The board, in the order you fill it
+    columns: 3
+    cards:
+      - title: 1. Requirements
+        text: Functional on the left, eight lines across students and instructors; non-functional on the right, each with a number.
+      - title: 2. Core entities
+        text: The nouns read off the requirements, five of them.
+      - title: 3. API
+        text: Course, progress and enrollment endpoints. The interviewer may let you skip this step.
+      - title: 4. High-level design
+        text: A student side and an instructor side, each behind its own gateway, sharing the stores in the middle.
+      - title: 5. Deep dive
+        text: "The design opened part by part: search, uploads and moderation, paid enrollment, playback, progress."
+  - __component: sd.quiz
+    key: problem-quiz
+    title: Quick check
+    questions:
+      - question: The prompt is "design Udemy". Why agree on scope before the requirements?
+        optionA: Because Udemy is a small system
+        optionB: There are students, instructors and moderators, each with their own flows, and there is no time to design them all
+        optionC: Because the API can be skipped
+        optionD: To pick a database first
+        answer: B
+        explanation: Many actors means many flows. Agreeing on the student flow and the instructor upload flow keeps the interview finishable.
+  # ────────────────────────────────────────────────────────────────── 1. Requirements
+  - __component: sd.section
+    key: requirements
+    title: Requirements.
+    railLabel: Requirements
+    intro: "Two lists side by side. The functional list covers the student first and then the instructor; the non-functional list gives each quality a number, and says where consistency matters and where it does not."
+  - __component: sd.subsection
+    key: functional-sub
+    title: Functional requirements
+    railLabel: Functional
+  - __component: sd.checklist
+    key: functional
+    idPrefix: FR-
+    items:
+      - text: A user can create an account.
+      - text: Users can browse, search and filter courses by category, difficulty, rating and price.
+      - text: Students can enroll in courses, free or paid.
+      - text: An assessment system with quizzes and assignments.
+      - text: Progress tracking and course completion status.
+        note: "How much of a course, and of each video, the student has done, so they can resume."
+      - text: Reviews and ratings for courses.
+      - text: Instructor onboarding and verification.
+        note: The instructor side starts here.
+      - text: Instructors can create courses with videos, quizzes, assignments and resources.
+  - __component: sd.subsection
+    key: non-functional-sub
+    title: Non-functional requirements
+    railLabel: Non-functional
+  - __component: sd.requirement-table
+    key: non-functional
+    rows:
+      - area: Scale
+        requirement: A large catalogue and a large student base.
+        targets: [100K+ courses, millions of enrolled students]
+        note: Ask for it first; it decides the database and the architecture.
+      - area: Availability
+        requirement: Browsing and streaming stay up.
+        targets: [availability over consistency for the site and video]
+        note: A new course goes through moderation anyway, so nobody expects it everywhere the second it is uploaded.
+      - area: Consistency
+        requirement: A student who pays gets the course.
+        targets: [strong consistency for payments and enrollment]
+        note: Money taken without access granted is the one failure this system cannot shrug off.
+      - area: Large files
+        requirement: Hour-long videos and big attachments upload and play.
+        targets: [large files supported]
+      - area: Latency
+        requirement: A video starts playing quickly.
+        targets: [start-up within 2 seconds]
+        note: "Say what the latency is of: the time from pressing play to the first frame."
+  - __component: sd.rich-text
+    key: cap-split
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Millions of students around the world means a distributed system, and partitions will happen, so CAP asks which side each part takes. Most of the platform takes availability: the site and its videos must stay up, and a course an instructor uploads has to pass moderation before anyone sees it, so a few seconds before every replica agrees costs nothing. Payment and enrollment take consistency: once money is taken, the student must get the course. Saying that the answer differs by part of the system is what the interviewer is listening for."
+  - __component: sd.quiz
+    key: requirements-quiz
+    title: Quick check
+    questions:
+      - question: Which part of this platform should favour consistency over availability?
+        optionA: Course search
+        optionB: Video streaming
+        optionC: Payment and enrollment, because a paid student must get access
+        optionD: Reviews
+        answer: C
+        explanation: Browsing and streaming favour availability; the payment-to-access path must never lose a purchase.
+      - question: Which is the better way to write the streaming requirement?
+        optionA: Fast video
+        optionB: Use a CDN
+        optionC: A video starts within 2 seconds of pressing play
+        optionD: Low latency everywhere
+        answer: C
+        explanation: A number, and what it measures. A CDN is a solution, not a requirement.
+  # ────────────────────────────────────────────────────────────────── 2. Entities
+  - __component: sd.section
+    key: entities
+    title: Core entities.
+    railLabel: Entities
+    intro: "Read the nouns off the functional requirements. There will be more later, but five are enough to start."
+  - __component: sd.table
+    key: entities-table
+    columns:
+      - { label: Entity, style: strong }
+      - { label: What it is, style: text }
+    rows:
+      - [User or instructor, "An account. Students and instructors share sign-up; instructors carry a profile of their own."]
+      - [Course, "What instructors create and students buy: its metadata, lessons, videos and quizzes."]
+      - [Payment, A student's purchase of a paid course.]
+      - [Review, A rating and comment on a course.]
+      - [Progress, "How far a student is through a course and each video."]
+  - __component: sd.quiz
+    key: entities-quiz
+    title: Quick check
+    questions:
+      - question: Where do the core entities come from?
+        optionA: From the database you plan to use
+        optionB: From the nouns in the functional requirements
+        optionC: From the API
+        optionD: From the interviewer only
+        answer: B
+        explanation: Well-written requirements already name them; the list can grow later in the design.
+  # ────────────────────────────────────────────────────────────────── 3. API
+  - __component: sd.section
+    key: api
+    title: API.
+    railLabel: API
+    intro: "Three groups of endpoints: courses, progress and enrollments. In the real interview behind this walkthrough, the interviewer said to skip this step, because the endpoints are plain; write them only if asked, and keep it short."
+  - __component: sd.endpoint
+    key: search-courses
+    method: GET
+    path: "/courses?query=&category=&price=&rating=&level=&sort="
+    summary: Searches the catalogue by text with filters. A read, so a GET.
+    responses:
+      - label: Found
+        status: "200"
+        body:
+          courses: [{ courseId: c42, title: System design, rating: 4.7, price: 499 }]
+          next: cursor-2
+  - __component: sd.endpoint
+    key: get-course
+    method: GET
+    path: "/courses/{courseId}"
+    summary: The course page, with its instructor, chapters and lessons.
+    responses:
+      - label: Found
+        status: "200"
+        body:
+          courseId: c42
+          instructor: i7
+          chapters: [{ title: URL shortener, lessons: 4 }]
+  - __component: sd.endpoint
+    key: create-course
+    method: POST
+    path: /instructor/courses
+    summary: An instructor creates a course; it starts as a draft.
+    requestBody:
+      title: System design
+      description: Nineteen interview designs
+      category: software
+      level: intermediate
+    responses:
+      - label: Created
+        status: "201"
+        body:
+          courseId: c42
+          status: draft
+  - __component: sd.endpoint
+    key: publish-course
+    method: POST
+    path: "/instructor/courses/{courseId}/publish"
+    summary: A moderator publishes a course they have checked, so students can find it.
+    responses:
+      - label: Published
+        status: "200"
+        body:
+          status: published
+  - __component: sd.endpoint
+    key: progress-events
+    method: POST
+    path: /progress/events
+    summary: The player sends progress events in batches, every few seconds while a video plays.
+    requestBody:
+      events: [{ courseId: c42, videoId: v3, positionSec: 610, at: "2026-10-27T10:00:10Z" }]
+    responses:
+      - label: Accepted
+        status: "202"
+        body:
+          accepted: 1
+  - __component: sd.endpoint
+    key: get-progress
+    method: GET
+    path: "/me/courses/{courseId}/progress"
+    summary: Where the student is in a course, to show completion and resume.
+    responses:
+      - label: Found
+        status: "200"
+        body:
+          percent: 70
+          resume: { videoId: v3, positionSec: 610 }
+  - __component: sd.endpoint
+    key: enroll
+    method: POST
+    path: "/courses/{courseId}/enroll"
+    summary: Enrolls the caller in a free course. A paid course goes through the payment flow instead.
+    responses:
+      - label: Enrolled
+        status: "201"
+        body:
+          accessId: a9
+          status: active
+  - __component: sd.endpoint
+    key: entitlements
+    method: GET
+    path: "/me/entitlements?courseId="
+    summary: Whether the caller may open this course. The video calls this the instructor's view of who enrolled; it is the student's own access check, and an instructor's list would be its own endpoint.
+    responses:
+      - label: Has access
+        status: "200"
+        body:
+          courseId: c42
+          scope: lifetime
+          status: active
+  - __component: sd.endpoint
+    key: my-enrollments
+    method: GET
+    path: /me/enrollments
+    summary: The courses the caller is enrolled in.
+    responses:
+      - label: Found
+        status: "200"
+        body:
+          courses: [c42, c51]
+  - __component: sd.quiz
+    key: api-quiz
+    title: Quick check
+    questions:
+      - question: Why does the progress endpoint take batched events?
+        optionA: Batching is required by REST
+        optionB: The player reports progress every few seconds, and one request per event would multiply the traffic
+        optionC: To save the whole video
+        optionD: Because progress is a payment
+        answer: B
+        explanation: Many small events are cheaper sent together; the backend only needs the latest position anyway.
+      - question: What does GET /me/entitlements?courseId= answer?
+        optionA: Every student enrolled in the course
+        optionB: Whether the calling student may open that course
+        optionC: The course price
+        optionD: The instructor's earnings
+        answer: B
+        explanation: "/me means the caller. An instructor's list of students would be a separate instructor endpoint."
+  # ────────────────────────────────────────────────────────────────── 4. High-level design
+  - __component: sd.section
+    key: high-level-design
+    title: High-level design.
+    railLabel: High level
+    intro: "One service per functional requirement, in the order they were listed, with a store for each. Students come in on the left through a load balancer and API gateway; instructors come in on the right through their own; the stores sit between them."
+  - __component: sd.component-diagram
+    key: hld-diagram
+    title: The first design
+    direction: LR
+    nodes:
+      - { key: students }
+      - { key: student-gateway, details: [spread load, route, authenticate] }
+      - { key: user-service, details: [sign-up and login] }
+      - { key: review-service }
+      - { key: search-service }
+      - { key: playback-service }
+      - { key: progress-service }
+      - { key: enrollment-service, details: [free courses] }
+      - { key: payment-service, details: [paid courses] }
+      - { key: user-db }
+      - { key: course-db }
+      - { key: blob-store }
+      - { key: progress-db }
+      - { key: enrollment-db }
+      - { key: payment-db }
+      - { key: catalog-service }
+      - { key: uploader-service }
+      - { key: instructor-gateway }
+      - { key: instructors }
+    edges:
+      - { from: students, to: student-gateway }
+      - { from: student-gateway, to: user-service }
+      - { from: student-gateway, to: search-service }
+      - { from: student-gateway, to: review-service }
+      - { from: student-gateway, to: playback-service }
+      - { from: student-gateway, to: progress-service }
+      - { from: student-gateway, to: enrollment-service }
+      - { from: student-gateway, to: payment-service }
+      - { from: user-service, to: user-db }
+      - { from: search-service, to: course-db }
+      - { from: review-service, to: course-db }
+      - { from: playback-service, to: blob-store }
+      - { from: progress-service, to: progress-db }
+      - { from: enrollment-service, to: enrollment-db }
+      - { from: payment-service, to: payment-db }
+      - { from: payment-service, to: enrollment-db, label: grant access }
+      - { from: instructors, to: instructor-gateway }
+      - { from: instructor-gateway, to: catalog-service }
+      - { from: instructor-gateway, to: uploader-service }
+      - { from: catalog-service, to: course-db }
+      - { from: uploader-service, to: blob-store }
+  - __component: sd.rich-text
+    key: hld-flows
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Students first reach a load balancer and API gateway, which spreads the traffic, routes each path to its service, and checks authentication. Then one service per requirement: a user service that signs people up into a user DB; a course search service over the course DB; an enrollment service that records a free enrollment in a course enrollment DB; a payment service for paid courses, which records the payment in a payment DB and grants access in the enrollment DB; a video playback service that fetches videos from blob storage; a user progress service with a progress DB; and a comment and review service that writes to the course DB, so everything about a course is found in one place."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Instructors get their own load balancer and API gateway on the right. A catalog service writes a course's metadata, questions and assignments to the course DB; a media uploader service puts heavy files, videos and images, into blob storage, because they do not belong in a database. Walk one course through: the instructor creates it and uploads its videos, a moderator approves it, a student signs up, finds it, enrolls free or pays, watches, and their progress is tracked."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Say what this picture hides: how a large video really gets into storage and out to a player, how search works across many tables, and how a payment reliably becomes access. Those are the deep dive."
+  - __component: sd.quiz
+    key: hld-quiz
+    title: Quick check
+    questions:
+      - question: Why does a paid enrollment touch two stores in this first design?
+        optionA: To keep a backup
+        optionB: The payment is recorded in the payment DB, and the access is granted in the course enrollment DB
+        optionC: Because the gateway requires it
+        optionD: It does not
+        answer: B
+        explanation: Two writes for one purchase is exactly what the deep dive has to make reliable.
+      - question: Why do videos go to blob storage rather than the course DB?
+        optionA: Databases cannot hold text
+        optionB: Large binary files belong in object storage; the database keeps the metadata
+        optionC: Blob storage is free
+        optionD: For search
+        answer: B
+        explanation: Hour-long videos and big attachments are flat files; the course DB holds rows about them.
+  # ────────────────────────────────────────────────────────────────── 5. Deep dive, 1: users and search
+  - __component: sd.section
+    key: lld-search
+    title: "Deep dive, 1: the user service and course search."
+    railLabel: Deep dive, search
+    intro: "Copy the high-level design into the deep dive and open the services one by one. The user service is simple; course search is the first real problem."
+  - __component: sd.db-schema
+    key: user-table
+    stores:
+      - key: user-store
+        engine: PostgreSQL or MySQL
+        component: user-db
+        why: Flat, relational account rows.
+        tables:
+          - name: user
+            columns:
+              - { name: user_id, type: bigint, role: primary }
+              - { name: name, type: text }
+              - { name: email_or_phone, type: text }
+              - { name: password_hash, type: text, note: "a slow salted hash such as bcrypt or Argon2id, never encryption" }
+              - { name: status, type: text }
+  - __component: sd.rich-text
+    key: search-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "The user service keeps profile rows: id, name, email or phone, password, account status. A relational database, PostgreSQL or MySQL, fits. The video writes the password as encrypted; it should be hashed with a slow, salted password hash, so nobody, not even the service, can turn it back into the password."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Search is harder. Students filter by category, difficulty, rating and price, and type free text into the title box. Text search needs a search engine, so the course search service stops querying the course DB and asks Elasticsearch instead. But the filters live in separate tables, ratings in one, prices in another, titles in a third, and joining them on every query would make every search slow."
+      - type: paragraph
+        children:
+          - type: text
+            text: "So precompute. Elasticsearch cannot work alone; it needs the data. A plain change data capture pipeline would copy rows across; here it must also aggregate: an aggregator CDC pipeline reads changes from the course DB, joins the course's tables into one JSON document per course, and indexes it. A search is then one look-up in a ready-made document, with the engine's own text matching and ranking."
+  - __component: sd.component-diagram
+    key: search-diagram
+    title: Search, precomputed
+    direction: LR
+    nodes:
+      - { key: search-service }
+      - { key: elasticsearch, details: [one document per course] }
+      - { key: aggregator, details: [joins the course tables] }
+      - { key: course-db }
+    edges:
+      - { from: search-service, to: elasticsearch, label: query }
+      - { from: aggregator, to: elasticsearch, label: index documents }
+      - { from: course-db, to: aggregator, label: changes }
+  - __component: sd.quiz
+    key: search-quiz
+    title: Quick check
+    questions:
+      - question: Why not run course search as SQL joins over the course tables?
+        optionA: SQL cannot filter by price
+        optionB: Free text needs a search engine, and joining several tables on every query makes each search slow
+        optionC: The course DB is write-only
+        optionD: Joins lose data
+        answer: B
+        explanation: Precompute the join once per change, and search a ready-made document.
+      - question: What does the aggregator CDC pipeline add over plain CDC?
+        optionA: Nothing
+        optionB: It joins the course's tables into one JSON document before indexing it
+        optionC: It deletes old courses
+        optionD: It caches videos
+        answer: B
+        explanation: Plain CDC copies rows; the search index wants whole courses.
+  # ────────────────────────────────────────────────────────────────── 5. Deep dive, 2: instructor flow
+  - __component: sd.section
+    key: lld-instructor
+    title: "Deep dive, 2: instructors, uploads and moderation."
+    railLabel: Deep dive, instructors
+    intro: "Before going further on the student side, follow how content gets in: an instructor signs up and is verified, creates a course, uploads its videos and quizzes, and a moderator publishes it."
+  - __component: sd.rich-text
+    key: instructor-onboarding
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Instructors log in like students, so their sign-up goes through the same user service; two services would also work, but one keeps it simple. The user table cannot tell an instructor from a student, so add an instructor_profile table: name, contact, password hash, average rating, student count, course count, status, and a verification status."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Verification was a follow-up in the real interview: how do you check an instructor's identity? The verification status holds the answer from an identity check against a government ID. In India that is Aadhaar, run by UIDAI; the video calls UIDAI's API directly, but only registered authentication and KYC agencies may call it, so the user service goes through such a provider and stores the flag it returns. Students skip this step."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Creating a course: the catalog service writes the course, its description, its chapters and lessons to the course DB, and its quizzes and questions to a quiz DB. The videos go through the media uploader service, which does not carry the bytes itself: it splits the work into chunks and hands out a signed URL, and the instructor's client uploads the chunks straight to S3. There they are transcoded into several resolutions, next to thumbnails and attachments. The interviewer may tell you to assume the uploader exists; do not spend the time on chunking unless asked."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Nothing is public yet. An admin or moderator, a third client on the instructor gateway, uses a course moderator service that reads the course's rows in the course DB, its videos in S3 and its quizzes in the quiz DB, and then publishes or rejects it. The course's status records where it is: draft, in review, published, rejected, archived."
+  - __component: sd.db-schema
+    key: course-tables
+    stores:
+      - key: course-store
+        engine: PostgreSQL or MySQL
+        component: course-db
+        why: Flat relational rows with joins; search reads a precomputed copy.
+        tables:
+          - name: courses
+            columns:
+              - { name: course_id, type: bigint, role: primary }
+              - { name: owner_instructor_id, type: bigint }
+              - { name: title, type: text }
+              - { name: description, type: text }
+              - { name: category_id, type: bigint }
+              - { name: level, type: text, note: "beginner, intermediate or advanced" }
+              - { name: thumbnail_url, type: text }
+              - { name: status, type: text, note: "draft, in review, published, rejected or archived" }
+          - name: course_pricing
+            columns:
+              - { name: course_id, type: bigint, role: primary }
+              - { name: price_amount, type: numeric }
+              - { name: currency, type: text }
+          - name: course_stats
+            columns:
+              - { name: course_id, type: bigint, role: primary, note: denormalized }
+              - { name: avg_rating, type: numeric }
+              - { name: rating_count, type: int }
+      - key: quiz-store
+        engine: PostgreSQL or MySQL
+        component: quiz-db
+        why: One quiz has many questions.
+        tables:
+          - name: quizzes
+            columns:
+              - { name: quiz_id, type: bigint, role: primary }
+              - { name: course_id, type: bigint }
+              - { name: lesson_id, type: bigint }
+              - { name: title, type: text }
+              - { name: status, type: text }
+              - { name: pass_score, type: int }
+          - name: questions
+            columns:
+              - { name: question_id, type: bigint, role: primary }
+              - { name: quiz_id, type: bigint }
+              - { name: type, type: text, note: "MCQ, multi-select, true-false or text" }
+              - { name: points, type: int }
+  - __component: sd.quiz
+    key: instructor-quiz
+    title: Quick check
+    questions:
+      - question: How does an hour-long video get into S3?
+        optionA: The instructor sends it to the catalog service, which saves it in the course DB
+        optionB: The media uploader hands out a signed URL and the client uploads the chunks straight to S3
+        optionC: The moderator uploads it
+        optionD: Through Elasticsearch
+        answer: B
+        explanation: The service authorises the upload; the bytes go directly from the instructor to storage, in chunks.
+      - question: What does the course moderator service read before publishing?
+        optionA: Only the title
+        optionB: The course rows in the course DB, the videos in S3 and the quizzes in the quiz DB
+        optionC: The payment DB
+        optionD: Nothing; it publishes automatically
+        answer: B
+        explanation: Everything the instructor uploaded is checked before the course becomes visible.
+  # ────────────────────────────────────────────────────────────────── 5. Deep dive, 3: enrollment and payment
+  - __component: sd.section
+    key: lld-enrollment
+    title: "Deep dive, 3: enrollment, payment and the outbox."
+    railLabel: Deep dive, enrollment
+    intro: "A student can open only the courses they joined or bought, so enrollment is a permission. Free courses grant it directly; paid ones must grant it reliably after the money moves."
+  - __component: sd.rich-text
+    key: enrollment-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Free course: the student presses enroll, the enrollment service writes an access row in the course enrollment DB, done. Paid course: the front end asks for payment, the payment service calls a payment gateway that does the transaction with the bank, and the result comes back to the payment service."
+      - type: paragraph
+        children:
+          - type: text
+            text: "On success, the obvious move, write the payment DB and then write the enrollment DB, is a dual write. If the second write fails, the student has paid and has no course. So the payment service makes one atomic transaction in its own database, writing the payment row and a row in a payment_outbox table together. The video calls it an outlook table; the pattern is the transactional outbox."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Change data capture reads new outbox rows and publishes each as an event to Kafka. Two consumers react: a notification service sends the receipt, and a permission sync service writes the access row for that user and course into the course enrollment DB."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Why not publish to Kafka straight from the payment service, next to the DB write? Because that is the same dual write: the service can crash after committing the payment and before publishing, and the event is gone. The video's reason, that Kafka might be down, is the weaker one; Kafka is replicated. With the outbox, the event is in the database the moment the payment is, and the relay keeps its place, a CDC offset in the log or a sent flag on the row, so unsent events are published after any failure. Delivery is at least once, so permission sync must be idempotent, keyed by the order. And access lands within seconds, not at the same instant: the payment is consistent at once, the access soon after, never lost; the page can poll the entitlement until it appears."
+  - __component: sd.db-schema
+    key: enrollment-tables
+    stores:
+      - key: payment-store
+        engine: PostgreSQL or MySQL
+        component: payment-db
+        why: Orders and their outbox, written in one transaction.
+        tables:
+          - name: orders
+            columns:
+              - { name: order_id, type: bigint, role: primary }
+              - { name: user_id, type: bigint }
+              - { name: currency, type: text }
+              - { name: amount_total, type: numeric }
+              - { name: status, type: text }
+          - name: payment_outbox
+            columns:
+              - { name: event_id, type: bigint, role: primary }
+              - { name: order_id, type: bigint }
+              - { name: payload, type: json, note: "user, course, purchase" }
+              - { name: created_at, type: timestamp }
+      - key: access-store
+        engine: PostgreSQL or MySQL
+        component: enrollment-db
+        why: Who may open which course; read on every playback.
+        tables:
+          - name: access
+            columns:
+              - { name: access_id, type: bigint, role: primary }
+              - { name: user_id, type: bigint }
+              - { name: course_id, type: bigint }
+              - { name: scope_type, type: text, note: lifetime or subscription }
+              - { name: status, type: text, note: "active, revoked or expired" }
+              - { name: purchase_date, type: timestamp }
+  - __component: sd.component-diagram
+    key: enrollment-diagram
+    title: A payment becomes access
+    direction: LR
+    nodes:
+      - { key: enrollment-service }
+      - { key: payment-service }
+      - { key: payment-gateway }
+      - { key: payment-db, details: [payment and outbox rows, one transaction] }
+      - { key: kafka }
+      - { key: permission-sync, details: [idempotent by order] }
+      - { key: notification-service }
+      - { key: enrollment-db }
+    edges:
+      - { from: enrollment-service, to: enrollment-db, label: free course }
+      - { from: payment-service, to: payment-gateway, label: charge }
+      - { from: payment-service, to: payment-db, label: one atomic write }
+      - { from: payment-db, to: kafka, label: CDC }
+      - { from: kafka, to: notification-service }
+      - { from: kafka, to: permission-sync }
+      - { from: permission-sync, to: enrollment-db, label: access row }
+  - __component: sd.quiz
+    key: enrollment-quiz
+    title: Quick check
+    questions:
+      - question: The payment row is written, then the write to the enrollment DB fails. What is wrong, and what fixes it?
+        optionA: Nothing; retry later by hand
+        optionB: A dual write half-failed and the student paid without access; write the payment and an outbox row in one transaction and let a relay deliver the event
+        optionC: Use a bigger database
+        optionD: Call the payment gateway again
+        answer: B
+        explanation: One local transaction cannot half-fail; the outbox carries the rest of the work to Kafka.
+      - question: Why must the permission sync service be idempotent?
+        optionA: It is never called twice
+        optionB: The outbox delivers at least once, so the same purchase event can arrive again
+        optionC: Kafka deletes duplicates
+        optionD: To be faster
+        answer: B
+        explanation: Keyed by the order, a repeat event finds the access row already there and does nothing.
+  # ────────────────────────────────────────────────────────────────── 5. Deep dive, 4: playback
+  - __component: sd.section
+    key: lld-playback
+    title: "Deep dive, 4: playback, the CDN, and assignments."
+    railLabel: Deep dive, playback
+    intro: "The student has access and opens the course. Playback has to check that access, then get video to the screen within two seconds wherever the student is."
+  - __component: sd.rich-text
+    key: playback-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Before anything is fetched, the video playback service checks the course enrollment DB: no active access row, no video. With access, it returns a manifest file, the list of the video's chunks at each resolution, which the player reads to fetch chunks and to switch resolution as the bandwidth changes, 4K on a good line, 720p or 480p when it drops."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Fetching every chunk from one S3 region would be a long trip for a student in India watching a video stored in the US. So a CDN sits in front: the player asks the nearest edge for each chunk, the edge serves it if cached, and only on a miss fetches it from S3 and keeps it. Popular courses are then served from nearby, which is what meets the two-second start. Give the chunk URLs a short-lived signature, so the access check cannot be bypassed by sharing a link."
+      - type: paragraph
+        children:
+          - type: text
+            text: "After a video a quiz or assignment opens. An assignment service saves the student's answers to the quiz DB, beside the quiz's own questions."
+  - __component: sd.component-diagram
+    key: playback-diagram
+    title: Opening a video
+    direction: LR
+    nodes:
+      - { key: students }
+      - { key: playback-service, details: [access check, then manifest] }
+      - { key: enrollment-db }
+      - { key: cdn, details: [nearest edge] }
+      - { key: blob-store }
+      - { key: assignment-service }
+      - { key: quiz-db }
+    edges:
+      - { from: students, to: playback-service, label: open video }
+      - { from: playback-service, to: enrollment-db, label: access check }
+      - { from: students, to: cdn, label: fetch chunks }
+      - { from: cdn, to: blob-store, label: on a miss }
+      - { from: students, to: assignment-service, label: answers }
+      - { from: assignment-service, to: quiz-db }
+  - __component: sd.quiz
+    key: playback-quiz
+    title: Quick check
+    questions:
+      - question: What does the playback service do before returning anything?
+        optionA: Transcodes the video
+        optionB: Checks the student's access row in the course enrollment DB
+        optionC: Charges the student
+        optionD: Asks Elasticsearch
+        answer: B
+        explanation: Courses are restricted; access first, then the manifest.
+      - question: How does the CDN help the two-second start?
+        optionA: It compresses videos
+        optionB: Chunks are served from an edge near the student, and only a miss goes back to S3
+        optionC: It stores progress
+        optionD: It replaces the manifest
+        answer: B
+        explanation: Distance is latency. Cached chunks travel a short way.
+  # ────────────────────────────────────────────────────────────────── 5. Deep dive, 5: progress, and the follow-up
+  - __component: sd.section
+    key: lld-progress
+    title: "Deep dive, 5: reviews, progress tracking, and the enterprise follow-up."
+    railLabel: Deep dive, progress
+    intro: "Two requirements are left. Reviews are simple. Progress is not: the player reports constantly, and the database only needs the last word."
+  - __component: sd.rich-text
+    key: progress-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Comments and reviews: the comment and review service writes them to the course DB, and the course's rating figures in course_stats follow, so the course page and the search document read them from one place."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Progress: to resume a video where the student left it, the player sends an event every 10 or 15 seconds. Saving each one would fill the progress DB with rows nobody reads; only the latest position matters. So the user progress service drops the events into Kafka, and a user tracking consumer reads them in batches, about once a minute, keeps the latest event per student and video, and writes that to the progress DB. If analytics later wants every event, another consumer can keep them elsewhere."
+      - type: paragraph
+        children:
+          - type: text
+            text: "The progress DB, MySQL, keeps per student, course and video: the duration, the furthest point watched, the last position for resuming, and whether it is completed. When the student logs in again, the progress service reads it and the player resumes, and the course shows its completion."
+  - __component: sd.db-schema
+    key: progress-table
+    stores:
+      - key: progress-store
+        engine: MySQL
+        component: progress-db
+        why: One row per student and video, overwritten with the latest position.
+        tables:
+          - name: progress
+            columns:
+              - { name: user_id, type: bigint, role: primary }
+              - { name: course_id, type: bigint, role: primary }
+              - { name: video_id, type: bigint, role: primary, note: if the lesson is a video }
+              - { name: duration_sec, type: int }
+              - { name: max_position_sec, type: int, note: furthest point watched }
+              - { name: last_position_sec, type: int, note: where to resume }
+              - { name: completed, type: bool }
+  - __component: sd.subsection
+    key: enterprise
+    title: "The follow-up: an enterprise version"
+  - __component: sd.rich-text
+    key: enterprise-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "After the deep dive, the interviewer added a requirement: companies such as Microsoft or Walmart onboard and assign courses to their employees by a deadline. Onboard organisations through their own onboarding service, as users are onboarded. Each organisation wants its own landing page: store a template per organisation as JSON, and pick it from the organisation in the employee's SSO token."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Two probes followed. Data must not be shared between organisations in one course DB: isolate tenants by sharding or partitioning on the organisation. And each organisation gets its own URL: a subdomain per organisation, with wildcard DNS and certificates, routed by the request's Host header. The video mentions subnets here; subnets are IP address ranges inside a network and play no part in giving a tenant its URL."
+  - __component: sd.component-diagram
+    key: final-diagram
+    title: The final design
+    direction: LR
+    nodes:
+      - { key: students }
+      - { key: cdn }
+      - { key: student-gateway }
+      - { key: user-service }
+      - { key: identity-check }
+      - { key: review-service }
+      - { key: search-service }
+      - { key: elasticsearch }
+      - { key: aggregator }
+      - { key: assignment-service }
+      - { key: playback-service }
+      - { key: progress-service }
+      - { key: progress-consumer }
+      - { key: enrollment-service }
+      - { key: payment-service }
+      - { key: payment-gateway }
+      - { key: kafka }
+      - { key: permission-sync }
+      - { key: notification-service }
+      - { key: user-db }
+      - { key: course-db }
+      - { key: quiz-db }
+      - { key: blob-store }
+      - { key: progress-db }
+      - { key: enrollment-db }
+      - { key: payment-db }
+      - { key: catalog-service }
+      - { key: moderator-service }
+      - { key: uploader-service }
+      - { key: instructor-gateway }
+      - { key: instructors }
+    edges:
+      - { from: students, to: student-gateway }
+      - { from: students, to: cdn, label: chunks }
+      - { from: cdn, to: blob-store, label: on a miss }
+      - { from: user-service, to: user-db }
+      - { from: user-service, to: identity-check, label: verify instructors }
+      - { from: review-service, to: course-db }
+      - { from: search-service, to: elasticsearch }
+      - { from: course-db, to: aggregator }
+      - { from: aggregator, to: elasticsearch }
+      - { from: assignment-service, to: quiz-db }
+      - { from: playback-service, to: enrollment-db, label: access check }
+      - { from: playback-service, to: blob-store, label: manifest }
+      - { from: progress-service, to: kafka, label: events }
+      - { from: kafka, to: progress-consumer }
+      - { from: progress-consumer, to: progress-db, label: latest position }
+      - { from: enrollment-service, to: enrollment-db }
+      - { from: payment-service, to: payment-gateway }
+      - { from: payment-service, to: payment-db, label: payment and outbox }
+      - { from: payment-db, to: kafka, label: CDC }
+      - { from: kafka, to: permission-sync }
+      - { from: kafka, to: notification-service }
+      - { from: permission-sync, to: enrollment-db }
+      - { from: instructors, to: instructor-gateway }
+      - { from: instructor-gateway, to: catalog-service }
+      - { from: instructor-gateway, to: moderator-service }
+      - { from: instructor-gateway, to: uploader-service }
+      - { from: catalog-service, to: course-db }
+      - { from: catalog-service, to: quiz-db }
+      - { from: moderator-service, to: course-db }
+      - { from: uploader-service, to: blob-store, label: signed URL }
+  - __component: sd.quiz
+    key: progress-quiz
+    title: Quick check
+    questions:
+      - question: The player sends progress every 10 seconds. Why not write each event to the progress DB?
+        optionA: MySQL cannot store integers
+        optionB: Only the latest position is needed, so the consumer batches the events and writes the last one
+        optionC: Events are too large
+        optionD: Kafka forbids it
+        answer: B
+        explanation: Kafka absorbs the stream; the database gets one row per student and video, overwritten.
+      - question: Each enterprise customer wants its own URL. What do you use?
+        optionA: A subnet per customer
+        optionB: A subdomain per organisation, with wildcard DNS and routing by the Host header
+        optionC: A separate CDN
+        optionD: A new database per request
+        answer: B
+        explanation: Subnets are IP ranges inside a network; tenant URLs are a DNS and routing matter.

@@ -1,0 +1,84 @@
+# Collaborative editor interview, low-level design approach 5, "Approach 5: Conflict Free Replicated Data-types (CRDT)", beside approach 4 as on the video's board: B at 0.5 and C at 0.75, A inserted at 0.25 and D at 0.875, both copies sorted to ABCD. The pack adds the tie-break and the metadata cost the video leaves out.
+id: backend/collaborative-editor/end-to-end/lld-crdt
+title: "Approach 5: CRDTs"
+source:
+  hash: "d915ca8d98f3"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/collaborative-editor/end-to-end/lld-ot
+  assumes:
+    - "OT transforms concurrent operations; client-server OT needs one server per document."
+  carries:
+    - "A CRDT gives every character a fixed position, so edits merge in any order with no central server."
+    - "Concurrent inserts at one spot need a tie-break such as the site id; per-character metadata and tombstones cost memory."
+    - "Google Docs uses OT, so the design continues with OT."
+  terms:
+    - term: CRDT
+      means: "Conflict-free replicated data type: a data structure whose concurrent edits can be merged in any order and give the same result."
+    - term: tombstone
+      means: A deleted character kept as a marker so that positions around it stay meaningful.
+board:
+  keep: [title, prompt-desc, nfr, nfr-scale, nfr-cap, nfr-latency, api, api-post, api-get, api-ws, lld-ot, ot-def, ot-bc, ot-a, ot-b, ot-a-final, ot-b-final, ot-limit-1, ot-limit-2, ot-google, ot-bc-a, ot-bc-b, ot-a-down, ot-b-down]
+  elements:
+    - { id: lld-crdt, kind: region, label: "Approach 5: CRDT", at: [48, 32], size: [38, 36] }
+    - { id: cr-def, kind: note, label: "fixed positions, merges in any order", at: [50, 35], in: lld-crdt }
+    - { id: cr-bc, kind: box, label: "B 0.5, C 0.75", at: [61, 38], size: [10, 3], in: lld-crdt }
+    - { id: cr-a, kind: box, label: user A adds A at 0.25, at: [50, 47], size: [11, 3], in: lld-crdt }
+    - { id: cr-b, kind: box, label: user B adds D at 0.875, at: [72, 47], size: [11, 3], in: lld-crdt }
+    - { id: cr-a-final, kind: box, label: "user A sorts, A B C D", at: [50, 58], size: [11, 3], tone: green, in: lld-crdt }
+    - { id: cr-b-final, kind: box, label: "user B sorts, A B C D", at: [72, 58], size: [11, 3], tone: green, in: lld-crdt }
+    - { id: cr-tie, kind: note, label: "same spot, tie-break by site id", at: [50, 62], in: lld-crdt }
+    - { id: cr-cost, kind: note, label: costs metadata per character, at: [50, 63], in: lld-crdt }
+    - { id: cr-choice, kind: note, label: "Google Docs uses OT, so we continue with OT", at: [50, 65], in: lld-crdt }
+  arrows:
+    - { id: cr-bc-a, from: cr-bc, to: cr-a, label: "insert A, 0.25" }
+    - { id: cr-bc-b, from: cr-bc, to: cr-b, label: "insert D, 0.875" }
+    - { id: cr-a-down, from: cr-a, to: cr-a-final, label: "gets D, 0.875" }
+    - { id: cr-b-down, from: cr-b, to: cr-b-final, label: "gets A, 0.25" }
+beats:
+  - point: "A CRDT is a data structure whose concurrent edits merge in any order with the same result, so no server has to transform them."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Approach five, a conflict-free replicated data type, CRDT. Not an algorithm that adjusts operations but a data structure built so that concurrent edits can be merged in any order and still give the same result."
+    draw: [lld-crdt, cr-def]
+    check: What is the key property of a CRDT?
+    answer: Concurrent edits merge in any order and every copy ends with the same result, without transforming operations.
+  - point: "Every character gets a position that never changes: B at 0.5 and C at 0.75; user A inserts A at 0.25, below B, and user B inserts D at 0.875, above C."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Instead of indexes that shift, give each character a fixed position. B sits at 0.5 and C at 0.75."
+      - "User A inserts A before B, so at a position below 0.5, say 0.25. User B inserts D after C, above 0.75, say 0.875."
+    draw: [cr-bc, cr-a, cr-bc-a, cr-b, cr-bc-b]
+    check: Why does inserting A not change B's position?
+    answer: Positions are fixed values, not counts; A takes a new value below B's 0.5, and B keeps its own.
+  - point: "Each copy sorts characters by position, so both read ABCD whatever order the inserts arrive in, with no central server."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Each copy applies the other's insert and sorts by position: 0.25, 0.5, 0.75, 0.875. Both read A B C D, whatever order the inserts arrived in, and no server had to put them in order."
+    draw: [cr-a-final, cr-a-down, cr-b-final, cr-b-down]
+    check: Why do both copies agree without a central server?
+    answer: Every character's position is fixed, so sorting by position gives the same order in any copy, in any arrival order.
+  - point: "Two details: concurrent inserts at the same spot need a tie-break such as the site id, and per-character positions and tombstones cost memory. Google Docs uses OT, so we continue with OT."
+    kind: decision
+    weight: core
+    teach:
+      - "Two things to add. If two users insert at the same spot at the same moment they can pick the same number, so real CRDTs break ties with the inserting site's id. And every character carries its position, and deleted ones stay as tombstones, so memory grows."
+      - "So: OT needs a central server, CRDTs need more metadata. Google Docs uses OT, and so will we."
+    draw: [cr-tie, cr-cost, cr-choice]
+    check: Two users insert at the same spot at once and pick the same position. What keeps the order the same everywhere?
+    answer: A tie-break that makes positions unique, such as the inserting site's id.
+    misconceptions:
+      - "CRDTs are simpler and free -> they avoid a central server but carry per-character metadata and tombstones, and need tie-breaks."
+asks:
+  - ids: [cr-a, cr-b]
+    beats: [2]
+    question: "B is at 0.5 and C at 0.75. User A wants A before B, and user B wants D after C. What positions would you give them?"
+    hints:
+      - Positions are numbers you can always fit another number between.
+      - Something below 0.5 for A, and above 0.75 for D.

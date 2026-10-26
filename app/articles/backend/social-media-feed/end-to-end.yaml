@@ -1,0 +1,921 @@
+# yaml-language-server: $schema=../../../../../lego/content-kit/schema/topic.schema.json
+# provenance: ai-drafted by claude-opus-5-5 on 2026-10-27
+#
+# A whole backend system design interview for a social media platform like Facebook or Instagram,
+# run step by step on one whiteboard: requirements, core entities, the API in three groups, a
+# high-level design of five services, then a low-level design that opens each service in the order
+# the walkthrough does (user, content, follower, engagement) and spends the most time on the feed:
+# fan-out on write for most users, pulled posts for celebrities, a bounded feed cache, and a backfill
+# path fed by precomputed recent posts. A backend system of lego-ai's own (app/articles/backend): it
+# stands alone and links to no main-site topic.
+catalogVersion: 5
+title: Designing a social media feed, end to end
+shortTitle: Social feed interview
+summary: "A backend design interview for a platform like Facebook or Instagram, step by step on one board: requirements with numbers, five entities, the API in three groups, five services, then each service opened up, ending with feed generation by fan-out, a feed cache and a backfill path."
+group: design
+order: 13
+xp: 280
+difficulty: intermediate
+tags: [interview, news-feed, fan-out, kafka, caching, scalability]
+eyebrow: Design
+breadcrumb: [Social media feed, Interview walkthrough]
+lede: "You have one whiteboard to design a platform like Facebook or Instagram: people sign up, post text, photos and videos, follow each other, like and comment, and open the app to a feed of posts from the people they follow. Most of that is ordinary services and tables. The hard part is the feed for 500 million daily users, and this walkthrough builds up to it the way a strong candidate does: requirements, entities, API, a simple design, then each service opened in turn, the feed last."
+reviewStatus: draft
+author: rakeshr410
+provenance: ai-drafted
+sources:
+  - title: "System Design 13: Design Social Media like Facebook | Instagram | Feeds Generation (InterviewWithBunny, YouTube)"
+    url: https://www.youtube.com/watch?v=MQOz1yZaC54
+    note: "Order, services and drawings. Corrected: CAP is a partition trade-off; hashed passwords; cursor feed paging; at-least-once Kafka needs idempotent likes; unique follow pair; cache capped by trimming, not TTL; fan-out reads all followers."
+  - title: Apache Kafka documentation, message delivery semantics
+    url: https://kafka.apache.org/documentation/#semantics
+    note: "At-least-once delivery when the consumer commits its offset after processing; duplicates on a retry are possible."
+  - title: Apache Cassandra documentation, storage engine
+    url: https://cassandra.apache.org/doc/latest/cassandra/architecture/storage-engine.html
+    note: "Writes go to a commit log and a memtable and are flushed to immutable SSTables, which is why writes are cheap."
+  - title: LTRIM (Redis documentation)
+    url: https://redis.io/docs/latest/commands/ltrim/
+    note: "Trims a list to a range; LPUSH then LTRIM keeps a capped list of the newest entries."
+tutorBrief: >-
+  Interview walkthrough for a social media platform like Facebook or Instagram. Board order, top to
+  bottom: title and one line (users share photos and videos with friends and followers); 1 functional
+  requirements on the left, non-functional on the right; 2 core entities; 3 API in three groups side
+  by side; 4 high-level design; 5 low-level design, the high-level picture copied and grown one
+  service at a time: user, content, follower, engagement, then feed. Functional: sign up and log in;
+  create and share posts (text, image, video); follow each other (friend requests on Facebook, only
+  follow here); like and comment; see a feed of posts from the people you follow. Out of scope:
+  stories, reels, messaging (a separate design). Non-functional: 500M daily active users;
+  availability over consistency, eventual is fine (a post may reach followers a minute or even an
+  hour later; an app that is down is worse); about 500 ms to upload a text or image post. Entities:
+  user, post, followers, like and comment, feed. API: users register, login, GET and PUT profile;
+  posts POST, GET, PUT, DELETE, GET feed with a limit (30 to 50 posts a page) and a cursor, GET a
+  user's posts paginated; interaction like, unlike (DELETE), comments POST, GET, PUT, DELETE, follow,
+  unfollow. One requirement may need several endpoints. High-level design: clients, an API gateway
+  and load balancer (authentication, authorization, routing, rate limiting; round robin), user
+  service and user DB, content service writing text to a post DB and media to S3, feed service
+  reading follower DB and post DB, follower service and follower DB, engagement service with comment
+  DB and like DB. Low-level: user service on Postgres (user_id, username, email, password hash,
+  phone, profile_url, follower and friend counts), login returns a JWT. Content: the content service
+  writes to Kafka topic raw_post; a moderator service (an ML model) moves each post to filtered_post
+  or blocked_post; a post consumer writes text and metadata to the post DB (Cassandra, write heavy:
+  post_id, user_id, post_type, content_text, media_url, thumbnail_url, like, share and comment
+  counts) and media to S3; video upload in chunks is a separate design; a notification service tells
+  the author a post was blocked. Follower: Postgres table follow_id, follower_id, following_id, status
+  (pending for friend requests), timestamp; unique pair, index both ways; a graph DB only for
+  friends-of-friends suggestions. Engagement: likes and comments go through Kafka first (millions a
+  second); an engagement service consumes them; comments in Cassandra (comment_id, post_id, user_id,
+  text, like_count), likes in Postgres (like_id, post or comment id, user_id, reaction_type); a job
+  sums likes into like_count; delivery is at least once, so a like is unique per user and target.
+  Feed: joining 10,000 followees with their posts at read time is too slow, so feeds are precomputed.
+  Fan-out: push (fan-out on write) for small circles, one author to about 1,000 followers; pull
+  (fan-out on read) for celebrities, one to 1M. The feed service reads a feed cache in front of a feed
+  DB. A fan-out service consumes filtered_post, reads the author's followers and writes post id plus
+  follower ids to Kafka; a fan-out consumer reads the post from the post DB and writes it to each
+  follower's feed DB row and feed cache. The cache holds 50 to 100 posts per user, capped by trimming
+  each list (TTL only expires idle users). When a user scrolls past them, the feed service calls a
+  backfill service, which reads the user's followees and their latest posts from Redis (a post
+  materializer keeps each author's recent 100 posts there), writes user id plus post ids to Kafka,
+  and the fan-out consumer fills the cache. Celebrity posts reach feeds the same way, pulled. A
+  followers cache of each user's top 100 to 200 accounts (ranked by interaction, ML) makes backfill
+  two cache reads.
+components:
+  - key: client
+    name: Clients
+    tone: sand
+    kind: client
+    summary: Mobile apps and web browsers.
+    owns: [nothing of its own]
+    talksTo: [api-gateway]
+  - key: api-gateway
+    name: API gateway and load balancer
+    tone: blue
+    kind: gateway
+    summary: Authenticates and authorizes requests, rate limits them, and routes each to its service, spread round robin across the service's servers.
+    owns: [routes, rate limits]
+    talksTo: [user-service, content-service, feed-service, follower-service, engagement-broker]
+  - key: user-service
+    name: User service
+    tone: green
+    kind: service
+    summary: Sign-up, login and profiles; checks credentials and issues a JWT.
+    owns: [accounts]
+    talksTo: [user-db]
+  - key: content-service
+    name: Content service
+    tone: green
+    kind: service
+    summary: Accepts a new post and puts it on the raw_post topic; replies once the topic has it.
+    owns: [nothing durable]
+    talksTo: [post-broker]
+  - key: post-broker
+    name: Kafka, post topics
+    tone: purple
+    kind: queue
+    summary: "Topics raw_post, filtered_post and blocked_post: a buffer between upload and publishing."
+    owns: [raw_post, filtered_post, blocked_post]
+    talksTo: []
+  - key: moderator-service
+    name: Moderator service
+    tone: green
+    kind: worker
+    summary: Consumes raw_post, checks each post with a model and moves it to filtered_post or blocked_post.
+    owns: [nothing durable]
+    talksTo: [post-broker]
+  - key: post-consumer
+    name: Post consumer service
+    tone: green
+    kind: worker
+    summary: Consumes filtered_post and stores the text and metadata in the post DB and the media in S3.
+    owns: [nothing durable]
+    talksTo: [post-db, media-store]
+  - key: notification-service
+    name: Notification service
+    tone: green
+    kind: service
+    summary: Consumes blocked_post and tells the author the post broke the policy.
+    owns: [nothing durable]
+    talksTo: [post-broker]
+  - key: feed-service
+    name: Feed service
+    tone: green
+    kind: service
+    summary: Serves a user's feed page from the feed cache, and asks for a backfill when the precomputed posts run out.
+    owns: [nothing durable]
+    talksTo: [feed-cache, backfill-service]
+  - key: fanout-service
+    name: Fan-out service
+    tone: green
+    kind: worker
+    summary: Consumes filtered_post; for an author who is not a celebrity, reads the author's followers and writes the post id with their ids to Kafka.
+    owns: [nothing durable]
+    talksTo: [post-broker, follower-db, fanout-broker]
+  - key: fanout-broker
+    name: Kafka, fan-out entries
+    tone: purple
+    kind: queue
+    summary: Entries of a post and the users whose feeds get it, or a user and the posts to add to that feed.
+    owns: [fan-out entries]
+    talksTo: []
+  - key: fanout-consumer
+    name: Fan-out consumer
+    tone: green
+    kind: worker
+    summary: Reads each entry, fetches the post from the post DB, and writes it to every named user's feed DB row and feed cache.
+    owns: [nothing durable]
+    talksTo: [post-db, feed-db, feed-cache]
+  - key: backfill-service
+    name: Backfill service
+    tone: green
+    kind: service
+    summary: Builds more feed for one user in near real time from the user's followees and their latest posts.
+    owns: [nothing durable]
+    talksTo: [followers-cache, follower-db, latest-posts-cache, fanout-broker]
+  - key: post-materializer
+    name: Post materializer
+    tone: green
+    kind: worker
+    summary: Consumes filtered_post and keeps each author's 100 most recent posts in Redis.
+    owns: [nothing durable]
+    talksTo: [latest-posts-cache]
+  - key: follower-service
+    name: Follower service
+    tone: green
+    kind: service
+    summary: Follow, unfollow and friend requests; who follows whom.
+    owns: [follow relationships]
+    talksTo: [follower-db]
+  - key: engagement-broker
+    name: Kafka, likes and comments
+    tone: purple
+    kind: queue
+    summary: Buffers like and comment events so bursts never overwhelm the stores.
+    owns: [engagement events]
+    talksTo: []
+  - key: engagement-service
+    name: Engagement service
+    tone: green
+    kind: worker
+    summary: Consumes likes and comments and writes them to their stores.
+    owns: [nothing durable]
+    talksTo: [engagement-broker, comment-db, like-db]
+  - key: user-db
+    name: User DB
+    tone: yellow
+    kind: datastore
+    summary: PostgreSQL; one row per account.
+    owns: [user]
+    talksTo: []
+  - key: post-db
+    name: Post DB
+    tone: yellow
+    kind: datastore
+    summary: Cassandra; post text and metadata, written heavily.
+    owns: [post]
+    talksTo: []
+  - key: media-store
+    name: S3
+    tone: yellow
+    kind: datastore
+    summary: Blob storage for images and videos, referenced from the post row by URL.
+    owns: [media files]
+    talksTo: []
+  - key: follower-db
+    name: Follower DB
+    tone: yellow
+    kind: datastore
+    summary: PostgreSQL; one row per follow.
+    owns: [follow]
+    talksTo: []
+  - key: comment-db
+    name: Comment DB
+    tone: yellow
+    kind: datastore
+    summary: Cassandra; comments by post.
+    owns: [comment]
+    talksTo: []
+  - key: like-db
+    name: Like DB
+    tone: yellow
+    kind: datastore
+    summary: PostgreSQL; one row per like or reaction.
+    owns: [like]
+    talksTo: []
+  - key: feed-db
+    name: Feed DB
+    tone: yellow
+    kind: datastore
+    summary: Each user's precomputed feed, post ids newest first.
+    owns: [feed]
+    talksTo: []
+  - key: feed-cache
+    name: Feed cache
+    tone: orange
+    kind: cache
+    summary: The newest 50 to 100 feed posts per active user, in memory.
+    owns: [hot feeds]
+    talksTo: [feed-db]
+  - key: latest-posts-cache
+    name: Redis, latest posts per author
+    tone: orange
+    kind: cache
+    summary: Each author's 100 most recent post ids.
+    owns: [recent posts by author]
+    talksTo: []
+  - key: followers-cache
+    name: Followers cache
+    tone: orange
+    kind: cache
+    summary: Each user's top followed accounts, the ones they interact with most.
+    owns: [top followees]
+    talksTo: [follower-db]
+content:
+  # ────────────────────────────────────────────────────────────────── Problem statement
+  - __component: sd.section
+    key: problem-statement
+    title: Understanding the problem.
+    railLabel: Problem
+    intro: "The prompt is one line: design a social media platform like Facebook or Instagram. Everyone knows the product, so say it in one sentence and move straight to the requirements."
+  - __component: sd.rich-text
+    key: problem-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "It is an online platform where users share photos, videos and text with their friends and followers, and open the app to see what the people they follow have posted. The interviewer expects you to know the behaviour already, so do not spend minutes on it: write the title and that one line at the top of the board and start step one."
+      - type: paragraph
+        children:
+          - type: text
+            text: "The steps are the usual five, each numbered on the board as you reach it: requirements, core entities, API, high-level design, low-level design. This system has many ordinary parts and one hard one, the feed, so the plan is to settle the ordinary parts quickly and keep most of the low-level time for feed generation."
+  - __component: sd.quiz
+    key: problem-quiz
+    title: Quick check
+    questions:
+      - question: Which part of this design deserves most of the low-level time?
+        optionA: Sign-up and login
+        optionB: Generating each user's feed for 500 million daily users
+        optionC: Editing a profile
+        optionD: Deleting a post
+        answer: B
+        explanation: The other services are ordinary reads and writes. Building feeds at this scale is what the interview is about.
+  # ────────────────────────────────────────────────────────────────── 1. Requirements
+  - __component: sd.section
+    key: requirements
+    title: Requirements.
+    railLabel: Requirements
+    intro: "Five functional requirements on the left, three non-functional ones on the right, and a short list of what is out of scope."
+  - __component: sd.subsection
+    key: functional-sub
+    title: Functional requirements
+    railLabel: Functional
+  - __component: sd.checklist
+    key: functional
+    idPrefix: FR-
+    items:
+      - text: Users sign up and log in.
+      - text: Users create and share posts, as text, an image or a video.
+      - text: Users follow each other.
+        note: Facebook also has friend requests; this design keeps to following, with a status column that could hold a pending request.
+      - text: Users like and comment on posts.
+      - text: Users see a feed of posts from the people they follow.
+        note: The core requirement; most of the design time goes here.
+  - __component: sd.rich-text
+    key: out-of-scope
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Say what you leave out: stories, reels, and messaging. A chat service is a whole design problem of its own, with different storage and delivery, so it gets no time here."
+  - __component: sd.subsection
+    key: non-functional-sub
+    title: Non-functional requirements
+    railLabel: Non-functional
+  - __component: sd.requirement-table
+    key: non-functional
+    rows:
+      - area: Scale
+        requirement: A very large consumer user base.
+        targets: [500M daily active users]
+        note: This number is why the design is distributed, many services behind a gateway.
+      - area: Availability
+        requirement: The app keeps working when machines fail.
+        targets: [availability over consistency, eventual consistency]
+        note: A post may reach followers a minute or even an hour later; an app that will not open is far worse.
+      - area: Latency
+        requirement: Publishing a post feels quick.
+        targets: ["about 500 ms to upload a text or image post"]
+        note: Say where the number applies. Here it is the upload, measured until the post is accepted.
+  - __component: sd.rich-text
+    key: cap-choice
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "At 500 million daily users the data lives on many machines, and when the network between them splits, each part of the system must choose: keep answering, possibly with stale data, or refuse until the copies agree. That is the CAP theorem's trade-off. It applies during a partition, not always: with a healthy network a system can be both consistent and available. For a feed the choice is easy. Nobody is harmed if a friend's post shows up a minute late, but everyone notices if the app is down, so availability wins and eventual consistency is accepted."
+  - __component: sd.quiz
+    key: requirements-quiz
+    title: Quick check
+    questions:
+      - question: Why is eventual consistency acceptable for the feed?
+        optionA: Consistency is impossible in distributed systems
+        optionB: A post reaching followers a minute late harms no one, while an app that is down loses every user's session
+        optionC: Because posts are stored in S3
+        optionD: Because feeds are cached
+        answer: B
+        explanation: The delay is invisible to followers; downtime is not.
+      - question: What does the CAP theorem actually force you to choose between?
+        optionA: Consistency and availability at all times
+        optionB: Consistency and availability while the network is partitioned
+        optionC: Latency and throughput
+        optionD: SQL and NoSQL
+        answer: B
+        explanation: Without a partition both are possible. The choice is what each part does when copies cannot talk to each other.
+  # ────────────────────────────────────────────────────────────────── 2. Entities
+  - __component: sd.section
+    key: entities
+    title: Core entities.
+    railLabel: Entities
+    intro: "Read the functional requirements and pick out the nouns. Five come out now; more may appear once the design is detailed."
+  - __component: sd.table
+    key: entities-table
+    columns:
+      - { label: Entity, style: strong }
+      - { label: What it is, style: text }
+    rows:
+      - [User, The person who signs up and uses the app.]
+      - [Post, "Text, an image or a video someone shares."]
+      - [Followers, Who follows whom; on Facebook also friendships.]
+      - [Like and comment, "The interactions on a post, or on a comment."]
+      - [Feed, The posts a user sees on opening the app.]
+  - __component: sd.quiz
+    key: entities-quiz
+    title: Quick check
+    questions:
+      - question: Why is the feed listed as an entity of its own, when it is made of posts?
+        optionA: It is not; it should be removed
+        optionB: Because the design will store each user's feed, precomputed, rather than build it on every open
+        optionC: Because feeds have their own author
+        optionD: For the load balancer
+        answer: B
+        explanation: The feed becomes stored data with its own database and cache, as the low-level design shows.
+  # ────────────────────────────────────────────────────────────────── 3. API
+  - __component: sd.section
+    key: api
+    title: API.
+    railLabel: API
+    intro: "Group the endpoints by requirement: user onboarding, posts, and interaction. Unlike the shortener's one-to-one mapping, one requirement here needs several endpoints."
+  - __component: sd.table
+    key: api-table
+    title: The endpoints, in three groups
+    columns:
+      - { label: Group, style: strong }
+      - { label: Endpoint, style: mono-strong }
+      - { label: Does, style: text }
+    rows:
+      - [User onboarding, "POST /v1/users/register", "Creates an account from name, email and password."]
+      - [User onboarding, "POST /v1/users/login", "Checks the credentials and returns a token."]
+      - [User onboarding, "GET /v1/users/{id}/profile", "Reads a profile: intro, work, counts."]
+      - [User onboarding, "PUT /v1/users/{id}/profile", "Edits the profile."]
+      - [Post, "POST /v1/posts", "Creates a post."]
+      - [Post, "GET /v1/posts/{id}", "Reads a post with its description, like count and comments."]
+      - [Post, "PUT /v1/posts/{id}", "Edits a post."]
+      - [Post, "DELETE /v1/posts/{id}", "Deletes a post."]
+      - [Post, "GET /v1/posts/feed?limit=50&cursor=c1", "The user's feed, one page at a time."]
+      - [Post, "GET /v1/users/{id}/posts?cursor=c1", "One user's posts, one page at a time."]
+      - [Interaction, "POST /v1/posts/{id}/like", "Likes a post."]
+      - [Interaction, "DELETE /v1/posts/{id}/like", "Removes the like."]
+      - [Interaction, "POST /v1/posts/{id}/comments", "Adds a comment."]
+      - [Interaction, "GET /v1/posts/{id}/comments", "Reads a post's comments."]
+      - [Interaction, "PUT /v1/comments/{id}", "Edits a comment."]
+      - [Interaction, "DELETE /v1/comments/{id}", "Deletes a comment."]
+      - [Interaction, "POST /v1/users/{id}/follow", "Follows a user."]
+      - [Interaction, "DELETE /v1/users/{id}/follow", "Unfollows a user."]
+  - __component: sd.endpoint
+    key: feed-endpoint
+    method: GET
+    path: "/v1/posts/feed"
+    summary: "The signed-in user's feed, newest and most relevant first, 30 to 50 posts a page. The cursor marks where the last page ended."
+    requestHeaders: ["Authorization: Bearer <token>"]
+    responses:
+      - label: OK
+        status: "200"
+        body:
+          posts: [{ postId: p91, author: user 2, text: Lunch by the river, mediaUrl: null, likes: 14 }]
+          nextCursor: c2
+  - __component: sd.rich-text
+    key: api-notes
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Two lists can be huge: a feed drawn from thousands of followed accounts, and the posts of someone who has used the app for years. Both are paginated, so the app loads 30 to 50 posts and asks for the next page as the user scrolls. Use a cursor (the position of the last post seen) rather than an offset: new posts keep arriving at the top of a feed, and an offset would shift under the reader, repeating or skipping posts."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Keep the paths resources and let the method say the action: unliking is DELETE on the like and unfollowing is DELETE on the follow, not a separate unlike or unfollow path. Cover picture, profile photo and similar endpoints exist in a real product; leave them out and say so, there is no time to list every feature's endpoints."
+  - __component: sd.quiz
+    key: api-quiz
+    title: Quick check
+    questions:
+      - question: Why does the feed endpoint take a cursor rather than an offset?
+        optionA: Cursors are shorter
+        optionB: New posts arrive at the top while the user scrolls, so an offset shifts and repeats or skips posts; a cursor marks the last post seen
+        optionC: Offsets are not allowed in REST
+        optionD: It does not matter
+        answer: B
+        explanation: A feed changes under the reader. A cursor is a stable position in it.
+      - question: How should unliking a post look in the API?
+        optionA: POST /v1/posts/{id}/unlike
+        optionB: DELETE /v1/posts/{id}/like
+        optionC: GET /v1/posts/{id}/unlike
+        optionD: PUT /v1/posts/{id}
+        answer: B
+        explanation: The like is the resource; removing it is a DELETE on it.
+  # ────────────────────────────────────────────────────────────────── 4. High-level design
+  - __component: sd.section
+    key: high-level-design
+    title: High-level design.
+    railLabel: High level
+    intro: "At 500 million daily users the backend is a set of services behind an API gateway and load balancer. Draw one service per functional requirement, each with its database, and the feed service reading two of them."
+  - __component: sd.component-diagram
+    key: hld-diagram
+    title: The first design
+    direction: LR
+    nodes:
+      - { key: client, details: [mobile and web] }
+      - { key: api-gateway, details: [authentication and authorization, routing, rate limiting, round robin] }
+      - { key: user-service, details: [sign-up and login] }
+      - { key: content-service, details: [text to the post DB, media to S3] }
+      - { key: feed-service, details: [followees, then their posts] }
+      - { key: follower-service, details: [who follows whom] }
+      - { key: engagement-service, details: [likes and comments] }
+      - { key: user-db }
+      - { key: post-db }
+      - { key: media-store }
+      - { key: follower-db }
+      - { key: comment-db }
+      - { key: like-db }
+    edges:
+      - { from: client, to: api-gateway }
+      - { from: api-gateway, to: user-service }
+      - { from: api-gateway, to: content-service }
+      - { from: api-gateway, to: feed-service }
+      - { from: api-gateway, to: follower-service }
+      - { from: api-gateway, to: engagement-service }
+      - { from: user-service, to: user-db }
+      - { from: content-service, to: post-db, label: text }
+      - { from: content-service, to: media-store, label: media }
+      - { from: feed-service, to: follower-db, label: followees }
+      - { from: feed-service, to: post-db, label: their posts }
+      - { from: follower-service, to: follower-db }
+      - { from: engagement-service, to: comment-db }
+      - { from: engagement-service, to: like-db }
+  - __component: sd.rich-text
+    key: hld-flows
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Clients, mobile or web, call one entry point. The API gateway authenticates and authorizes each request, rate limits it and routes it by path; the load balancer spreads each service's traffic across its servers, round robin. Behind it: the user service stores accounts in a user DB. The content service stores a post's text and metadata in a post DB and its image or video in S3, because large files belong in blob storage, not in a database row."
+      - type: paragraph
+        children:
+          - type: text
+            text: "The feed service, on an open, reads the user's followees from the follower DB, then their recent posts from the post DB, and merges them. The follower service keeps the follower DB. One engagement service writes likes and comments to a like DB and a comment DB; in production they would likely be two services. This meets every functional requirement, but the feed's read-time merge will not survive the scale, which the low-level design fixes."
+  - __component: sd.quiz
+    key: hld-quiz
+    title: Quick check
+    questions:
+      - question: Why do images and videos go to S3 rather than the post database?
+        optionA: Databases cannot store bytes
+        optionB: Large files belong in cheap blob storage; the post row keeps only their URL
+        optionC: S3 is faster for small text
+        optionD: For moderation
+        answer: B
+        explanation: Media files are big and read whole; blob storage is built for that, and the database stays small.
+      - question: Which two stores does the feed service read in the first design?
+        optionA: User DB and like DB
+        optionB: Follower DB for the followees, then post DB for their posts
+        optionC: S3 and comment DB
+        optionD: Only the post DB
+        answer: B
+        explanation: Followees first, then their posts, merged at read time. The low-level design replaces this.
+  # ────────────────────────────────────────────────────────────────── 5. Low-level design: user service
+  - __component: sd.section
+    key: lld-user-service
+    title: "Low-level design: the user service."
+    railLabel: LLD, user
+    intro: "Copy the high-level design down the board and open the services one at a time, starting with the simplest: sign-up and login."
+  - __component: sd.rich-text
+    key: user-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "The user service registers accounts and handles login. On sign-up it stores the user's details; on login it checks the credentials and, if they match, returns a JWT, a signed token the client sends with every later request so the other services can trust who is calling without asking the user service each time."
+      - type: paragraph
+        children:
+          - type: text
+            text: "User data is flat and relational, so PostgreSQL (or MySQL) is the natural store. Store the password as a salted hash from a slow password-hashing function such as bcrypt, never the password itself."
+  - __component: sd.db-schema
+    key: user-tables
+    stores:
+      - key: user-store
+        engine: PostgreSQL
+        component: user-db
+        why: Flat account rows, read by key.
+        tables:
+          - name: user
+            columns:
+              - { name: user_id, type: bigint, role: primary }
+              - { name: username, type: text, role: unique }
+              - { name: email, type: text, role: unique }
+              - { name: password_hash, type: text }
+              - { name: phone_number, type: text }
+              - { name: profile_url, type: text }
+              - { name: followers_count, type: int }
+              - { name: friends_count, type: int }
+  - __component: sd.quiz
+    key: user-quiz
+    title: Quick check
+    questions:
+      - question: What does the login return, and why?
+        optionA: The user row
+        optionB: A JWT, so later requests carry proof of identity that services can verify on their own
+        optionC: The password
+        optionD: A cookie with the user ID in plain text
+        answer: B
+        explanation: The token is signed, so any service can check it without calling the user service.
+      - question: How is the password stored?
+        optionA: As typed
+        optionB: Encrypted with a key on the server
+        optionC: As a salted hash from a slow password hash such as bcrypt
+        optionD: In S3
+        answer: C
+        explanation: A hash cannot be reversed; the salt and the slowness defeat precomputed and brute-force attacks.
+  # ────────────────────────────────────────────────────────────────── 5. Low-level design: content service
+  - __component: sd.section
+    key: lld-content-service
+    title: "Low-level design: the content service."
+    railLabel: LLD, content
+    intro: "Millions of posts arrive every minute, and each must be checked before anyone sees it. Replace the direct database write with a pipeline through Kafka."
+  - __component: sd.rich-text
+    key: content-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "The content service no longer writes to the database. It puts each new post on a Kafka topic, raw_post, and answers the client as soon as Kafka has it. That keeps the upload inside its 500 ms however busy the stores are: Kafka is a durable buffer between accepting a post and publishing it."
+      - type: paragraph
+        children:
+          - type: text
+            text: "A moderator service consumes raw_post and checks each post against the policy, with a machine-learning model, for malicious or explicit content. A valid post goes to the filtered_post topic, a violating one to blocked_post. A post consumer service reads filtered_post and stores it: the text and metadata in the post DB, the image or video in S3. A notification service reads blocked_post and tells the author the post was blocked. Blocked posts could also be stored to retrain the model later; that is out of scope."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Videos are uploaded in chunks and encoded into several resolutions, which is a design of its own (an OTT upload pipeline); here the post just records its type and the media URL."
+  - __component: sd.component-diagram
+    key: content-diagram
+    title: Publishing a post
+    direction: LR
+    nodes:
+      - { key: content-service }
+      - { key: post-broker, details: [raw_post, filtered_post, blocked_post] }
+      - { key: moderator-service, details: [raw to filtered or blocked] }
+      - { key: post-consumer }
+      - { key: notification-service }
+    edges:
+      - { from: content-service, to: post-broker, label: raw_post }
+      - { from: moderator-service, to: post-broker, label: "reads raw, writes the verdict" }
+      - { from: post-broker, to: post-consumer, label: filtered_post }
+      - { from: post-broker, to: notification-service, label: blocked_post }
+  - __component: sd.db-schema
+    key: post-tables
+    stores:
+      - key: post-store
+        engine: Cassandra
+        component: post-db
+        why: "Thousands of post writes a second; Cassandra appends each write to a log and a memtable, so writes stay cheap."
+        tables:
+          - name: post
+            columns:
+              - { name: post_id, type: timeuuid, role: primary }
+              - { name: user_id, type: bigint, role: index }
+              - { name: post_type, type: text, note: "text, image or video" }
+              - { name: content_text, type: text }
+              - { name: media_url, type: text, note: the file in S3 }
+              - { name: thumbnail_url, type: text, note: a small image for a video }
+              - { name: like_count, type: counter }
+              - { name: share_count, type: counter }
+              - { name: comment_count, type: counter }
+  - __component: sd.quiz
+    key: content-quiz
+    title: Quick check
+    questions:
+      - question: Why does the content service write to Kafka instead of the database?
+        optionA: Kafka is a database
+        optionB: Kafka absorbs bursts durably, so the upload is accepted quickly and moderation and storage happen behind it
+        optionC: To avoid S3
+        optionD: Because posts are small
+        answer: B
+        explanation: Accepting and publishing are decoupled; the stores work at their own pace.
+      - question: What happens to a post that breaks the policy?
+        optionA: It is stored and shown
+        optionB: The moderator moves it to blocked_post, and the notification service tells the author
+        optionC: Kafka deletes it
+        optionD: The client never sends it
+        answer: B
+        explanation: Only filtered_post reaches the post consumer and the stores.
+      - question: Why Cassandra for the post DB?
+        optionA: It supports joins
+        optionB: The post table is write heavy, and Cassandra's log-structured writes are cheap and spread across nodes
+        optionC: It stores videos
+        optionD: It is relational
+        answer: B
+        explanation: Writes go to a commit log and memory first; it scales writes by adding nodes.
+  # ────────────────────────────────────────────────────────────────── 5. Low-level design: follower service
+  - __component: sd.section
+    key: lld-follower-service
+    title: "Low-level design: the follower service."
+    railLabel: LLD, follower
+    intro: "The follower service only records who follows whom. The decision worth discussing is the table, and why it is relational rather than a graph."
+  - __component: sd.db-schema
+    key: follower-tables
+    stores:
+      - key: follower-store
+        engine: PostgreSQL
+        component: follower-db
+        why: "Pairs of user IDs; two look-ups, by follower and by followed."
+        tables:
+          - name: follow
+            columns:
+              - { name: follow_id, type: uuid, role: primary }
+              - { name: follower_id, type: bigint, note: who follows }
+              - { name: following_id, type: bigint, role: index, note: who is followed }
+              - { name: status, type: text, note: "pending or accepted, for friend requests" }
+              - { name: created_at, type: timestamp }
+            constraints:
+              - { name: one_follow_per_pair, kind: unique, definition: "UNIQUE (follower_id, following_id)" }
+  - __component: sd.rich-text
+    key: follower-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Each row is one follow: follower_id is the user who follows, following_id the user being followed. If I follow five people there are five rows with my ID as follower_id. The relationship is many to many, so make the pair unique, which stops a double follow, and index following_id as well, because fan-out asks the opposite question: who follows this author? The status column holds pending or accepted when the product has friend requests."
+      - type: paragraph
+        children:
+          - type: text
+            text: "A relational table is enough to store and query direct relationships. A graph database earns its place only if the interviewer adds traversals, such as suggesting friends of friends."
+  - __component: sd.quiz
+    key: follower-quiz
+    title: Quick check
+    questions:
+      - question: Why index following_id as well as follower_id?
+        optionA: For sorting by time
+        optionB: The feed asks both who a user follows and who follows an author; each needs its own index
+        optionC: Postgres requires it
+        optionD: To store friend requests
+        answer: B
+        explanation: Fan-out reads the author's followers; backfill reads the reader's followees.
+      - question: When would a graph database be worth it here?
+        optionA: Always, since follows form a graph
+        optionB: When the product needs traversals such as friends-of-friends suggestions
+        optionC: When there are more than a million users
+        optionD: Never
+        answer: B
+        explanation: Storing and reading direct follows is simple key look-ups.
+  # ────────────────────────────────────────────────────────────────── 5. Low-level design: engagement service
+  - __component: sd.section
+    key: lld-engagement-service
+    title: "Low-level design: the engagement service."
+    railLabel: LLD, engagement
+    intro: "Likes and comments come in at millions a second, far more than any store takes directly. Buffer them in Kafka and let the engagement service write them at its own pace."
+  - __component: sd.rich-text
+    key: engagement-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Every like and comment goes first to a Kafka topic, and the engagement service consumes it and writes to the stores. This is the publish-subscribe answer to a flood of small writes: Kafka absorbs the burst durably, and no event is lost if the service falls behind. Kafka delivers at least once when the consumer commits its offset only after writing, which means an event can be delivered twice after a retry. So writes must be idempotent: a like is unique per user and target, and a repeated delivery changes nothing."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Comments are write heavy and read by post, so they go to Cassandra. Likes go to PostgreSQL, one row per like with its reaction type (like, heart and so on); a like targets either a post or a comment. Counting rows on every read would be slow, so a separate job sums likes into the like_count kept on the comment and on the post. One service handles both here; in production, likes and comments would likely be separate services."
+  - __component: sd.db-schema
+    key: engagement-tables
+    stores:
+      - key: comment-store
+        engine: Cassandra
+        component: comment-db
+        why: Write heavy; read by post.
+        tables:
+          - name: comment
+            columns:
+              - { name: post_id, type: bigint, role: partition }
+              - { name: comment_id, type: timeuuid, role: clustering }
+              - { name: user_id, type: bigint }
+              - { name: text, type: text }
+              - { name: like_count, type: counter, note: summed by a job }
+      - key: like-store
+        engine: PostgreSQL
+        component: like-db
+        why: One row per reaction, unique per user and target.
+        tables:
+          - name: like
+            columns:
+              - { name: like_id, type: bigint, role: primary }
+              - { name: target_id, type: bigint, note: a post or a comment }
+              - { name: user_id, type: bigint }
+              - { name: reaction_type, type: text }
+            constraints:
+              - { name: one_like_per_target, kind: unique, definition: "UNIQUE (user_id, target_id)" }
+  - __component: sd.component-diagram
+    key: engagement-diagram
+    title: Likes and comments
+    direction: LR
+    nodes:
+      - { key: api-gateway }
+      - { key: engagement-broker }
+      - { key: engagement-service }
+      - { key: comment-db }
+      - { key: like-db }
+    edges:
+      - { from: api-gateway, to: engagement-broker }
+      - { from: engagement-broker, to: engagement-service }
+      - { from: engagement-service, to: comment-db }
+      - { from: engagement-service, to: like-db }
+  - __component: sd.quiz
+    key: engagement-quiz
+    title: Quick check
+    questions:
+      - question: Why put Kafka in front of the engagement service?
+        optionA: To join likes with posts
+        optionB: Millions of likes a second would overwhelm direct writes; Kafka buffers them durably so none are lost
+        optionC: To moderate comments
+        optionD: Kafka is a cache
+        answer: B
+        explanation: The service consumes at its own pace and the events wait safely in the topic.
+      - question: Kafka redelivers a like after a consumer crash. How does the design stay correct?
+        optionA: Kafka guarantees exactly one delivery
+        optionB: The like is unique per user and target, so the second insert changes nothing
+        optionC: The client retries less
+        optionD: It double counts, which is fine
+        answer: B
+        explanation: At-least-once delivery needs idempotent writes.
+  # ────────────────────────────────────────────────────────────────── 5. Low-level design: feed service
+  - __component: sd.section
+    key: lld-feed-service
+    title: "Low-level design: the feed service."
+    railLabel: LLD, feed
+    intro: "The heart of the design. Building a feed when the app opens is too slow, so feeds are precomputed: pushed when an ordinary user posts, pulled for celebrities, cached, and topped up by a backfill path when the reader scrolls past them."
+  - __component: sd.rich-text
+    key: feed-why-precompute
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "The high-level design built the feed on open: fetch the user's followees from the follower DB, then their posts from the post DB, and merge. With 10,000 followees that is 10,000 accounts' posts fetched and merged across two services' databases (not a single SQL join, since the data lives in different stores) while the user stares at a spinner. It cannot meet the scale. The feed must be ready before the user opens the app."
+  - __component: sd.table
+    key: fanout-models
+    title: "Feed generation, the fan-out model"
+    columns:
+      - { label: Model, style: strong }
+      - { label: When a post is made, style: text }
+      - { label: Used for, style: text }
+    rows:
+      - [Push (fan-out on write), "The post is written into every follower's feed at once.", "Most users: one author to about 1,000 followers is a thousand cheap writes."]
+      - [Pull (fan-out on read), Nothing is written; followers' feeds fetch the post when they are built., "Celebrities: one author to a million followers would be a million writes per post."]
+  - __component: sd.rich-text
+    key: feed-push
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "The feed service now reads a feed cache, in front of a feed DB holding each user's precomputed feed. The writes come from a fan-out service, a second consumer of filtered_post. When an author who is not a celebrity posts, it reads the author's followers from the follower DB and writes an entry to a Kafka topic: this post, these follower IDs. A fan-out consumer reads each entry, fetches the post from the post DB, and writes it into each follower's row in the feed DB and list in the feed cache. When a follower opens the app, the feed is already there."
+      - type: paragraph
+        children:
+          - type: text
+            text: "The cache cannot hold everyone's whole feed, so it keeps the newest 50 to 100 posts per user. Cap each list by trimming it after every insert (push, then trim to 100); a TTL only lets an idle user's feed expire, it does not bound a busy one."
+  - __component: sd.rich-text
+    key: feed-backfill
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "A reader who scrolls past those posts needs more, now. When the app is close to the end of the precomputed posts, the feed service calls a backfill service, which builds the next part of the feed in near real time. It can do so fast only because its inputs are precomputed too: a post materializer, a third consumer of filtered_post, keeps each author's 100 most recent posts in a Redis cache. The backfill service reads the reader's followees, fetches their latest posts from Redis instead of scanning the post DB, and writes an entry to the fan-out topic: this user, these post IDs. The fan-out consumer adds them to the feed cache, and the reader scrolls on, apparently forever."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Celebrity posts arrive the same way: they are never pushed, but backfill pulls them from the celebrity's recent posts in Redis when it builds a follower's feed. Last, most people see posts from only the 100 or 200 accounts they interact with most, not all of their thousands. A followers cache keeps each reader's top followees, ranked by interaction (a machine-learning model can keep it updated), so backfill makes two cache reads, top followees and their latest posts, and never touches a database. Fan-out still needs every follower of the author, or at least every active one, so it keeps reading the follower table."
+  - __component: sd.component-diagram
+    key: feed-diagram
+    title: The final feed design
+    direction: LR
+    nodes:
+      - { key: post-broker, details: [filtered_post] }
+      - { key: fanout-service, details: [push, skips celebrities] }
+      - { key: fanout-broker, details: ["post id and follower ids", "user id and post ids"] }
+      - { key: fanout-consumer }
+      - { key: post-db }
+      - { key: feed-db }
+      - { key: feed-cache, details: [newest 50 to 100 per user] }
+      - { key: feed-service }
+      - { key: backfill-service }
+      - { key: post-materializer }
+      - { key: latest-posts-cache, details: [recent 100 per author] }
+      - { key: followers-cache, details: [top followees per reader] }
+      - { key: follower-db }
+    edges:
+      - { from: post-broker, to: fanout-service }
+      - { from: post-broker, to: post-materializer }
+      - { from: fanout-service, to: follower-db, label: "the author's followers" }
+      - { from: fanout-service, to: fanout-broker }
+      - { from: fanout-broker, to: fanout-consumer }
+      - { from: fanout-consumer, to: post-db, label: read the post }
+      - { from: fanout-consumer, to: feed-db, label: write }
+      - { from: fanout-consumer, to: feed-cache, label: write }
+      - { from: feed-service, to: feed-cache, label: read }
+      - { from: feed-service, to: backfill-service, label: near the end }
+      - { from: post-materializer, to: latest-posts-cache }
+      - { from: backfill-service, to: followers-cache }
+      - { from: backfill-service, to: latest-posts-cache }
+      - { from: backfill-service, to: fanout-broker }
+      - { from: follower-db, to: followers-cache }
+  - __component: sd.rich-text
+    key: feed-recap
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Close by reading the non-functional list back against the board. Scale: every service scales behind the gateway, and the heavy write streams go through Kafka. Availability: feeds are served from a cache and a feed DB, and a slow fan-out delays a post, it does not take the app down, which is the eventual consistency agreed in step one. Latency: an upload returns once Kafka has the post, well inside 500 ms."
+  - __component: sd.quiz
+    key: feed-quiz
+    title: Quick check
+    questions:
+      - question: Why is the feed precomputed instead of built when the app opens?
+        optionA: To save storage
+        optionB: Fetching thousands of followees' posts and merging them per open is far too slow at this scale
+        optionC: Because Kafka requires it
+        optionD: To support pagination
+        answer: B
+        explanation: The work moves to post time, when it can happen in the background.
+      - question: Why are celebrity posts pulled rather than pushed?
+        optionA: Celebrities post less
+        optionB: Pushing one post to a million followers' feeds is a million writes; pulling it when feeds are built costs nothing at post time
+        optionC: Celebrity posts are not moderated
+        optionD: The feed cache cannot hold them
+        answer: B
+        explanation: Push suits a small circle; one to a million makes every post a write storm.
+      - question: How is the feed cache kept to 50 to 100 posts per user?
+        optionA: With a TTL on each entry
+        optionB: By trimming each user's list to the newest entries after every insert
+        optionC: By deleting the feed DB
+        optionD: The cache grows forever
+        answer: B
+        explanation: Trimming bounds the size; a TTL only expires feeds that nobody reads.
+      - question: What makes backfill fast enough for near real time?
+        optionA: It scans the post DB in parallel
+        optionB: It reads precomputed data from caches, the reader's top followees and each author's latest posts in Redis
+        optionC: It skips moderation
+        optionD: It returns an empty page
+        answer: B
+        explanation: Two cache reads replace a database scan and a merge.

@@ -1,0 +1,58 @@
+# Social media interview, low-level design, the user service: the first service the video opens after copying the high-level design, beside it on the board: the service, its Postgres store with the user schema, and login returning a JWT. The video lists a password column; it is stored as a salted hash.
+id: backend/social-media-feed/end-to-end/lld-user-service
+title: "Low-level design: the user service"
+source:
+  hash: "b6de110e9cec"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/social-media-feed/end-to-end/high-level-design
+  assumes:
+    - "The user service handles onboarding and keeps accounts in a user DB."
+  carries:
+    - "The user service registers users and checks logins; a successful login returns a JWT the other services verify."
+    - "User data is flat, so PostgreSQL; the password is stored as a salted hash."
+  terms:
+    - term: JWT
+      means: "A signed token the client sends with each request, so services can verify who is calling without asking the user service."
+board:
+  keep: [title, prompt-desc, fr, fr-login, fr-post, fr-follow, fr-engage, fr-feed, nfr, nfr-scale, nfr-cap, nfr-latency, hld, h-clients, h-gateway, h-gw-note, h-user, h-user-db, h-content, h-post-db, h-s3, h-feed, h-follower, h-follower-db, h-engage, h-comment-db, h-like-db, h-clients-gw, h-gw-user, h-user-userdb, h-gw-content, h-content-postdb, h-content-s3, h-gw-feed, h-gw-follower, h-follower-db-arrow, h-feed-followerdb, h-feed-postdb, h-gw-engage, h-engage-comment, h-engage-like]
+  elements:
+    - { id: lld-user, kind: region, label: "5. Low-level design: user service", at: [72, 22], size: [46, 17] }
+    - { id: u-svc, kind: box, label: "User service, sign-up and login", at: [74, 26], size: [12, 4], in: lld-user, tone: blue }
+    - { id: u-jwt, kind: note, label: login returns a JWT the other services trust, at: [74, 31], in: lld-user }
+    - { id: u-db, kind: oval, label: "User DB, Postgres", at: [96, 26], size: [16, 4], in: lld-user, tone: amber }
+    - { id: u-schema-1, kind: note, label: "user: user_id, username, email, password_hash,", at: [74, 33], in: lld-user }
+    - { id: u-schema-2, kind: note, label: "phone, profile_url, follower and friend counts", at: [76, 34], in: lld-user }
+  arrows:
+    - { id: u-svc-db, from: u-svc, to: u-db, label: "save, verify" }
+beats:
+  - point: "The user service registers users and checks logins; when the credentials match it returns a JWT, which the client sends to every other service."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Step five, the low-level design. Copy the high-level picture down and open each service, simplest first: the user service."
+      - "On sign-up it stores the user's details. On login it checks the credentials and, if they match, returns a JWT, a signed token the client sends with every request so the other services can trust it."
+    draw: [lld-user, u-svc, u-jwt]
+    check: What does a successful login return, and why?
+    answer: A JWT, a signed token the client sends with later requests so services can verify the caller themselves.
+  - point: "User data is flat, so PostgreSQL holds it: user ID, username, email, password hash, phone, profile URL and counts; the password is a salted hash, never stored as typed."
+    kind: decision
+    weight: core
+    teach:
+      - "The data is flat metadata, so a relational database is plenty: Postgres, easy to scale with replicas later."
+      - "The table: user ID, username, email, the password, phone, profile picture URL, follower and friend counts. Store the password as a salted hash from a slow function like bcrypt, never as typed."
+    draw: [u-db, u-svc-db, u-schema-1, u-schema-2]
+    check: How should the password be stored?
+    answer: As a salted hash from a slow password hash such as bcrypt, never as typed.
+    misconceptions:
+      - "Encrypt the password so it can be checked -> hash it; nothing should be able to recover it, and login compares hashes."
+asks:
+  - ids: [u-db]
+    beats: [2]
+    question: "What database would you put the users in, and what goes in the table?"
+    hints:
+      - Is user data relational and flat, or something more exotic?
+      - Think of what sign-up and the profile page need.

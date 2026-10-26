@@ -1,0 +1,92 @@
+# Payment gateway interview, high-level design: "4. High level designing" under the requirements, as in the video: users, the client or merchant, a tall API gateway and load balancer, then the intent service with its database, the session service that returns a checkout page, and the processor service calling the external processor.
+id: backend/payment-gateway/end-to-end/high-level-design
+title: One service per call
+source:
+  hash: "28ff3425bc3e"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/payment-gateway/end-to-end/api
+  assumes:
+    - "A payment is three calls: intent, session, pay; plus a status read."
+    - "Non-functional: 10,000 transactions per second, consistency over availability, under 200 ms, PCI DSS."
+  carries:
+    - "Users pay through the merchant; the merchant calls an API gateway and load balancer in front of microservices."
+    - "An intent service with its database, a session service that returns a checkout page, a processor service that calls the external processor."
+    - "The processor's answer is not final; a reconciliation job confirms it later."
+  terms:
+    - term: API gateway
+      means: "The front door of the microservices: authentication, routing of each call to its service, load balancing."
+board:
+  keep: [title, prompt-desc, nfr, nfr-scale, nfr-cap, nfr-latency, nfr-security]
+  elements:
+    - { id: hld, kind: region, label: 4. High-level design, at: [2, 26], size: [70, 20] }
+    - { id: hld-users, kind: box, label: users, at: [4, 34], size: [7, 3], in: hld }
+    - { id: hld-client, kind: box, label: "client, the merchant", at: [14, 33], size: [10, 5], in: hld }
+    - { id: hld-gateway, kind: box, label: API gateway and load balancer, at: [28, 30], size: [9, 14], in: hld }
+    - { id: hld-intent, kind: box, label: Intent service, at: [42, 30], size: [12, 3], tone: blue, in: hld }
+    - { id: hld-intent-db, kind: oval, label: Intent database, at: [58, 29], size: [10, 4], tone: amber, in: hld }
+    - { id: hld-session, kind: box, label: Session service, at: [42, 36], size: [12, 3], tone: blue, in: hld }
+    - { id: hld-page, kind: note, label: returns a checkout web page, at: [56, 37], in: hld }
+    - { id: hld-processor, kind: box, label: Processor service, at: [42, 41], size: [12, 3], tone: blue, in: hld }
+    - { id: hld-external, kind: box, label: External processor, at: [58, 40], size: [11, 4], tone: grey, dashed: true, in: hld }
+    - { id: hld-recon, kind: note, label: "the processor's answer is not final, reconciliation confirms", at: [4, 44], in: hld }
+  arrows:
+    - { id: hld-users-client, from: hld-users, to: hld-client }
+    - { id: hld-client-gateway, from: hld-client, to: hld-gateway }
+    - { id: hld-gateway-intent, from: hld-gateway, to: hld-intent, label: intent }
+    - { id: hld-intent-save, from: hld-intent, to: hld-intent-db, label: save }
+    - { id: hld-gateway-session, from: hld-gateway, to: hld-session }
+    - { id: hld-gateway-processor, from: hld-gateway, to: hld-processor }
+    - { id: hld-processor-external, from: hld-processor, to: hld-external }
+beats:
+  - point: "Users pay through the merchant, our client; at 10,000 transactions a second the back end is microservices, so an API gateway and load balancer sit in front to route each call."
+    kind: component
+    weight: core
+    teach:
+      - "Step four, the high-level design. On the left, our client, the merchant. Its users are not ours to design, but they are the ones who type the card, so draw them talking to the merchant."
+      - "We handle 10,000 transactions a second and several jobs, tokenizing, routing, so the back end is microservices. That means an API gateway and a load balancer in front, routing each call to its service."
+    draw: [hld, hld-users, hld-client, hld-users-client, hld-gateway, hld-client-gateway]
+    check: Why put an API gateway in front of the services?
+    answer: "With several microservices at 10,000 transactions a second, something must authenticate, route each call to its service and balance the load."
+  - point: "The intent service takes the first call and saves the payment's metadata, item, amount and currency, in its database; it never touches the card."
+    kind: component
+    weight: core
+    teach:
+      - "The first call is the intent, so a payment intent service: it captures the payment's metadata, what is bought, the amount, the currency, into a database, and answers with the intent id."
+      - "Keep in mind it never sees card details. That is not its job."
+    draw: [hld-intent, hld-gateway-intent, hld-intent-db, hld-intent-save]
+    check: What does the intent service store?
+    answer: "The payment's metadata, item, amount, currency, merchant, in its database; no card details."
+  - point: "The session service takes the second call and returns a secure checkout page; the merchant must not build its own card form, which would pull it into PCI scope."
+    kind: component
+    weight: core
+    teach:
+      - "The second call, with the intent id, goes to a payment session service. It creates a session and returns a secure checkout web page where the buyer enters the card."
+      - "Why not let the merchant build that form? Then the merchant would handle the card, a big security problem unless it is PCI compliant itself."
+    draw: [hld-session, hld-gateway-session, hld-page]
+    check: Why does the gateway, not the merchant, provide the card page?
+    answer: "So card details go into the gateway's page and the merchant never handles them or carries the PCI burden."
+  - point: "The processor service takes the pay call and calls the external processor over a secure connection; what comes back is an acknowledgement, not the last word, and a reconciliation job confirms later."
+    kind: flow
+    weight: core
+    teach:
+      - "The pay call goes to a payment processor service, which calls the external processor over a secure connection. The processor talks to the bank."
+      - "What comes back is not the final word that the money moved. You have seen a payment fail on screen while the bank shows a debit, or succeed and be declined later. A reconciliation job behind the scenes settles it."
+    draw: [hld-processor, hld-gateway-processor, hld-external, hld-processor-external, hld-recon]
+    check: The processor answers right away. Is the payment done?
+    answer: "Not for certain; the answer can change at settlement, so a reconciliation job confirms the final result later."
+    misconceptions:
+      - "The processor's first response means the money moved -> it can still fail or reverse at settlement; reconciliation confirms."
+asks:
+  - ids: [hld-intent, hld-session, hld-processor]
+    beats: [2, 3, 4]
+    question: "Behind the gateway, what services would you have? Think of the three calls a payment makes."
+    hints:
+      - One service per call is a good start.
+      - Which of them must reach outside our system?
+task:
+  prompt: "Draw the high-level design: users and the merchant, the API gateway and load balancer, an intent service with its database, a session service that returns the checkout page, and a processor service calling the external processor."
+  expects: [1, 2, 3, 4]

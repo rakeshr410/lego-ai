@@ -1,0 +1,96 @@
+# Ticket booking interview, low-level design 1: the databases. Under "5. Low level designing", the high-level picture copied (client apps, a tall API gateway, Search, Event details, Booking) and its database replaced by Cassandra for event metadata and MySQL or Postgres for bookings, with the event and movie rows written beside Cassandra, as the video draws it. Search's store is left for the next part, as in the video.
+id: backend/ticket-booking/end-to-end/lld-databases
+title: "Low-level design, 1: the databases"
+source:
+  hash: "0377a3259064"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/ticket-booking/end-to-end/high-level-design
+  assumes:
+    - "Clients, an API gateway, and search, event and booking services sharing one database."
+    - "Available for search and view, consistent for booking."
+  carries:
+    - "Bookings and payments go to MySQL or PostgreSQL, for transactions and consistency."
+    - "Event and movie metadata goes to Cassandra: huge, read-mostly, and it must stay available."
+    - "Event rows: id, venue, artistId, name, description, seats. Movie rows: id, title, actors, seats."
+  terms:
+    - term: Cassandra
+      means: "A partitioned, replicated wide-column store that keeps answering when nodes fail and writes very fast."
+    - term: transaction
+      means: A group of writes that all happen or none do, which bookings and payments need.
+board:
+  keep: [title, prompt-desc, fr, fr-search, fr-view, fr-book, nfr, nfr-scale, nfr-available, nfr-consistent, entities, ent-user, ent-event, ent-venue, ent-ticket, api, api-search, api-event, api-reserve, api-reserve-body, api-confirm, api-confirm-body, api-auth, hld, hld-clients, hld-gateway, hld-booking, hld-db, hld-search, hld-event, hld-clients-gateway, hld-gateway-booking, hld-booking-db, hld-gateway-search, hld-gateway-event, hld-search-db, hld-event-db]
+  elements:
+    - { id: lld-db, kind: region, label: "5. Low level designing: 1. Databases", at: [6, 56], size: [70, 25] }
+    - { id: l-clients, kind: box, label: client apps, at: [7, 67], size: [7, 3], in: lld-db }
+    - { id: l-gateway, kind: box, label: API gateway, at: [17, 59], size: [9, 20], in: lld-db }
+    - { id: l-search, kind: box, label: Search, at: [30, 60], size: [12, 3], tone: blue, in: lld-db }
+    - { id: l-event, kind: box, label: Event details, at: [30, 67], size: [12, 3], tone: blue, in: lld-db }
+    - { id: l-booking, kind: box, label: Booking, at: [30, 74], size: [12, 3], tone: blue, in: lld-db }
+    - { id: l-postgres, kind: oval, label: MySQL or Postgres, at: [46, 73], size: [14, 5], tone: amber, in: lld-db }
+    - { id: l-cassandra, kind: oval, label: Cassandra, at: [46, 67], size: [14, 4], tone: amber, in: lld-db }
+    - { id: l-event-row-1, kind: note, label: "event: id, venue, artistId,", at: [61, 67], in: lld-db }
+    - { id: l-event-row-2, kind: note, label: "name, description, seats", at: [62, 68], in: lld-db }
+    - { id: l-movie-row, kind: note, label: "movie: id, title, actors, seats", at: [61, 70], in: lld-db }
+  arrows:
+    - { id: l-clients-gateway, from: l-clients, to: l-gateway }
+    - { id: l-gateway-search, from: l-gateway, to: l-search }
+    - { id: l-gateway-event, from: l-gateway, to: l-event }
+    - { id: l-gateway-booking, from: l-gateway, to: l-booking }
+    - { id: l-booking-postgres, from: l-booking, to: l-postgres }
+    - { id: l-event-cassandra, from: l-event, to: l-cassandra }
+beats:
+  - point: "The low-level design starts from a copy of the high-level picture, to open each box; the first box to open is the database."
+    kind: rule
+    weight: supporting
+    teach:
+      - "Step five, the low-level design. Copy the picture down the board: client apps, the API gateway, and the search, event details and booking services."
+      - "The database was a vague box. Now we say which databases, and what they hold."
+    draw: [lld-db, l-clients, l-gateway, l-clients-gateway, l-search, l-gateway-search, l-event, l-gateway-event, l-booking, l-gateway-booking]
+    check: Why copy the high-level picture instead of drawing something new?
+    answer: The low-level design opens the same boxes in detail, so the picture grows from the agreed design.
+  - point: "Bookings and payments must be consistent, so they go to a relational database with transactions, MySQL or PostgreSQL."
+    kind: decision
+    weight: core
+    teach:
+      - "The data is of two kinds. First, bookings: the payment, the order history, which seats were sold. No two users may get one seat, and a payment must never be half recorded."
+      - "That calls for transactions and consistency: a relational database, MySQL or Postgres. The booking service writes there."
+    draw: [l-postgres, l-booking-postgres]
+    check: Which database do bookings go to, and why?
+    answer: MySQL or PostgreSQL, because bookings and payments need transactions and consistency.
+  - point: "Event and movie metadata is a huge, read-mostly catalogue that must stay up, so it goes to Cassandra, a replicated store built for availability."
+    kind: decision
+    weight: core
+    teach:
+      - "Second, the metadata: every movie, show and concert, the actors, the venues. A huge amount, read far more than written, and the requirement says searching and viewing must stay available."
+      - "Cassandra fits: partitioned and replicated, it keeps answering when a node fails, and it writes very fast. The event details service reads it."
+    draw: [l-cassandra, l-event-cassandra]
+    check: Which non-functional line does putting the metadata in Cassandra serve?
+    answer: Highly available for searching and viewing events.
+    misconceptions:
+      - "Always pick Cassandra when you need availability -> pick it because this data is huge, read by key and must stay up; the reason matters, not the rule."
+  - point: "Beside Cassandra go its rows: an event has an id, a venue, an artist, a name, a description and seats; a movie has an id, a title, actors and seats."
+    kind: decision
+    weight: supporting
+    teach:
+      - "Write what Cassandra holds. An event row: id, venue, artist id, name, description, and its seats."
+      - "A movie row is much the same: id, title, actors, seats. Search, still pointing nowhere, is the next part."
+    draw: [l-event-row-1, l-event-row-2, l-movie-row]
+    check: Which entity's fields hold the seats an event sells?
+    answer: The event and movie rows carry their seats, with the venue they are in.
+asks:
+  - ids: [l-postgres]
+    beats: [2]
+    question: "Bookings and payments must never be wrong. Which kind of database would you put them in?"
+    hints:
+      - Think about a payment and a seat being written together, or not at all.
+      - Which databases give you transactions?
+  - ids: [l-cassandra]
+    beats: [3]
+    question: "And the event metadata, millions of movies and shows that must always be readable. Where would that live?"
+    hints:
+      - It is huge, read far more than written, and must stay up.
+      - A store that is partitioned and replicated for availability.

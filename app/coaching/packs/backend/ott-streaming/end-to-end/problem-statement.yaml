@@ -1,0 +1,43 @@
+# OTT streaming interview, the problem statement: the title and one line on what an OTT platform does, written at the top of the board as the video does, then the scope question and the five steps said once.
+id: backend/ott-streaming/end-to-end/problem-statement
+title: The problem, and the five steps
+source:
+  hash: "640f39f48f14"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: null
+  assumes: []
+  carries:
+    - "An OTT platform streams films and shows to subscribers over the internet, with no cable operator in between."
+    - "The interview runs in five steps: requirements, core entities, API, high-level design, low-level design."
+  terms:
+    - term: OTT
+      means: "Over the top: video delivered straight to the viewer over the internet."
+board:
+  keep: []
+  elements:
+    - { id: title, kind: note, label: "OTT platform like Netflix, Prime Video, Hotstar", at: [26, 0] }
+    - { id: prompt-desc, kind: note, label: "streams films and shows over the internet, by subscription", at: [21, 2] }
+  arrows: []
+beats:
+  - point: "An OTT platform like Netflix, Prime Video or Hotstar delivers films and shows straight to viewers over the internet, to people who pay for a plan."
+    kind: rule
+    weight: core
+    teach:
+      - "Write the title: an OTT platform like Netflix, Prime Video or Hotstar. Under it, one line on what it is: it streams films and shows over the internet, by subscription."
+      - "Over the top means no cable or satellite operator in between: the service talks to the viewer's phone or TV directly."
+    draw: [title, prompt-desc]
+    check: What does over the top mean for a streaming service?
+    answer: The video goes straight to the viewer over the internet, with no cable or satellite operator in between.
+  - point: "The prompt is vague on purpose: ask which parts to design, then run five steps, requirements, core entities, API, high-level design, low-level design."
+    kind: rule
+    weight: core
+    teach:
+      - "A streaming service is billing, search and video processing at once. Your job is to ask what exactly the interviewer wants designed."
+      - "Then say the plan once: requirements, functional and non-functional; the core entities; the API; a high-level design; and the low-level design, where most of the time goes."
+      - "Nobody outside video engineering is expected to know codecs in depth; a few ideas carry the hard part. Said, not written."
+    check: Which step comes straight after the requirements?
+    answer: Identifying the core entities, then the API.

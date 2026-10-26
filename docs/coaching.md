@@ -24,8 +24,11 @@ app/articles/backend/<system>/<topic>.yaml           lego-ai's own backend artic
 ```
 
 Backend design articles and their packs live under `backend/`, apart from the frontend ones, because one
-system can have both (Twitter's feed client and Twitter's timeline service): a backend article may share
-its system and slug with a frontend article, or with a topic of the main site. The snapshot keeps them in
+system can have both (Twitter's feed client and Twitter's timeline service). Each folder under
+`articles/backend/` is a system of lego-ai's own: it need not exist in the main site's `content/systems.yaml`
+(the main site's backend articles are not used), and a backend article may share its system and slug with a
+frontend article or a topic of the main site. A backend article links to no main-site topic. Each backend
+system has its own playlist, `backend-<system>`. The snapshot keeps them in
 `backendTopics`, read only by the coach; a backend pack's id starts with `backend/`
 (`backend/url-shortener/short-links-end-to-end/api`), and `packRef` (schema.ts) and `topicAt`
 (content-snapshot.ts) resolve it. `backend` is therefore not a system slug. How a backend lesson's sections

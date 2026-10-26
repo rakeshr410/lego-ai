@@ -1,0 +1,46 @@
+# Rate limiter interview, the problem statement: the title and the one-line prompt at the top of the board, as the video writes them, an example of what a limit means, then the five steps said once (said, not drawn), with the warning that this question usually ends in code.
+id: backend/rate-limiter/end-to-end/problem-statement
+title: The problem, and the five steps
+source:
+  hash: "3160ef1bc00c"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: null
+  assumes: []
+  carries:
+    - "A rate limiter blocks a client's requests once they pass a limit within a time window, to protect backends from abuse, overload and cost."
+    - "The interview runs in five steps: requirements, core entities, API, high-level design, deep dive; this one often ends with the algorithm as code."
+  terms:
+    - term: rate limiter
+      means: "A service that decides, for each request, whether the client may make it now, and refuses it once the client is past its limit in a window."
+    - term: time window
+      means: "The span a limit counts over, such as a minute: 15 image requests a minute."
+board:
+  keep: []
+  elements:
+    - { id: title, kind: note, label: Distributed rate limiter, at: [34, 0] }
+    - { id: prompt-desc, kind: note, label: "protects backends from abuse, overload, bots and cost", at: [4, 2] }
+    - { id: prompt-example, kind: note, label: "image generation, 15 requests a minute per user", at: [4, 3] }
+  arrows: []
+beats:
+  - point: "A rate limiter refuses a client's requests once they pass a limit within a time window, protecting backends from abuse, overload, bots and runaway cost."
+    kind: rule
+    weight: core
+    teach:
+      - "Write the title, then the prompt in one line: a rate limiting system that protects backend services from abuse, overload, unfair use, bot traffic, brute force and cost explosions, by limiting how many requests a client makes in a window."
+      - "Then an example. An AI product generates images on a costly model, so each user may make 15 image requests a minute; the sixteenth is refused until the minute moves on."
+    draw: [title, prompt-desc, prompt-example]
+    check: "In your own words, what does a rate limiter do, and why would an image generation API want one?"
+    answer: "It counts each client's requests in a time window and refuses them past a limit; image generation is costly, so unlimited use would overload the backend and the bill."
+  - point: "The interview runs in five steps, requirements, entities, API, high-level design, deep dive, and for this question the interviewer often asks for the algorithm as working code at the end."
+    kind: rule
+    weight: core
+    teach:
+      - "Say the plan once: functional and non-functional requirements, the core entities, the API, a high-level design, then a deep dive."
+      - "Warn yourself about one thing: the architecture here is small, and interviewers usually follow up by asking you to code the limiting algorithm with a design pattern. Leave time for it."
+      - "Said, not written; each step gets its number on the board when we reach it."
+    check: What should you expect once the rate limiter's design is done?
+    answer: To explain the algorithms, pick one, and write it as working code organised with a design pattern.

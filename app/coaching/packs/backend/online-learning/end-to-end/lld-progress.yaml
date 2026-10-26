@@ -1,0 +1,134 @@
+# Online learning interview, deep dive 5: reviews, progress tracking, and the enterprise follow-up. Under "5. Deep dive", the video's last part: the comment and review service to the course DB, the user progress service to Kafka, the user tracking consumer under Kafka writing the progress DB, the progress table below; then the interviewer's enterprise follow-up, which the video says without drawing, as notes. The video's "subnet" is taught as subdomains.
+id: backend/online-learning/end-to-end/lld-progress
+title: "Deep dive, 5: reviews, progress, and the enterprise follow-up"
+source:
+  hash: "a4ff337eaca0"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/online-learning/end-to-end/lld-playback
+  assumes:
+    - "Reviews belong to a course and go into the course DB; course_stats holds the rating figures."
+    - "Kafka already carries the purchase events from the payment outbox."
+  carries:
+    - "The player sends a progress event every 10 to 15 s; the progress service puts them on Kafka."
+    - "A user tracking consumer reads them about once a minute and writes only the latest position per student and video to the progress DB."
+    - "Enterprise follow-up: organisations onboarded, a JSON landing template each, tenants sharded by organisation, a subdomain each."
+  terms:
+    - term: consumer
+      means: A service that reads events from a Kafka topic and acts on them.
+    - term: tenant
+      means: One organisation's share of a multi-organisation system, whose data is kept apart from the others.
+board:
+  keep: [title, nfr, nfr-scale, nfr-avail, nfr-consistent, nfr-files, nfr-latency]
+  elements:
+    - { id: pr, kind: region, label: "5. Deep dive: reviews, progress, and a follow-up", at: [2, 26], size: [65, 28] }
+    - { id: pr-students, kind: box, label: students, at: [3, 33], size: [8, 3], in: pr }
+    - { id: pr-lb, kind: box, label: "LB and API gateway", at: [14, 29], size: [4, 14], in: pr }
+    - { id: pr-review, kind: box, label: Comment and review service, at: [21, 29], size: [12, 3], in: pr, tone: blue }
+    - { id: pr-coursedb, kind: oval, label: Course DB, at: [40, 29], size: [11, 3], in: pr, tone: amber }
+    - { id: pr-progress, kind: box, label: User progress service, at: [21, 36], size: [12, 3], in: pr, tone: blue }
+    - { id: pr-events, kind: note, label: "the player sends an event every 10 to 15 seconds", at: [3, 47], in: pr }
+    - { id: pr-kafka, kind: box, label: Kafka, at: [40, 36], size: [9, 3], in: pr, tone: grey }
+    - { id: pr-consumer, kind: box, label: user tracking consumer service, at: [40, 42], size: [14, 3], in: pr, tone: blue }
+    - { id: pr-progressdb, kind: oval, label: "Progress DB, MySQL", at: [21, 42], size: [12, 3], in: pr, tone: amber }
+    - { id: pr-batch, kind: note, label: "the consumer keeps the latest event, about once a minute", at: [3, 48], in: pr }
+    - { id: pr-table-1, kind: note, label: "progress: userId, courseId, videoId, durationSec,", at: [3, 50], in: pr }
+    - { id: pr-table-2, kind: note, label: "maxPositionSec, lastPositionSec, completed", at: [5, 51], in: pr }
+    - { id: ent-head, kind: note, label: "Follow-up: an enterprise version", at: [36, 47], in: pr }
+    - { id: ent-onboard, kind: note, label: "onboard organisations; a landing template each, as JSON", at: [36, 48], in: pr }
+    - { id: ent-sso, kind: note, label: "pick the template from the SSO token's organisation", at: [36, 49], in: pr }
+    - { id: ent-shard, kind: note, label: "isolate tenants: shard data by organisation", at: [36, 50], in: pr }
+    - { id: ent-domain, kind: note, label: "a subdomain per organisation, routed by the Host header", at: [36, 51], in: pr }
+  arrows:
+    - { id: pr-students-lb, from: pr-students, to: pr-lb }
+    - { id: pr-lb-review, from: pr-lb, to: pr-review }
+    - { id: pr-review-coursedb, from: pr-review, to: pr-coursedb, label: reviews }
+    - { id: pr-lb-progress, from: pr-lb, to: pr-progress }
+    - { id: pr-progress-kafka, from: pr-progress, to: pr-kafka, label: events }
+    - { id: pr-kafka-consumer, from: pr-kafka, to: pr-consumer }
+    - { id: pr-consumer-progressdb, from: pr-consumer, to: pr-progressdb, label: latest }
+    - { id: pr-progress-progressdb, from: pr-progress, to: pr-progressdb }
+beats:
+  - point: "Comments and reviews are simple: the comment and review service writes them to the course DB, where course_stats keeps the rating figures."
+    kind: component
+    weight: supporting
+    teach:
+      - "Two requirements are left. Reviews first, the easy one: the comment and review service writes each comment and rating into the course DB, and the course's stats follow."
+    draw: [pr, pr-students, pr-lb, pr-students-lb, pr-review, pr-lb-review, pr-coursedb, pr-review-coursedb]
+    check: Where do reviews end up, and what keeps the course's rating up to date?
+    answer: In the course DB, with course_stats holding the average rating and rating count.
+  - point: "To resume a video, the player sends a progress event every 10 to 15 seconds; storing every one would fill the progress DB with rows nobody needs, since only the latest position matters."
+    kind: failure
+    weight: core
+    teach:
+      - "Progress is harder. To resume where the student stopped, the front end sends an event every 10 or 15 seconds: at second zero I was here, at second ten here."
+      - "Save each one and the progress DB fills with rows nobody reads. We only need the last position."
+    draw: [pr-progress, pr-lb-progress, pr-events]
+    check: Why not write every progress event to the progress DB?
+    answer: There are a great many of them and only the latest position matters, so the rest would be stored for nothing.
+  - point: "The user progress service drops the events into Kafka, and a user tracking consumer reads them about once a minute and writes only the latest position per student and video to the progress DB."
+    kind: mechanism
+    weight: core
+    teach:
+      - "So the user progress service puts the events on Kafka, which takes the stream easily."
+      - "A user tracking consumer reads them in batches, about once a minute, keeps the latest event per student and video, and writes just that to the progress DB. If analytics wants every event, another consumer can keep them elsewhere."
+    draw: [pr-kafka, pr-progress-kafka, pr-consumer, pr-kafka-consumer, pr-progressdb, pr-consumer-progressdb, pr-batch]
+    check: What does the consumer write to the progress DB?
+    answer: Only the latest position for each student and video, about once a minute.
+    misconceptions:
+      - "Kafka replaces the progress DB -> Kafka buffers the stream; the progress DB keeps the one row per student and video that resuming reads."
+  - point: "The progress table keeps, per student, course and video, the duration, the furthest point watched, the last position for resuming, and whether it is completed; the progress service reads it when the student returns."
+    kind: decision
+    weight: core
+    teach:
+      - "The progress table, in MySQL: user, course, video, the duration, the maximum position watched, the last position to resume from, and completed."
+      - "When the student logs in again, the progress service reads it: the video resumes from the last position, and the course shows its completion."
+    draw: [pr-progress-progressdb, pr-table-1, pr-table-2]
+    check: Which column does resuming use, and which shows how much was watched?
+    answer: The last position is where to resume; the maximum position is the furthest point watched.
+  - point: "Follow-up from the real interview: an enterprise version where companies onboard and assign courses; organisations get their own onboarding and a landing page template each, stored as JSON and picked from the SSO token."
+    kind: requirement
+    weight: supporting
+    teach:
+      - "After the deep dive the interviewer added a requirement: companies like Microsoft or Walmart join and assign courses to their employees by a deadline."
+      - "Onboard organisations through their own onboarding service, as users are. Each wants its own landing page: keep a template per organisation as JSON, and pick it from the organisation in the employee's SSO token."
+    draw: [ent-head, ent-onboard, ent-sso]
+    check: How does each organisation get its own landing page?
+    answer: A template per organisation stored as JSON, chosen from the organisation in the employee's SSO token.
+  - point: "The probes behind it: keep each organisation's data apart by sharding on the organisation, and give each its URL as a subdomain, routed by DNS and the Host header; subnets play no part."
+    kind: decision
+    weight: core
+    teach:
+      - "Then the probe: one course DB holding every company's data together is not acceptable. Isolate tenants, sharding or partitioning by organisation, so no two share data."
+      - "And each organisation wants its own URL: a subdomain per organisation, with wildcard DNS and certificates, routed by the request's Host header. The video mentions subnets; those are IP ranges inside a network, nothing to do with a tenant's URL."
+    draw: [ent-shard, ent-domain]
+    check: How would you give each organisation its own URL?
+    answer: A subdomain per organisation, resolved by wildcard DNS and routed by the Host header.
+    misconceptions:
+      - "Give each organisation a subnet -> subnets are IP address ranges; tenant URLs are subdomains."
+  - point: "Close by reading the non-functional list back against the design: scale, availability where it helps, consistency for payment, large files, and the 2-second start."
+    kind: rule
+    weight: supporting
+    teach:
+      - "Read the requirements on the right back. Scale: services scaled apart, search on Elasticsearch, progress buffered by Kafka. Availability for browsing and video; consistency for payment, made safe by the outbox. Large files: chunks straight to S3. Two seconds: the CDN."
+    check: Which part of the design meets the 2-second start?
+    answer: The CDN serving chunks from an edge near the student, with the manifest from the playback service.
+asks:
+  - ids: [pr-kafka, pr-consumer]
+    beats: [3]
+    question: "Events arrive every ten seconds per student, and we only need the last one. How would you get the latest position into the database without writing every event?"
+    hints:
+      - Something could absorb the stream first.
+      - And something else could read it in batches.
+  - ids: [ent-shard, ent-domain]
+    beats: [6]
+    question: "Enterprise customers want their data kept apart and their own URL. How would you do each?"
+    hints:
+      - Split the data by the organisation.
+      - Think of a part of the domain name per organisation.
+task:
+  prompt: "Draw the final design from the whole deep dive: students, the gateway, search with Elasticsearch, playback behind the access check and a CDN, payment with the outbox and Kafka, and progress through Kafka to the progress DB."
+  expects: [3, 4]

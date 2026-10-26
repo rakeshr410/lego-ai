@@ -1,0 +1,108 @@
+# Collaborative editor interview, low-level design approach 3, "3. Events passing + websocket Connector": only the change is sent (user A inserts r at position 29) over one websocket, then the video's conflict picture: document BC, user A inserts A at 0, user B inserts D at 2, and applying the raw events gives ABDC on one side and ABCD on the other (users named user A and user B here).
+id: backend/collaborative-editor/end-to-end/lld-events
+title: "Approach 3: edit events over a websocket"
+source:
+  hash: "83c92eb342ce"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/collaborative-editor/end-to-end/lld-locking
+  assumes:
+    - "File replacement fails on payload size and request count; locking fails on simultaneity."
+  carries:
+    - "Send only the change, as an event, over one persistent websocket per editor."
+    - "Applying the other side's raw index diverges: BC becomes ABDC for user A and ABCD for user B."
+    - "Sending is solved; reconciliation is the problem, solved by OT or CRDTs."
+  terms:
+    - term: edit event
+      means: "One small change, such as insert r at position 29, sent instead of the file."
+    - term: reconciliation
+      means: Applying other users' concurrent edits to your own copy so that every copy ends up the same.
+board:
+  keep: [title, prompt-desc, nfr, nfr-scale, nfr-cap, nfr-latency, api, api-post, api-get, api-ws, lld-file, f-user-a, f-user-b, f-file, f-editor, f-flaw-size, f-flaw-count, f-a-file, f-file-editor, f-editor-b, lld-lock, l-lock, l-optimistic, l-pessimistic, l-verdict]
+  elements:
+    - { id: lld-events, kind: region, label: "Approach 3: events and a websocket", at: [6, 57], size: [56, 31] }
+    - { id: e-delta, kind: note, label: "user A inserts r at position 29, only the change", at: [8, 60], in: lld-events }
+    - { id: e-tab-a, kind: box, label: tab of user A, at: [8, 63], size: [9, 3], in: lld-events }
+    - { id: e-server, kind: box, label: "Editor service, websocket", at: [26, 63], size: [12, 3], tone: blue, in: lld-events }
+    - { id: e-tab-b, kind: box, label: tab of user B, at: [48, 63], size: [9, 3], in: lld-events }
+    - { id: e-bc, kind: box, label: "start, B C", at: [30, 69], size: [8, 3], in: lld-events }
+    - { id: e-a-abc, kind: box, label: user A has A B C, at: [12, 74], size: [10, 3], in: lld-events }
+    - { id: e-b-bcd, kind: box, label: user B has B C D, at: [46, 74], size: [10, 3], in: lld-events }
+    - { id: e-a-final, kind: box, label: user A gets A B D C, at: [12, 82], size: [10, 3], tone: red, in: lld-events }
+    - { id: e-b-final, kind: box, label: user B gets A B C D, at: [46, 82], size: [10, 3], tone: red, in: lld-events }
+    - { id: e-inconsistent, kind: note, label: "inconsistent, the copies differ", at: [24, 83], in: lld-events }
+    - { id: e-verdict, kind: note, label: "sending is right, applying the index is wrong", at: [8, 86], in: lld-events }
+  arrows:
+    - { id: e-a-server, from: e-tab-a, to: e-server, label: insert r at 29, both: true }
+    - { id: e-server-b, from: e-server, to: e-tab-b, label: pushed to B, both: true }
+    - { id: e-bc-a, from: e-bc, to: e-a-abc, label: inserts A at 0 }
+    - { id: e-bc-b, from: e-bc, to: e-b-bcd, label: inserts D at 2 }
+    - { id: e-a-down, from: e-a-abc, to: e-a-final, label: D at 2 }
+    - { id: e-b-down, from: e-b-bcd, to: e-b-final, label: A at 0 }
+beats:
+  - point: "Fix the payload: send only the change, an event such as user A inserts r at position 29, instead of the whole file."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Third approach: fix file replacement's two flaws directly. The payload first. User A types an r between two letters at position 29. Send only that: user A inserts r at position 29. A few bytes instead of the document."
+    draw: [lld-events, e-delta]
+    check: What does the client send now when user A types one letter?
+    answer: One small edit event, such as insert r at position 29, not the file.
+  - point: "Fix the request count: one persistent, two-way websocket per editor carries the events up and pushes them down to the others."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Then the count. Instead of a request per keystroke and a push back, open a websocket: one persistent, two-way connection per editor."
+      - "User A's events go up on it, and the server pushes them down to user B on user B's connection. Both flaws of file replacement are gone."
+    draw: [e-tab-a, e-server, e-a-server, e-tab-b, e-server-b]
+    check: How does the websocket cut the number of requests?
+    answer: One connection stays open and carries every event both ways, instead of a new request and a separate push per keystroke.
+  - point: "Now two users edit the same text at once: the document is BC, user A inserts A at position 0 and sees ABC, while user B inserts D at position 2 and sees BCD."
+    kind: flow
+    weight: core
+    teach:
+      - "But watch two users edit the same words at once. The document is B C. User A inserts A at position 0 and sees A B C. At the same moment user B inserts D at position 2, the end, and sees B C D. Each sends the event."
+    draw: [e-bc, e-a-abc, e-bc-a, e-b-bcd, e-bc-b]
+    check: What does each user see right after their own edit?
+    answer: User A sees ABC and user B sees BCD.
+  - point: "Each applies the other's event as sent: user A puts D at 2 into ABC and gets ABDC, user B puts A at 0 into BCD and gets ABCD. The copies diverge."
+    kind: failure
+    weight: core
+    teach:
+      - "User A receives insert D at 2 and applies it to A B C: A B D C. User B receives insert A at 0 and applies it to B C D: A B C D."
+      - "Both did exactly what they were told, and the copies differ. User B's position 2 was counted in B C; in user A's copy it points one letter too early."
+    draw: [e-a-final, e-a-down, e-b-final, e-b-down, e-inconsistent]
+    check: Why do the two copies end up different?
+    answer: Each applied the other's raw index, but that index was counted against the old text, so in user A's copy it lands one place too early.
+    misconceptions:
+      - "The server can fix it by applying events in arrival order -> the indexes themselves are stale; they must be adjusted for the concurrent edits."
+  - point: "Sending events over a websocket is right; reconciling them is the problem, and operational transformation and CRDTs are the two known solutions."
+    kind: decision
+    weight: core
+    teach:
+      - "So keep the events and the websocket; what is wrong is how we reconcile. Two algorithms solve exactly this: operational transformation, OT, and conflict-free replicated data types, CRDTs. Expect to explain both in the interview."
+    draw: [e-verdict]
+    check: Which part of approach 3 do we keep, and which part must change?
+    answer: Keep sending small events over a websocket; change how concurrent events are applied, using OT or a CRDT.
+asks:
+  - ids: [e-delta]
+    beats: [1]
+    question: "File replacement sends the whole file on every change. What could the client send instead?"
+    hints:
+      - Most of the file did not change.
+      - What is the smallest description of one keystroke?
+  - ids: [e-server]
+    beats: [2]
+    question: "And to stop a fresh request for every keystroke, what kind of connection would you use?"
+    hints:
+      - The server also needs to push other people's edits to us.
+      - Something that stays open and works in both directions.
+  - ids: [e-a-final, e-b-final]
+    beats: [4]
+    question: "Each user now applies the other's event exactly as it was sent. What text does each of them end up with?"
+    hints:
+      - User A applies insert D at 2 to A B C.
+      - User B applies insert A at 0 to B C D.

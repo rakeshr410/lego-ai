@@ -1,0 +1,33 @@
+slug: backend-e-commerce
+title: "The e-commerce platform interview"
+summary: "A backend design interview for an online shop like Amazon or Flipkart, step by step on one whiteboard: requirements with a CAP choice per module, entities, the API, a service per requirement, then each service opened in turn until search is fast, payment and stock stay consistent, and the last phone is sold once."
+outline: "The e-commerce lessons follow the five-step order and the drawings of InterviewWithBunny's System Design 3, E-Commerce Platform like Amazon / Flipkart (youtube.com/watch?v=-wJuExkI97s), section by section; the low-level design is split by the services the video opens in turn. No text is taken from it, and its factual slips are corrected in the article."
+lessons:
+  - slug: e-commerce
+    title: "The e-commerce interview: the problem, requirements, entities and API"
+    summary: "The shop and its scope at the top of the board, six functional requirements beside scale, the CAP choice per module and latency, the five entities, and the endpoints."
+    parts:
+      - { title: "The problem, then two lists", minutes: 10, packs: [backend/e-commerce/end-to-end/problem-statement, backend/e-commerce/end-to-end/requirements] }
+      - { title: "Entities, then the API", minutes: 8, packs: [backend/e-commerce/end-to-end/entities, backend/e-commerce/end-to-end/api] }
+  - slug: e-commerce-design
+    title: "The e-commerce interview: high-level design, then users and search"
+    summary: "Users, the gateway, a service per requirement and their databases; then the low-level design opens the user service and search: MySQL and a JWT, Elasticsearch fed by CDC, MongoDB, S3 and a CDN."
+    parts:
+      - { title: "A service per requirement", minutes: 9, packs: [backend/e-commerce/end-to-end/high-level-design] }
+      - { title: "Users and search", minutes: 12, packs: [backend/e-commerce/end-to-end/lld-user-search] }
+  - slug: e-commerce-checkout
+    title: "The e-commerce interview: the cart and the checkout"
+    summary: "A Postgres cart that stores no prices; then the checkout: an inventory service, three writes that can half-fail, and one Kafka event with its consumers in their place."
+    parts:
+      - { title: "The cart", minutes: 4, packs: [backend/e-commerce/end-to-end/lld-cart] }
+      - { title: "Checkout, then one event", minutes: 15, packs: [backend/e-commerce/end-to-end/lld-checkout] }
+  - slug: e-commerce-limited-stock
+    title: "The e-commerce interview: limited stock"
+    summary: "Ten checkout replicas oversell the last iPhone; a Redis lock per product with a TTL, and an atomic reservation for several units."
+    parts:
+      - { title: "The race, then the lock", minutes: 10, packs: [backend/e-commerce/end-to-end/lld-limited-stock] }
+  - slug: e-commerce-inventory
+    title: "The e-commerce interview: the inventory cache, and finishing"
+    summary: "A Redis cache in front of the inventory database and how it stays fresh, the product page's quantity by CDC, order status, and the requirements read back against the final picture."
+    parts:
+      - { title: "The cache, then the final design", minutes: 14, packs: [backend/e-commerce/end-to-end/lld-inventory-cache] }

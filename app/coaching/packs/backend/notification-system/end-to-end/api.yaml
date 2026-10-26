@@ -1,0 +1,79 @@
+# Notification system interview, API: "3. API designing" beside the entities: the send POST with its body as code and the status GET, then the template endpoints, and the preferences PUT with its JSON body to the right, as on the video's board.
+id: backend/notification-system/end-to-end/api
+title: Send, status, templates, preferences
+source:
+  hash: "ce8095e0d487"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/notification-system/end-to-end/entities
+  assumes:
+    - "Functional: channels, templates, user preferences, immediate or scheduled sends, delivery status."
+    - "The client is the calling company; the user is the person."
+  carries:
+    - "POST /api/v1/notifications { templateId, recipientId, variables, channels?, priority?, scheduledAt? }; GET /api/v1/notifications/{id}/status."
+    - "POST /api/v1/templates and GET /api/v1/templates/{id}/{version}, plus update and delete."
+    - "PUT /api/v1/preferences { externalUserId, clientId, preferences: { email, sms, inApp } }."
+  terms:
+    - term: priority
+      means: "Low, medium or high on a send request: promotional, standard, or critical like an OTP."
+board:
+  keep: [title, prompt-desc, prompt-example, fr, fr-channels, fr-templates, fr-prefs, fr-schedule, fr-status, nfr, nfr-scale, nfr-cap, nfr-latency, entities, ent-user, ent-pref, ent-content, ent-template, ent-status, ent-client-is, ent-user-is]
+  elements:
+    - { id: api, kind: region, label: 3. API designing, at: [42, 25], size: [50, 11], dashed: true }
+    - { id: api-send, kind: note, label: POST /api/v1/notifications, at: [43, 27], in: api }
+    - { id: api-send-1, kind: note, label: "{ templateId, recipientId, variables,", at: [45, 28], in: api }
+    - { id: api-send-2, kind: note, label: "channels?, priority?, scheduledAt? }", at: [47, 29], in: api }
+    - { id: api-status, kind: note, label: "GET /api/v1/notifications/{id}/status", at: [43, 30], in: api }
+    - { id: api-tpl-post, kind: note, label: POST /api/v1/templates, at: [43, 32], in: api }
+    - { id: api-tpl-get, kind: note, label: "GET /api/v1/templates/{id}/{version}", at: [43, 33], in: api }
+    - { id: api-pref, kind: note, label: PUT /api/v1/preferences, at: [66, 27], in: api }
+    - { id: api-pref-1, kind: note, label: "{ externalUserId: 1234, clientId: uber,", at: [68, 28], in: api }
+    - { id: api-pref-2, kind: note, label: "preferences: { email: true,", at: [70, 29], in: api }
+    - { id: api-pref-3, kind: note, label: "sms: false, inApp: true } }", at: [72, 30], in: api }
+  arrows: []
+beats:
+  - point: "Sending is a POST to /api/v1/notifications with the template id, the recipient and the variables, and three optional fields: channels, priority and a scheduled time."
+    kind: flow
+    weight: core
+    teach:
+      - "Step three, the API. The main call: the client POSTs to api v1 notifications with the template id, the recipient's id, and the variables that personalise it."
+      - "Then three optional fields, with a question mark: channels, SMS, push or email; priority, low for a promotion, high for an OTP; and scheduledAt, a time to send it later."
+    draw: [api, api-send, api-send-1, api-send-2]
+    check: Which field turns a send into a scheduled send, and which marks an OTP?
+    answer: "scheduledAt makes it scheduled; priority high marks an OTP or other critical message."
+  - point: "A GET on the notification's status serves the reporting requirement."
+    kind: flow
+    weight: supporting
+    teach:
+      - "To see where a notification is, a GET on api v1 notifications, its id, status."
+    draw: [api-status]
+    check: Which requirement does the status endpoint serve?
+    answer: Tracking delivery status for the client's dashboard.
+  - point: "Templates are saved with a POST, since it inserts a row, and read by id and version with a GET, with update and delete beside them."
+    kind: flow
+    weight: core
+    teach:
+      - "Templates: the client saves one with a POST to api v1 templates; it inserts data, so POST."
+      - "A template has versions, so a GET by template id and version reads one. Update and delete endpoints complete the set."
+    draw: [api-tpl-post, api-tpl-get]
+    check: Why does the template GET take a version?
+    answer: A template can have several versions; the client reads a specific one.
+  - point: "Preferences are a PUT to /api/v1/preferences carrying the client id, the client's own user id and a true or false per channel."
+    kind: flow
+    weight: core
+    teach:
+      - "Last, preferences, a PUT to api v1 preferences. It comes through the client; a person never calls us directly."
+      - "The body: the external user id, 1234, the client id, uber, and the preferences: email true, SMS false, in-app true."
+    draw: [api-pref, api-pref-1, api-pref-2, api-pref-3]
+    check: Why does the preference body carry the client id as well as the user id?
+    answer: "The user id is the client's own id for the person, so it is only unique within that client."
+asks:
+  - ids: [api-send, api-tpl-post, api-pref]
+    beats: [1, 3, 4]
+    question: "From the requirements, what endpoints do we need? Give me the method and the path, and I'll write them."
+    hints:
+      - One call sends a notification; what else does a client set up before sending?
+      - And how does a person's choice of channel reach us?

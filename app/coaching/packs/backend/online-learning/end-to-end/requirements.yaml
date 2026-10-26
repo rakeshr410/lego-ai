@@ -1,0 +1,114 @@
+# Online learning interview, requirements: "1. Functional requirements" on the left, student lines then instructor lines, and "Non-functional requirements" on the right, under the problem statement, as the video lays them out; CAP split by part of the system.
+id: backend/online-learning/end-to-end/requirements
+title: Two lists, functional and non-functional
+source:
+  hash: "253eb96b3815"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/online-learning/end-to-end/problem-statement
+  assumes:
+    - "Students, instructors and moderators; the scope is the student flow and the instructor upload flow."
+  carries:
+    - "Functional, students: account; search and filter by category, difficulty, rating, price; enroll; quizzes and assignments; progress and completion; reviews and ratings."
+    - "Functional, instructors: onboarding and verification; create courses with videos, quizzes, assignments and resources."
+    - "Non-functional: 100K+ courses and millions of students; availability for site and video, strong consistency for payment and enrollment; large files; video starts within 2 s."
+  terms:
+    - term: functional requirement
+      means: What the system does.
+    - term: non-functional requirement
+      means: "A quality of the system, with a number and where it applies."
+board:
+  keep: [title, prompt-desc, prompt-actors, prompt-scope]
+  elements:
+    - { id: fr, kind: region, label: "1. Functional requirements", at: [2, 6], size: [52, 20], dashed: true }
+    - { id: fr-account, kind: note, label: "a user can create an account", at: [3, 8], in: fr }
+    - { id: fr-search, kind: note, label: "search and filter by category, difficulty, rating, price", at: [3, 10], in: fr }
+    - { id: fr-enroll, kind: note, label: "students enroll in courses, free or paid", at: [3, 12], in: fr }
+    - { id: fr-assess, kind: note, label: "assessments, quizzes and assignments", at: [3, 14], in: fr }
+    - { id: fr-progress, kind: note, label: "progress tracking and completion status", at: [3, 16], in: fr }
+    - { id: fr-review, kind: note, label: "reviews and ratings for courses", at: [3, 18], in: fr }
+    - { id: fr-onboard, kind: note, label: "instructor onboarding and verification", at: [3, 20], in: fr }
+    - { id: fr-create, kind: note, label: "instructors create courses, videos, quizzes, resources", at: [3, 22], in: fr }
+    - { id: nfr, kind: region, label: "Non-functional requirements", at: [58, 6], size: [50, 18], dashed: true }
+    - { id: nfr-scale, kind: note, label: "scale, 100K plus courses, millions of students", at: [59, 8], in: nfr }
+    - { id: nfr-avail, kind: note, label: "availability over consistency, site and video", at: [59, 10], in: nfr }
+    - { id: nfr-consistent, kind: note, label: "strongly consistent payments and enrollment", at: [59, 12], in: nfr }
+    - { id: nfr-files, kind: note, label: "large files, hour-long videos", at: [59, 14], in: nfr }
+    - { id: nfr-latency, kind: note, label: "video starts within 2 seconds", at: [59, 16], in: nfr }
+  arrows: []
+  lists:
+    - { id: fr-list, in: fr, at: [3, 8], step: 2, slots: 9, width: 50, items: [fr-account, fr-search, fr-enroll, fr-assess, fr-progress, fr-review, fr-onboard, fr-create] }
+    - { id: nfr-list, in: nfr, at: [59, 8], step: 2, slots: 7, width: 44, items: [nfr-scale, nfr-avail, nfr-consistent, nfr-files, nfr-latency] }
+beats:
+  - point: "The student's core requirements: create an account, search and filter courses by category, difficulty, rating and price, and enroll, free or paid."
+    kind: requirement
+    weight: core
+    teach:
+      - "Step one, on the left: what the system does, the student first. A user can create an account."
+      - "They browse, search and filter courses, by category, difficulty, rating and price. And they enroll in a course, which may be free or paid."
+    draw: [fr, fr-account, fr-search, fr-enroll]
+    check: What does a student need to do before they can watch anything?
+    answer: Create an account, find the course by searching or filtering, and enroll in it, free or by paying.
+  - point: "Then what the student does inside a course: quizzes and assignments, progress tracking with completion status, and reviews and ratings."
+    kind: requirement
+    weight: core
+    teach:
+      - "Inside a course there is an assessment system, quizzes and assignments, and the student's progress is tracked: how much is done, whether it is complete."
+      - "And every course has reviews and ratings; without them nobody can tell which course is any good."
+    draw: [fr-assess, fr-progress, fr-review]
+    check: Why are reviews and ratings a requirement, not a nice-to-have?
+    answer: Students choose courses by them; without reviews and ratings they cannot tell a good course from a bad one.
+  - point: "The instructor side adds two: instructor onboarding with verification, and creating courses with videos, quizzes, assignments and resources."
+    kind: requirement
+    weight: core
+    teach:
+      - "Now the instructor. They are onboarded, and verified, so we know who is teaching."
+      - "And they create courses: videos, quizzes, assignments and other resources. Eight lines, six for students and two for instructors."
+    draw: [fr-onboard, fr-create]
+    check: What are the two instructor requirements?
+    answer: Onboarding with verification, and creating courses with videos, quizzes, assignments and resources.
+  - point: "Scale comes first among the non-functional requirements: over 100,000 courses and millions of enrolled students."
+    kind: metric
+    weight: core
+    teach:
+      - "On the right, the qualities. Ask for the scale first, because it decides the big design choices."
+      - "Say the interviewer answers: more than 100,000 courses, and millions of enrolled students, about a million to start."
+    draw: [nfr, nfr-scale]
+    check: Why ask for the scale before anything else?
+    answer: The number of courses and students decides the database and architecture choices that follow.
+  - point: "CAP is split by part of the system: the site and its videos favour availability, while payment and enrollment must be strongly consistent."
+    kind: requirement
+    weight: core
+    teach:
+      - "Millions of students worldwide means a distributed system, so partitions happen and we choose. For browsing and streaming, availability: a new course passes moderation before anyone sees it, so nobody needs it everywhere instantly."
+      - "But a student who pays must get the course; access should not trail the payment. So payment and enrollment favour consistency."
+    draw: [nfr-avail, nfr-consistent]
+    check: Which part of this platform favours consistency, and why?
+    answer: Payment and enrollment, because once a student pays they must get access; the rest favours availability.
+    misconceptions:
+      - "The whole system picks one side of CAP -> each part chooses; streaming takes availability, payment and enrollment take consistency."
+  - point: "The system supports large files, such as hour-long videos, and a video starts within 2 seconds of pressing play."
+    kind: metric
+    weight: core
+    teach:
+      - "Large files: an instructor uploads an hour of video, or a big assignment; the system has to take it."
+      - "And latency, with a number: when a student presses play, the video starts within two seconds."
+    draw: [nfr-files, nfr-latency]
+    check: What exactly does the 2-second figure measure?
+    answer: The start-up time, from pressing play to the video starting.
+asks:
+  - list: fr-list
+    beats: [1, 2, 3]
+    question: "So what should this platform let people do? Start with the student, then the instructor, one feature at a time."
+    hints:
+      - Think of a student's journey, from signing up to finishing a course.
+      - And what does an instructor need to get a course online?
+  - list: nfr-list
+    beats: [4, 5, 6]
+    question: "Now the qualities. How big is it, what must never go wrong, and how fast should a video start?"
+    hints:
+      - Ask about the number of courses and students.
+      - Where would losing consistency hurt, and where would losing availability hurt?

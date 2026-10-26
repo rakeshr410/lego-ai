@@ -1,0 +1,47 @@
+# Cloud storage interview, core entities: "2. Core Entity" under the functional list, three lines, as in the video.
+id: backend/cloud-storage/end-to-end/entities
+title: "Three entities"
+source:
+  hash: "4dad743d7303"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/cloud-storage/end-to-end/requirements
+  assumes:
+    - "Functional: account, upload and download, sync, share with permission, folders, quota."
+  carries:
+    - "The core entities are the user, the file metadata and the files and folders themselves."
+  terms:
+    - term: "core entity"
+      means: "A noun the system stores and moves."
+    - term: "file metadata"
+      means: "Everything about a file but its bytes: name, size, type, owner, folder, permissions."
+board:
+  keep: [title, desc, fr, fr-account, fr-upload, fr-sync, fr-share, fr-folders, fr-quota, fr-out, nfr, nfr-scale, nfr-cap, nfr-large, nfr-latency, nfr-durable]
+  elements:
+    - { id: "entities", kind: "region", label: "2. Core entities", at: [2, 23], size: [20, 12], dashed: true }
+    - { id: "ent-user", kind: "note", label: "user", at: [3, 25], in: "entities" }
+    - { id: "ent-meta", kind: "note", label: "file metadata", at: [3, 27], in: "entities" }
+    - { id: "ent-files", kind: "note", label: "files and folders", at: [3, 29], in: "entities" }
+  arrows: []
+  lists:
+    - { id: "entity-list", in: "entities", at: [3, 25], step: 2, slots: 4, width: 16, items: ["ent-user", "ent-meta", "ent-files"] }
+beats:
+  - point: "Three core entities to start: the user, the file metadata, and the files and folders."
+    kind: component
+    weight: core
+    teach:
+      - "Step two, read them off the requirements. The user, without whom nothing is uploaded."
+      - "The file metadata: name, size, type, owner, who may read or write. And the files and folders themselves. More turn up in the deep dive."
+    draw: [entities, ent-user, ent-meta, ent-files]
+    check: "Why is file metadata an entity of its own, apart from the file?"
+    answer: "The bytes are large and live in storage; the name, size, owner, folder and permissions are small records read and changed far more often."
+asks:
+  - list: entity-list
+    beats: [1]
+    question: "What are the core entities, the things this system keeps track of?"
+    hints:
+      - "Look at who does the uploading, and what they upload."
+      - "Is there anything about a file besides its bytes?"

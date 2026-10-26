@@ -1,0 +1,99 @@
+# Food delivery interview, API: "3. API designing" beside the entities, nine endpoints one per line, as the video writes them (login as a POST, the user from the JWT, the order body a cart id: corrected).
+id: backend/food-delivery/end-to-end/api
+title: Nine endpoints
+source:
+  hash: "0db1a63827ad"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/food-delivery/end-to-end/entities
+  assumes:
+    - "Functional: browse, search, menu, cart and pay, restaurant accepts, partner assigned, live location, notifications."
+    - "Entities: user, restaurant, food menu, delivery partner, payment."
+  carries:
+    - "POST /v1/users/register (plus login, logout, update); GET nearby with lat, long and radius; GET search with title and menuItem; both paginated and partial."
+    - "GET a restaurant, GET its menu; POST /v1/cart/items returns cartId; POST /v1/orders returns orderId; POST /v1/payments returns paymentId and status."
+    - "GET /v1/delivery/{orderId}/tracking; restaurant acceptance and partner assignment are internal, not public."
+  terms:
+    - term: endpoint
+      means: A method and a path the service answers, with what it takes and what it returns.
+    - term: pagination
+      means: "Returning a long list a page at a time, with a way to ask for the next page."
+board:
+  keep: [title, prompt-desc, fr, fr-register, fr-nearby, fr-search, fr-menu, fr-cart, fr-assign, fr-live, fr-notify, nfr, nfr-scale, nfr-available, nfr-consistent, entities, ent-user, ent-restaurant, ent-menu, ent-partner, ent-payment]
+  elements:
+    - { id: api, kind: region, label: 3. API designing, at: [30, 29], size: [34, 13], dashed: true }
+    - { id: api-register, kind: note, label: "POST /v1/users/register with user details, plus login", at: [31, 31], in: api }
+    - { id: api-nearby, kind: note, label: "GET /v1/restaurants/nearby?lat&long&radius, a page", at: [31, 32], in: api }
+    - { id: api-search, kind: note, label: "GET /v1/restaurants/search?title&menuItem, a page", at: [31, 33], in: api }
+    - { id: api-restaurant, kind: note, label: "GET /v1/restaurants/{restId}, its details", at: [31, 34], in: api }
+    - { id: api-menu, kind: note, label: "GET /v1/restaurants/{restId}/menu, the food items", at: [31, 35], in: api }
+    - { id: api-cart, kind: note, label: "POST /v1/cart/items with itemId, qty, restId, returns cartId", at: [31, 36], in: api }
+    - { id: api-order, kind: note, label: "POST /v1/orders with the cartId, returns orderId", at: [31, 37], in: api }
+    - { id: api-payment, kind: note, label: "POST /v1/payments with details and orderId, returns status", at: [31, 38], in: api }
+    - { id: api-track, kind: note, label: "GET /v1/delivery/{orderId}/tracking", at: [31, 39], in: api }
+  arrows: []
+beats:
+  - point: "Registering is a POST to /v1/users/register with the user's details; login, logout and update come with it, and login is a POST too, so the password never sits in a URL."
+    kind: flow
+    weight: supporting
+    teach:
+      - "Step three, the API: mostly one endpoint per requirement. Sign-up sends data, so a POST to v1 users register, with name, email, password and address."
+      - "Mention login, logout and update without writing each out. Login is a POST as well: credentials go in the body, never in a URL."
+    draw: [api, api-register]
+    check: Why is login a POST and not a GET?
+    answer: The password goes in the request body; a GET would put it in the URL, where logs and history keep it.
+    misconceptions:
+      - "Login is a GET because it fetches a token -> it sends credentials, which belong in a POST body."
+  - point: "Nearby is a GET with the user's latitude, longitude and a radius; search is a GET with a title and a menu item. Both return a page of partial restaurants."
+    kind: flow
+    weight: core
+    teach:
+      - "The home page: GET restaurants nearby, with the user's latitude and longitude and a radius, say 5 or 10 kilometres, from wherever they open the app."
+      - "Search looks the same but matches text: a title and a menu item. Both return restaurant ids with just a name and a thumbnail, a page at a time, because hundreds may match."
+    draw: [api-nearby, api-search]
+    check: Why paginate the nearby list?
+    answer: Hundreds of restaurants may be in range; sending them all would overwhelm the app and the network.
+  - point: "Showing a restaurant takes two GETs: its details by restId, and its menu."
+    kind: flow
+    weight: supporting
+    teach:
+      - "When the user taps a restaurant: GET restaurants by its id for the details, and GET its menu for the food items available now. One requirement, two endpoints."
+    draw: [api-restaurant, api-menu]
+    check: What two calls does opening a restaurant make?
+    answer: One for the restaurant's details and one for its menu.
+  - point: "Ordering takes three POSTs: add to the cart with itemId, qty and restId (the user from the JWT), place the order for the cart, and pay with the orderId, which returns a status."
+    kind: flow
+    weight: core
+    teach:
+      - "Add to cart: a POST with the item, the quantity, three plates of biryani say, and the restaurant. Who is adding comes from the token in the header, not the body. It returns a cart id; update and delete come with it."
+      - "Then place the order for the cart, which returns an order id, and the order service pays: payment details and the order id, returning a payment id and a status. A failed payment still leaves an order, marked failed."
+    draw: [api-cart, api-order, api-payment]
+    check: Where does the add-to-cart call get the user from?
+    answer: From the JWT in the Authorization header, verified by the gateway; never a userId in the body.
+    misconceptions:
+      - "Send the userId in a header for security -> a plain id header can be forged too; identity comes from the signed token."
+  - point: "Tracking is a GET on the order id. Restaurant acceptance and partner assignment are internal calls, not public endpoints."
+    kind: flow
+    weight: core
+    teach:
+      - "Accepting the order and assigning a partner happen inside the system, so they are not in the public API."
+      - "The user needs one more: GET delivery by order id, tracking: cooking, dispatched, where the partner is."
+    draw: [api-track]
+    check: Why is there no public endpoint for the restaurant accepting an order?
+    answer: It is an internal step between services and the restaurant's app, not something the user's app calls.
+asks:
+  - ids: [api-nearby, api-search]
+    beats: [2]
+    question: "The home page lists nearby restaurants, and there's a search bar. What endpoints would serve those two? Method, path and what they take."
+    hints:
+      - What does the server need to know to find what is near the user?
+      - And for search, what is the user typing?
+  - ids: [api-cart, api-order, api-payment]
+    beats: [4]
+    question: "Now ordering: from adding biryani to the cart to paying. What calls do we need?"
+    hints:
+      - There is a cart, an order and a payment.
+      - What does each one return for the next step to use?

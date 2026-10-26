@@ -1,0 +1,83 @@
+# Email delivery interview, deep dive into search, as the video draws it: the search service querying an Elasticsearch engine below it, the mailbox DB and a mailbox metadata DB both feeding an aggregator service that writes joined documents into the index.
+id: backend/email-delivery/end-to-end/lld-search
+title: "Deep dive: search"
+source:
+  hash: "5ddf3a8c779b"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/email-delivery/end-to-end/lld-delivery
+  assumes:
+    - "Every user's mail is in the mailbox items table of the mailbox DB."
+    - "Search is by subject, body and sender; the user comes from the auth token."
+  carries:
+    - "The search service queries Elasticsearch, a full-text index, not the databases."
+    - "Bodies stay in the mailbox DB, metadata in a mailbox metadata DB; an aggregator joins them at write time and indexes one document per email."
+  terms:
+    - term: full-text search
+      means: Finding documents by any word they contain, with an inverted index from words to documents.
+board:
+  keep: [title, nfr, nfr-scale, nfr-available, nfr-signup, nfr-durable]
+  elements:
+    - { id: lld-search, kind: region, label: "5. Deep dive: search", at: [6, 22], size: [70, 25] }
+    - { id: s-client, kind: box, label: client, at: [8, 28], size: [8, 3] }
+    - { id: s-search, kind: box, label: Search service, at: [21, 28], size: [12, 3], tone: blue }
+    - { id: s-es, kind: oval, label: Elasticsearch index, at: [42, 27], size: [16, 5], tone: amber }
+    - { id: s-fulltext, kind: note, label: "full text over subject, body and sender", at: [8, 33], in: lld-search }
+    - { id: s-mailbox, kind: oval, label: Mailbox DB, at: [21, 37], size: [12, 3], tone: amber }
+    - { id: s-meta, kind: oval, label: Mailbox metadata DB, at: [62, 37], size: [14, 4], tone: amber, in: lld-search }
+    - { id: s-meta-why, kind: note, label: "metadata apart, many searches are by sender", at: [44, 43], in: lld-search }
+    - { id: s-aggregator, kind: box, label: Aggregator service, at: [44, 37], size: [14, 3], tone: grey }
+    - { id: s-join-once, kind: note, label: "joined once at write time, not per search", at: [8, 43], in: lld-search }
+    - { id: s-one-doc, kind: note, label: "one document per email, only the caller's mail", at: [8, 44], in: lld-search }
+  arrows:
+    - { id: s-client-search, from: s-client, to: s-search }
+    - { id: s-search-es, from: s-search, to: s-es, label: query }
+    - { id: s-mailbox-agg, from: s-mailbox, to: s-aggregator, label: bodies }
+    - { id: s-meta-agg, from: s-meta, to: s-aggregator }
+    - { id: s-agg-es, from: s-aggregator, to: s-es }
+beats:
+  - point: "Searching any word of a subject, body or sender is full-text search, so the search service queries Elasticsearch rather than the mailbox DB."
+    kind: component
+    weight: core
+    teach:
+      - "Last requirement, search. The user types free text and we match it anywhere in the subject, the body or the sender. A database table does that badly; a full-text search engine does it well."
+      - "So the search service queries Elasticsearch, filtered to the caller's own mail."
+    draw: [lld-search, s-client, s-search, s-client-search, s-es, s-search-es, s-fulltext]
+    check: Why not run the search as a query on the mailbox DB?
+    answer: Matching any word in subjects and bodies is full-text search, which a search engine's index does far better than a table scan.
+  - point: "Store bodies in the mailbox DB and metadata (sender, recipients, subject, types) in a mailbox metadata DB, because many searches only need the metadata, such as by sender."
+    kind: decision
+    weight: supporting
+    teach:
+      - "Split the storage: the bodies stay in the mailbox DB, and the metadata, sender, recipients, subject, type, attachment types, goes in its own mailbox metadata DB."
+      - "Plenty of searches are by sender alone, and they only need the metadata."
+    draw: [s-mailbox, s-meta, s-meta-why]
+    check: What goes in the mailbox metadata DB rather than the mailbox DB?
+    answer: The metadata, sender, recipients, subject, type and attachment types; the bodies stay in the mailbox DB.
+  - point: "Elasticsearch searches its own index; an aggregator joins each email's body and metadata once, at write time, and indexes one document, so no search ever joins two stores."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Joining the two stores on every search would make each one slow, and there are searches every second. So an aggregator service joins the body and the metadata once, when the email is written."
+      - "It pushes the joined result into Elasticsearch as one document per email. A search is then one look-up in one index."
+    draw: [s-aggregator, s-mailbox-agg, s-meta-agg, s-agg-es, s-join-once, s-one-doc]
+    check: Why join body and metadata in an aggregator instead of at search time?
+    answer: The join is paid once per email when it is written, instead of on every search; each search reads one ready document.
+    misconceptions:
+      - "Elasticsearch queries the databases when you search -> it searches its own index, which the aggregator keeps filled."
+asks:
+  - ids: [s-es]
+    beats: [1]
+    question: "Users search for any word in a subject or body. What would you search with?"
+    hints:
+      - A database table is poor at finding a word anywhere in a text.
+      - Think of an engine built for full-text search.
+  - ids: [s-aggregator]
+    beats: [3]
+    question: "Bodies and metadata are in two stores. How would you avoid joining them on every search?"
+    hints:
+      - When could the join happen instead?
+      - Something could build one document per email ahead of time.

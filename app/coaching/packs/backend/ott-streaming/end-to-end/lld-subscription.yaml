@@ -1,0 +1,124 @@
+# OTT streaming interview, low-level design 2: subscriptions and payments, as the video opens the subscription service: a MySQL subscription DB with its schema, a payment service between the subscription service and the third-party gateway, a MySQL payment DB with its schema, then Kafka feeding a notification service and a consumer service that updates the user's status and expiry. The video wires the two readers with Kafka Connect; here they are plain Kafka consumer groups.
+id: backend/ott-streaming/end-to-end/lld-subscription
+title: "Low-level design, 2: subscriptions and payments"
+source:
+  hash: "a8f622c6ac1f"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/ott-streaming/end-to-end/lld-user-service
+  assumes:
+    - "The subscription service takes payment through a third-party gateway and records the plan in the user DB."
+    - "The user DB is MySQL with the subscription status and expiry date."
+    - "Payments and subscriptions must be consistent."
+  carries:
+    - "Plans live in a MySQL subscription DB: subscriptionId, name, price, currency, validity."
+    - "A payment service calls the payment gateway and saves each result in a MySQL payment DB: paymentId, userId, amount, currency, time."
+    - "The subscription service publishes the payment result to Kafka; a notification service and a consumer service read it independently, and the consumer updates the user's status and expiry."
+  terms:
+    - term: consumer group
+      means: "A set of readers of a Kafka topic; each group gets every event, so two groups act on the same event independently."
+    - term: idempotent
+      means: "Safe to apply twice: an update keyed by the payment id has the same effect if the event is read again."
+board:
+  keep: [title, prompt-desc, fr, fr-account, fr-search, fr-watch, fr-out, nfr, nfr-scale, nfr-cap, nfr-buffer, nfr-micro, entities, ent-user, ent-user-meta, ent-video, ent-video-meta, api, api-register, api-plans, api-subscribe, api-search, api-details, api-play, hld, hld-users, hld-gateway, hld-gw-roles, hld-lb-rr, hld-user-svc, hld-sub-svc, hld-search-svc, hld-play-svc, hld-user-db, hld-pay-gw, hld-uploader, hld-video-db, hld-blob, hld-blob-note, hld-users-gw, hld-gw-user, hld-gw-sub, hld-gw-search, hld-gw-play, hld-user-userdb, hld-sub-userdb, hld-sub-paygw, hld-up-videodb, hld-up-blob, hld-search-videodb, hld-play-blob]
+  elements:
+    - { id: lld-sub, kind: region, label: "5. Low-level design: 2. Subscription service", at: [2, 64], size: [58, 35] }
+    - { id: s-sub-db, kind: oval, label: Subscription DB, at: [3, 66], size: [14, 4], in: lld-sub, tone: amber }
+    - { id: s-sub-schema-1, kind: note, label: "subscription: subscriptionId, name,", at: [19, 67], in: lld-sub }
+    - { id: s-sub-schema-2, kind: note, label: "price, currency, validity", at: [20, 68], in: lld-sub }
+    - { id: s-sub-svc, kind: box, label: "Subscription service, checkout", at: [3, 73], size: [14, 4], in: lld-sub, tone: blue }
+    - { id: s-pay-svc, kind: box, label: Payment service, at: [24, 73], size: [12, 4], in: lld-sub, tone: blue }
+    - { id: s-pay-gw, kind: box, label: "Payment gateway, card details", at: [44, 73], size: [12, 4], in: lld-sub, tone: grey }
+    - { id: s-pay-db, kind: oval, label: "Payment DB, MySQL", at: [23, 82], size: [14, 4], in: lld-sub, tone: amber }
+    - { id: s-pay-schema-1, kind: note, label: "payment: paymentId, userId,", at: [39, 82], in: lld-sub }
+    - { id: s-pay-schema-2, kind: note, label: "amount, currency, time", at: [40, 83], in: lld-sub }
+    - { id: s-pay-consistent, kind: note, label: payments stay consistent, at: [39, 85], in: lld-sub }
+    - { id: s-kafka, kind: box, label: "Kafka, payment events", at: [3, 88], size: [14, 3], in: lld-sub, tone: grey }
+    - { id: s-notify, kind: box, label: Notification service, at: [24, 88], size: [12, 3], in: lld-sub, tone: blue }
+    - { id: s-consumer, kind: box, label: Consumer service, at: [24, 94], size: [12, 3], in: lld-sub, tone: blue }
+    - { id: s-user-db, kind: oval, label: "User DB, updated", at: [46, 94], size: [13, 4], in: lld-sub, tone: amber }
+  arrows:
+    - { id: s-sub-db-arrow, from: s-sub-svc, to: s-sub-db }
+    - { id: s-sub-pay, from: s-sub-svc, to: s-pay-svc, label: checkout, both: true }
+    - { id: s-pay-gw-arrow, from: s-pay-svc, to: s-pay-gw, label: charge, both: true }
+    - { id: s-pay-db-arrow, from: s-pay-svc, to: s-pay-db, label: save }
+    - { id: s-sub-kafka, from: s-sub-svc, to: s-kafka, label: payment result }
+    - { id: s-kafka-notify, from: s-kafka, to: s-notify }
+    - { id: s-kafka-consumer, from: s-kafka, to: s-consumer }
+    - { id: s-consumer-db, from: s-consumer, to: s-user-db, label: "status, expiry" }
+beats:
+  - point: "The plans live in a subscription DB, MySQL since the data is small and simple: subscriptionId, name, price, currency and validity; GET plans reads it."
+    kind: decision
+    weight: core
+    teach:
+      - "Second, the subscription service. After login the first thing a user sees is the plans, so they need a home: a subscription DB."
+      - "One month, a year, the price and when it runs out: small, straightforward rows, so MySQL again. Write the schema: subscriptionId, name, price, currency, validity. The GET plans endpoint reads this table."
+    draw: [lld-sub, s-sub-db, s-sub-svc, s-sub-db-arrow, s-sub-schema-1, s-sub-schema-2]
+    check: Which endpoint reads the subscription DB?
+    answer: GET /v1/subscription/plans, which lists every plan.
+  - point: "Checkout goes to a payment service, which hands the charge to the third-party payment gateway; the gateway takes the card details, talks to the bank and answers success or failure."
+    kind: flow
+    weight: core
+    teach:
+      - "The user picks a plan and lands on payment. Add a payment service between the subscription service and the gateway."
+      - "The card details go to the payment gateway itself, so they never sit on our servers. It talks to the bank and sends back an acknowledgement: success or failure."
+    draw: [s-pay-svc, s-sub-pay, s-pay-gw, s-pay-gw-arrow]
+    check: Why let the gateway take the card details rather than our payment service?
+    answer: So card numbers never touch our servers; the gateway handles the bank and the compliance, and returns a result.
+  - point: "Every result is saved in a payment DB, MySQL because payments must be consistent: paymentId, userId, amount, currency and time."
+    kind: decision
+    weight: core
+    teach:
+      - "Success or failure, the result is saved: a payment DB. A payment must be recorded exactly once, so it is MySQL, with transactions."
+      - "Its schema: paymentId, userId, amount, currency and the time of the payment. Then the payment service acknowledges the subscription service."
+    draw: [s-pay-db, s-pay-db-arrow, s-pay-schema-1, s-pay-schema-2, s-pay-consistent]
+    check: Why is the payment DB relational and consistent when the catalogue is not?
+    answer: A payment lost or recorded twice is real money; a title appearing late harms nobody.
+  - point: "After a payment two things must happen, notify the user and update their record, so the subscription service publishes one event to Kafka instead of doing both in turn."
+    kind: decision
+    weight: core
+    teach:
+      - "Once the payment result arrives, two jobs: tell the user the plan is active, and update the user DB so next time they log in they see the status and when it ends."
+      - "Do them concurrently and independently: the subscription service posts one event to a Kafka broker, and does not call either job itself."
+    draw: [s-kafka, s-sub-kafka]
+    check: Why put an event on Kafka instead of calling the notifier and then the user DB?
+    answer: The two jobs run independently; a slow or failed notifier does not hold up activating the plan, and events stay on the log to be retried.
+  - point: "Two consumer groups read each event: a notification service tells the user, and a consumer service updates the subscription status and expiry date in the user DB, idempotently."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Two readers of the topic, each in its own consumer group so each gets every event: a notification service that messages the user, and a consumer service that writes the status and expiry date into the user DB."
+      - "The video calls this Kafka Connect; it is just two Kafka consumer groups. An event can be read twice after a failure, so the update is keyed by the payment id and safe to repeat."
+    draw: [s-notify, s-kafka-notify, s-consumer, s-kafka-consumer, s-user-db, s-consumer-db]
+    check: The consumer crashes after updating the user DB but before committing its offset. What must be true of the update?
+    answer: It must be idempotent, keyed by the payment id, because the event will be read again.
+    misconceptions:
+      - "Kafka Connect is how services read a topic -> services read topics as consumer groups; Kafka Connect moves data between Kafka and external systems."
+asks:
+  - ids: [s-pay-svc, s-pay-gw]
+    beats: [2]
+    question: "The user picks a plan and wants to pay. What pieces handle the money? Name them and I'll draw them."
+    hints:
+      - We don't talk to banks ourselves.
+      - Something of ours sits between the subscription service and that third party.
+  - ids: [s-pay-db]
+    beats: [3]
+    question: "Where does the payment result go, and what kind of store should it be?"
+    hints:
+      - Think back to the CAP choice for billing.
+      - A payment must be recorded exactly once.
+  - ids: [s-kafka]
+    beats: [4]
+    question: "A payment succeeds. We must notify the user and update their record. How would you trigger both without one blocking the other?"
+    hints:
+      - Something the subscription service writes once and forgets.
+      - Several readers could each act on it.
+  - ids: [s-notify, s-consumer]
+    beats: [5]
+    question: "Who reads that event, and what does each do?"
+    hints:
+      - One talks to the user.
+      - One writes to the user DB.

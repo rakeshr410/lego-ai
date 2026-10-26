@@ -1,0 +1,1147 @@
+# yaml-language-server: $schema=../../../../../lego/content-kit/schema/topic.schema.json
+# provenance: ai-drafted by claude-opus-5-5 on 2026-10-27
+#
+# A whole backend system design interview for an email platform like Gmail or Outlook, run step by step on
+# one whiteboard. The order and the board follow InterviewWithBunny's System Design 20 (Design an Email
+# Delivery System): requirements, core entities, API, a high-level design of four services, then a deep dive
+# that opens one service at a time along the path of an email: the user service, compose and drafts, the
+# mail send service and its outbox, validation, the SMTP relay to other domains, delivery inside our own
+# domain, search, and receiving mail from other domains.
+# A backend system of lego-ai's own (app/articles/backend): it stands alone and links to no main-site topic.
+catalogVersion: 5
+title: Designing an email delivery system, end to end
+shortTitle: Email delivery interview
+summary: "A backend design interview for an email platform like Gmail or Outlook, step by step on one board: requirements with numbers, entities, five endpoints, four services, then a deep dive along the path of an email: sign-up and autocomplete, drafts and attachments, the outbox, validation, SMTP to other domains, delivery, search and inbound mail."
+group: design
+order: 20
+xp: 300
+difficulty: intermediate
+tags: [interview, outbox-pattern, kafka, smtp, sharding, search]
+eyebrow: Design
+breadcrumb: [Email delivery, Interview walkthrough]
+lede: "You have about forty-five minutes and one whiteboard to design an email platform like Gmail or Outlook for well over a billion users. Everyone has used one, so the product needs little explaining; the interview is about what happens behind the send button. This walkthrough runs it the way a strong candidate does: pin the requirements down, name the entities and endpoints, draw four services, then follow one email from the compose window through an outbox, a set of checks and a queue, to a mailbox in our own domain or to another provider's server over SMTP."
+reviewStatus: draft
+author: rakeshr410
+provenance: ai-drafted
+sources:
+  - title: "System Design 20: Design an Email Delivery System | Gmail | Outlook (InterviewWithBunny, YouTube)"
+    url: https://www.youtube.com/watch?v=87GhPP3jMp0
+    note: "Order, services and drawings. Corrected: CAP is a choice made during a partition; sharding is for size and throughput, not lookup speed; outbox gives no loss, not consistency; MX records change rarely; user ID from the token."
+  - title: "RFC 5321, Simple Mail Transfer Protocol"
+    url: https://www.rfc-editor.org/rfc/rfc5321
+    note: "The SMTP conversation (220 greeting, EHLO, MAIL FROM, RCPT TO, DATA, 354, 250) and MX lookup with preference values, lower first."
+  - title: "Transactional outbox (microservices.io)"
+    url: https://microservices.io/patterns/data/transactional-outbox.html
+    note: "Write the message to an outbox table in the same transaction as the change, and relay it to the broker afterwards."
+  - title: "Sharing objects with presigned URLs (Amazon S3 documentation)"
+    url: https://docs.aws.amazon.com/AmazonS3/latest/userguide/ShareObjectPreSignedURL.html
+    note: "A time-limited URL that lets a client upload straight to the bucket without the service handling the bytes."
+tutorBrief: >-
+  Interview walkthrough for an email platform like Gmail or Outlook. Board, top to bottom: title and one
+  line (a globally scalable platform to send, receive, store, search and manage email across devices); 1
+  functional requirements on the left, non-functional on the right; 2 core entities; 3 API, beside the
+  entities; 4 high-level design; 5 deep dive, the high-level picture copied and grown one service at a
+  time. Functional: create a mailing account; compose and send to one or more recipients; view inbox,
+  sent, drafts, spam, trash and custom folders; search by subject, body and sender; attachments (images,
+  docs, PDFs); replies grouped into a conversation thread. Non-functional: scale 1.8 billion plus users
+  (said as 1 to 1.5 billion) and billions of emails, so a distributed, microservice system; CAP per part:
+  available over consistent for sending (eventual, an email may show up a minute later) but strongly
+  consistent at sign-up (no two users share an email ID); reliable and durable (no email lost). Requirements
+  inside 45 to 50 minutes total. Entities: user, message or email, thread or conversation, email metadata.
+  API (skip it if the interviewer agrees, it eats time): POST /v1/accounts/register; POST /v1/emails/send
+  with { to: [], cc: [], bcc: [], subject, body, attachmentIds: [] }; GET /v1/emails/{emailId} returns the
+  full email and attachments; GET /v1/search?q=...&limit=20 returns metadata and snippets (the user comes
+  from the auth token, not a userId parameter); POST /v1/attachments/upload returns an attachmentId and a
+  signed upload URL: attachments go up first, in a separate step, so the send request stays small. HLD:
+  clients (web, iOS, Android), a load balancer and API gateway (authentication, authorization, rate
+  limiting, routing), user service and user DB, compose service and draft DB, mail send service writing to
+  the mailbox DB and handing other domains to SMTP, search service reading the mailbox DB. Deep dive. User
+  service: sign-up checks the email ID and inserts it; the To field also hits it for autocomplete, five
+  cases: unknown first time no suggestion; other domain first time no suggestion; anyone you have mailed
+  before suggested; anyone in your contacts suggested; an unknown address inside our domain shows a contact
+  card only on Enter. A per-user cache holds the 25 to 50 most recent recipients and the contacts: hit,
+  suggest; miss, look the user DB up on Enter. User DB sharded by email ID with consistent hashing (hash mod
+  N remaps almost every key when N changes), email ID the primary key so a concurrent duplicate sign-up
+  fails, columns user_id, email_id, password_hash, status, metadata; Spanner or Bigtable at Google, sharded
+  Postgres in an interview. Compose: the draft is saved as you type to the draft DB (body, to, cc, bcc,
+  attachment links); files go to S3 with a signed URL, straight from the client, in parts. Mail send
+  service: light pre-checks only (file type, format), fetches the draft by ID, writes a row to the
+  outbox_email table in the mailbox DB; an outbox consumer (CDC) publishes it to Kafka. Outbox means a sent
+  email is never lost (at least once; consumers dedupe by message ID). Outbox delivery orchestrator:
+  consumes from Kafka, runs the checks in parallel (spam and malware filter, policy check for enterprise
+  rules, attachment check), records each result in a validation DB (messageId, sender_user_id,
+  recipient_email, recipient_domain, route_type INTERNAL or EXTERNAL, policy_check, spam_check and
+  attachment_check PASS, FAIL or PENDING, status) so a slow or down checker (say policy check down 15
+  minutes) holds only its emails, not every thread. Attachments are scanned on upload by an attachment
+  scanner triggered by the S3 event, verdict in an S3 validation DB; at send time the attachment check
+  service only reads it. Then the domain check: other domains go to the outbound send request topic, our
+  own to the inbound send request topic. SMTP relay workers consume outbound: MX lookup (dig MX
+  outlook.com: 10 outlook-com.olc.protection.outlook.com, 20 outlook1-com...; lower number first, next on
+  timeout), MX cache (records change rarely, keep for their DNS TTL), TCP to port 25, 220 ready, EHLO
+  gmail.com, 250 and extensions, MAIL FROM alice@gmail.com, 250, RCPT TO bob@outlook.com, 250 2.1.5
+  recipient OK or 550 no such user (a bounce to the sender), DATA, 354, headers, body and attachments MIME
+  encoded, 250 accepted. SMTP is a protocol, not a server. Delivery consumer reads inbound: copies the
+  outbox row to mailbox_items (sender's sent, recipient's inbox); the relay's 250 marks external mail sent.
+  Notification service: tells the sender when a check blocks the mail, tells the recipient of new mail.
+  Search: Elasticsearch over subject, body and sender; body in the mailbox DB, metadata in a mailbox
+  metadata DB; an aggregator joins them and indexes one document per email, so nothing joins at query time.
+  Inbound: an inbound SMTP service receives from Outlook or Yahoo, checks the recipient exists with the
+  user service, runs the checks and publishes to the inbound topic. Tables mailbox_items and outbox: user_id,
+  message_id, thread_id, from_email, to_emails, subject, has_attachment, url_attachment, outbox adds status.
+  Topics: outbound, internal, SMTP delivery queue, delay queue (retries), email check, delivery status.
+components:
+  - key: client
+    name: Client
+    tone: sand
+    kind: client
+    summary: The web app, the iOS app or the Android app a user reads and writes mail in.
+    owns: [nothing of its own]
+    talksTo: [gateway, blob-store]
+  - key: gateway
+    name: Load balancer and API gateway
+    tone: blue
+    kind: gateway
+    summary: Authenticates and authorizes each request, rate limits it, and routes it by path to the right service.
+    owns: [routes, rate limits]
+    talksTo: [user-service, compose-service, mail-send-service, search-service]
+  - key: user-service
+    name: User service
+    tone: green
+    kind: service
+    summary: Signs users up with a unique email ID, and answers the To field's autocomplete and contact look-ups.
+    owns: [accounts]
+    talksTo: [user-cache, user-db]
+  - key: user-cache
+    name: User cache
+    tone: orange
+    kind: cache
+    summary: Per user, the 25 to 50 most recent recipients and the saved contacts, for autocomplete.
+    owns: [recent recipients, contacts]
+    talksTo: []
+  - key: user-db
+    name: User DB
+    tone: yellow
+    kind: datastore
+    summary: Every account, sharded by email ID with consistent hashing; the email ID is the primary key.
+    owns: [users]
+    talksTo: []
+  - key: compose-service
+    name: Compose service
+    tone: green
+    kind: service
+    summary: Saves the email being written as a draft while the user types, and hands out signed URLs for attachments.
+    owns: [drafts]
+    talksTo: [draft-db, blob-store]
+  - key: draft-db
+    name: Draft DB
+    tone: yellow
+    kind: datastore
+    summary: Drafts not yet sent, the body, recipients and links to attachments.
+    owns: [drafts]
+    talksTo: []
+  - key: blob-store
+    name: S3 attachments
+    tone: yellow
+    kind: datastore
+    summary: Blob storage for attachments, uploaded by the client straight to the bucket in parts.
+    owns: [attachment files]
+    talksTo: [attachment-scanner]
+  - key: mail-send-service
+    name: Mail send service
+    tone: green
+    kind: service
+    summary: On send, runs light checks, fetches the draft and writes it to the outbox table.
+    owns: [nothing durable of its own]
+    talksTo: [draft-db, mailbox-db]
+  - key: mailbox-db
+    name: Mailbox DB
+    tone: yellow
+    kind: datastore
+    summary: The outbox table of emails being sent and the mailbox items table of every user's mail.
+    owns: [outbox_email, mailbox_items]
+    talksTo: []
+  - key: outbox-consumer
+    name: Outbox consumer
+    tone: gray
+    kind: worker
+    summary: Watches the outbox table (change data capture) and publishes each new row to Kafka.
+    owns: [its read position]
+    talksTo: [mailbox-db, kafka]
+  - key: kafka
+    name: Kafka
+    tone: purple
+    kind: queue
+    summary: The event stream between the stages, with a topic per step (outbox events, outbound and inbound send requests, retries).
+    owns: [topics]
+    talksTo: []
+  - key: orchestrator
+    name: Outbox delivery orchestrator
+    tone: blue
+    kind: service
+    summary: Consumes each outgoing email, runs the checks in parallel, records them, then routes it by the recipient's domain.
+    owns: [the routing decision]
+    talksTo: [kafka, spam-filter, policy-check, attachment-check, validation-db]
+  - key: spam-filter
+    name: Spam and malware filter
+    tone: green
+    kind: service
+    summary: Scans the content for spam and malware and blocks it from going on.
+    owns: [nothing]
+    talksTo: [validation-db, notification-service]
+  - key: policy-check
+    name: Policy check
+    tone: green
+    kind: service
+    summary: Applies an enterprise's rules, such as no sensitive documents leaving the company.
+    owns: [nothing]
+    talksTo: [validation-db, notification-service]
+  - key: attachment-scanner
+    name: Attachment scanner
+    tone: gray
+    kind: worker
+    summary: Triggered by each upload to S3; scans the file for viruses and executables and records the verdict.
+    owns: [nothing]
+    talksTo: [scan-db]
+  - key: scan-db
+    name: S3 validation DB
+    tone: yellow
+    kind: datastore
+    summary: The scan verdict of every uploaded attachment.
+    owns: [scan results]
+    talksTo: []
+  - key: attachment-check
+    name: Attachment check service
+    tone: green
+    kind: service
+    summary: At send time, reads the precomputed scan verdict instead of scanning again.
+    owns: [nothing]
+    talksTo: [scan-db]
+  - key: validation-db
+    name: Validation DB
+    tone: yellow
+    kind: datastore
+    summary: One row per email being sent, with each check's result, pass, fail or pending.
+    owns: [validation rows]
+    talksTo: []
+  - key: smtp-relay
+    name: SMTP relay workers
+    tone: blue
+    kind: worker
+    summary: Consume the outbound topic, find the recipient domain's mail server and hand the email over by SMTP.
+    owns: [open connections]
+    talksTo: [mx-cache, mx-resolver, receiver-smtp, mailbox-db]
+  - key: mx-resolver
+    name: MX resolver
+    tone: gray
+    kind: external
+    summary: DNS; answers which mail servers take a domain's mail, each with a preference number.
+    owns: [nothing]
+    talksTo: []
+  - key: mx-cache
+    name: MX cache
+    tone: orange
+    kind: cache
+    summary: Recent MX answers kept for their DNS time to live, so most sends skip the lookup.
+    owns: [MX answers]
+    talksTo: []
+  - key: receiver-smtp
+    name: Receiver SMTP
+    tone: white
+    kind: external
+    summary: Another provider's mail server, such as Outlook's or Yahoo's.
+    owns: [their users' mailboxes]
+    talksTo: []
+  - key: delivery-consumer
+    name: Delivery consumer
+    tone: blue
+    kind: worker
+    summary: Consumes the inbound topic and moves the email from the outbox into the mailbox items table.
+    owns: [nothing]
+    talksTo: [mailbox-db, notification-service]
+  - key: notification-service
+    name: Notification service
+    tone: green
+    kind: service
+    summary: Tells a sender their email was blocked, and pushes a new-mail alert to the recipient's devices.
+    owns: [nothing]
+    talksTo: [client]
+  - key: search-service
+    name: Search service
+    tone: green
+    kind: service
+    summary: Takes the user's search text and queries the search index for that user's mail.
+    owns: [nothing]
+    talksTo: [elasticsearch]
+  - key: elasticsearch
+    name: Elasticsearch
+    tone: yellow
+    kind: datastore
+    summary: A full-text index of every email, one document per email with its subject, body and metadata.
+    owns: [search index]
+    talksTo: []
+  - key: metadata-db
+    name: Mailbox metadata DB
+    tone: yellow
+    kind: datastore
+    summary: Each email's metadata, sender, recipients, subject, type and attachment types, apart from the body.
+    owns: [email metadata]
+    talksTo: []
+  - key: aggregator
+    name: Aggregator service
+    tone: gray
+    kind: worker
+    summary: Joins each email's body and metadata and writes one document per email into the search index.
+    owns: [nothing]
+    talksTo: [mailbox-db, metadata-db, elasticsearch]
+  - key: inbound-smtp
+    name: Inbound SMTP service
+    tone: blue
+    kind: service
+    summary: Receives mail from other providers, checks the recipient exists and feeds it into the inbound flow.
+    owns: [nothing]
+    talksTo: [user-service, kafka]
+content:
+  # ────────────────────────────────────────────────────────────────── Problem statement
+  - __component: sd.section
+    key: problem-statement
+    title: Understanding the problem.
+    railLabel: Problem
+    intro: "The prompt is one line: design an email sending platform like Gmail or Outlook. Everyone has used one, so say in a sentence what it does and move straight to the requirements."
+  - __component: sd.rich-text
+    key: problem-why
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Write the title and one line under it: a globally scalable email platform that lets users reliably send, receive, store, search and manage email across devices. That line already holds most of the requirements, and the interviewer can correct it before you build on it."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Run the interview in five steps and number each on the board as you reach it: requirements, core entities, API, high-level design, deep dive. The product looks simple from the inbox, but the deep dive is where the work is: unique sign-ups for over a billion users, an email that is never lost between the send button and the recipient, checks that do not slow every send down, and the conversation with other providers' mail servers."
+  - __component: sd.quiz
+    key: problem-quiz
+    title: Quick check
+    questions:
+      - question: Everyone knows what Gmail does. How long should you spend explaining the product?
+        optionA: Ten minutes, feature by feature
+        optionB: One line on the board, agreed with the interviewer, then straight to the requirements
+        optionC: None; start drawing services
+        optionD: Until the interviewer stops you
+        answer: B
+        explanation: A one-line statement fixes the scope cheaply; the time is better spent on requirements and the deep dive.
+  # ────────────────────────────────────────────────────────────────── 1. Requirements
+  - __component: sd.section
+    key: requirements
+    title: Requirements.
+    railLabel: Requirements
+    intro: "Functional requirements on the left, what the platform does; non-functional on the right, how well. The non-functional side has a twist: different parts of the system make different CAP choices."
+  - __component: sd.subsection
+    key: functional-sub
+    title: Functional requirements
+    railLabel: Functional
+  - __component: sd.checklist
+    key: functional
+    idPrefix: FR-
+    items:
+      - text: A user can create a mailing account.
+        note: Nobody can send or receive mail before they are onboarded.
+      - text: A user can compose an email and send it to one or more recipients.
+      - text: "A user can view their inbox, sent, drafts, spam and trash folders, and create custom labels or folders."
+        note: Each email lands in a folder by its category or status.
+      - text: A user can search their mail by subject, body and sender.
+      - text: "A user can send attachments: images, documents, PDFs."
+      - text: Emails in the same conversation, the replies, are grouped together in a thread.
+  - __component: sd.subsection
+    key: non-functional-sub
+    title: Non-functional requirements
+    railLabel: Non-functional
+  - __component: sd.requirement-table
+    key: non-functional
+    rows:
+      - area: Scale
+        requirement: A consumer email service at global size.
+        targets: ["1.8 billion plus users", billions of emails]
+        note: At this size the system is distributed, a set of services rather than one server.
+      - area: Availability
+        requirement: Sending and reading mail keep working when machines fail.
+        targets: [availability over consistency for mail]
+        note: "Eventual consistency is fine: an email may appear in the recipient's inbox a minute after it is sent."
+      - area: Consistency at sign-up
+        requirement: No two users ever hold the same email ID.
+        targets: [strong consistency for account creation]
+        note: The one place the system chooses consistency over availability.
+      - area: Reliability and durability
+        requirement: An email that was sent is never lost.
+        targets: [no lost or deleted email]
+  - __component: sd.rich-text
+    key: cap-choice
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "CAP is a choice made per part of the system, and only when the network between replicas splits: answer anyway, or refuse until every copy agrees. For sending mail the answer is to stay available. Nobody notices an email arriving a minute late, but an hour when nobody can send is a disaster. For sign-up the answer is consistency: if two replicas could each accept the same new address during a split, two people would own one email ID, so the sign-up path waits or fails rather than risk it."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Other qualities, end-to-end encryption, a latency target, can be named, but in a 45 to 50 minute interview keep to the ones that shape the design and move on."
+  - __component: sd.quiz
+    key: requirements-quiz
+    title: Quick check
+    questions:
+      - question: Why does sign-up choose consistency while sending chooses availability?
+        optionA: Sign-up is rarer, so it can be slow
+        optionB: Two users must never get the same email ID, while an email arriving a little late harms nobody
+        optionC: Sending mail is not stored
+        optionD: CAP applies to the whole system at once
+        answer: B
+        explanation: Each part makes the choice its failure demands. A duplicate address is a real failure; a delayed email is not.
+      - question: Which of these is a non-functional requirement?
+        optionA: Users can search by sender
+        optionB: Users can send attachments
+        optionC: An email that was sent is never lost
+        optionD: Replies are grouped into a thread
+        answer: C
+        explanation: Durability is a quality of the system; the others are things it does.
+  # ────────────────────────────────────────────────────────────────── 2. Entities
+  - __component: sd.section
+    key: entities
+    title: Core entities.
+    railLabel: Entities
+    intro: "Read the functional requirements and name the nouns. Four come straight out of them."
+  - __component: sd.table
+    key: entities-table
+    columns:
+      - { label: Entity, style: strong }
+      - { label: What it is, style: text }
+    rows:
+      - [User, "An account with a unique email ID, who sends, receives and searches mail."]
+      - [Message or email, "One email: its subject, body, recipients and attachments."]
+      - [Thread or conversation, "The emails that reply to one another, grouped together."]
+      - [Email metadata, "What travels with an email besides its body: sender, recipients, subject, type, attachment types, folder."]
+  - __component: sd.quiz
+    key: entities-quiz
+    title: Quick check
+    questions:
+      - question: Why is the thread an entity of its own?
+        optionA: It is not; it is just a folder
+        optionB: Replies must be grouped together, so the system has to record which emails belong to one conversation
+        optionC: For the load balancer
+        optionD: Because attachments need it
+        answer: B
+        explanation: The last functional requirement groups replies; a thread ID on each email is what makes it possible.
+  # ────────────────────────────────────────────────────────────────── 3. API
+  - __component: sd.section
+    key: api
+    title: API.
+    railLabel: API
+    intro: "Ask first whether the interviewer wants the endpoints; they take time the deep dive needs. If they do, write one per requirement, as a request and what it returns."
+  - __component: sd.endpoint
+    key: register
+    method: POST
+    path: /v1/accounts/register
+    summary: Creates an account. Fails if the email ID is already taken.
+    requestBody:
+      emailId: alice@mail.example
+      password: "********"
+    responses:
+      - label: Created
+        status: "201"
+        body:
+          userId: u-42
+      - label: Taken
+        status: "409"
+        body:
+          error: email_taken
+  - __component: sd.endpoint
+    key: send
+    method: POST
+    path: /v1/emails/send
+    summary: "Sends an email. to, cc and bcc are arrays, because one email can go to many people; attachments are referred to by ID, uploaded beforehand."
+    requestHeaders: ["Authorization: Bearer <token>"]
+    requestBody:
+      to: [bob@mail.example]
+      cc: []
+      bcc: []
+      subject: Meeting tomorrow
+      body: "See you at ten."
+      attachmentIds: [att-7]
+    responses:
+      - label: Accepted
+        status: "202"
+        body:
+          messageId: m-001
+  - __component: sd.endpoint
+    key: get-email
+    method: GET
+    path: "/v1/emails/{emailId}"
+    summary: "Returns one email in full, its subject, body and attachment links, by its unique ID (a UUID)."
+    responses:
+      - label: Found
+        status: "200"
+        body:
+          messageId: m-001
+          subject: Meeting tomorrow
+          body: "See you at ten."
+          attachments: ["https://files.mail.example/att-7"]
+  - __component: sd.endpoint
+    key: search
+    method: GET
+    path: "/v1/search?q=meeting%20tomorrow&limit=20"
+    summary: "Free-text search of the caller's own mail. The user is taken from the token, never from a userId parameter, or anyone could search anyone's mailbox."
+    responses:
+      - label: Results
+        status: "200"
+        body:
+          results: ["metadata and a snippet per matching email"]
+  - __component: sd.endpoint
+    key: upload
+    method: POST
+    path: /v1/attachments/upload
+    summary: "Step one of sending a file: registers the attachment and returns its ID and a signed URL the client uploads the file to directly."
+    responses:
+      - label: Ready
+        status: "201"
+        body:
+          attachmentId: att-7
+          uploadUrl: "https://files.mail.example/att-7?signature=..."
+  - __component: sd.rich-text
+    key: two-step
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Why two steps for an attachment? Posting the body and a large file in one request makes a heavy payload that can time out, and the API servers would carry every byte. So the file goes up first, straight to blob storage, and the send request carries only its ID."
+  - __component: sd.quiz
+    key: api-quiz
+    title: Quick check
+    questions:
+      - question: Why does the send request carry attachment IDs rather than the files?
+        optionA: Files cannot be sent over HTTP
+        optionB: The files are uploaded first in a separate step, so the send request stays small and does not time out
+        optionC: IDs are encrypted
+        optionD: To save database space
+        answer: B
+        explanation: Uploading and sending are split; the send only refers to what is already stored.
+      - question: The search endpoint takes q and limit. Where does it get the user from?
+        optionA: A userId query parameter
+        optionB: The authenticated token, so a user can only search their own mail
+        optionC: The search text
+        optionD: A cookie with the email ID in plain text
+        answer: B
+        explanation: Identity comes from authentication; a parameter would let a caller name someone else's mailbox.
+  # ────────────────────────────────────────────────────────────────── 4. High-level design
+  - __component: sd.section
+    key: high-level-design
+    title: High-level design.
+    railLabel: High level
+    intro: "Draw the services the functional requirements need and nothing more: clients, a load balancer and gateway, then one service per job with its store."
+  - __component: sd.component-diagram
+    key: hld-diagram
+    title: The first design
+    direction: LR
+    nodes:
+      - { key: client, details: [web, iOS, Android] }
+      - { key: gateway, details: ["authentication, rate limiting, routing"] }
+      - { key: user-service }
+      - { key: user-db }
+      - { key: compose-service }
+      - { key: draft-db }
+      - { key: mail-send-service }
+      - { key: mailbox-db }
+      - { key: search-service }
+      - { key: smtp-relay, title: SMTP, details: [to other domains] }
+      - { key: receiver-smtp, title: Outside mail servers }
+    edges:
+      - { from: client, to: gateway }
+      - { from: gateway, to: user-service }
+      - { from: gateway, to: compose-service }
+      - { from: gateway, to: mail-send-service }
+      - { from: gateway, to: search-service }
+      - { from: user-service, to: user-db }
+      - { from: compose-service, to: draft-db }
+      - { from: mail-send-service, to: mailbox-db, label: same domain }
+      - { from: mail-send-service, to: smtp-relay, label: other domains }
+      - { from: smtp-relay, to: receiver-smtp }
+      - { from: search-service, to: mailbox-db }
+  - __component: sd.rich-text
+    key: hld-flows
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "At over a billion users there are thousands of requests a second, more than one server can take, so every service runs as many copies behind a load balancer and API gateway. The gateway authenticates and authorizes the request, rate limits it, and routes it by its path."
+      - type: paragraph
+        children:
+          - type: text
+            text: "The user service onboards users into a user DB. The compose service saves the email being written as a draft in a draft DB, so a closed window loses nothing. The mail send service is the heart of the system: if the recipient is in our own domain, a Gmail user mailing a Gmail user, it stores the email in the mailbox DB and nothing leaves the network; if the recipient is at another domain, Outlook or Yahoo, the email has to be handed to that provider's mail server using SMTP, the Simple Mail Transfer Protocol. The search service queries the mailbox DB."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Say out loud that each box hides real work: unique sign-ups, how the email is sent without being lost, how SMTP works. That is the deep dive."
+  - __component: sd.quiz
+    key: hld-quiz
+    title: Quick check
+    questions:
+      - question: A Gmail user mails another Gmail user. Does the email go out over SMTP?
+        optionA: Yes, every email does
+        optionB: No; the recipient is in our own domain, so it is stored in our mailbox DB without leaving the network
+        optionC: Only if it has attachments
+        optionD: Only through the search service
+        answer: B
+        explanation: SMTP is for handing mail to another provider's servers; inside one domain the system delivers it itself.
+  # ────────────────────────────────────────────────────────────────── 5. Deep dive: user service
+  - __component: sd.section
+    key: lld-user-service
+    title: "Deep dive: the user service."
+    railLabel: Deep dive, users
+    intro: "Copy the high-level picture down the board and open the user service. It does more than sign-up: every time someone types in the To field, it is asked who that might be."
+  - __component: sd.table
+    key: autosuggest-cases
+    title: The five cases of the To field
+    columns:
+      - { label: You type, style: text }
+      - { label: What happens, style: text }
+    rows:
+      - [An address you have never mailed, No suggestion; you type it in full]
+      - ["An address at another domain, first time", "No suggestion; we know nothing about it"]
+      - [An address you have mailed before, Suggested]
+      - [An address in your contacts, "Suggested, whatever its domain"]
+      - [An unknown address inside our own domain, "No suggestion, but on Enter the user's contact card is shown"]
+  - __component: sd.component-diagram
+    key: user-diagram
+    title: The user service
+    direction: LR
+    nodes:
+      - { key: user-service }
+      - { key: user-cache, details: [25 to 50 recent recipients, contacts] }
+      - { key: user-db, details: [sharded by email ID, email ID primary key] }
+    edges:
+      - { from: user-service, to: user-cache, label: first }
+      - { from: user-service, to: user-db, label: "on a miss, on Enter" }
+  - __component: sd.rich-text
+    key: user-cache-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Look at the cases: a suggestion appears only for addresses already in the user's own recent list or contacts. So keep exactly that in a per-user cache, the 25 to 50 addresses they mail most recently plus their contacts, and check it on every keystroke. A hit is suggested at once. On a miss there is no suggestion, and the user DB is looked up only when the user presses Enter, to show the contact card of an address in our domain. With over a billion users, hitting the database on every keystroke would be wasteful; the cache takes almost all of that load."
+      - type: paragraph
+        children:
+          - type: text
+            text: "The user DB is sharded by email ID. The simple way, hash the email ID and take it modulo the number of shards, ties every key to that number: going from 10 shards to 12 remaps almost every key, and look-ups miss until the data is moved. Consistent hashing places shards and keys on a ring, so adding a shard moves only the keys next to it. Sharding is about size and throughput, billions of rows and their traffic, not about making one look-up fast; inside each shard an index on the email ID does that. Google keeps such data in Spanner or Bigtable; sharded Postgres is a fine answer in an interview."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Two people signing up for the same address at the same moment: make the email ID the primary key, so the second insert fails. Because the shard is chosen by the email ID, both requests reach the same shard, where the key is enforced."
+  - __component: sd.db-schema
+    key: user-tables
+    stores:
+      - key: users-store
+        engine: "Sharded by email ID (Spanner, Bigtable, or sharded Postgres)"
+        component: user-db
+        why: One row per account, always found by email ID.
+        tables:
+          - name: users
+            columns:
+              - { name: email_id, type: text, role: primary }
+              - { name: user_id, type: uuid, role: unique }
+              - { name: password_hash, type: text }
+              - { name: status, type: text }
+              - { name: metadata, type: jsonb }
+  - __component: sd.quiz
+    key: user-quiz
+    title: Quick check
+    questions:
+      - question: Why not query the user DB on every keystroke in the To field?
+        optionA: The database cannot find partial matches
+        optionB: Suggestions only come from the user's own recent recipients and contacts, which a small per-user cache holds, so the database is needed only on Enter
+        optionC: Keystrokes are not sent to the server
+        optionD: The gateway blocks it
+        answer: B
+        explanation: The cache answers the cases that suggest; the database answers only the contact card on Enter.
+      - question: What goes wrong with hash of email ID modulo 10 when you add two shards?
+        optionA: Nothing
+        optionB: Almost every key now maps to a different shard, so look-ups miss until the data moves; consistent hashing moves only a small share
+        optionC: The hash gets longer
+        optionD: Duplicates appear
+        answer: B
+        explanation: Modulo ties placement to the shard count; a ring does not.
+      - question: Two people sign up for the same address at once. What stops both succeeding?
+        optionA: Checking first, then inserting
+        optionB: The email ID is the primary key, and both requests land on the same shard, so the second insert fails
+        optionC: The cache
+        optionD: A cron job that removes duplicates later
+        answer: B
+        explanation: A separate check and insert race; a unique key enforced by the one shard that owns the address does not.
+  # ────────────────────────────────────────────────────────────────── 5. Deep dive: compose
+  - __component: sd.section
+    key: lld-compose
+    title: "Deep dive: compose and drafts."
+    railLabel: Deep dive, compose
+    intro: "Before send is pressed, everything the user writes is already stored. The compose service makes that happen."
+  - __component: sd.component-diagram
+    key: compose-diagram
+    title: Composing an email
+    direction: LR
+    nodes:
+      - { key: client }
+      - { key: compose-service }
+      - { key: draft-db, details: [body, to, cc, bcc, attachment links] }
+      - { key: blob-store, details: [uploaded in parts] }
+    edges:
+      - { from: client, to: compose-service, label: saves as you type }
+      - { from: compose-service, to: draft-db }
+      - { from: compose-service, to: blob-store, label: signs an upload URL }
+      - { from: client, to: blob-store, label: uploads directly }
+  - __component: sd.rich-text
+    key: compose-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Clicking compose opens a window; as the user types, the compose service saves the email as a draft in the draft DB: the body, to, cc, bcc and links to attachments. Close the window and nothing is lost. By the time send is pressed, the email already exists on the server, and sending only has to deliver it."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Attachments are heavy, so they never go into a database. They go to blob storage, an S3 bucket. The compose service hands the client a signed URL and the client uploads the file straight to the bucket, in parts for a large file (a multipart upload), so the service never carries the bytes. The draft keeps the link."
+  - __component: sd.quiz
+    key: compose-quiz
+    title: Quick check
+    questions:
+      - question: Where does a 20 MB PDF attachment end up, and how does it get there?
+        optionA: In the draft DB, inside the draft row
+        optionB: In an S3 bucket, uploaded by the client directly with a signed URL, in parts; the draft keeps its link
+        optionC: In Kafka
+        optionD: In the user cache
+        answer: B
+        explanation: Blob storage holds files; the database holds the link. The signed URL keeps the bytes off the services.
+  # ────────────────────────────────────────────────────────────────── 5. Deep dive: mail send and the outbox
+  - __component: sd.section
+    key: lld-outbox
+    title: "Deep dive: the mail send service and the outbox."
+    railLabel: Deep dive, outbox
+    intro: "Send is pressed. The mail send service must accept the email quickly and make sure it can never be lost, without doing the slow work itself."
+  - __component: sd.component-diagram
+    key: outbox-diagram
+    title: From send to the event stream
+    direction: LR
+    nodes:
+      - { key: mail-send-service, details: [light pre-checks] }
+      - { key: draft-db }
+      - { key: mailbox-db, details: [outbox_email table] }
+      - { key: outbox-consumer, details: [change data capture] }
+      - { key: kafka }
+    edges:
+      - { from: mail-send-service, to: draft-db, label: fetch the draft }
+      - { from: mail-send-service, to: mailbox-db, label: insert outbox row }
+      - { from: outbox-consumer, to: mailbox-db, label: reads new rows }
+      - { from: outbox-consumer, to: kafka, label: publishes }
+  - __component: sd.rich-text
+    key: outbox-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "The send request carries only the draft's ID. The mail send service does light checks, the file types and the format, nothing heavy, because thousands of sends arrive every second and any slow work here backs up everything behind it. It fetches the draft from the draft DB by its ID and writes the email into an outbox table in the mailbox DB. That is the outbox you see for a second in a mail client before an email moves to sent."
+      - type: paragraph
+        children:
+          - type: text
+            text: "The mail send service does not call SMTP itself, as the high-level picture suggested. An outbox consumer watches the outbox table, by change data capture, and publishes each new row to Kafka. This is the transactional outbox pattern: the email is durably saved before anything else happens, so a crash anywhere after it only delays the email, never loses it. It gives at-least-once delivery, not consistency: an email may be published twice after a crash, so every consumer downstream drops a message ID it has already handled."
+  - __component: sd.quiz
+    key: outbox-quiz
+    title: Quick check
+    questions:
+      - question: Why write the email to an outbox table before publishing it to Kafka?
+        optionA: Kafka cannot accept emails directly
+        optionB: Once the row is saved the email cannot be lost; the consumer can always publish it again after a crash
+        optionC: It makes the email consistent across regions
+        optionD: To make it searchable
+        answer: B
+        explanation: Durability first. The price is that a message can be published twice, so consumers dedupe by message ID.
+      - question: Why does the mail send service only do light checks?
+        optionA: Heavy checks are not needed
+        optionB: It takes thousands of sends a second, and slow work at the front would back up every send behind it; the heavy checks run later, asynchronously
+        optionC: The gateway already scanned for viruses
+        optionD: Checks happen in the browser
+        answer: B
+        explanation: Accept fast, check after the email is safely stored.
+  # ────────────────────────────────────────────────────────────────── 5. Deep dive: validation
+  - __component: sd.section
+    key: lld-validation
+    title: "Deep dive: checking the email."
+    railLabel: Deep dive, checks
+    intro: "Nothing the client sent has been checked for spam, viruses or company policy yet. An orchestrator runs the checks without letting one slow checker hold up every email."
+  - __component: sd.component-diagram
+    key: validation-diagram
+    title: The checks
+    direction: LR
+    nodes:
+      - { key: kafka }
+      - { key: orchestrator, details: [consume, validate, check the domain] }
+      - { key: spam-filter }
+      - { key: policy-check }
+      - { key: attachment-check }
+      - { key: validation-db, details: [one row per email] }
+      - { key: blob-store }
+      - { key: attachment-scanner, details: [on each upload] }
+      - { key: scan-db }
+    edges:
+      - { from: kafka, to: orchestrator, label: consume }
+      - { from: orchestrator, to: spam-filter }
+      - { from: orchestrator, to: policy-check }
+      - { from: orchestrator, to: attachment-check }
+      - { from: orchestrator, to: validation-db, label: pending row }
+      - { from: spam-filter, to: validation-db, label: result }
+      - { from: policy-check, to: validation-db, label: result }
+      - { from: blob-store, to: attachment-scanner, label: upload event }
+      - { from: attachment-scanner, to: scan-db, label: verdict }
+      - { from: attachment-check, to: scan-db, label: reads }
+  - __component: sd.rich-text
+    key: validation-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "The outbox delivery orchestrator consumes each email from Kafka and calls the checkers: a spam and malware filter, a policy check that applies an enterprise's rules (no sensitive documents leaving the company), and an attachment check. They run in parallel, not one after another, because each one in series would add its time to every send."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Waiting on all of them in memory has a flaw: if the policy check is down for 15 minutes, every email sits blocked behind it, holding threads. So the orchestrator writes a row per email to a validation DB with every check marked pending, and each checker updates its own column to pass or fail when it finishes. The orchestrator moves on and comes back when the row is complete. A checker that is down still delays the emails waiting on it, retried through a delay queue, but it no longer stalls the rest."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Scanning a file is slow, so it is not done at send time. Each upload to S3 raises an event that triggers an attachment scanner; it scans the file and writes the verdict to an S3 validation DB. At send time the attachment check service only reads that precomputed verdict."
+  - __component: sd.db-schema
+    key: validation-tables
+    stores:
+      - key: validation-store
+        engine: A key-value or relational table keyed by message ID
+        component: validation-db
+        why: Each checker updates its own column of one row.
+        tables:
+          - name: validation
+            columns:
+              - { name: message_id, type: uuid, role: primary }
+              - { name: sender_user_id, type: uuid }
+              - { name: recipient_email, type: text }
+              - { name: recipient_domain, type: text }
+              - { name: route_type, type: "enum INTERNAL, EXTERNAL" }
+              - { name: spam_check, type: "enum PASS, FAIL, PENDING" }
+              - { name: policy_check, type: "enum PASS, FAIL, PENDING" }
+              - { name: attachment_check, type: "enum PASS, FAIL, PENDING" }
+              - { name: status, type: text }
+      - key: scan-store
+        engine: A small table keyed by attachment ID
+        component: scan-db
+        why: The verdict is computed once, on upload, and read at send.
+        tables:
+          - name: attachment_scan
+            columns:
+              - { name: attachment_id, type: uuid, role: primary }
+              - { name: verdict, type: "enum CLEAN, MALICIOUS, PENDING" }
+  - __component: sd.quiz
+    key: validation-quiz
+    title: Quick check
+    questions:
+      - question: The policy check is down for 15 minutes. What does the validation DB change?
+        optionA: Emails skip the policy check
+        optionB: Results are recorded per email as they arrive, so the orchestrator does not hold every email and thread waiting; only emails still pending policy wait, and are retried
+        optionC: Nothing; all email stops
+        optionD: The spam filter takes over the policy check
+        answer: B
+        explanation: Recording progress lets the orchestrator move on; the slow checker delays only what depends on it.
+      - question: Why scan attachments when they are uploaded rather than when the email is sent?
+        optionA: Uploads are rarer
+        optionB: Scanning is slow; done on upload it is finished by send time, and the send only reads the stored verdict
+        optionC: S3 forbids scanning later
+        optionD: To save storage
+        answer: B
+        explanation: Precompute the slow part off the send path.
+  # ────────────────────────────────────────────────────────────────── 5. Deep dive: SMTP relay
+  - __component: sd.section
+    key: lld-smtp-relay
+    title: "Deep dive: sending to other domains over SMTP."
+    railLabel: Deep dive, SMTP
+    intro: "Checked emails are routed by the recipient's domain. Mail for another provider is handed over by relay workers that speak SMTP to that provider's server."
+  - __component: sd.component-diagram
+    key: relay-diagram
+    title: The relay
+    direction: LR
+    nodes:
+      - { key: orchestrator }
+      - { key: kafka, details: [outbound send request, inbound send request] }
+      - { key: smtp-relay }
+      - { key: mx-cache }
+      - { key: mx-resolver }
+      - { key: receiver-smtp }
+    edges:
+      - { from: orchestrator, to: kafka, label: by domain }
+      - { from: kafka, to: smtp-relay, label: outbound }
+      - { from: smtp-relay, to: mx-cache, label: first }
+      - { from: smtp-relay, to: mx-resolver, label: on a miss }
+      - { from: smtp-relay, to: receiver-smtp, label: "SMTP, port 25" }
+  - __component: sd.rich-text
+    key: relay-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Once every check passes, the orchestrator checks the recipient's domain. Our own domain goes to the inbound send request topic; any other goes to the outbound send request topic. SMTP relay workers consume the outbound topic. SMTP is a protocol, the rules two mail servers follow to talk, not a server of its own."
+      - type: paragraph
+        children:
+          - type: text
+            text: "First the worker finds where the domain takes mail: a DNS MX lookup, like dig MX outlook.com, which returns hosts with a preference number. The lowest number is tried first, and if it does not answer in time the next one. MX records change rarely, so the answers are kept in an MX cache for their DNS time to live, and most sends skip the lookup."
+  - __component: sd.sequence-diagram
+    key: smtp-steps
+    title: Handing an email to Outlook
+    autonumber: true
+    participants:
+      - { key: smtp-relay, label: Our relay worker }
+      - { key: receiver-smtp, label: outlook.com mail server }
+    steps:
+      - { kind: message, from: smtp-relay, to: receiver-smtp, text: "Open a TCP connection to the MX host, port 25" }
+      - { kind: reply, from: receiver-smtp, to: smtp-relay, text: "220 outlook.com ESMTP ready" }
+      - { kind: message, from: smtp-relay, to: receiver-smtp, text: "EHLO gmail.com" }
+      - { kind: reply, from: receiver-smtp, to: smtp-relay, text: "250 OK and the extensions it supports" }
+      - { kind: message, from: smtp-relay, to: receiver-smtp, text: "MAIL FROM:<alice@gmail.com>" }
+      - { kind: reply, from: receiver-smtp, to: smtp-relay, text: "250 OK" }
+      - { kind: message, from: smtp-relay, to: receiver-smtp, text: "RCPT TO:<bob@outlook.com>" }
+      - { kind: reply, from: receiver-smtp, to: smtp-relay, text: "250 2.1.5 recipient OK, or 550 no such user" }
+      - { kind: message, from: smtp-relay, to: receiver-smtp, text: DATA }
+      - { kind: reply, from: receiver-smtp, to: smtp-relay, text: "354 start mail input" }
+      - { kind: message, from: smtp-relay, to: receiver-smtp, text: "Headers, body and attachments, MIME encoded" }
+      - { kind: reply, from: receiver-smtp, to: smtp-relay, text: "250 OK, accepted" }
+  - __component: sd.rich-text
+    key: relay-recipient
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Our side cannot know whether bob@outlook.com exists; only Outlook can. It checks at RCPT TO and refuses an unknown address, which our system turns into a bounce message to the sender a moment later. The final 250 means Outlook has taken responsibility for the email."
+  - __component: sd.quiz
+    key: relay-quiz
+    title: Quick check
+    questions:
+      - question: How does the relay worker know which server takes mail for outlook.com?
+        optionA: It is configured by hand
+        optionB: A DNS MX lookup, which lists the domain's mail servers with preference numbers; the lowest is tried first, and the answer is cached for its time to live
+        optionC: It asks the user service
+        optionD: It sends to outlook.com's web server
+        answer: B
+        explanation: MX records are how a domain publishes where its mail goes.
+      - question: Alice mails an address that does not exist at outlook.com. When does anyone find out?
+        optionA: Never
+        optionB: During the SMTP conversation, when Outlook refuses the RCPT TO address; our system then sends Alice a bounce
+        optionC: When Bob logs in
+        optionD: At the spam filter
+        answer: B
+        explanation: Only the receiving provider knows its users, so it rejects the recipient during the handshake.
+  # ────────────────────────────────────────────────────────────────── 5. Deep dive: delivery and notifications
+  - __component: sd.section
+    key: lld-delivery
+    title: "Deep dive: delivery inside our domain, and notifications."
+    railLabel: Deep dive, delivery
+    intro: "Mail between two of our own users needs no protocol at all, only a move from one table to another and a nudge to the recipient."
+  - __component: sd.component-diagram
+    key: delivery-diagram
+    title: Delivery and notifications
+    direction: LR
+    nodes:
+      - { key: kafka }
+      - { key: delivery-consumer }
+      - { key: mailbox-db, details: [outbox_email, mailbox_items] }
+      - { key: smtp-relay }
+      - { key: spam-filter }
+      - { key: notification-service }
+      - { key: client, title: Recipient's devices }
+    edges:
+      - { from: kafka, to: delivery-consumer, label: inbound }
+      - { from: delivery-consumer, to: mailbox-db, label: outbox to mailbox items }
+      - { from: smtp-relay, to: mailbox-db, label: "on 250, mark sent" }
+      - { from: spam-filter, to: notification-service, label: blocked }
+      - { from: delivery-consumer, to: notification-service, label: new mail }
+      - { from: notification-service, to: client }
+  - __component: sd.rich-text
+    key: delivery-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "A delivery consumer reads the inbound send request topic. All it does is copy the email from the outbox table into the mailbox items table: the sender's copy lands in sent, the recipient's in their inbox. For external mail, the relay worker does the equivalent when the receiving server answers 250: it marks the email sent in the mailbox DB."
+      - type: paragraph
+        children:
+          - type: text
+            text: "A notification service closes the loop. If the spam and malware filter or the policy check blocks an email, the sender is told why. When the delivery consumer puts an email in an inbox, the recipient's phone or browser gets a new-mail alert."
+  - __component: sd.quiz
+    key: delivery-quiz
+    title: Quick check
+    questions:
+      - question: What does the delivery consumer do for a Gmail-to-Gmail email?
+        optionA: Opens an SMTP connection to Gmail
+        optionB: Copies the email from the outbox table into mailbox items, the sender's sent and the recipient's inbox, and triggers a notification
+        optionC: Runs the spam filter again
+        optionD: Deletes the draft only
+        answer: B
+        explanation: Inside one domain, delivery is a database write.
+  # ────────────────────────────────────────────────────────────────── 5. Deep dive: search
+  - __component: sd.section
+    key: lld-search
+    title: "Deep dive: search."
+    railLabel: Deep dive, search
+    intro: "Searching by any word of a subject or body is full-text search, which a database table does badly and a search engine does well."
+  - __component: sd.component-diagram
+    key: search-diagram
+    title: Search
+    direction: LR
+    nodes:
+      - { key: search-service }
+      - { key: elasticsearch, details: [one document per email] }
+      - { key: aggregator }
+      - { key: mailbox-db, details: [bodies] }
+      - { key: metadata-db, details: [sender, recipients, subject, types] }
+    edges:
+      - { from: search-service, to: elasticsearch, label: query }
+      - { from: mailbox-db, to: aggregator }
+      - { from: metadata-db, to: aggregator }
+      - { from: aggregator, to: elasticsearch, label: joined documents }
+  - __component: sd.rich-text
+    key: search-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "The search service queries Elasticsearch, a full-text search engine, over subject, body and sender. Split the storage too: the bodies stay in the mailbox DB, and the metadata (sender, recipients, subject, type, attachment types) goes in a mailbox metadata DB, since many searches are by sender alone."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Elasticsearch does not query those databases; it searches its own index. Joining the two stores at query time, on every search, would be far too slow, so an aggregator service joins each email's body and metadata once, when it is written, and indexes the result as one document. A search is then one look-up in one index, filtered to the caller's own mail."
+  - __component: sd.quiz
+    key: search-quiz
+    title: Quick check
+    questions:
+      - question: Why put an aggregator in front of Elasticsearch?
+        optionA: Elasticsearch cannot store text
+        optionB: It joins body and metadata once, at write time, so a search reads one ready document instead of joining two stores on every query
+        optionC: To encrypt the index
+        optionD: To send notifications
+        answer: B
+        explanation: Pay for the join once per email, not once per search.
+  # ────────────────────────────────────────────────────────────────── 5. Deep dive: inbound mail, tables and topics
+  - __component: sd.section
+    key: lld-inbound
+    title: "Deep dive: receiving mail, and the tables and topics."
+    railLabel: Deep dive, inbound
+    intro: "Mail also arrives from other providers. Receiving it reuses the flow already built; then write down the main tables and topics, and read the requirements back."
+  - __component: sd.component-diagram
+    key: final-diagram
+    title: The final design
+    direction: LR
+    nodes:
+      - { key: client }
+      - { key: gateway }
+      - { key: user-service }
+      - { key: compose-service }
+      - { key: mail-send-service }
+      - { key: search-service }
+      - { key: mailbox-db }
+      - { key: outbox-consumer }
+      - { key: kafka }
+      - { key: orchestrator }
+      - { key: validation-db }
+      - { key: smtp-relay }
+      - { key: delivery-consumer }
+      - { key: notification-service }
+      - { key: elasticsearch }
+      - { key: receiver-smtp, title: Outlook or Yahoo SMTP }
+      - { key: inbound-smtp }
+    edges:
+      - { from: client, to: gateway }
+      - { from: gateway, to: user-service }
+      - { from: gateway, to: compose-service }
+      - { from: gateway, to: mail-send-service }
+      - { from: gateway, to: search-service }
+      - { from: mail-send-service, to: mailbox-db, label: outbox row }
+      - { from: outbox-consumer, to: kafka }
+      - { from: kafka, to: orchestrator }
+      - { from: orchestrator, to: validation-db }
+      - { from: kafka, to: smtp-relay, label: outbound }
+      - { from: kafka, to: delivery-consumer, label: inbound }
+      - { from: smtp-relay, to: receiver-smtp }
+      - { from: receiver-smtp, to: inbound-smtp }
+      - { from: inbound-smtp, to: user-service, label: recipient exists? }
+      - { from: inbound-smtp, to: kafka, label: inbound }
+      - { from: delivery-consumer, to: mailbox-db }
+      - { from: delivery-consumer, to: notification-service }
+      - { from: search-service, to: elasticsearch }
+  - __component: sd.rich-text
+    key: inbound-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Outlook and Yahoo send mail to our users the same way we send to theirs. An inbound SMTP service takes those connections, asks the user service whether the recipient exists (refusing an unknown address at RCPT TO), runs the same spam and malware checks, and publishes the email to the inbound send request topic. From there the existing delivery consumer puts it in the inbox and notifies the recipient."
+  - __component: sd.db-schema
+    key: mailbox-tables
+    stores:
+      - key: mailbox-store
+        engine: "A wide-column or sharded relational store, partitioned by user"
+        component: mailbox-db
+        why: Every read is one user's mail.
+        tables:
+          - name: mailbox_items
+            columns:
+              - { name: user_id, type: uuid, role: partition }
+              - { name: message_id, type: uuid, role: clustering }
+              - { name: thread_id, type: uuid, role: index }
+              - { name: from_email, type: text }
+              - { name: to_emails, type: "text[]" }
+              - { name: subject, type: text }
+              - { name: has_attachment, type: bool }
+              - { name: url_attachment, type: text }
+          - name: outbox_email
+            note: The same columns, plus the send status.
+            columns:
+              - { name: user_id, type: uuid, role: partition }
+              - { name: message_id, type: uuid, role: clustering }
+              - { name: thread_id, type: uuid }
+              - { name: from_email, type: text }
+              - { name: to_emails, type: "text[]" }
+              - { name: subject, type: text }
+              - { name: status, type: text }
+              - { name: has_attachment, type: bool }
+              - { name: url_attachment, type: text }
+  - __component: sd.event-contract
+    key: topics
+    title: Kafka topics
+    broker: Kafka
+    topics:
+      - { name: outbox events, delivery: at-least-once, producers: [outbox-consumer], consumers: [orchestrator], note: Every new outbox row. }
+      - { name: outbound send request, partitionKey: recipient domain, delivery: at-least-once, producers: [orchestrator], consumers: [smtp-relay], note: Checked mail for other domains. }
+      - { name: inbound send request, delivery: at-least-once, producers: [orchestrator, inbound-smtp], consumers: [delivery-consumer], note: Mail for our own users. }
+      - { name: delay queue, delivery: at-least-once, producers: [orchestrator, smtp-relay], note: "Emails to retry later: a slow check, a receiving server that did not answer." }
+      - { name: delivery status, delivery: at-least-once, producers: [smtp-relay, delivery-consumer], note: "Sent or bounced, for the mailbox and the notifications." }
+  - __component: sd.rich-text
+    key: wrap-up
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "The thread ID on every row is what groups replies into a conversation. Close by reading the non-functional list back against the board. Scale: every service runs many copies behind the gateway, and the user DB is sharded. Availability: sending is asynchronous through Kafka, and a slow checker holds only its own emails. Consistent sign-up: the email ID is a primary key on the one shard that owns it. Durability: every email is saved in the outbox before anything else touches it."
+  - __component: sd.quiz
+    key: inbound-quiz
+    title: Quick check
+    questions:
+      - question: An email arrives from Yahoo for one of our users. What new part does that need?
+        optionA: A whole second delivery pipeline
+        optionB: An inbound SMTP service that checks the recipient exists and publishes to the inbound topic; the existing delivery consumer does the rest
+        optionC: Nothing; the relay workers receive it
+        optionD: The search service
+        answer: B
+        explanation: Receiving reuses the delivery flow; only the front door is new.
+      - question: What groups an email with its replies?
+        optionA: The subject line
+        optionB: A thread ID stored on every mailbox row
+        optionC: The Kafka topic
+        optionD: The attachment URL
+        answer: B
+        explanation: Subjects change and repeat; a thread ID is explicit.

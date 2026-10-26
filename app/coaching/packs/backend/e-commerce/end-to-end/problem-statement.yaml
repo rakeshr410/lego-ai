@@ -1,0 +1,52 @@
+# E-commerce interview, the problem statement: the title, what the shop is, and the scope written at the top of the board as the video does, then the five steps said once (said, not drawn).
+id: backend/e-commerce/end-to-end/problem-statement
+title: The problem, the scope, and the five steps
+source:
+  hash: "6af45e260411"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: null
+  assumes: []
+  carries:
+    - "An e-commerce platform is an online shop for mobiles, laptops, books, apparel and more; we design the shopper's flow, not the warehouse."
+    - "The interview runs in five steps: requirements, core entities, API, high-level design, low-level design."
+  terms:
+    - term: shopper's flow
+      means: "Search, product page, cart, checkout and payment, order status: what a buyer touches."
+board:
+  keep: []
+  elements:
+    - { id: title, kind: note, label: E-commerce platform like Amazon or Flipkart, at: [49, 0] }
+    - { id: prompt-desc, kind: note, label: "an online shop for mobiles, laptops, books, apparel, shoes", at: [45, 2] }
+    - { id: prompt-scope, kind: note, label: "scope: the shopper's flow, not the warehouse", at: [49, 3] }
+  arrows: []
+beats:
+  - point: "An e-commerce platform like Amazon or Flipkart is an online shop where people buy mobiles, laptops, books, apparel and shoes."
+    kind: rule
+    weight: core
+    teach:
+      - "Write the title: an e-commerce platform like Amazon or Flipkart. Under it, one line on what it is: an online shop where people buy mobiles, laptops, cameras, books, apparel, shoes."
+      - "Writing it down lets the interviewer correct you before you design the wrong thing."
+    draw: [title, prompt-desc]
+    check: In one sentence, what does this platform let people do?
+    answer: Buy goods online, from search to payment, mobiles, laptops, books, apparel and so on.
+  - point: "Amazon is many systems, so agree the scope first: the shopper's flow, not the warehouse and inventory back office."
+    kind: decision
+    weight: core
+    teach:
+      - "Amazon is huge: there is the shopper's side and there is the warehouse and inventory side. Ask which one the interviewer wants."
+      - "Here it is the shopper's flow, search to order status, plus the one back-office problem the shopper feels, buying items in limited stock."
+    draw: [prompt-scope]
+    check: Why ask about the scope before the requirements?
+    answer: Because an application that size has many systems; agreeing which one keeps the hour on the part the interviewer wants.
+  - point: "The interview runs in five steps: gather the requirements, identify the core entities, write the API, draw the high-level design, then the low-level design."
+    kind: rule
+    weight: core
+    teach:
+      - "Say the plan once: requirements, functional and non-functional, then the core entities, then the API, then a high-level design, and last the low-level design, where most of the time goes."
+      - Said, not written; each step gets its number on the board when we reach it.
+    check: Which step comes after the API?
+    answer: The high-level design, then the low-level design.

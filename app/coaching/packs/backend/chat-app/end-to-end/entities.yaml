@@ -1,0 +1,45 @@
+# Chat app interview, core entities: "2. Core Entities" under the functional list, three lines (User, Group, Message/Chat), as in the video.
+id: backend/chat-app/end-to-end/entities
+title: Three entities
+source:
+  hash: "6069f397e2af"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/chat-app/end-to-end/requirements
+  assumes:
+    - "Functional: register, one-to-one and group messaging, text and media, history, receipts."
+  carries:
+    - "The core entities are the user, the group and the message."
+  terms:
+    - term: core entity
+      means: A noun the system stores and moves.
+board:
+  keep: [title, prompt-desc, fr, fr-register, fr-one, fr-group, fr-media, fr-history, fr-receipts, nfr, nfr-scale, nfr-volume, nfr-cap, nfr-latency, nfr-reliable]
+  elements:
+    - { id: entities, kind: region, label: 2. Core entities, at: [6, 23], size: [20, 11], dashed: true }
+    - { id: ent-user, kind: note, label: user, at: [7, 25], in: entities }
+    - { id: ent-group, kind: note, label: group, at: [7, 27], in: entities }
+    - { id: ent-message, kind: note, label: "message, the chat", at: [7, 29], in: entities }
+  arrows: []
+  lists:
+    - { id: entity-list, in: entities, at: [7, 25], step: 2, slots: 4, width: 16, items: [ent-user, ent-group, ent-message] }
+beats:
+  - point: "The core entities come straight from the requirements: the user, the group, and the message that is delivered."
+    kind: component
+    weight: core
+    teach:
+      - "Step two: the core entities. Read them off the functional list. The users, first."
+      - "We support group messaging, so the group. And the most important one, the message we deliver, which belongs to a chat."
+    draw: [entities, ent-user, ent-group, ent-message]
+    check: Why is the group an entity of its own?
+    answer: "Groups are created and change members on their own, and every group message goes to the current member list."
+asks:
+  - list: entity-list
+    beats: [1]
+    question: "What are the core entities here, the things this system keeps track of?"
+    hints:
+      - Who is chatting, and what do they chat in besides one-to-one?
+      - And what actually travels between them?

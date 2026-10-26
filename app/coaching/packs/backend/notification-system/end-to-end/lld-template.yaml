@@ -1,0 +1,80 @@
+# Notification system interview, deep dive 1: the gateway and the template service. Under "5. Deep dive design (LLD)", the high-level picture is opened box by box: the clients and a tall gateway with its responsibilities written under it, then the template service and its Postgres table, as in the video. The rest of the deep dive grows in this region.
+id: backend/notification-system/end-to-end/lld-template
+title: "Deep dive: the gateway and templates"
+source:
+  hash: "81ee4a589844"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/notification-system/end-to-end/high-level-design
+  assumes:
+    - "HLD: clients, a gateway, template, preference and notification services, and a black-box provider."
+  carries:
+    - "The gateway does authentication and authorization, routing, rate limiting and round-robin load balancing."
+    - "The template service stores templates in Postgres: id, name, type, channel, content, variables, version, is_active, timestamps."
+    - "A template is per channel, because an SMS must be short and an email can be rich."
+  terms:
+    - term: rate limiting
+      means: Capping how many requests a caller may make in a window, so no one can flood the service.
+board:
+  keep: [title, fr, fr-channels, fr-templates, fr-prefs, fr-schedule, fr-status, nfr, nfr-scale, nfr-cap, nfr-latency, hld, hld-clients, hld-gw, hld-tpl-svc, hld-tpl-db, hld-pref-svc, hld-pref-db, hld-notif-svc, hld-provider, hld-provider-note, hld-clients-gw, hld-gw-tpl, hld-tpl-db-arrow, hld-gw-pref, hld-pref-db-arrow, hld-gw-notif, hld-notif-provider, hld-notif-pref]
+  elements:
+    - { id: lld, kind: region, label: 5. Deep dive design, at: [1, 46], size: [70, 51] }
+    - { id: lld-clients, kind: box, label: client apps, at: [2, 68], size: [7, 3] }
+    - { id: lld-gw, kind: box, label: API gateway and load balancer, at: [11, 49], size: [7, 42] }
+    - { id: gw-jobs-1, kind: note, label: "gateway: authentication, authorization,", at: [2, 93], in: lld }
+    - { id: gw-jobs-2, kind: note, label: "routing, rate limiting, round robin", at: [4, 94], in: lld }
+    - { id: tpl-svc, kind: box, label: "Template service, CRUD", at: [21, 49], size: [9, 3] }
+    - { id: tpl-db, kind: oval, label: "Templates, Postgres", at: [33, 49], size: [10, 3], tone: amber }
+    - { id: tpl-table-1, kind: note, label: "templates: id, name, type, channel,", at: [50, 49], in: lld }
+    - { id: tpl-table-2, kind: note, label: "content, variables, version,", at: [52, 50], in: lld }
+    - { id: tpl-table-3, kind: note, label: "is active, created at, updated at", at: [52, 51], in: lld }
+  arrows:
+    - { id: lld-clients-gw, from: lld-clients, to: lld-gw }
+    - { id: gw-tpl, from: lld-gw, to: tpl-svc }
+    - { id: tpl-svc-db, from: tpl-svc, to: tpl-db }
+beats:
+  - point: "The deep dive starts from the high-level picture; the clients and gateway stay, and the gateway's jobs are authentication and authorization, routing, rate limiting and round-robin load balancing."
+    kind: component
+    weight: core
+    teach:
+      - "Step five, the deep dive. Copy the high-level design down here and open each box. Clients and gateway don't change; just say what the gateway is responsible for."
+      - "Authentication and authorization of each client, routing to the right service, rate limiting, and spreading requests round robin. Rate limiting matters most on a public API; we come back to it at the end."
+    draw: [lld, lld-clients, lld-gw, lld-clients-gw, gw-jobs-1, gw-jobs-2]
+    check: Name the gateway's jobs.
+    answer: "Authentication and authorization, routing, rate limiting, and load balancing round robin."
+  - point: "The template service is a plain CRUD API that saves each template as a row in a Postgres database, which is relational."
+    kind: component
+    weight: core
+    teach:
+      - "The template service is simple: an API through which a client creates, reads, updates and deletes templates."
+      - "Templates are structured, so a relational database, Postgres. Careful: Postgres is relational, not NoSQL."
+    draw: [tpl-svc, gw-tpl, tpl-db, tpl-svc-db]
+    check: Why is Postgres a good fit for templates?
+    answer: "Templates are small structured rows read by id and version; a relational database fits."
+    misconceptions:
+      - "Postgres is a NoSQL database -> it is relational; a NoSQL store would be a different choice."
+  - point: "A template row holds its id, name, type (transactional or promotional), channel, content, variables, version and active flag, with one template per channel because an SMS must be short and an email can be rich."
+    kind: decision
+    weight: core
+    teach:
+      - "The table: template id, name, type, transactional or promotional, then channel, content, variables, version, is active, and the timestamps."
+      - "Why a channel? An email can carry a long description and pictures; an SMS must be short or nobody reads it. So each channel gets its own template, in versions."
+    draw: [tpl-table-1, tpl-table-2, tpl-table-3]
+    check: Why does the template table need a channel column?
+    answer: "An SMS must be short and an email can be rich, so a client keeps a separate template per channel."
+asks:
+  - ids: [gw-jobs-1, gw-jobs-2]
+    beats: [1]
+    question: "The gateway stays as it was. What is it actually responsible for?"
+    hints:
+      - Who is calling, and are they allowed?
+      - Where does the request go, and what if someone sends too many?
+  - ids: [tpl-table-1, tpl-table-2, tpl-table-3]
+    beats: [3]
+    question: "What columns would the templates table need?"
+    hints:
+      - Think about what we send in the request, the variables.
+      - Is a template the same for an SMS and an email? And can it change over time?

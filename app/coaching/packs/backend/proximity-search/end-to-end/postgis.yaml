@@ -1,0 +1,85 @@
+# Proximity search, 3. PostgreSQL with PostGIS: "3. PostGres DB with GIS extension" with the INSERT of Taco Bell on the left and the ST_DWithin search for 5 km on the right, as the video writes them. Corrected: PostGIS answers with a GiST (R-tree style) index on the location column, not with geohashing.
+id: backend/proximity-search/end-to-end/postgis
+title: "3. PostgreSQL with PostGIS"
+source:
+  hash: "26c8ccea131e"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/proximity-search/end-to-end/geohash
+  assumes:
+    - "Proximity search returns the places within a radius of the user, say 5 km."
+    - "Geohash stores a prefix-searchable cell name per place and queries the user's cell and its 8 neighbours."
+  carries:
+    - "PostGIS is a PostgreSQL extension that adds location types and functions; a location is stored with ST_GeogFromText, longitude first, SRID 4326."
+    - "ST_DWithin(location, user point, 5000) keeps the rows within 5000 metres, 5 km, on a geography column."
+    - "A GiST index on the location column is what makes it fast."
+  terms:
+    - term: PostGIS
+      means: The PostgreSQL extension that adds spatial types, functions and indexes.
+    - term: SRID 4326
+      means: "The latitude and longitude system GPS uses; PostGIS points list longitude first."
+    - term: GiST index
+      means: "PostgreSQL's general search tree, which PostGIS uses as an R-tree style index of bounding boxes."
+board:
+  keep: [title, prompt-desc, prompt-example]
+  elements:
+    - { id: pg, kind: region, label: 3. PostgreSQL with the PostGIS extension, at: [2, 5], size: [62, 14] }
+    - { id: pg-insert, kind: note, label: "INSERT INTO restaurants (name, location)", at: [4, 8], in: pg }
+    - { id: pg-values, kind: note, label: "VALUES ( 'Taco Bell',", at: [6, 9], in: pg }
+    - { id: pg-point, kind: note, label: "ST_GeogFromText('SRID=4326;POINT(77.5946 12.9716)') );", at: [6, 10], in: pg }
+    - { id: pg-lonlat, kind: note, label: "longitude first, then latitude; SRID 4326 is GPS", at: [4, 13], in: pg }
+    - { id: pg-select, kind: note, label: SELECT * FROM restaurants, at: [35, 8], in: pg }
+    - { id: pg-within, kind: note, label: "WHERE ST_DWithin( location,", at: [37, 9], in: pg }
+    - { id: pg-user, kind: note, label: "ST_GeogFromText('SRID=4326;POINT(77.6000 12.9700)'),", at: [37, 10], in: pg }
+    - { id: pg-radius, kind: note, label: "5000 ); 5 km, in metres", at: [37, 11], in: pg }
+    - { id: pg-gist, kind: note, label: "a GiST index on location, R-tree style, not geohash", at: [4, 14], in: pg }
+  arrows: []
+beats:
+  - point: "PostGIS is an extension installed on PostgreSQL that gives it location types and functions; a restaurant's location is inserted with ST_GeogFromText as a point, longitude first, in SRID 4326."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Number three, and maybe the simplest: PostgreSQL with the PostGIS extension. Install it and the database itself understands locations and distances."
+      - "When a restaurant joins, insert its name and its location: ST_GeogFromText with a point, 77.5946 then 12.9716 for Bangalore. Longitude comes first, then latitude, and SRID 4326 is the system GPS uses."
+    draw: [pg, pg-insert, pg-values, pg-point, pg-lonlat]
+    check: In the PostGIS point for Bangalore, which number comes first, latitude or longitude?
+    answer: "Longitude first (77.5946), then latitude (12.9716)."
+    misconceptions:
+      - "POINT takes latitude then longitude -> PostGIS points are x then y, longitude then latitude."
+  - point: "The search is one query: ST_DWithin(location, the user's point, 5000) keeps the restaurants within 5000 metres, 5 km, because geography distances are in metres."
+    kind: flow
+    weight: core
+    teach:
+      - "To search, select from restaurants where ST_DWithin of the location column, the user's current point, and 5000."
+      - "On a geography column the distance is in metres, so 5000 is 5 kilometres. No cells, no neighbours: the database does the geometry."
+    draw: [pg-select, pg-within, pg-user, pg-radius]
+    check: "In ST_DWithin(location, user point, 5000), what is 5000?"
+    answer: "5000 metres, 5 km, because geography distances are in metres."
+  - point: "It is fast because of a GiST index on the location column, an R-tree style index of bounding boxes, not because it geohashes; without the index it tests every row."
+    kind: mechanism
+    weight: supporting
+    teach:
+      - "What makes it fast? Create a GiST index on the location column. PostGIS uses it as an R-tree style index of bounding boxes, so ST_DWithin only looks at nearby rows."
+      - "It does not geohash behind the scenes. And without the index, the same query compares every row."
+    draw: [pg-gist]
+    check: What do you need to add so the ST_DWithin query does not scan every row?
+    answer: A GiST index on the location column.
+    misconceptions:
+      - "PostGIS geohashes everything by default -> it uses a GiST, R-tree style index, which you create on the column."
+asks:
+  - ids: [pg-within, pg-radius]
+    beats: [2]
+    frame: [pg-select]
+    question: "PostGIS has a function, ST_DWithin, that tests whether two locations are within a distance. How would you use it to find restaurants within 5 km?"
+    hints:
+      - It takes the column, the user's point, and a distance.
+      - In what unit would the distance be?
+  - ids: [pg-gist]
+    beats: [3]
+    question: "That query is correct. What makes it fast on millions of rows?"
+    hints:
+      - What does any database need to avoid a full scan?
+      - Which kind of index suits locations?

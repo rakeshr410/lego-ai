@@ -1,0 +1,151 @@
+# Ride-sharing interview, low-level design, the trip's data: the right side of the video's final board, redrawn: the gateway with the rating and payment services and driver matching in a column, their databases with the rating, estimated fare and ride tables written beside them, the location update service feeding a Kafka queue and a trip update consumer, and the rating aggregator that writes into the drivers database.
+id: backend/ride-sharing/end-to-end/lld-trip-data
+title: "Low-level design: ratings, payment, the trip's records"
+source:
+  hash: "49c8fe531061"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/ride-sharing/end-to-end/lld-location
+  assumes:
+    - "Matching walks the top five drivers under a ZooKeeper lock and writes the ride database on an accept."
+    - "The location update service receives every active driver's position over WebSockets."
+  carries:
+    - "Rating table in PostgreSQL: senderId, receiverId, rating, timestamp, rideId."
+    - "Payment service calls a third-party payment gateway and writes a relational payment database, for ACID."
+    - "Ride database: an estimated fare table written on booking, and a ride table (rideId is the requestId) with its status."
+    - "Locations of drivers on a ride go to Kafka; a trip consumer records the route and status; a rating aggregator writes each driver's average into the driver row."
+  terms:
+    - term: ACID
+      means: "Atomic, consistent, isolated, durable transactions; a charge is recorded exactly once, all or nothing."
+    - term: Kafka
+      means: A durable log of messages that consumers read at their own pace, publish and subscribe.
+    - term: aggregator job
+      means: A periodic job that combines detailed rows into a summary stored elsewhere.
+board:
+  keep: [title, nfr, nfr-scale, nfr-rider, nfr-match, nfr-latency]
+  elements:
+    - { id: lld-trip, kind: region, label: "5. Low-level design: the trip's data", at: [6, 20], size: [70, 37] }
+    - { id: t-gateway, kind: box, label: API gateway, at: [8, 24], size: [10, 20] }
+    - { id: t-rating, kind: box, label: Rating service, at: [22, 37], size: [14, 3], tone: blue }
+    - { id: t-rating-db, kind: oval, label: Rating DB, at: [42, 37], size: [10, 3], tone: amber }
+    - { id: t-rating-1, kind: note, label: "rating: senderId, receiverId,", at: [56, 36], in: lld-trip }
+    - { id: t-rating-2, kind: note, label: "rating, timestamp, rideId", at: [58, 37], in: lld-trip }
+    - { id: t-payment, kind: box, label: Payment service, at: [22, 31], size: [14, 3], tone: blue }
+    - { id: t-pay-db, kind: oval, label: Payment DB, at: [42, 31], size: [12, 3], tone: amber }
+    - { id: t-pay-gw, kind: note, label: calls a third-party payment gateway, at: [22, 34], in: lld-trip }
+    - { id: t-pay-acid, kind: note, label: "MySQL or Postgres, for ACID", at: [56, 32], in: lld-trip }
+    - { id: t-matching, kind: box, label: Driver matching service, at: [22, 24], size: [14, 4], tone: blue }
+    - { id: t-ride, kind: oval, label: Ride DB, at: [42, 24], size: [10, 3], tone: amber }
+    - { id: t-est-1, kind: note, label: "estimated fare: requestId, pickup,", at: [56, 22], in: lld-trip }
+    - { id: t-est-2, kind: note, label: "drop, fare, currency, timestamp,", at: [58, 23], in: lld-trip }
+    - { id: t-est-3, kind: note, label: "vehicleType, userId", at: [58, 24], in: lld-trip }
+    - { id: t-ride-1, kind: note, label: "ride: rideId, userId, driverId,", at: [56, 26], in: lld-trip }
+    - { id: t-ride-2, kind: note, label: "source, driver location, status", at: [58, 27], in: lld-trip }
+    - { id: t-actual, kind: note, label: "estimate versus actual fare, for refunds", at: [56, 29], in: lld-trip }
+    - { id: t-ws, kind: box, label: WebSocket gateway, at: [8, 45], size: [10, 4] }
+    - { id: t-location, kind: box, label: Location update service, at: [22, 45], size: [14, 3], tone: blue }
+    - { id: t-kafka, kind: box, label: "Kafka, drivers on a ride", at: [42, 45], size: [12, 3], tone: amber }
+    - { id: t-drivers-db, kind: oval, label: Drivers DB, at: [58, 45], size: [12, 3], tone: amber }
+    - { id: t-trip, kind: box, label: Trip consumer service, at: [58, 50], size: [14, 3], tone: grey }
+    - { id: t-trip-note, kind: note, label: "records route and status, for refunds", at: [56, 54], in: lld-trip }
+    - { id: t-aggregator, kind: box, label: Rating aggregator job, at: [58, 40], size: [14, 3], tone: grey }
+    - { id: t-agg-note, kind: note, label: averages ratings into the driver row, at: [36, 42], in: lld-trip }
+  arrows:
+    - { id: t-gw-rating, from: t-gateway, to: t-rating }
+    - { id: t-rating-db-arrow, from: t-rating, to: t-rating-db }
+    - { id: t-gw-payment, from: t-gateway, to: t-payment }
+    - { id: t-pay-db-arrow, from: t-payment, to: t-pay-db }
+    - { id: t-gw-matching, from: t-gateway, to: t-matching }
+    - { id: t-matching-ride, from: t-matching, to: t-ride }
+    - { id: t-ws-location, from: t-ws, to: t-location }
+    - { id: t-location-kafka, from: t-location, to: t-kafka }
+    - { id: t-kafka-trip, from: t-kafka, to: t-trip }
+    - { id: t-trip-drivers, from: t-trip, to: t-drivers-db }
+    - { id: t-rating-agg, from: t-rating-db, to: t-aggregator }
+    - { id: t-agg-drivers, from: t-aggregator, to: t-drivers-db }
+beats:
+  - point: "Ratings from riders and drivers go through the rating service into a PostgreSQL rating table: sender, receiver, rating, timestamp and ride."
+    kind: decision
+    weight: core
+    teach:
+      - "After the trip. Every rating, from a rider or a driver, comes through the gateway to the rating service and into the rating database, PostgreSQL."
+      - "One row per rating: sender ID, receiver ID, the rating, a timestamp and the ride ID. Sender and receiver can each be a rider or a driver."
+    draw: [lld-trip, t-gateway, t-rating, t-gw-rating, t-rating-db, t-rating-db-arrow, t-rating-1, t-rating-2]
+    check: Why does the rating table have both a sender and a receiver?
+    answer: Riders rate drivers and drivers rate riders, so either can be on either side.
+  - point: "The payment service calls a third-party payment gateway and records the result in a relational database, MySQL or PostgreSQL, because money needs ACID transactions."
+    kind: decision
+    weight: core
+    teach:
+      - "Payment: the payment service calls a third-party payment gateway, and whether it succeeds or fails, records it in the payment database."
+      - "That database is relational, MySQL or PostgreSQL, because payment data must be consistent: ACID transactions, a charge recorded once, all or nothing."
+    draw: [t-payment, t-gw-payment, t-pay-db, t-pay-db-arrow, t-pay-gw, t-pay-acid]
+    check: Why is the payment database relational?
+    answer: Money needs ACID transactions, so a charge is recorded exactly once and consistently.
+  - point: "The ride database has two tables: the estimated fare, saved when the rider books, and the ride, written when a driver accepts, whose rideId is the requestId and whose status moves from allocated to on ride to reached."
+    kind: decision
+    weight: core
+    teach:
+      - "The ride database. When the rider books, matching first saves the accepted quote in an estimated fare table: request ID, pick-up and drop, the fare, currency, timestamp, vehicle type and user."
+      - "When a driver accepts, it writes the ride table: a ride ID, which is the request ID, the user, the driver, the source, the driver's location and a status, allocated, arriving, on ride, reached."
+    draw: [t-matching, t-gw-matching, t-ride, t-matching-ride, t-est-1, t-est-2, t-est-3, t-ride-1, t-ride-2]
+    check: When is each of the two ride tables written?
+    answer: The estimated fare when the rider books; the ride when a driver accepts.
+  - point: "The estimate is kept and the actual fare sits in payment, so when traffic or a detour changes the price the two can be compared for a refund."
+    kind: rule
+    weight: supporting
+    teach:
+      - "Why keep the estimate at all? The final fare can differ from the quote, with traffic or a different route. The actual fare is in the payment database; with both, a refund can be worked out."
+    draw: [t-actual]
+    check: Why keep the estimated fare when payment has the actual one?
+    answer: To compare quote and charge when the price changed, and work out a refund.
+  - point: "To check a fare you need the route: the location update service publishes positions of drivers on a ride to Kafka, and a trip consumer service records the route and status."
+    kind: mechanism
+    weight: core
+    teach:
+      - "To judge whether a higher fare is fair, we need the route the driver took. The location update service already sees every position; for drivers on a ride it also publishes them to a Kafka queue."
+      - "A trip consumer service subscribes and periodically writes the driver's location, the status and the route taken, so refunds are judged against the real route."
+    draw: [t-ws, t-location, t-ws-location, t-kafka, t-location-kafka, t-trip, t-kafka-trip, t-drivers-db, t-trip-drivers, t-trip-note]
+    check: Why put trip positions on a queue rather than writing them straight to the database?
+    answer: The queue absorbs the stream and lets a consumer write at its own pace, without slowing the location service.
+  - point: "The driver row and the rating table both hold ratings; a rating aggregator job averages the rating table and writes it into the driver row, so the two never drift."
+    kind: mechanism
+    weight: core
+    teach:
+      - "One gap: the driver table has a rating, and so does the rating table; two copies can drift. Keep the rating table as the record."
+      - "A rating aggregator job runs periodically, averages each driver's ratings and writes the result into the driver row."
+    draw: [t-aggregator, t-rating-agg, t-agg-drivers, t-agg-note]
+    check: Which copy of the rating is the source of truth, and how is the other kept current?
+    answer: The rating table; an aggregator job writes each driver's average into the driver row.
+  - point: "Read the requirements back against the board: every functional line has its service, and the non-functional ones are met by services and Redis, availability for riders, the ZooKeeper lock, and a match or a clean failure inside a minute."
+    kind: rule
+    weight: supporting
+    teach:
+      - "Close by reading the non-functional list on the right back. Scale: services behind gateways and Redis for locations. Riders: available. Matching: consistent through the ZooKeeper lock. Latency: top five drivers, 10 seconds each, a driver or a clean failure within the minute."
+    check: Which part of the design meets the consistency line?
+    answer: The ZooKeeper lock per driver, so no driver is offered two rides at once.
+asks:
+  - ids: [t-pay-acid]
+    beats: [2]
+    question: "Which kind of database would you put payments in, and why?"
+    hints:
+      - What must never happen to a charge?
+      - Think of transactions that are all or nothing.
+  - ids: [t-kafka]
+    beats: [5]
+    question: "We want each trip's route, for refunds. How would you get it from the stream of positions without slowing the location service?"
+    hints:
+      - The location service already sees every position.
+      - Something that buffers events for another service to read later.
+  - ids: [t-aggregator]
+    beats: [6]
+    question: "The driver row has a rating and the rating table has every rating. How do you keep them in step?"
+    hints:
+      - Which one should be the record?
+      - Something periodic could recompute the other.
+task:
+  prompt: "Draw the final design: riders and drivers through the API gateway and the WebSocket gateway; the ride service with maps, rates and surge; driver matching reading Redis and locking in ZooKeeper; the location update service feeding Redis and Kafka; rating, payment and their databases; the trip consumer and the rating aggregator."
+  expects: [2, 3, 5, 6]

@@ -1,0 +1,45 @@
+# Top K leaderboard interview, the problem statement: the title "Leaderboard, top K, trending list" and the one line under it, as the video writes them, then the five steps said once (said, not drawn).
+id: backend/top-k-leaderboard/end-to-end/problem-statement
+title: The problem, and the five steps
+source:
+  hash: "331f589f64fd"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: null
+  assumes: []
+  carries:
+    - "A leaderboard returns the K items with the highest score for a board, a region and a time window, out of billions."
+    - "Game leaderboards, trending songs and trending videos are the same problem."
+    - "The interview runs in five steps: requirements, core entities, API, high-level design, deep dive."
+  terms:
+    - term: top K
+      means: "The K items with the highest score, such as the top 100 players or the 10 most played songs."
+board:
+  keep: []
+  elements:
+    - { id: title, kind: note, label: "Leaderboard, top K, trending list", at: [33, 0] }
+    - { id: prompt-desc, kind: note, label: "real-time dashboard of top players, ranks and scores", at: [8, 2] }
+    - { id: prompt-example, kind: note, label: "top 100 players, trending songs, trending videos", at: [8, 3] }
+  arrows: []
+beats:
+  - point: "A leaderboard answers one query fast: the K items with the highest score, for a board, a region and a time window, out of billions of records."
+    kind: rule
+    weight: core
+    teach:
+      - "Write the title: leaderboard, top K, trending list. Under it, one line: a real-time dashboard of top players, ranks and scores, across games, regions and time windows."
+      - "Then the examples. A gaming platform running a global competition wants the top 50 or 100 players at any moment. A music app wants the trending songs; a video site the most viewed videos. Same problem: a score per item, and the K highest."
+    draw: [title, prompt-desc, prompt-example]
+    check: What do a game's leaderboard and a list of trending songs have in common?
+    answer: "Both return the K items with the highest score, points for players, plays or views for songs and videos, for a board, region and window."
+  - point: "The interview runs in five steps: requirements, core entities, API, high-level design, then the deep dive, where this problem offers three approaches."
+    kind: rule
+    weight: core
+    teach:
+      - "Say the plan once: requirements, functional and non-functional; the core entities; the API; a high-level design; and the deep dive."
+      - "This is an easy algorithm question and a hard design one: every approach draws a follow-up about its cost at scale, so we will build three, each with its pros and cons."
+      - Said, not written; each step gets its number on the board when we reach it.
+    check: Why is this problem harder in a design round than in an algorithm round?
+    answer: "At scale every approach has a cost the interviewer will probe, so you need several approaches and their trade-offs, not one algorithm."

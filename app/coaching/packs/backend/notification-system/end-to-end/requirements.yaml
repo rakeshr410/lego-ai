@@ -1,0 +1,101 @@
+# Notification system interview, requirements: "1. Functional requirements" on the left and "Non-functional requirements" on the right, under the problem statement, as the video's board has them; the functional lines in the board's order.
+id: backend/notification-system/end-to-end/requirements
+title: Two lists, functional and non-functional
+source:
+  hash: "2d9e76b22991"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/notification-system/end-to-end/problem-statement
+  assumes:
+    - "The service is a platform other companies call to notify their users by email, SMS and in-app push."
+  carries:
+    - "Functional: email, SMS and in-app channels; templates with variables; user preferences per channel and type; immediate and scheduled sends; delivery status for reporting."
+    - "Non-functional: 1M+ notifications a minute; availability over consistency; OTPs near real time, promotional within 5 to 10 s."
+  terms:
+    - term: functional requirement
+      means: What the system does.
+    - term: non-functional requirement
+      means: "A quality of the system, scale, availability, latency, stated with a number."
+    - term: eventual consistency
+      means: "A change, such as a new template version, may take a few seconds to apply everywhere, but it gets there."
+board:
+  keep: [title, prompt-desc, prompt-example]
+  elements:
+    - { id: fr, kind: region, label: 1. Functional requirements, at: [6, 6], size: [30, 17], dashed: true }
+    - { id: fr-channels, kind: note, label: "send by email, SMS and in-app push", at: [7, 8], in: fr }
+    - { id: fr-templates, kind: note, label: create and manage templates with variables, at: [7, 10], in: fr }
+    - { id: fr-prefs, kind: note, label: users set preferences per channel and type, at: [7, 12], in: fr }
+    - { id: fr-schedule, kind: note, label: send now or at a scheduled time, at: [7, 14], in: fr }
+    - { id: fr-status, kind: note, label: track delivery status on a dashboard, at: [7, 16], in: fr }
+    - { id: nfr, kind: region, label: Non-functional requirements, at: [42, 6], size: [32, 14], dashed: true }
+    - { id: nfr-scale, kind: note, label: "scale, 1 million notifications a minute", at: [43, 8], in: nfr }
+    - { id: nfr-cap, kind: note, label: "availability over consistency, eventual", at: [43, 10], in: nfr }
+    - { id: nfr-latency, kind: note, label: "latency, OTP in real time, promotional 5 to 10 s", at: [43, 12], in: nfr }
+  arrows: []
+  lists:
+    - { id: fr-list, in: fr, at: [7, 8], step: 2, slots: 7, width: 28, items: [fr-channels, fr-templates, fr-prefs, fr-schedule, fr-status] }
+    - { id: nfr-list, in: nfr, at: [43, 8], step: 2, slots: 5, width: 30, items: [nfr-scale, nfr-cap, nfr-latency] }
+beats:
+  - point: "The service must send through three channels, email, SMS and in-app push, and let clients create and manage templates whose variables are filled per user."
+    kind: requirement
+    weight: core
+    teach:
+      - "Step one, on the left: functional requirements. First, support every channel: email, SMS and in-app push."
+      - "Second, templates. Flipkart writes one message with variables, and user 1 hears about an iPhone while user 2 hears about a Samsung. Clients create, update and manage them."
+    draw: [fr, fr-channels, fr-templates]
+    check: Why does a client want templates rather than sending finished text?
+    answer: "One template with variables is personalised per user, so a client writes a message once and it changes with each person."
+  - point: "End users set their preferences per channel and type, a send can be immediate or scheduled, and clients track each notification's delivery status on a dashboard."
+    kind: requirement
+    weight: core
+    teach:
+      - "Third, preferences: a person who wants email but no SMS must get only email. Fourth, immediate or scheduled: an OTP goes now, a promotion at a time the company picks."
+      - "Fifth, status: a company sending a campaign wants to see what is pending and what was delivered, so give it a dashboard."
+    draw: [fr-prefs, fr-schedule, fr-status]
+    check: Give me an example of a scheduled notification and an immediate one.
+    answer: A promotion sent at a chosen time is scheduled; an OTP or an order event is sent the moment it happens.
+  - point: "Scale first: the service carries big companies' every order and promotion, about a million notifications a minute."
+    kind: metric
+    weight: core
+    teach:
+      - "On the right, the non-functional requirements. Scale first, because the design depends on it."
+      - "Any company can integrate, Amazon included, and every order it takes sends notifications through us: say a million notifications a minute, about sixteen thousand seven hundred a second."
+    draw: [nfr, nfr-scale]
+    check: Why ask for the scale before anything else?
+    answer: Because the design depends on it; a million a minute needs a different architecture from a thousand.
+  - point: "Availability over consistency: a template or preference change may take a few seconds to apply, which is consistency, not latency."
+    kind: requirement
+    weight: core
+    teach:
+      - "CAP: when the network splits, a distributed system keeps answering or waits for every copy to agree. A notification service keeps answering."
+      - "If a company changes a template, the old one going out for a few more seconds is fine. Don't confuse that with latency, how fast a message arrives."
+    draw: [nfr-cap]
+    check: What is the difference between consistency and latency here?
+    answer: "Consistency is whether a change, like a new template, is seen everywhere at once; latency is how fast a message reaches the person."
+    misconceptions:
+      - "Eventual consistency means notifications arrive late -> it means changes take a moment to apply everywhere; delivery speed is the latency requirement."
+  - point: "Latency depends on priority: an OTP must arrive near real time or it expires, while a promotion may take 5 to 10 seconds."
+    kind: metric
+    weight: core
+    teach:
+      - "Latency comes in two classes. A promotional or event message may arrive 5 to 10 seconds late; nobody minds."
+      - "An OTP or bank alert must be near real time: late, it has expired and the login fails."
+    draw: [nfr-latency]
+    check: Why can a promotion wait when an OTP cannot?
+    answer: An OTP expires and the authentication fails if it is late; a promotion a few seconds late costs nothing.
+asks:
+  - list: fr-list
+    beats: [1, 2]
+    question: "So what should this notification service do? Give me the features one at a time, and I'll write them down."
+    hints:
+      - Think about how a message can reach a person, and who writes it.
+      - And what does the person get to choose, and what does the company want to see afterwards?
+  - list: nfr-list
+    beats: [3, 4, 5]
+    question: "Now the qualities. How big, how reliable, how fast should it be? A number if you have one."
+    hints:
+      - How many notifications a minute would a company like Amazon send?
+      - Does an OTP need the same speed as a promotion?

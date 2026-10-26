@@ -1,0 +1,958 @@
+# yaml-language-server: $schema=../../../../../lego/content-kit/schema/topic.schema.json
+# provenance: ai-drafted by claude-opus-5-5 on 2026-10-27
+#
+# A whole backend system design interview for a hotel booking service like Airbnb or Booking.com,
+# run step by step on one whiteboard. The order and the board follow InterviewWithBunny's System
+# Design 5 (youtube.com/watch?v=mH2Ye3_vErw): requirements, core entities, API, a high-level design
+# of microservices behind a load balancer and API gateway, then a low-level design that opens one
+# service at a time: the user service, the hotel database, the search service (Elasticsearch and
+# proximity search), the review service, the booking flow with payment and Kafka, and last the
+# concurrency control that stops two guests booking one room for the same night.
+# Every latency figure is an illustrative round number for the exercise, not a measurement.
+# A backend system of lego-ai's own (app/articles/backend): it stands alone and links to no main-site topic.
+catalogVersion: 5
+title: Designing a hotel booking system, end to end
+shortTitle: Hotel booking interview
+summary: "A 45-minute backend design interview for a hotel booking service like Airbnb or Booking.com, step by step on one board: requirements with a split CAP choice, four entities, five endpoints, a microservice high-level design, then each service opened in turn: users, the hotel database, search with Elasticsearch, reviews, booking with payment and Kafka, and the lock that stops double booking."
+group: design
+order: 5
+xp: 280
+difficulty: intermediate
+tags: [interview, search, geospatial, consistency, locking, event-driven]
+eyebrow: Design
+breadcrumb: [Hotel booking, Interview walkthrough]
+lede: "You have about forty-five minutes and one whiteboard to design a service like Airbnb or Booking.com, where a guest searches hotels by place, name and date and books a room. The requirements are familiar, so the interviewer expects depth: how hotel, room, price and availability data is stored, how search by location and text stays fast, how a booking and its payment are recorded across services, and above all how two guests are stopped from booking the same room for the same night."
+reviewStatus: draft
+author: rakeshr410
+provenance: ai-drafted
+sources:
+  - title: "System Design 5: Design Hotel Booking App like AirBnb / Booking.com (InterviewWithBunny, YouTube)"
+    url: https://www.youtube.com/watch?v=mH2Ye3_vErw
+    note: "Order and drawings. Corrected: CAP is a choice under partition; Kafka needs an outbox; Redis is read by key, not joined; quadtree memory is small; Postgres has text search; ES geo uses BKD trees; lock is atomic SET NX plus a DB guard."
+  - title: "Geo queries (Elasticsearch documentation)"
+    url: https://www.elastic.co/guide/en/elasticsearch/reference/current/geo-queries.html
+    note: "geo_distance and geo_bounding_box queries on geo_point fields, combined with full-text queries in one request."
+  - title: PostGIS
+    url: https://postgis.net/
+    note: "The spatial extension for PostgreSQL: geometry and geography types with GiST indexes for radius and box queries."
+  - title: Distributed locks with Redis (Redis documentation)
+    url: https://redis.io/docs/latest/develop/use/patterns/distributed-locks/
+    note: "SET key value NX PX ttl takes a lock atomically with an expiry; the caveats of lock expiry under long pauses."
+  - title: "Pattern: Transactional outbox (microservices.io)"
+    url: https://microservices.io/patterns/data/transactional-outbox.html
+    note: "Writing the event in the same database transaction as the state change, then relaying it to the broker, so neither is lost."
+  - title: Quadtree (Wikipedia)
+    url: https://en.wikipedia.org/wiki/Quadtree
+    note: "A tree that splits a square region into four quadrants recursively, used for point and range queries in two dimensions."
+tutorBrief: >-
+  Interview walkthrough for a hotel booking service like Airbnb, Booking.com or MakeMyTrip. 45 to 50
+  minutes; the problem is familiar, so the interviewer expects depth on the data model, search and
+  double booking. Board, top to bottom: title and one line (an online platform to search and book rooms
+  by location, date and availability); 1 functional requirements (left), 2 non-functional requirements
+  (right), 2 identify core entities (under functional), 3 API designing (beside it), 4 high-level design,
+  5 low-level design (the high-level diagram copied and each service opened). Functional: create an
+  account and log in; search hotels by location and name (and date); see a hotel's details and the rooms
+  available on a date, with prices; book a room and pay, which confirms the booking; view past bookings.
+  Non-functional: scale 50M users and 1M hotels; CAP split by operation: search favours availability,
+  booking favours consistency, no two users may book the same room on the same date. CAP only forces the
+  choice during a network partition. Entities: user, hotel, room, booking. API: POST /v1/user/registry
+  { userMetaData } plus login, logout, update (not detailed); GET /v1/hotels/search?q=name&l=location&d=date
+  returns a paginated list of hotel summaries (id, thumbnail, title, rating); GET /v1/hotels/{hotelId}/{date}
+  returns details, amenities, reviews and the rooms available that date with that date's price; POST
+  /v1/booking { hotelId, roomId, date } returns a booking id after payment (user from the auth token);
+  GET /v1/bookings/{userId} lists past bookings. High level: clients, a load balancer and API gateway
+  (authentication and authorization, routing, rate limiting, round robin), then user service to UserDB,
+  search service to HotelDB, booking service to BookingDB with a payment gateway below it, booking info
+  service reading BookingDB, review service to ReviewDB. Microservices because of the 50M-user scale.
+  Low level: user service: sign up, log in, issue a JWT; UserDB on MySQL (userId, name, email, password
+  hash, phone, metadata). HotelDB on Postgres: hotel (hotelId, name, address, geolocation lat and long),
+  rooms (hotelId, roomId, roomType, capacity, metadata), price (hotelId, roomId, price, currency,
+  startDate, endDate, e.g. 1,200 in January and 1,400 on 1 to 15 February), availability, two designs:
+  one row per room per day (hotelId, roomId, date, status AVL, BOOKED, MAINTNC): 300 rooms x 365 days =
+  109,500 rows per hotel a year, about 110 billion for 1M hotels, simple to query and update; or one row
+  per date range with a status: far fewer rows but a booking splits a range into up to three rows.
+  Images in S3 (blob storage), not Postgres. Search: joining five or six tables per query is slow, so the
+  search service queries Elasticsearch. Proximity search options: Elasticsearch geo queries, quadtree,
+  Postgres with PostGIS, geohash. Hotels do not move (static data). Elasticsearch wins because one query
+  needs text (name) and location together and it does both; Postgres has full-text search too but weaker
+  relevance and fuzzy matching. A quadtree for 1M points fits in tens of MB, memory is not the problem;
+  it lacks text search. Elasticsearch indexes geo_point with BKD trees (geohash is for grid aggregations).
+  Feeding Elasticsearch: option 1, a CDC pipeline plus a consumer that joins and denormalizes every row
+  (heavy, lots of unneeded data); option 2, two phases: Elasticsearch holds only the hotel table (name,
+  geolocation), returns about a hundred hotel ids, then the search service reads rooms, prices and
+  availability for those ids from a Redis cache keyed by hotel and merges them (Redis has no joins), plus
+  image links from S3. Review service: ReviewDB on MySQL or any store (hotelId, userId, rating, comments,
+  image links), images in S3. Booking: booking service calls a payment service, which calls a
+  third-party payment gateway and records the result in PaymentDB on MySQL (userId, bookingId, amount,
+  currency, date) for its ACID transactions. After payment the booking service publishes a booking event
+  to Kafka; a notification service tells the user; a consumer service writes BookingDB; an availability
+  service is the only writer of the availability table. Updating two databases directly is a dual write
+  that can half-fail; Kafka consumers retry, but the event must be written with an outbox, and consumers
+  must be idempotent: eventual consistency, not a distributed transaction. Concurrency: user 1 at t0 and
+  user 2 at t0 + 5 s both saw the room free; so before payment the booking service asks the availability
+  service whether the room is still free. Two requests at the same instant both pass a check, so the
+  booking service takes a Redis lock per room and night, SET NX with a TTL of 5 minutes (time to pay);
+  if payment does not finish the lock expires and the room is free again. Because a lock can expire, the
+  availability service's final write is conditional (UPDATE ... WHERE status = AVL) or a unique key on
+  room and date. Booking info service reads BookingDB: bookingId (unique), hotelId, userId, list of
+  roomIds, startDate, endDate, amount, currency, status, metadata; Postgres or MySQL. All services scale
+  out behind the gateway.
+components:
+  - key: client
+    name: Client
+    tone: sand
+    kind: client
+    summary: The guest's browser or app, searching hotels and booking rooms.
+    owns: [nothing of its own]
+    talksTo: [gateway]
+  - key: gateway
+    name: Load balancer and API gateway
+    tone: blue
+    kind: gateway
+    summary: Authenticates and authorizes requests, routes each endpoint to its service, rate-limits, and spreads traffic round robin.
+    owns: [routes, rate limits]
+    talksTo: [user-service, search-service, booking-service, booking-info-service, review-service]
+  - key: user-service
+    name: User service
+    tone: blue
+    kind: service
+    summary: Signs users up, checks their credentials on login and issues a JWT for later calls.
+    owns: [accounts]
+    talksTo: [user-db]
+  - key: search-service
+    name: Search service
+    tone: blue
+    kind: service
+    summary: Finds hotels by name, location and date through Elasticsearch, then adds rooms, prices and availability from the cache.
+    owns: [nothing durable]
+    talksTo: [elasticsearch, room-cache, blob-store]
+  - key: booking-service
+    name: Booking service
+    tone: blue
+    kind: service
+    summary: Checks the room is free, holds it with a lock, takes payment and publishes the booking event.
+    owns: [the booking flow]
+    talksTo: [availability-service, room-lock, payment-service, kafka]
+  - key: payment-service
+    name: Payment service
+    tone: blue
+    kind: service
+    summary: Collects the payment details, calls the third-party gateway and records the outcome.
+    owns: [payment records]
+    talksTo: [payment-gateway, payment-db]
+  - key: payment-gateway
+    name: Payment gateway
+    tone: gray
+    kind: external
+    summary: A third party that moves the money with the bank and answers success or failure.
+    owns: [the card transaction]
+    talksTo: []
+  - key: booking-info-service
+    name: Booking info service
+    tone: blue
+    kind: service
+    summary: Lists a user's past bookings from the booking database.
+    owns: [nothing durable]
+    talksTo: [booking-db]
+  - key: review-service
+    name: Review service
+    tone: blue
+    kind: service
+    summary: Saves and serves hotel reviews, with their photos in blob storage.
+    owns: [reviews]
+    talksTo: [review-db, blob-store]
+  - key: notification-service
+    name: Notification service
+    tone: blue
+    kind: worker
+    summary: Consumes booking events and tells the guest the booking is confirmed.
+    owns: [nothing durable]
+    talksTo: [kafka]
+  - key: booking-consumer
+    name: Booking consumer
+    tone: blue
+    kind: worker
+    summary: Consumes booking events and writes each booking and its status to the booking database.
+    owns: [nothing durable]
+    talksTo: [kafka, booking-db]
+  - key: availability-service
+    name: Availability service
+    tone: green
+    kind: service
+    summary: The only writer of the availability table; answers whether a room is free and marks it booked.
+    owns: [room availability]
+    talksTo: [hotel-db]
+  - key: kafka
+    name: Kafka
+    tone: gray
+    kind: queue
+    summary: Carries booking events from the booking service to the consumers that act on them.
+    owns: [booking events]
+    talksTo: []
+  - key: room-lock
+    name: Redis lock
+    tone: orange
+    kind: cache
+    summary: Holds a room for one night for 5 minutes while the guest pays, taken atomically with SET NX and a TTL.
+    owns: [room holds]
+    talksTo: []
+  - key: room-cache
+    name: Redis cache
+    tone: green
+    kind: cache
+    summary: Rooms, prices and availability keyed by hotel, read for the hotels Elasticsearch returns.
+    owns: [rooms, prices, availability, copied]
+    talksTo: []
+  - key: elasticsearch
+    name: Elasticsearch
+    tone: green
+    kind: datastore
+    summary: An index of the hotel table, answering text and geo-distance queries together.
+    owns: [hotel index]
+    talksTo: []
+  - key: user-db
+    name: UserDB
+    tone: yellow
+    kind: datastore
+    summary: MySQL; one row per user.
+    owns: [user]
+    talksTo: []
+  - key: hotel-db
+    name: HotelDB
+    tone: yellow
+    kind: datastore
+    summary: Postgres; the hotel, rooms, price and availability tables.
+    owns: [hotel, rooms, price, availability]
+    talksTo: []
+  - key: booking-db
+    name: BookingDB
+    tone: yellow
+    kind: datastore
+    summary: Postgres or MySQL; one row per booking.
+    owns: [booking]
+    talksTo: []
+  - key: review-db
+    name: ReviewDB
+    tone: yellow
+    kind: datastore
+    summary: MySQL, or any store; one row per review.
+    owns: [review]
+    talksTo: []
+  - key: payment-db
+    name: PaymentDB
+    tone: yellow
+    kind: datastore
+    summary: MySQL; one row per payment attempt and its outcome.
+    owns: [payment]
+    talksTo: []
+  - key: blob-store
+    name: S3 blob storage
+    tone: yellow
+    kind: datastore
+    summary: Hotel, room and review images, referenced by URL from the databases.
+    owns: [images]
+    talksTo: []
+content:
+  # ────────────────────────────────────────────────────────────────── Problem statement
+  - __component: sd.section
+    key: problem-statement
+    title: Understanding the problem.
+    railLabel: Problem
+    intro: "The prompt is one line: design a hotel booking system like Airbnb, MakeMyTrip or Booking.com. Say what it is in one sentence before anything else, then run the interview in five steps."
+  - __component: sd.rich-text
+    key: problem-what
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "A hotel booking system is an online platform where a guest searches for hotels by location, date and availability, picks a hotel, sees its rooms and their prices for those dates, and books a room. Everyone has used one, which makes the requirements quick to agree and raises the bar: the interviewer expects you to go deep on how the data is stored, how search stays fast and how one room is never sold twice."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Say the five steps once: gather the functional and non-functional requirements, identify the core entities, design the API, draw the high-level design, then the low-level design, a deep dive into each service. Number each step on the board when you reach it, top to bottom. The interview runs 45 to 50 minutes, so spend little on auxiliary features like login and most on search and booking."
+  - __component: sd.quiz
+    key: problem-quiz
+    title: Quick check
+    questions:
+      - question: Why does a familiar problem like hotel booking raise the bar in an interview?
+        optionA: It does not; familiar problems are easier
+        optionB: The requirements take little time, so the interviewer expects depth on storage, search and double booking
+        optionC: Because there are more requirements to list
+        optionD: Because the API is harder
+        answer: B
+        explanation: Requirements everyone knows leave more time for the low-level design, and that is where you are judged.
+  # ────────────────────────────────────────────────────────────────── 1, 2. Requirements
+  - __component: sd.section
+    key: requirements
+    title: Requirements.
+    railLabel: Requirements
+    intro: "Functional on the left, five lines; non-functional on the right, two: the scale, and a CAP choice that differs between searching and booking."
+  - __component: sd.subsection
+    key: functional-sub
+    title: Functional requirements
+    railLabel: Functional
+  - __component: sd.checklist
+    key: functional
+    idPrefix: FR-
+    items:
+      - text: A user can create an account and log in.
+      - text: A user can search hotels by location and name, for a date.
+        note: "Real sites ask for at least two criteria: a place and dates, or a hotel's name."
+      - text: A user can see a hotel's details and book a room that is available on the chosen date.
+      - text: A user pays, and only a successful payment confirms the booking.
+      - text: A user can see their past bookings in their profile.
+  - __component: sd.subsection
+    key: non-functional-sub
+    title: Non-functional requirements
+    railLabel: Non-functional
+  - __component: sd.requirement-table
+    key: non-functional
+    rows:
+      - area: Scale
+        requirement: A global service with a large catalogue.
+        targets: [50M users, 1M hotels]
+        note: "These numbers rule out a single monolith and decide the data volumes later: 1M hotels with hundreds of rooms each."
+      - area: Availability
+        requirement: Searching and browsing hotels keep working when machines fail.
+        targets: [search is highly available]
+        note: A slightly stale search result costs little; a search that is down loses every booking.
+      - area: Consistency
+        requirement: Booking never sells one room twice.
+        targets: [no two users book the same room on the same date]
+        note: The one requirement the whole booking design is measured against.
+  - __component: sd.rich-text
+    key: cap-split
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "CAP says that when the network between a distributed system's machines splits, each operation must either answer anyway, possibly with stale data, or refuse until the copies agree. It is a choice made under a partition, not a rule that a system can never be both consistent and available. Here the choice differs by operation, and saying so is the point of this requirement: search favours availability, because a hotel shown as free a moment after its last room went is caught at booking time; booking favours consistency, because two guests holding one room for one night is the failure the business cannot have."
+  - __component: sd.quiz
+    key: requirements-quiz
+    title: Quick check
+    questions:
+      - question: How should the CAP requirement be written for a hotel booking system?
+        optionA: Highly available everywhere
+        optionB: Strongly consistent everywhere
+        optionC: Search favours availability; booking favours consistency, so no two users book the same room on the same date
+        optionD: CAP does not apply
+        answer: C
+        explanation: Different operations can make different choices. Search can tolerate staleness; booking cannot.
+      - question: What does CAP actually force you to choose between?
+        optionA: Consistency and availability, always, on every request
+        optionB: Answering with possibly stale data or refusing, while the network is partitioned
+        optionC: SQL and NoSQL
+        optionD: Latency and throughput
+        answer: B
+        explanation: Without a partition a system can be both; the choice is about what an operation does when copies cannot talk.
+  # ────────────────────────────────────────────────────────────────── 2. Entities
+  - __component: sd.section
+    key: entities
+    title: Core entities.
+    railLabel: Entities
+    intro: "Read the nouns off the functional requirements: four of them."
+  - __component: sd.table
+    key: entities-table
+    columns:
+      - { label: Entity, style: strong }
+      - { label: What it is, style: text }
+    rows:
+      - [User, The guest who searches and books; also who writes reviews.]
+      - [Hotel, "A property with a name, an address and a location; 1M of them."]
+      - [Room, "A bookable room of a hotel, with a type and capacity; its price and availability change by date."]
+      - [Booking, "A user's reservation of one or more rooms for a date range, confirmed by payment."]
+  - __component: sd.quiz
+    key: entities-quiz
+    title: Quick check
+    questions:
+      - question: Why is the room an entity of its own, apart from the hotel?
+        optionA: It is not needed
+        optionB: Guests book rooms, not hotels, and each room's price and availability vary by date
+        optionC: For the images
+        optionD: For the load balancer
+        answer: B
+        explanation: Availability, the heart of double booking, is per room per date.
+  # ────────────────────────────────────────────────────────────────── 3. API
+  - __component: sd.section
+    key: api
+    title: API.
+    railLabel: API
+    intro: "One endpoint per functional requirement, five in all. Register users in detail, name login, logout and update without designing them, and spend the time on search, details and booking."
+  - __component: sd.endpoint
+    key: register
+    method: POST
+    path: /v1/user/registry
+    summary: "Registers a user from their metadata: name, email, password, phone. Login, logout and update exist too; name them and move on."
+    requestBody:
+      name: user 1
+      email: user1@example.com
+      password: "********"
+      phone: "+1 555 0100"
+    responses:
+      - label: Created
+        status: "201"
+        body:
+          userId: u_81
+  - __component: sd.endpoint
+    key: search
+    method: GET
+    path: "/v1/hotels/search?q={name}&l={location}&d={date}"
+    summary: "Searches hotels by name (optional), location and date. Returns one page of hotel summaries, not just ids: a thumbnail, title, rating and price from, so the results page renders without another call."
+    responses:
+      - label: OK
+        status: "200"
+        body:
+          hotels:
+            - { hotelId: h_1201, title: Lakeside Inn, thumbnail: "https://img.example.com/h_1201.jpg", rating: 4.4 }
+          nextCursor: c_2
+  - __component: sd.endpoint
+    key: hotel-details
+    method: GET
+    path: "/v1/hotels/{hotelId}/{date}"
+    summary: "A hotel's details, amenities and reviews, and the rooms available on that date with that date's price. The date is in the path because availability and price change by date while the hotel's details do not."
+    responses:
+      - label: OK
+        status: "200"
+        body:
+          hotelId: h_1201
+          amenities: [wifi, pool]
+          rooms:
+            - { roomId: r_12, type: deluxe, price: 1200, currency: INR }
+  - __component: sd.endpoint
+    key: book
+    method: POST
+    path: /v1/booking
+    summary: "Books a room. The user comes from the auth token, not the body, so nobody books as someone else. Behind it is a two-step flow, hold and pay, so it returns a booking id only once payment succeeds."
+    requestHeaders: ["Authorization: Bearer <token>"]
+    requestBody:
+      hotelId: h_1201
+      roomId: r_12
+      date: "2027-01-14"
+    responses:
+      - label: Confirmed
+        status: "201"
+        body:
+          bookingId: b_5530
+      - label: Room taken
+        status: "409"
+        body:
+          error: room_unavailable
+  - __component: sd.endpoint
+    key: past-bookings
+    method: GET
+    path: "/v1/bookings/{userId}"
+    summary: Lists the user's past bookings.
+    responses:
+      - label: OK
+        status: "200"
+        body:
+          bookings:
+            - { bookingId: b_5530, hotelId: h_1201, startDate: "2027-01-14", endDate: "2027-01-16", status: CONFIRMED }
+  - __component: sd.rich-text
+    key: api-notes
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Two details are worth saying out loud. Search results are paginated: a city can match thousands of hotels, and sending them all makes the page slow to arrive and slow to render. And a real stay is a date range, check-in to check-out; the board writes one date for short, and the booking table later stores a start and an end date."
+  - __component: sd.quiz
+    key: api-quiz
+    title: Quick check
+    questions:
+      - question: Why does the hotel details endpoint take a date?
+        optionA: For caching
+        optionB: The hotel's details are fixed, but which rooms are free and what they cost change by date
+        optionC: To log the visit
+        optionD: It should not
+        answer: B
+        explanation: Price and availability are per room per date; the response depends on the date.
+      - question: Where should the booking request carry the user's identity?
+        optionA: In the body, as userId
+        optionB: In the Authorization header, as the token the gateway verifies
+        optionC: In the URL
+        optionD: It is not needed
+        answer: B
+        explanation: A user id in the body could be anyone's; the verified token says who is booking.
+  # ────────────────────────────────────────────────────────────────── 4. High-level design
+  - __component: sd.section
+    key: high-level-design
+    title: High-level design.
+    railLabel: High level
+    intro: "50 million users rule out one monolith, so draw microservices behind a load balancer and API gateway: one service per functional requirement, each with its own database. How each works is left for the low-level design."
+  - __component: sd.component-diagram
+    key: hld-diagram
+    title: The first design
+    direction: LR
+    nodes:
+      - { key: client, details: [many clients] }
+      - { key: gateway, details: [authentication and authorization, routing, rate limiting, round robin] }
+      - { key: user-service, details: [sign up, log in] }
+      - { key: search-service, details: [scans the hotel database] }
+      - { key: booking-service, details: [books, then pays] }
+      - { key: payment-gateway, details: [third party] }
+      - { key: booking-info-service, details: [past bookings] }
+      - { key: review-service, details: [reviews of a hotel] }
+      - { key: user-db }
+      - { key: hotel-db }
+      - { key: booking-db }
+      - { key: review-db }
+    edges:
+      - { from: client, to: gateway }
+      - { from: gateway, to: user-service }
+      - { from: gateway, to: search-service }
+      - { from: gateway, to: booking-service }
+      - { from: gateway, to: booking-info-service }
+      - { from: gateway, to: review-service }
+      - { from: user-service, to: user-db }
+      - { from: search-service, to: hotel-db }
+      - { from: booking-service, to: payment-gateway }
+      - { from: booking-service, to: booking-db }
+      - { from: booking-info-service, to: booking-db }
+      - { from: review-service, to: review-db }
+  - __component: sd.rich-text
+    key: hld-flows
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Every request reaches the load balancer and API gateway first. It authenticates and authorizes the caller, routes each endpoint to its service, rate-limits abusive clients and spreads traffic across each service's instances round robin. Behind it, the user service onboards users into the user database; the search service finds matching hotels in the hotel database; the booking service books a room and calls the payment gateway, saving the booking in the booking database; the booking info service reads past bookings from that database; and a review service keeps reviews in a database of their own, which is cleaner than mixing them into the hotel database."
+      - type: paragraph
+        children:
+          - type: text
+            text: "This meets every functional requirement and none of the hard ones yet: nothing says how a room's availability is stored, how search stays fast over a million hotels, or how two guests are stopped from booking the same room. That is the low-level design."
+  - __component: sd.quiz
+    key: hld-quiz
+    title: Quick check
+    questions:
+      - question: What does the API gateway in front of the services do?
+        optionA: Stores the bookings
+        optionB: Authenticates and authorizes, routes each endpoint to its service, rate-limits, and spreads load round robin
+        optionC: Runs the search queries
+        optionD: Takes payments
+        answer: B
+        explanation: One entry point for cross-cutting concerns, so each service does not repeat them.
+      - question: What does the high-level design not yet answer?
+        optionA: Which service handles booking
+        optionB: How availability is stored, how search is fast, and how double booking is prevented
+        optionC: Where users are stored
+        optionD: How requests reach the services
+        answer: B
+        explanation: It meets the functional requirements; the non-functional ones are the low-level design's job.
+  # ────────────────────────────────────────────────────────────────── 5. Low-level design: user service
+  - __component: sd.section
+    key: lld-user-service
+    title: "Low-level design: the user service."
+    railLabel: LLD, users
+    intro: "Copy the high-level design down the board and open the services one by one, starting with the simplest."
+  - __component: sd.rich-text
+    key: user-service-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "The user service saves a new user's details on sign-up. On a later login it checks the email and password and, if they match, issues a JWT, a signed token the client sends with every later call so the gateway can verify who it is without asking the user service again. Nothing fancy is needed here; the decision worth stating is the database."
+      - type: paragraph
+        children:
+          - type: text
+            text: "User data is relational and small, one row per user, so UserDB is MySQL, or Postgres. Store a password hash, never the password itself."
+  - __component: sd.db-schema
+    key: user-schema
+    stores:
+      - key: user-store
+        engine: MySQL
+        component: user-db
+        why: Small relational rows read by id or email.
+        tables:
+          - name: user
+            columns:
+              - { name: user_id, type: bigint, role: primary }
+              - { name: name, type: text }
+              - { name: email, type: text, note: unique }
+              - { name: password_hash, type: text }
+              - { name: phone, type: text }
+  - __component: sd.quiz
+    key: user-quiz
+    title: Quick check
+    questions:
+      - question: What does the user service hand the client after a successful login?
+        optionA: The password
+        optionB: A JWT the client sends with later calls, which the gateway can verify
+        optionC: A session row in Redis
+        optionD: Nothing
+        answer: B
+        explanation: A signed token lets the gateway check identity on every call without a trip to the user service.
+  # ────────────────────────────────────────────────────────────────── 5. Low-level design: hotel database
+  - __component: sd.section
+    key: lld-hotel-db
+    title: "Low-level design: the hotel database."
+    railLabel: LLD, hotel data
+    intro: "Before the search service can be fast, decide what the hotel database holds and how: hotels, rooms, prices by date, availability by date, and images."
+  - __component: sd.rich-text
+    key: hotel-db-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "A hotel has rooms, and each room has a price and an availability that change with the date. The data is related at every step, so HotelDB is Postgres, which keeps those relations and scales with replicas and partitioning. The hotel table holds the text a guest reads and the location search needs: id, name, the address as text, and the geolocation as latitude and longitude. The rooms table holds each room's type, deluxe or standard, and capacity. The price table holds a price and currency for a room over a date range, say 1,200 for January and 1,400 for the first half of February, so festival pricing is one new row."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Availability is the hard table, because search filters on it constantly. There are two ways to store it, and naming both with their trade-off is what the interviewer wants. Images do not go in Postgres at all: they go to blob storage such as S3, and the rows keep their URLs."
+  - __component: sd.db-schema
+    key: hotel-schema
+    stores:
+      - key: hotel-store
+        engine: Postgres
+        component: hotel-db
+        why: "Hotels, rooms, prices and availability are related rows queried together."
+        tables:
+          - name: hotel
+            columns:
+              - { name: hotel_id, type: bigint, role: primary }
+              - { name: name, type: text }
+              - { name: address, type: text }
+              - { name: geolocation, type: point, note: latitude and longitude }
+          - name: rooms
+            columns:
+              - { name: room_id, type: bigint, role: primary }
+              - { name: hotel_id, type: bigint }
+              - { name: room_type, type: text }
+              - { name: capacity, type: int }
+          - name: price
+            columns:
+              - { name: room_id, type: bigint }
+              - { name: price, type: numeric }
+              - { name: currency, type: text }
+              - { name: start_date, type: date }
+              - { name: end_date, type: date }
+          - name: availability
+            columns:
+              - { name: room_id, type: bigint }
+              - { name: date, type: date, note: one row per room per day }
+              - { name: status, type: text, note: "AVL, BOOKED, MAINTNC" }
+  - __component: sd.table
+    key: availability-options
+    title: Two ways to store availability
+    columns:
+      - { label: Design, style: strong }
+      - { label: Rows, style: text }
+      - { label: Trade-off, style: text }
+    rows:
+      - ["One row per room per day: room, date, status", "300 rooms x 365 days = 109,500 a hotel a year; about 110 billion for 1M hotels", "Simple to query (is every night in the stay free?) and to update (flip the nights booked), but a lot of rows."]
+      - ["One row per date range: room, start, end, status", A few rows per room, "Far less data, but a booking in the middle of a free range splits it into up to three rows, computed before the write."]
+  - __component: sd.quiz
+    key: hotel-db-quiz
+    title: Quick check
+    questions:
+      - question: Why store a room's price as rows with a start and end date?
+        optionA: To save space only
+        optionB: Prices change by season and festival, so each date range gets its own price without rewriting the room
+        optionC: Because Postgres requires it
+        optionD: For the images
+        answer: B
+        explanation: One row per price period handles January at 1,200 and early February at 1,400.
+      - question: A guest books two nights in the middle of a free range. What does the range design have to do?
+        optionA: Nothing
+        optionB: Split the range into a free part, a booked part and a free part, computed before writing
+        optionC: Delete the range
+        optionD: Add a row per day
+        answer: B
+        explanation: That pre-computation is the price of storing fewer rows.
+      - question: Where do hotel and room photos go?
+        optionA: In a Postgres column
+        optionB: In blob storage such as S3, with their URLs in the rows
+        optionC: In Elasticsearch
+        optionD: In Redis
+        answer: B
+        explanation: Databases hold the text; large binary files belong in blob storage.
+  # ────────────────────────────────────────────────────────────────── 5. Low-level design: search service
+  - __component: sd.section
+    key: lld-search
+    title: "Low-level design: the search service."
+    railLabel: LLD, search
+    intro: "Searching by name, location and date with joins across five or six tables would be slow. Put Elasticsearch in front, choose it over the other proximity search options, and decide how it is fed."
+  - __component: sd.rich-text
+    key: search-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "A guest searches either by a hotel's name, or by a location and dates. Name search is text search, Elasticsearch's strength. Location search is a proximity search: hotels within, say, 5 km of a point. There are four common ways to do it."
+  - __component: sd.table
+    key: proximity-options
+    title: Four ways to do proximity search
+    columns:
+      - { label: Option, style: strong }
+      - { label: How it works, style: text }
+      - { label: For this system, style: text }
+    rows:
+      - [Elasticsearch, "geo_distance and bounding-box queries on a geo_point field, indexed with BKD trees", "Does text and location in one query: chosen."]
+      - [Quadtree, "The map split into four quadrants, recursively, down to cells of 200 to 500 m; a search reads the cell and its eight neighbours", "An in-memory structure each server builds; 1M hotels take only tens of MB, but it has no text search."]
+      - [Postgres with PostGIS, "A geography column with a GiST index answers radius queries", "No new system, and Postgres has full-text search, but its relevance and fuzzy matching are weaker than Elasticsearch's."]
+      - [Geohash, "Latitude and longitude encoded as a string whose shared prefix means nearby, so a prefix index finds neighbours", "Works in any database with an index, but text search is still separate."]
+  - __component: sd.rich-text
+    key: search-choice
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Hotels do not move, so the location data is static and any of the four would index it once. The deciding need is that one query combines text and location, and Elasticsearch does both, so it is the simplest choice; do not reach for a quadtree because it sounds impressive."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Feeding it is the real problem. Elasticsearch works best on flat documents, and the hotel database is normalized. The first way is a change data capture (CDC) pipeline with a consumer that joins hotel, rooms, price and availability on every change and writes one flat document per hotel. It works, but the index fills with room, price and availability data that a name search never needs, and that data changes with every booking."
+      - type: paragraph
+        children:
+          - type: text
+            text: "The better way is a two-phase search. Elasticsearch holds only the hotel table: name and geolocation. Phase one asks it for the hotels matching the name or within the radius, a hundred out of a million. Phase two reads the rooms, prices and availability of those hundred hotels from a Redis cache, keyed by hotel, and the search service merges them in its own code: Redis looks values up by key and has no joins. It also adds the image URLs that point to S3."
+  - __component: sd.component-diagram
+    key: search-diagram
+    title: The two-phase search
+    direction: LR
+    nodes:
+      - { key: search-service, details: [merges the two phases] }
+      - { key: elasticsearch, details: [hotel table only, name and geolocation] }
+      - { key: room-cache, details: [rooms, prices, availability by hotel] }
+      - { key: hotel-db, details: [source of truth] }
+      - { key: blob-store, details: [hotel and room images] }
+    edges:
+      - { from: search-service, to: elasticsearch, label: "phase 1, matching hotel ids" }
+      - { from: search-service, to: room-cache, label: "phase 2, read by hotel id" }
+      - { from: search-service, to: blob-store, label: image URLs }
+      - { from: hotel-db, to: elasticsearch, label: hotel rows }
+      - { from: hotel-db, to: room-cache, label: rooms and prices }
+  - __component: sd.quiz
+    key: search-quiz
+    title: Quick check
+    questions:
+      - question: Why Elasticsearch over a quadtree, PostGIS or geohash here?
+        optionA: It is the only one that does proximity search
+        optionB: One query needs both text and location, and Elasticsearch does both well
+        optionC: Quadtrees do not fit in memory
+        optionD: Hotels move
+        answer: B
+        explanation: Each option can find nearby hotels; the text search in the same query decides it.
+      - question: In the two-phase search, what does Elasticsearch hold?
+        optionA: Every table, denormalized
+        optionB: Only the hotel table, name and geolocation; rooms, prices and availability come from Redis for the matching hotels
+        optionC: Only availability
+        optionD: Images
+        answer: B
+        explanation: A small index that changes rarely; the fast-changing data is read for a handful of hotels.
+      - question: How does the search service combine the Redis data with the hotel ids?
+        optionA: Redis runs an inner join
+        optionB: It reads each hotel's entries by key and merges them in its own code
+        optionC: Elasticsearch joins them
+        optionD: Postgres joins them
+        answer: B
+        explanation: Redis is a key-value store; the merge is application code.
+  # ────────────────────────────────────────────────────────────────── 5. Low-level design: review service
+  - __component: sd.section
+    key: lld-review
+    title: "Low-level design: the review service."
+    railLabel: LLD, reviews
+    intro: "A short one: where reviews and their photos live."
+  - __component: sd.rich-text
+    key: review-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Reviews are simple rows, so ReviewDB can be MySQL, Postgres or even Cassandra; MySQL is fine. Each review holds the hotel, the user who wrote it, a rating, the comment and links to any photos. The photos themselves go to S3, like the hotel images, and only their URLs are stored."
+  - __component: sd.db-schema
+    key: review-schema
+    stores:
+      - key: review-store
+        engine: MySQL
+        component: review-db
+        why: Simple rows read by hotel.
+        tables:
+          - name: review
+            columns:
+              - { name: review_id, type: bigint, role: primary }
+              - { name: hotel_id, type: bigint }
+              - { name: user_id, type: bigint }
+              - { name: rating, type: int }
+              - { name: comment, type: text }
+              - { name: image_urls, type: text, note: photos in S3 }
+  - __component: sd.quiz
+    key: review-quiz
+    title: Quick check
+    questions:
+      - question: Where do the photos a reviewer uploads go?
+        optionA: Into ReviewDB as binary columns
+        optionB: Into S3, with only their URLs in ReviewDB
+        optionC: Into Elasticsearch
+        optionD: Into Kafka
+        answer: B
+        explanation: Same rule as hotel images; databases keep the text and the links.
+  # ────────────────────────────────────────────────────────────────── 5. Low-level design: booking service
+  - __component: sd.section
+    key: lld-booking
+    title: "Low-level design: the booking service."
+    railLabel: LLD, booking
+    intro: "Booking is a two-step flow, pay then confirm, and its outcome must reach several places. Open the booking service: payment, then events."
+  - __component: sd.rich-text
+    key: booking-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "When a guest confirms, the booking service calls a payment service. The payment service collects the card details and the one-time password, calls a third-party payment gateway that moves the money with the bank, and records the attempt and its outcome in PaymentDB. PaymentDB is MySQL, chosen for its ACID transactions: each payment's row is written exactly once with its status. It holds the user, the booking id, the amount, the currency and the date."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Then three things must happen: the booking saved, the room's availability marked booked, and the guest notified. If the booking service updated the booking database and the hotel database itself, one write could succeed and the other fail, leaving them disagreeing. That is a dual write; a two-phase commit across services would fix it at a high cost. Instead the booking service publishes one booking event to Kafka, and each consumer does its own part: a notification service tells the guest, a consumer service writes the booking database, and an availability service marks the room booked. The availability service is the only writer of the availability table, so no two services race on it."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Kafka keeps the event until each consumer has processed it, so a consumer that fails retries and the databases converge: eventual consistency, not a transaction. Two details make it hold. The event must not be lost between the payment and the publish, so write it to an outbox table in the same transaction as the booking's state and relay it to Kafka. And a consumer may see an event twice, so each write is idempotent, keyed by the booking id."
+  - __component: sd.db-schema
+    key: payment-schema
+    stores:
+      - key: payment-store
+        engine: MySQL
+        component: payment-db
+        why: ACID transactions for money.
+        tables:
+          - name: payment
+            columns:
+              - { name: payment_id, type: bigint, role: primary }
+              - { name: user_id, type: bigint }
+              - { name: booking_id, type: bigint }
+              - { name: amount, type: numeric }
+              - { name: currency, type: text }
+              - { name: paid_at, type: timestamp }
+              - { name: status, type: text }
+  - __component: sd.quiz
+    key: booking-quiz
+    title: Quick check
+    questions:
+      - question: Why publish a booking event to Kafka instead of updating the booking and hotel databases directly?
+        optionA: Kafka is faster than a database
+        optionB: Two direct writes can half-fail; one event that each consumer applies, with retries, lets the databases converge
+        optionC: Kafka is a database
+        optionD: To avoid payment
+        answer: B
+        explanation: It turns a fragile dual write into one durable event and independent, retried consumers.
+      - question: Which service writes the availability table?
+        optionA: Any service that needs to
+        optionB: Only the availability service
+        optionC: The booking service
+        optionD: The search service
+        answer: B
+        explanation: A single writer avoids two services racing on the same rows.
+      - question: A consumer crashes after writing a booking but before committing its Kafka offset. What protects you?
+        optionA: Nothing
+        optionB: The write is idempotent, keyed by booking id, so processing the event again changes nothing
+        optionC: Kafka deletes the event
+        optionD: The gateway retries
+        answer: B
+        explanation: At-least-once delivery means duplicates; idempotent consumers make them harmless.
+  # ────────────────────────────────────────────────────────────────── 5. Low-level design: concurrency
+  - __component: sd.section
+    key: lld-concurrency
+    title: "Low-level design: no two users book the same room."
+    railLabel: LLD, concurrency
+    intro: "The flow so far sends a guest to payment without checking the room is still free. Fix it in two steps, a check and then a lock, then finish with the booking info service."
+  - __component: sd.rich-text
+    key: concurrency-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Two guests both saw the room free in their search results. User 1 books at time zero and pays; user 2 books five seconds later, and nothing stops the booking service sending user 2 to payment too. So before payment, the booking service asks the availability service whether the room is still free for those dates, and refuses with an error if it is not. That handles bookings seconds apart."
+      - type: paragraph
+        children:
+          - type: text
+            text: "It does not handle two requests at the same instant: both checks can pass before either booking is written. So the booking service holds the room while the guest pays. It takes a Redis lock per room and night, with SET key NX and a TTL of 5 minutes, about the time it takes to pay. NX makes taking the lock atomic: of two requests, exactly one gets it, and the other is told the room is taken. If the guest does not finish paying, the lock expires and the room is free again. A stay of several nights locks every night."
+      - type: paragraph
+        children:
+          - type: text
+            text: "A lock with a TTL can expire while a slow payment is still running, so it is not the last line. The availability service's write is conditional, marking a night booked only where it is still available, or rests on a unique key on room and date, so even then the second booking fails instead of overwriting the first."
+  - __component: sd.rich-text
+    key: booking-info-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Last, the booking info service just reads the booking database for a user's bookings. BookingDB is Postgres or MySQL, with the booking id as the unique key, the hotel, the user, the list of rooms (a booking can hold several), the start and end dates, the amount, currency and status. Then read the requirements back: search stays available through Elasticsearch and the cache; booking stays consistent through the check, the lock and the conditional write; every service scales out behind the gateway for 50 million users."
+  - __component: sd.db-schema
+    key: booking-schema
+    stores:
+      - key: booking-store
+        engine: Postgres or MySQL
+        component: booking-db
+        why: One row per booking, read by user.
+        tables:
+          - name: booking
+            columns:
+              - { name: booking_id, type: bigint, role: primary }
+              - { name: hotel_id, type: bigint }
+              - { name: user_id, type: bigint }
+              - { name: room_ids, type: "bigint[]" }
+              - { name: start_date, type: date }
+              - { name: end_date, type: date }
+              - { name: amount, type: numeric }
+              - { name: currency, type: text }
+              - { name: status, type: text }
+  - __component: sd.component-diagram
+    key: final-diagram
+    title: The final booking path
+    direction: LR
+    nodes:
+      - { key: client }
+      - { key: gateway }
+      - { key: booking-service, details: [check, lock, pay, publish] }
+      - { key: room-lock, details: [SET NX, TTL 5 minutes] }
+      - { key: availability-service, details: [only writer of availability] }
+      - { key: payment-service }
+      - { key: payment-gateway }
+      - { key: payment-db }
+      - { key: kafka }
+      - { key: notification-service }
+      - { key: booking-consumer }
+      - { key: booking-db }
+      - { key: hotel-db }
+      - { key: booking-info-service }
+    edges:
+      - { from: client, to: gateway }
+      - { from: gateway, to: booking-service }
+      - { from: gateway, to: booking-info-service }
+      - { from: booking-service, to: availability-service, label: still free? }
+      - { from: booking-service, to: room-lock, label: hold the room }
+      - { from: booking-service, to: payment-service, label: pay }
+      - { from: payment-service, to: payment-gateway }
+      - { from: payment-service, to: payment-db }
+      - { from: booking-service, to: kafka, label: booking event }
+      - { from: kafka, to: notification-service }
+      - { from: kafka, to: booking-consumer }
+      - { from: kafka, to: availability-service }
+      - { from: booking-consumer, to: booking-db }
+      - { from: availability-service, to: hotel-db, label: mark booked if free }
+      - { from: booking-info-service, to: booking-db }
+  - __component: sd.quiz
+    key: concurrency-quiz
+    title: Quick check
+    questions:
+      - question: Why is checking availability before payment not enough on its own?
+        optionA: The check is slow
+        optionB: Two requests at the same instant can both pass the check before either booking is written
+        optionC: The availability service is down
+        optionD: It is enough
+        answer: B
+        explanation: Check then act races; something atomic has to pick one winner.
+      - question: Why does the Redis lock have a TTL of about 5 minutes?
+        optionA: Redis requires it
+        optionB: If the guest abandons payment, the hold expires and the room is free again
+        optionC: To make search faster
+        optionD: To delete old bookings
+        answer: B
+        explanation: The TTL is the payment window; without it an abandoned checkout would hold the room forever.
+      - question: The lock expired during a slow payment and a second guest took it. What still stops a double booking?
+        optionA: Nothing
+        optionB: The availability write is conditional on the night still being available, or a unique key on room and date
+        optionC: Kafka
+        optionD: The search service
+        answer: B
+        explanation: The database's own guard is the last line; the lock only keeps the common case smooth.

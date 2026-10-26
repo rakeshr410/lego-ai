@@ -1,0 +1,27 @@
+slug: backend-top-k-leaderboard
+title: "The top K leaderboard interview"
+summary: "A backend design interview for a leaderboard and trending list, run step by step on one whiteboard: requirements with numbers, entities, the API, a high-level design, then Kafka for a million writes a second and three ways to serve the top K, each fixing the last one's flaw."
+outline: "The leaderboard lessons follow the five-step order and the drawings of InterviewWithBunny's System Design 14, Design Top K Leaderboard (youtube.com/watch?v=KOvDWEGVXec), section by section; no text is taken from it, and its factual slips are corrected in the article."
+lessons:
+  - slug: top-k-leaderboard
+    title: "The leaderboard interview: the problem, requirements, entities and API"
+    summary: "The problem written at the top of the board, functional and non-functional requirements side by side, the three entities, and the three endpoints."
+    parts:
+      - { title: "The problem, then two lists", minutes: 10, packs: [backend/top-k-leaderboard/end-to-end/problem-statement, backend/top-k-leaderboard/end-to-end/requirements] }
+      - { title: "Entities, then the API", minutes: 7, packs: [backend/top-k-leaderboard/end-to-end/entities, backend/top-k-leaderboard/end-to-end/api] }
+  - slug: top-k-leaderboard-design
+    title: "The leaderboard interview: high-level design, then a sorted set"
+    summary: "Gateway, score service, ranking service and score DB; then the deep dive puts Kafka in front of the writes and a Redis sorted set behind the reads, with its keys, flaws and fixes."
+    parts:
+      - { title: "Gateway, two services, one database", minutes: 6, packs: [backend/top-k-leaderboard/end-to-end/high-level-design] }
+      - { title: "Kafka and a Redis sorted set", minutes: 16, packs: [backend/top-k-leaderboard/end-to-end/lld-redis-sorted-set] }
+  - slug: top-k-leaderboard-precomputed
+    title: "The leaderboard interview: precomputed rankings"
+    summary: "Cassandra for the scores, Flink precomputing into a time-series aggregated DB, a cache in front, and why the rankings go stale."
+    parts:
+      - { title: "Precompute the rankings", minutes: 13, packs: [backend/top-k-leaderboard/end-to-end/lld-precomputed] }
+  - slug: top-k-leaderboard-hybrid
+    title: "The leaderboard interview: the hybrid, and finishing"
+    summary: "Both paths from Kafka: Redis time-bucket keys for recent windows, the aggregated DB for the past and as backup; then WebSocket updates, the probabilistic variant, and the requirements read back."
+    parts:
+      - { title: "The hybrid, then the last follow-ups", minutes: 16, packs: [backend/top-k-leaderboard/end-to-end/lld-hybrid] }

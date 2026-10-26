@@ -1,0 +1,114 @@
+# Hotel booking interview, low-level design, concurrency control: as in the video, the booking service first checks the room availability service before payment (user 1 at t0, user 2 at t0 plus 5 seconds), then holds the room with a Redis lock, TTL 5 minutes, drawn beside the booking service; last the booking info service reading BookingDB and the booking table's columns. The lock is taught as an atomic SET NX, and a conditional write behind it, which the video leaves out.
+id: backend/hotel-booking/end-to-end/lld-concurrency
+title: "Low-level design: no two users book one room"
+source:
+  hash: "82873d9c21f0"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/hotel-booking/end-to-end/lld-booking
+  assumes:
+    - "The booking service takes payment through the payment service and publishes a booking event to Kafka."
+    - "The availability service is the only writer of the availability table."
+    - "Non-functional: no two users book the same room on the same date."
+  carries:
+    - "Before payment the booking service asks the availability service whether the room is still free."
+    - "A Redis lock per room and night, SET NX with a 5-minute TTL, picks one winner among simultaneous requests and frees the room if payment is abandoned."
+    - "A conditional availability write, or a unique key on room and date, is the last guard if a lock expires."
+    - "The booking info service reads BookingDB: bookingId, hotelId, userId, roomIds, dates, amount, currency, status."
+  terms:
+    - term: SET NX
+      means: "Redis's set-if-not-exists: of two clients setting one key, exactly one succeeds."
+    - term: TTL
+      means: Time to live; the key is deleted when it runs out.
+board:
+  keep: [title, nfr, nfr-scale, nfr-available, nfr-consistent, lld-booking, bk-two-step, bk-gateway, bk-booking, bk-payment, bk-pgw, bk-payment-db, bk-pay-schema-1, bk-pay-schema-2, bk-kafka, bk-dual-write, bk-notify, bk-consumer, bk-booking-db, bk-avail, bk-hotel-db, bk-outbox, bk-gw-booking, bk-booking-pay, bk-pay-pgw, bk-pay-db, bk-booking-kafka, bk-kafka-notify, bk-kafka-consumer, bk-consumer-db, bk-kafka-avail, bk-avail-db]
+  elements:
+    - { id: cc-region, kind: region, label: Concurrency control, at: [4, 59], size: [30, 9], dashed: true }
+    - { id: cc-race, kind: note, label: "user 1 books at t0, user 2 at t0 plus 5 seconds", at: [6, 62], in: cc-region }
+    - { id: cc-race-2, kind: note, label: both saw the room free in search, at: [6, 63], in: cc-region }
+    - { id: cc-lock, kind: oval, label: "Redis lock, TTL 5 minutes", at: [5, 42], size: [13, 4], tone: amber, in: lld-booking }
+    - { id: cc-lock-note, kind: note, label: "SET NX, one winner", at: [5, 47], in: lld-booking }
+    - { id: cc-conditional, kind: note, label: "mark booked only where still free, the last guard", at: [6, 65], in: cc-region }
+    - { id: cc-info, kind: box, label: Booking info service, at: [60, 53], size: [13, 3], tone: blue, in: lld-booking }
+    - { id: cc-schema-1, kind: note, label: "booking: bookingId, hotelId, userId,", at: [38, 54], in: lld-booking }
+    - { id: cc-schema-2, kind: note, label: "roomIds, startDate, endDate, amount, status", at: [38, 55], in: lld-booking }
+  arrows:
+    - { id: cc-check, from: bk-booking, to: bk-avail, label: "still free?" }
+    - { id: cc-hold, from: bk-booking, to: cc-lock, label: hold }
+    - { id: cc-info-read, from: cc-info, to: bk-booking-db }
+beats:
+  - point: "The flow so far sends a guest to payment without checking the room: user 1 at t0 and user 2 at t0 plus 5 seconds both saw it free, and both would pay."
+    kind: failure
+    weight: core
+    teach:
+      - "The last requirement: no two users book the same room on the same date. Look at the flow: the booking service sends the guest to payment without checking anything."
+      - "User 1 books at time zero and pays. User 2, five seconds later, saw the same free room in search, and nothing stops them paying too."
+    draw: [cc-region, cc-race, cc-race-2]
+    check: Where in the current flow can a double booking happen?
+    answer: The booking service sends a guest to payment without checking the room is still free, so a second guest who saw it free can pay too.
+  - point: "So before payment the booking service asks the availability service whether the room is still free for those dates, and refuses if it is not."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Fix one: before sending anyone to payment, the booking service asks the availability service, is this room still free for these dates?"
+      - "For user 2, five seconds later, the answer is no, and they get an error at once. That handles bookings seconds apart."
+    draw: [cc-check]
+    check: What does the booking service do now before payment?
+    answer: It asks the availability service whether the room is still free and refuses if not.
+  - point: "Two requests at the same instant both pass the check, so the booking service holds the room with a Redis lock per room and night, taken atomically with SET NX: exactly one request wins."
+    kind: mechanism
+    weight: core
+    teach:
+      - "But two requests at the same instant can both pass that check before either booking is written. Check then act races."
+      - "Fix two: hold the room. The booking service takes a Redis lock on that room and night with SET if not exists. Of two requests, exactly one gets it; the other is told the room is taken. A stay of several nights locks every night."
+    draw: [cc-lock, cc-hold, cc-lock-note]
+    check: Why must taking the lock be a single atomic SET NX rather than a read, then a write?
+    answer: A read then a write lets two requests both see it free; SET NX lets exactly one succeed.
+    misconceptions:
+      - "Checking availability first is enough -> two simultaneous requests both pass the check; only an atomic step picks one winner."
+  - point: "The lock has a TTL of about 5 minutes, the time to pay; if the guest abandons payment the lock expires and the room is free again."
+    kind: rule
+    weight: core
+    teach:
+      - "Give the lock a TTL of about five minutes, how long paying takes. If the guest closes the tab, the key expires and the room is bookable again."
+      - "This is the same hold-while-you-pay idea as a ticket booking system."
+    check: What would happen without the TTL?
+    answer: An abandoned checkout would hold the room forever.
+  - point: "A lock can expire during a slow payment, so the availability service's write is conditional, booking a night only where it is still free, or rests on a unique key on room and date: the database is the last guard."
+    kind: decision
+    weight: core
+    teach:
+      - "One more layer. A lock with a TTL can run out while a slow payment is still going, and then a second guest can take it."
+      - "So the availability service marks a night booked only where it is still free, a conditional update, or the table has a unique key on room and date. The second booking then fails instead of overwriting the first."
+    draw: [cc-conditional]
+    check: The lock expired during a slow payment and a second guest took it. What still stops the double booking?
+    answer: The availability write is conditional on the night still being free, or a unique key on room and date rejects the second one.
+  - point: "The booking info service reads BookingDB, Postgres or MySQL: booking id as the unique key, hotel, user, a list of rooms, start and end dates, amount, currency and status."
+    kind: component
+    weight: supporting
+    teach:
+      - "Last, the booking info service: it reads the booking database for a user's past bookings."
+      - "The booking table: booking id as the unique key, hotel id, user id, a list of room ids since one booking can hold several rooms, start and end dates, amount, currency and status."
+    draw: [cc-info, cc-info-read, cc-schema-1, cc-schema-2]
+    check: Why is the rooms column a list?
+    answer: One booking can reserve more than one room.
+  - point: "Read the requirements back: search stays available through Elasticsearch and the cache, booking stays consistent through the check, the lock and the conditional write, and every service scales out behind the gateway."
+    kind: rule
+    weight: supporting
+    teach:
+      - "Close by reading the right-hand list against the board. Fifty million users: every service scales out behind the gateway. Search available: Elasticsearch and the cache. Booking consistent: the check, the lock, and the conditional write."
+    check: Which parts of the design make booking consistent?
+    answer: The availability check before payment, the atomic Redis lock with a TTL, and the conditional write in the availability service.
+asks:
+  - ids: [cc-lock]
+    beats: [3]
+    question: "Two guests press book at the very same instant and both pass the check. How would you make sure only one of them goes on to pay?"
+    hints:
+      - Something both requests try to take, that only one can get.
+      - In a fast shared store, with an expiry.
+task:
+  prompt: "Draw the final booking path: the booking service checking the availability service, holding the room with a Redis lock with a 5-minute TTL, paying through the payment service and gateway, publishing to Kafka, and the notification, consumer and availability services writing their databases."
+  expects: [2, 3, 4]

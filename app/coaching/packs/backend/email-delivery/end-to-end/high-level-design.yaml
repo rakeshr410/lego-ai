@@ -1,0 +1,103 @@
+# Email delivery interview, high-level design: "4. High Level Designing" under the API, as the video draws it: clients on the left, a tall load balancer and API gateway, a column of four services (user, compose, mail send, search), their stores on the right, and SMTP out to the outside mail servers.
+id: backend/email-delivery/end-to-end/high-level-design
+title: Four services
+source:
+  hash: "846fc85046be"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/email-delivery/end-to-end/api
+  assumes:
+    - "Functional: accounts, compose and send, folders, search, attachments, threads."
+    - "Scale of 1.8 billion plus users; available for mail, consistent at sign-up; durable."
+  carries:
+    - "Clients reach a load balancer and API gateway that authenticates, rate limits and routes by path."
+    - "Four services: user service with a user DB, compose service with a draft DB, mail send service writing to the mailbox DB, search service reading it."
+    - "Mail to our own domain stays in the mailbox DB; mail to another domain is handed to that provider over SMTP."
+  terms:
+    - term: API gateway
+      means: "The front door: authentication, authorization, rate limiting and routing to the right service."
+    - term: SMTP
+      means: "Simple Mail Transfer Protocol, the rules mail servers of different providers use to hand each other email."
+board:
+  keep: [title, prompt-desc, fr, fr-account, fr-send, fr-folders, fr-search, fr-attach, fr-threads, nfr, nfr-scale, nfr-available, nfr-signup, nfr-durable, entities, ent-user, ent-email, ent-thread, ent-meta, api, api-register, api-send, api-send-1, api-send-2, api-get, api-search, api-search-1, api-upload, api-upload-1]
+  elements:
+    - { id: hld, kind: region, label: 4. High-level design, at: [6, 43], size: [70, 23] }
+    - { id: hld-clients, kind: box, label: "clients, web, iOS, Android", at: [8, 53], size: [10, 4] }
+    - { id: hld-lb, kind: box, label: Load balancer and API gateway, at: [21, 46], size: [9, 18] }
+    - { id: hld-user, kind: box, label: User service, at: [35, 46], size: [12, 3] }
+    - { id: hld-compose, kind: box, label: Compose service, at: [35, 51], size: [12, 3] }
+    - { id: hld-send, kind: box, label: Mail send service, at: [35, 56], size: [12, 3] }
+    - { id: hld-search, kind: box, label: Search service, at: [35, 61], size: [12, 3] }
+    - { id: hld-user-db, kind: oval, label: User DB, at: [54, 46], size: [11, 3], tone: amber }
+    - { id: hld-draft-db, kind: oval, label: Draft DB, at: [54, 51], size: [11, 3], tone: amber }
+    - { id: hld-smtp, kind: box, label: SMTP, at: [54, 56], size: [8, 3] }
+    - { id: hld-mailbox-db, kind: oval, label: Mailbox DB, at: [54, 61], size: [11, 3], tone: amber }
+    - { id: hld-outside, kind: box, label: Outside mail servers, at: [66, 56], size: [10, 3], tone: grey }
+  arrows:
+    - { id: hld-clients-lb, from: hld-clients, to: hld-lb }
+    - { id: hld-lb-user, from: hld-lb, to: hld-user }
+    - { id: hld-lb-compose, from: hld-lb, to: hld-compose }
+    - { id: hld-lb-send, from: hld-lb, to: hld-send }
+    - { id: hld-lb-search, from: hld-lb, to: hld-search }
+    - { id: hld-user-db-arrow, from: hld-user, to: hld-user-db }
+    - { id: hld-compose-db, from: hld-compose, to: hld-draft-db }
+    - { id: hld-send-smtp, from: hld-send, to: hld-smtp }
+    - { id: hld-send-mailbox, from: hld-send, to: hld-mailbox-db }
+    - { id: hld-smtp-outside, from: hld-smtp, to: hld-outside }
+    - { id: hld-search-mailbox, from: hld-search, to: hld-mailbox-db }
+beats:
+  - point: "Clients on the web, iOS and Android reach a load balancer and API gateway, because thousands of requests a second need many copies of each server; the gateway authenticates, rate limits and routes."
+    kind: component
+    weight: core
+    teach:
+      - "Step four, the high-level design. On the left, the clients: the web app, iOS, Android."
+      - "At over a billion users there are thousands of requests a second, more than one server can take, so every service runs many copies. In front of them, a load balancer and API gateway: it authenticates and authorizes, rate limits, and routes each request by its path."
+    draw: [hld, hld-clients, hld-lb, hld-clients-lb]
+    check: What does the API gateway do besides spreading load?
+    answer: Authentication and authorization, rate limiting, and routing each request to the right service by its path.
+  - point: "A user service onboards users into a user DB, and a compose service saves the email being written as a draft in a draft DB."
+    kind: component
+    weight: core
+    teach:
+      - "One service per requirement. Onboarding: a user service, storing accounts in a user DB. Keep it simple for now; making email IDs unique is the deep dive's job."
+      - "Composing: a compose service. Clicking compose opens a window, and whatever you type is saved as a draft in a draft DB, so you can send it later. It does not send anything."
+    draw: [hld-user, hld-lb-user, hld-user-db, hld-user-db-arrow, hld-compose, hld-lb-compose, hld-draft-db, hld-compose-db]
+    check: What is the difference between the compose service and sending?
+    answer: Compose only saves the email as a draft while it is written; sending delivers it to the recipients.
+  - point: "The mail send service is the heart: mail to our own domain is stored in the mailbox DB and never leaves the network; mail to another domain goes out over SMTP to that provider's server."
+    kind: flow
+    weight: core
+    teach:
+      - "The mail send service delivers. If a Gmail user mails a Gmail user, nothing leaves our network: the email is saved in the mailbox DB, where the recipient's mail lives."
+      - "If the recipient is at outlook.com or yahoo.com, that is another provider's network. We hand the email to their mail server over SMTP, the Simple Mail Transfer Protocol, out to the internet."
+    draw: [hld-send, hld-lb-send, hld-mailbox-db, hld-send-mailbox, hld-smtp, hld-send-smtp, hld-outside, hld-smtp-outside]
+    check: A Gmail user mails an Outlook user. What does the mail send service do differently from Gmail to Gmail?
+    answer: It cannot just store it in our mailbox DB; it hands the email to Outlook's mail server over SMTP.
+  - point: "A search service answers keyword searches from the mailbox DB, where all the mail lives; every box here hides real work for the deep dive."
+    kind: component
+    weight: supporting
+    teach:
+      - "Last requirement, search: a search service that queries the mailbox DB, since every email is stored there."
+      - "Say it out loud: this is not even the start. Unique sign-ups, how an email is sent without being lost, and how SMTP works are the deep dive."
+    draw: [hld-search, hld-lb-search, hld-search-mailbox]
+    check: Which store does the search service read in this first design?
+    answer: The mailbox DB, where all the mail is stored.
+asks:
+  - ids: [hld-lb]
+    beats: [1]
+    question: "Thousands of requests a second arrive from the clients. What sits between them and our services?"
+    hints:
+      - One server cannot take it all, so there are many copies.
+      - Something spreads the traffic and checks who is calling.
+  - ids: [hld-user, hld-compose, hld-send, hld-search]
+    beats: [2, 3, 4]
+    question: "Now the services. Going through the functional requirements, what services would you put behind the gateway?"
+    hints:
+      - One for signing up, one for writing an email.
+      - And one that actually delivers it, and one that finds old mail.
+task:
+  prompt: "Draw the high-level design: clients, a load balancer and API gateway, the user, compose, mail send and search services with their stores, and SMTP out to other providers' mail servers."
+  expects: [1, 2, 3, 4]

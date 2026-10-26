@@ -145,7 +145,7 @@ function articles(): number {
   const own = readOwnArticles(articlesDir, catalog.systems, new Set(catalog.topics.map((t) => `${t.system}/${t.slug}`)));
   for (const list of own.problems.values()) for (const line of list) console.error(line);
   for (const t of own.topics) {
-    const groups = catalog.systems.find((x) => x.slug === t.system)?.groups;
+    const groups = t.backend ? undefined : catalog.systems.find((x) => x.slug === t.system)?.groups;
     const warnings = lintTopic(t.data, { groups }).filter((i) => i.severity !== 'error');
     if (warnings.length) console.warn(formatLint(warnings.map((i) => ({ ...i, file: t.file }))));
   }

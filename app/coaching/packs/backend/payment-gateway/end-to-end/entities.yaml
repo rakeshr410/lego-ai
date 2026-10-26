@@ -1,0 +1,59 @@
+# Payment gateway interview, core entities: "2. Core entity" under the functional list, six lines, as in the video.
+id: backend/payment-gateway/end-to-end/entities
+title: Six entities
+source:
+  hash: "3b2b4cd25b17"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/payment-gateway/end-to-end/requirements
+  assumes:
+    - "Functional: payment intent, temporary session page, PCI DSS handling, status tracking."
+  carries:
+    - "The core entities are the merchant (client), the transaction, the payment method, the customer (user), the webhook event and the payment session."
+  terms:
+    - term: webhook
+      means: "A server-to-server message from the gateway to an endpoint the merchant registered, carrying a payment's result."
+board:
+  keep: [title, prompt-desc, fr, fr-intent, fr-session, fr-pci, fr-status, fr-oos, nfr, nfr-scale, nfr-cap, nfr-latency, nfr-security]
+  elements:
+    - { id: entities, kind: region, label: 2. Core entities, at: [4, 26], size: [26, 16], dashed: true }
+    - { id: ent-merchant, kind: note, label: "merchant, the client", at: [5, 28], in: entities }
+    - { id: ent-txn, kind: note, label: transaction, at: [5, 30], in: entities }
+    - { id: ent-method, kind: note, label: payment method, at: [5, 32], in: entities }
+    - { id: ent-customer, kind: note, label: "customer, the user", at: [5, 34], in: entities }
+    - { id: ent-webhook, kind: note, label: webhook event, at: [5, 36], in: entities }
+    - { id: ent-session, kind: note, label: payment session, at: [5, 38], in: entities }
+  arrows: []
+  lists:
+    - { id: entity-list, in: entities, at: [5, 28], step: 2, slots: 7, width: 22, items: [ent-merchant, ent-txn, ent-method, ent-customer, ent-webhook, ent-session] }
+beats:
+  - point: "Four entities come straight from the requirements: the merchant, our client; the transaction, the payment itself; the payment method, a Visa or a Mastercard; and the customer, the merchant's user who enters the card."
+    kind: component
+    weight: core
+    teach:
+      - "Step two, the core entities, read off the requirements. The merchant, or client: the shop that integrated us, an Amazon or a Walmart."
+      - "The transaction, the payment going through us. The payment method, because the buyer picks Visa or Mastercard. And the customer, the merchant's user, who types the card."
+    draw: [entities, ent-merchant, ent-txn, ent-method, ent-customer]
+    check: Who is our client here, and who is the user?
+    answer: "Our client is the merchant that integrated the gateway; the user is the merchant's customer, who pays."
+  - point: "Two more: the webhook event, a server-to-server message that tells the merchant a payment's result, and the payment session, which every payment happens inside and fails without."
+    kind: component
+    weight: core
+    teach:
+      - "The webhook event: how the merchant learns the result. Keep it apart from the success page; that page is the browser redirected back to the shop. A webhook is our server posting to the merchant's server, so it arrives even if the buyer closes the tab."
+      - "And the payment session. Everything in a payment hangs on it; if it expires or does not match, the payment fails. More entities will turn up in the deep dive."
+    draw: [ent-webhook, ent-session]
+    check: How is a webhook different from the success page the buyer sees?
+    answer: "The success page is a browser redirect back to the merchant; a webhook is a server-to-server message from the gateway to the merchant's endpoint."
+    misconceptions:
+      - "The webhook is the success page loading after payment -> that is a browser redirect; the webhook is a server-to-server call to the merchant."
+asks:
+  - list: entity-list
+    beats: [1, 2]
+    question: "What are the core entities here, the things this gateway keeps track of? Read them off the requirements."
+    hints:
+      - Who calls us, who pays, and with what?
+      - What carries the payment from the card page, and how does the merchant hear the result?

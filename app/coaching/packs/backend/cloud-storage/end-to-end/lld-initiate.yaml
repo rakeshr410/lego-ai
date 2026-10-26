@@ -1,0 +1,89 @@
+# Cloud storage interview, deep dive, "Step 1: Initiate Upload (by File Uploader Svc)": the uploader added behind the gateway with its quota check against the users table, and the step written beside the drawing, the init request and response as JSON, then scenario 2, a resume after a dropped connection, as in the video.
+id: backend/cloud-storage/end-to-end/lld-initiate
+title: "Step 1: initiate the upload"
+source:
+  hash: "c50bd830a8c8"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/cloud-storage/end-to-end/lld-client
+  assumes:
+    - "The app has a chunker, an upload manager and a local metadata index."
+    - "The user table holds each user's storage used."
+  carries:
+    - "Init sends fileName, fileSize and parentFolderId; the uploader checks the quota in the user DB."
+    - "The answer: fileId, uploadId, a fixed chunkSize of 5 MB, and existingChunks, empty on a fresh upload."
+    - "A resume sends resumeUploadId and gets back the chunks already stored, so only the rest are sent."
+  terms:
+    - term: "upload id"
+      means: "The id that ties every call of one upload together."
+    - term: "quota"
+      means: "The storage a user may use, 15 GB on the free plan."
+board:
+  keep: [title, desc, fr, fr-account, fr-upload, fr-sync, fr-share, fr-folders, fr-quota, fr-out, nfr, nfr-scale, nfr-cap, nfr-large, nfr-latency, nfr-durable, hld, hld-phone, hld-laptop, hld-tablet, hld-clients, hld-gateway, hld-user-svc, hld-uploader, hld-meta-svc, hld-user-db, hld-blob, hld-meta-db, hld-phone-gw, hld-laptop-gw, hld-tablet-gw, hld-gw-user, hld-gw-uploader, hld-gw-meta, hld-user-db-arrow, hld-blob-arrow, hld-meta-db-arrow, lld-head, lc-client, lc-chunker, lc-upload-mgr, lc-index, lk-gateway, lk-user-svc, lk-users-db, lk-users-1, lk-users-2, lk-client-gw, lk-gw-user, lk-user-db]
+  elements:
+    - { id: "lk-uploader", kind: "box", label: "Uploader service", at: [37, 51], size: [13, 3], tone: "blue" }
+    - { id: "s1", kind: "region", label: "Step 1, initiate upload, by the uploader", at: [80, 23], size: [38, 15] }
+    - { id: "s1-post", kind: "note", label: "POST /api/v1/files/upload/init", at: [81, 25], in: "s1" }
+    - { id: "s1-req-1", kind: "note", label: "{ fileName: video.mp4,", at: [82, 26], in: "s1" }
+    - { id: "s1-req-2", kind: "note", label: "fileSize: 52428800,", at: [84, 27], in: "s1" }
+    - { id: "s1-req-3", kind: "note", label: "parentFolderId: root121413 }", at: [84, 28], in: "s1" }
+    - { id: "s1-resp-1", kind: "note", label: "{ fileId: F123,", at: [100, 25], in: "s1" }
+    - { id: "s1-resp-2", kind: "note", label: "uploadId: U456,", at: [102, 26], in: "s1" }
+    - { id: "s1-resp-3", kind: "note", label: "chunkSize: 5 MB,", at: [102, 27], in: "s1" }
+    - { id: "s1-resp-4", kind: "note", label: "existingChunks: [] }", at: [102, 28], in: "s1" }
+    - { id: "s1-quota", kind: "note", label: "quota checked in the user DB first, else an error", at: [81, 30], in: "s1" }
+    - { id: "s1-resume-1", kind: "note", label: "resume after a drop, POST upload init again", at: [81, 32], in: "s1" }
+    - { id: "s1-resume-2", kind: "note", label: "{ fileName: vacation.mp4, fileSize: 524288000,", at: [82, 33], in: "s1" }
+    - { id: "s1-resume-3", kind: "note", label: "resumeUploadId: upload123 }", at: [84, 34], in: "s1" }
+    - { id: "s1-resume-4", kind: "note", label: "returns existingChunks: [0, 1, 2, 3, 4], send from 5", at: [81, 36], in: "s1" }
+  arrows:
+    - { id: "lk-gw-uploader", from: "lk-gateway", to: "lk-uploader" }
+    - { id: "lk-quota", from: "lk-uploader", to: "lk-users-db" }
+beats:
+  - point: "The upload manager's first call goes to the uploader service: initiate, with the file name, its size and the folder it goes in."
+    kind: flow
+    weight: core
+    teach:
+      - "Now the heart of it, the upload, in numbered steps beside the drawing. Behind the gateway, the uploader service."
+      - "Step one, initiate: the upload manager posts to upload init with the file name, video dot mp4, its size, 52,428,800 bytes, which is 50 MB, and the parent folder id."
+    draw: [lk-uploader, lk-gw-uploader, s1, s1-post, s1-req-1, s1-req-2, s1-req-3]
+    check: "What does the client send to start an upload?"
+    answer: "The file name, the file size and the folder to put it in."
+  - point: "The uploader checks the quota in the user DB, then answers with a file id, an upload id that ties the upload together, the chunk size, fixed at 5 MB, and the chunks already stored."
+    kind: mechanism
+    weight: core
+    teach:
+      - "First the quota: the uploader reads the storage used from the user DB. If the file does not fit in what is left, it answers with an error and nothing is uploaded. It checks again at commit, since two uploads can start at once."
+      - "If it fits: a file id, a new upload id, the chunk size the backend chose, 5 MB, the same for every file, and existingChunks, empty because nothing is uploaded yet."
+    draw: [lk-quota, s1-quota, s1-resp-1, s1-resp-2, s1-resp-3, s1-resp-4]
+    check: "Why does the server, not the client, choose the chunk size?"
+    answer: "So it is one fixed size for every file, which the later steps, and deduplication, rely on."
+    misconceptions:
+      - "Each file can pick its own chunk size -> the backend fixes one size for all files, so equal content cuts into equal chunks."
+  - point: "If the connection drops, the client calls init again with resumeUploadId; the server answers with the chunks it already has, and only the rest are sent."
+    kind: failure
+    weight: core
+    teach:
+      - "Scenario two: halfway through a 500 MB upload the network fails. Starting over wastes the bandwidth already spent."
+      - "So the client calls init again with the same name and size and a resumeUploadId, the upload id from the first call. The server returns the same upload id and existingChunks, say 0 to 4, and the client carries on from chunk 5."
+    draw: [s1-resume-1, s1-resume-2, s1-resume-3, s1-resume-4]
+    check: "How does a resumed upload avoid sending chunks again?"
+    answer: "It sends the earlier upload id as resumeUploadId, and the server answers with existingChunks, the ones it already stored."
+asks:
+  - ids: [s1-resp-1, s1-resp-2, s1-resp-3, s1-resp-4]
+    frame: [lk-quota, s1-quota]
+    beats: [2]
+    question: "The client has asked to upload a 50 MB file. What should the server check, and what should it send back?"
+    hints:
+      - "Can this user store 50 MB more?"
+      - "The client will cut the file. What does it need to know, and what ties the calls together?"
+  - ids: [s1-resume-3, s1-resume-4]
+    frame: [s1-resume-1, s1-resume-2]
+    beats: [3]
+    question: "The connection drops after five chunks. How should the client resume without sending everything again?"
+    hints:
+      - "What id from the first call could it send back?"
+      - "What would the server answer with?"

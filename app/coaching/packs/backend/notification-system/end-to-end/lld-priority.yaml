@@ -1,0 +1,106 @@
+# Notification system interview, deep dive 7: a fast lane for OTPs, and finishing. As in the video: critical messages go straight from the notification service to Kafka (the first arrow), an OTP service under the providers consumes only the critical topics and reads the preference cache, then the follow-ups: provider webhooks for delivered, and a rate limiter beside the external senders.
+id: backend/notification-system/end-to-end/lld-priority
+title: "Deep dive: OTPs first, and finishing"
+source:
+  hash: "2bbddb02a78c"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/notification-system/end-to-end/lld-outbox
+  assumes:
+    - "Standard and promotional messages go through the outbox and CDC to the queue."
+    - "Topics are priority times channel; providers check preferences through a cache."
+  carries:
+    - "Critical messages skip the outbox and go straight to Kafka; a lost OTP is requested again."
+    - "An OTP service consumes only the critical topics and is scaled out further, with partitions to match."
+    - "Provider webhooks report delivered; rate limiters sit at the gateway and before the external senders."
+  terms:
+    - term: consumer lag
+      means: "How far a consumer is behind the newest messages in its topic, when producers write faster than it reads."
+    - term: webhook
+      means: "A URL of ours that an external service calls to report an event, such as a delivery receipt."
+board:
+  keep: [title, fr, fr-channels, fr-templates, fr-prefs, fr-schedule, fr-status, nfr, nfr-scale, nfr-cap, nfr-latency, hld, hld-clients, hld-gw, hld-tpl-svc, hld-tpl-db, hld-pref-svc, hld-pref-db, hld-notif-svc, hld-provider, hld-provider-note, hld-clients-gw, hld-gw-tpl, hld-tpl-db-arrow, hld-gw-pref, hld-pref-db-arrow, hld-gw-notif, hld-notif-provider, hld-notif-pref, lld, lld-clients, lld-gw, gw-jobs-1, gw-jobs-2, tpl-svc, tpl-db, tpl-table-1, tpl-table-2, tpl-table-3, lld-clients-gw, gw-tpl, tpl-svc-db, pref-svc, pref-scale, pref-kafka, pref-consumer, pref-db, pref-table-1, pref-table-2, pref-table-3, gw-pref, pref-svc-kafka, pref-kafka-consumer, pref-consumer-db, notif-svc, sms-prov, email-prov, inapp-prov, twilio, sendgrid, fcm, fcm-note, queue, topic-critical, topic-standard, topic-promo, topic-bulk, topic-retry, gw-notif, sms-twilio, email-sendgrid, inapp-fcm, notif-queue, queue-sms, queue-email, queue-inapp, notif-consumer, notif-db, notif-table-1, notif-table-2, notif-table-3, status-note, writers-note, delivery-kafka, delivery-consumer, reporting, event-db, queue-notif-consumer, notif-consumer-db, sms-delivery, email-delivery, inapp-delivery, delivery-kafka-consumer, delivery-consumer-db, gw-reporting, reporting-db, delivery-consumer-events, reporting-events, pref-check, pref-cache, sms-cache, email-cache, inapp-cache, cache-pref-db, ack-note, outbox-1, outbox-2, cdc, notif-svc-db, db-cdc, cdc-queue]
+  elements:
+    - { id: critical-note, kind: note, label: "critical skips the outbox, straight to Kafka", at: [21, 81], in: lld }
+    - { id: otp-svc, kind: box, label: OTP service, at: [47, 78], size: [9, 3], tone: blue }
+    - { id: scale-note, kind: note, label: "scale OTP consumers, partitions to match", at: [21, 82], in: lld }
+    - { id: webhook-note, kind: note, label: webhooks from senders report delivered, at: [47, 82], in: lld }
+    - { id: rate-limiter, kind: oval, label: Rate limiter, at: [47, 61], size: [9, 3], tone: grey }
+    - { id: rate-note, kind: note, label: rate limits at the gateway and per provider, at: [21, 83], in: lld }
+  arrows:
+    - { id: queue-otp, from: queue, to: otp-svc }
+    - { id: otp-cache, from: otp-svc, to: pref-cache }
+    - { id: sms-rate, from: sms-prov, to: rate-limiter }
+beats:
+  - point: "Priority is set on every request but every message takes the same path; critical messages like OTPs skip the outbox and go straight to Kafka, and a lost OTP is simply requested again."
+    kind: decision
+    weight: core
+    teach:
+      - "One requirement is still unmet: the priority flag changes nothing, and an OTP through the outbox could take seconds."
+      - "So critical messages don't use the outbox: the service puts them straight on Kafka, the path we drew first. If one is lost, the user taps resend and a new request comes through. A separate consumer can still record them in the database."
+    draw: [critical-note]
+    check: Why is it acceptable for OTPs to skip the durable outbox?
+    answer: "An OTP needs near real time, and if one is lost the user asks for a new one, so speed is worth more than durability here."
+  - point: "An OTP service consumes only the critical topics, so OTPs never wait behind promotions in the ordinary providers, which now read standard and promotional topics."
+    kind: component
+    weight: core
+    teach:
+      - "Still, the SMS provider treats an OTP like any promotion. Add an OTP service, a consumer that reads only the critical topics, whatever the channel."
+      - "The SMS, email and in-app providers keep the standard and promotional ones. The OTP service checks preferences through the same cache."
+    draw: [otp-svc, queue-otp, otp-cache]
+    check: Which topics does the OTP service read, and which do the other providers read?
+    answer: "The OTP service reads the critical topics; the SMS, email and in-app providers read standard and promotional."
+  - point: "Delay in Kafka is consumer lag, so the OTP service is scaled out further than the others, in several regions, with at least as many partitions on the critical topics as consumers."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Delay here means consumer lag: producers writing faster than consumers read. So scale the OTP service out more than the ordinary providers, across regions."
+      - "One catch: in a consumer group each partition goes to one consumer, so the critical topics need at least as many partitions as OTP consumers, or the extras sit idle."
+    draw: [scale-note]
+    check: You run twenty OTP consumers on a topic with six partitions. What happens?
+    answer: "Only six consume; each partition is read by one consumer in the group, so add partitions to scale further."
+    misconceptions:
+      - "Adding consumers always adds throughput -> a group's parallelism is capped by the topic's partition count."
+  - point: "Status stops at sent, because only the external sender knows if a message arrived; each provider exposes a webhook that the sender calls with delivered or failed."
+    kind: mechanism
+    weight: supporting
+    teach:
+      - "A follow-up: we mark sent, but delivered depends on Twilio or SendGrid. Each provider opens a webhook, the sender calls it with the receipt, and the provider publishes it to the delivery status topic."
+    draw: [webhook-note]
+    check: How does the system learn an SMS was delivered?
+    answer: "The external sender calls the provider's webhook, and the provider publishes the status event for the delivery consumer."
+  - point: "Rate limits in two places: at the gateway, so no one floods the public API, and before the external senders, whose own quotas would drop the excess."
+    kind: decision
+    weight: core
+    teach:
+      - "Rate limiting, as promised. At the gateway, so a spammer can't flood our public API."
+      - "And before the external senders: each has its own limit and drops what goes over. Every provider asks a rate limiter before it sends."
+    draw: [rate-limiter, sms-rate, rate-note]
+    check: Why a rate limiter before the external senders as well as at the gateway?
+    answer: "The external senders have their own quotas and drop excess messages; the gateway's limiter only protects our API."
+  - point: "Read the non-functional list back: Kafka between every producer and consumer carries the scale, changes may lag by seconds, OTPs have their own lane and promotions the durable outbox."
+    kind: rule
+    weight: supporting
+    teach:
+      - "Close by reading the requirements back. Scale: Kafka everywhere, consumers scaled per channel. Availability: preferences and templates may lag a few seconds. Latency: OTPs on their own topics and service, promotions through the outbox within 5 to 10 seconds."
+    check: Which part of the design meets the OTP latency requirement?
+    answer: "The critical topics written straight to Kafka and the dedicated, scaled-out OTP service."
+asks:
+  - ids: [otp-svc]
+    beats: [2]
+    question: "OTPs still share the SMS provider with promotions. What would you change so they never wait?"
+    hints:
+      - The critical topics are already separate.
+      - Who reads them?
+  - ids: [rate-limiter]
+    beats: [5]
+    question: "Twilio and SendGrid each cap how many messages we can send. What would you add?"
+    hints:
+      - We have one at the gateway already.
+      - Something the providers check before each send.
+task:
+  prompt: "Draw the final design: client apps, the gateway, the template and preference services with their stores, the notification service writing the notifications DB with its outbox, CDC to the Kafka queue, providers and an OTP service with their external senders, the preference cache, delivery status and reporting."
+  expects: [2, 5]

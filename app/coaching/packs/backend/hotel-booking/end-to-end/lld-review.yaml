@@ -1,0 +1,46 @@
+# Hotel booking interview, low-level design, the review service: as in the video, the review service writes ReviewDB (MySQL, or any store), its columns as a note beside it, and the review photos go to S3.
+id: backend/hotel-booking/end-to-end/lld-review
+title: "Low-level design: the review service"
+source:
+  hash: "fc21b24577ca"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/hotel-booking/end-to-end/lld-search
+  assumes:
+    - "Images go to S3; databases keep their URLs."
+  carries:
+    - "ReviewDB is MySQL (or Postgres, or Cassandra): hotelId, userId, rating, comments, image URLs; the photos in S3."
+  terms:
+    - term: ReviewDB
+      means: The review service's own database, apart from the hotel database.
+board:
+  keep: [title, nfr, nfr-scale, nfr-available, nfr-consistent, lld-search, sv-joins, sv-search, sv-es, sv-db, sv-option-1, sv-option-2, sv-cache, sv-merge, sv-s3, sv-search-es, sv-db-es, sv-search-cache, sv-db-cache, sv-search-s3, prox, prox-es, prox-quadtree, prox-postgis, prox-geohash, prox-qt-1, prox-qt-2, prox-static, prox-choice]
+  elements:
+    - { id: lld-review, kind: region, label: "5. Low-level design: review service", at: [4, 50], size: [62, 10] }
+    - { id: rv-service, kind: box, label: Review service, at: [6, 53], size: [12, 3], tone: blue, in: lld-review }
+    - { id: rv-db, kind: oval, label: "ReviewDB, MySQL", at: [28, 53], size: [14, 3], tone: amber, in: lld-review }
+    - { id: rv-schema-1, kind: note, label: "review: hotelId, userId, rating,", at: [46, 53], in: lld-review }
+    - { id: rv-schema-2, kind: note, label: "comments, image URLs", at: [48, 54], in: lld-review }
+    - { id: rv-photos, kind: note, label: "review photos go to S3, only their URLs here", at: [6, 57], in: lld-review }
+  arrows:
+    - { id: rv-save, from: rv-service, to: rv-db, label: save }
+beats:
+  - point: "Reviews are simple rows, so ReviewDB can be MySQL, Postgres or even Cassandra: hotel, user, rating, comments and image URLs, with the photos themselves in S3."
+    kind: decision
+    weight: core
+    teach:
+      - "The review service is a quick one. Reviews are simple rows; MySQL is fine, though Postgres or Cassandra would do. Each holds the hotel, the user who wrote it, a rating, the comments and links to photos."
+      - "The photos go to S3, like the hotel images; only their URLs are stored here."
+    draw: [lld-review, rv-service, rv-db, rv-save, rv-schema-1, rv-schema-2, rv-photos]
+    check: Where do a reviewer's photos go?
+    answer: To S3, with only their URLs saved in ReviewDB.
+asks:
+  - ids: [rv-db]
+    beats: [1]
+    question: "Where would you keep the reviews, and what goes in one?"
+    hints:
+      - How complex is a review row?
+      - And the photos people attach?

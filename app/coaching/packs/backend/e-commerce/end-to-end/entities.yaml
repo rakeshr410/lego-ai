@@ -1,0 +1,47 @@
+# E-commerce interview, core entities: "2. Identify core entity" under the functional list, five lines, as in the video.
+id: backend/e-commerce/end-to-end/entities
+title: Five entities
+source:
+  hash: "32622f62d7e5"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/e-commerce/end-to-end/requirements
+  assumes:
+    - "Functional: search, details, cart, pay and check out, order status, limited stock."
+  carries:
+    - "The core entities are user, product, cart, order and checkout."
+  terms:
+    - term: core entity
+      means: A noun the system stores and moves.
+board:
+  keep: [title, prompt-desc, prompt-scope, fr, fr-search, fr-details, fr-cart, fr-pay, fr-status, fr-limited, nfr, nfr-scale, nfr-available, nfr-consistent, nfr-latency]
+  elements:
+    - { id: entities, kind: region, label: 2. Identify core entities, at: [2, 24], size: [18, 13], dashed: true }
+    - { id: ent-user, kind: note, label: user, at: [3, 26], in: entities }
+    - { id: ent-product, kind: note, label: product, at: [3, 28], in: entities }
+    - { id: ent-cart, kind: note, label: cart, at: [3, 30], in: entities }
+    - { id: ent-order, kind: note, label: order, at: [3, 32], in: entities }
+    - { id: ent-checkout, kind: note, label: checkout, at: [3, 34], in: entities }
+  arrows: []
+  lists:
+    - { id: entity-list, in: entities, at: [3, 26], step: 2, slots: 6, width: 14, items: [ent-user, ent-product, ent-cart, ent-order, ent-checkout] }
+beats:
+  - point: "The shop's core entities are the user, the product, the cart, the order and the checkout; more may appear later."
+    kind: component
+    weight: core
+    teach:
+      - "Step two: the core entities, the nouns the system keeps. Read them off the requirements: the user, the product they search for, the cart they fill."
+      - "Then the order they place and the checkout that turns a cart into an order and a payment. Five for now; more may turn up as we design."
+    draw: [entities, ent-user, ent-product, ent-cart, ent-order, ent-checkout]
+    check: Why keep the cart separate from the order?
+    answer: A cart is chosen items not yet bought and changes freely; an order is a fixed purchase with a payment and a status.
+asks:
+  - list: entity-list
+    beats: [1]
+    question: "What are the core entities, the things this shop keeps track of?"
+    hints:
+      - Look at the nouns in the requirements.
+      - Who buys, what do they buy, and where does it sit before they pay?

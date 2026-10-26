@@ -1,0 +1,66 @@
+# E-commerce interview, low-level design: the cart. As in the video: the cart service saving to a Postgres cart DB with its fields beside it (cartId, userId, products of productId and qty), and a second arrow to the product DB for the current price, which is deliberately not stored in the cart.
+id: backend/e-commerce/end-to-end/lld-cart
+title: "Low-level design: the cart"
+source:
+  hash: "f834a0349046"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/e-commerce/end-to-end/lld-user-search
+  assumes:
+    - "Each service keeps its own database; the product DB is MongoDB with each product's price."
+  carries:
+    - "The cart DB is Postgres: cartId, userId, and products as productId and qty."
+    - "The cart stores no price; the cart service reads current prices from the product DB whenever the cart is shown."
+  terms:
+    - term: cart
+      means: The products and quantities a user has chosen but not yet bought.
+board:
+  keep: [title, prompt-desc, prompt-scope, nfr, nfr-scale, nfr-available, nfr-consistent, nfr-latency]
+  elements:
+    - { id: lld-cart, kind: region, label: "5. Low-level design: cart service", at: [2, 24], size: [64, 13] }
+    - { id: c-productdb, kind: oval, label: "Product DB, prices", at: [3, 27], size: [11, 5], tone: amber, in: lld-cart }
+    - { id: c-cart, kind: box, label: Cart service, at: [24, 28], size: [13, 3], tone: blue, in: lld-cart }
+    - { id: c-cartdb, kind: oval, label: "Cart DB, Postgres", at: [45, 27], size: [14, 5], tone: amber, in: lld-cart }
+    - { id: c-schema-1, kind: note, label: "cart: cartId, userId, products", at: [45, 33], in: lld-cart }
+    - { id: c-schema-2, kind: note, label: "products: productId and qty, no price", at: [45, 34], in: lld-cart }
+    - { id: c-fresh, kind: note, label: "prices change, read them fresh", at: [3, 33], in: lld-cart }
+  arrows:
+    - { id: c-cart-db, from: c-cart, to: c-cartdb, label: save items }
+    - { id: c-cart-price, from: c-cart, to: c-productdb, label: latest price }
+beats:
+  - point: "The cart must be right, so it lives in Postgres: a cart id, the user id, and a list of products, each a product id and a quantity."
+    kind: decision
+    weight: core
+    teach:
+      - "Next, the cart service. The flow is simple: the shopper picks a quantity and saves the item in the cart."
+      - "We want it consistent, so a relational database, Postgres. A cart has a cart id, the user id and a list of products, each a product id and a quantity: one iPhone is the iPhone's id and quantity one."
+    draw: [lld-cart, c-cart, c-cartdb, c-cart-db, c-schema-1, c-schema-2]
+    check: What does one line of a cart hold?
+    answer: A product id and a quantity.
+  - point: "The price is not stored in the cart: prices change while items sit there, so the cart service reads the current price from the product DB every time the cart is shown."
+    kind: decision
+    weight: core
+    teach:
+      - "Notice what is missing: the price. An iPhone added at one lakh may cost less or more ten days later."
+      - "So each time the shopper views the cart, the cart service asks the product DB for the current prices and totals the cart from them."
+    draw: [c-productdb, c-cart-price, c-fresh]
+    check: Where does the price shown in the cart come from?
+    answer: The product DB, read fresh each time the cart is shown; the cart itself stores no price.
+    misconceptions:
+      - "Store the price in the cart so it is fast -> it goes stale; the shopper must see what they will actually pay."
+asks:
+  - ids: [c-cartdb]
+    beats: [1]
+    question: "Where would you keep the carts, and what goes in one?"
+    hints:
+      - The cart should be consistent.
+      - A cart belongs to a user and holds products with quantities.
+  - ids: [c-fresh]
+    beats: [2]
+    question: "Should the cart store each item's price? Why or why not?"
+    hints:
+      - An item can sit in a cart for days.
+      - Where is the current price kept?

@@ -1,0 +1,128 @@
+# Ticket booking interview, low-level design 3: holding seats with a cron job. Under "5. Low level designing", the picture so far, then "Spider-Man, L12, L13" and "user 1, user 2" under the clients, a payment gateway below the booking service, and a cron job beside Cassandra that frees unpaid holds, as the video draws its first approach; the verdict written beside it.
+id: backend/ticket-booking/end-to-end/lld-booking-cron
+title: "Low-level design, 3: holding seats, with a cron job"
+source:
+  hash: "b935be674816"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/ticket-booking/end-to-end/lld-search
+  assumes:
+    - "Search on Elasticsearch, fed from Cassandra by change data capture; bookings in MySQL or PostgreSQL."
+    - "Booking is two calls, reserve then confirm, and must be highly consistent."
+  carries:
+    - "Seats are available, reserved or booked; a reserve holds them for one user for 10 minutes while they pay."
+    - "On a successful payment the seats become booked; a cron job every minute frees holds older than 10 minutes."
+    - "The cron approach scans every seat every minute and frees seats late: not real time, and the reserve must be atomic."
+  terms:
+    - term: hold
+      means: "Seats reserved for one user for a few minutes while they pay; nobody else can take them."
+    - term: cron job
+      means: A task the system runs on a fixed schedule, here every minute.
+    - term: payment gateway
+      means: A third party that takes the payment and reports whether it succeeded.
+board:
+  keep: [title, nfr, nfr-scale, nfr-available, nfr-consistent]
+  elements:
+    - { id: lld-cron, kind: region, label: "5. Low level designing: 3. Booking, a cron job", at: [6, 22], size: [70, 37] }
+    - { id: b-clients, kind: box, label: client apps, at: [7, 33], size: [7, 3], in: lld-cron }
+    - { id: b-gateway, kind: box, label: API gateway, at: [17, 25], size: [9, 20], in: lld-cron }
+    - { id: b-search, kind: box, label: Search, at: [30, 26], size: [12, 3], tone: blue, in: lld-cron }
+    - { id: b-event, kind: box, label: Event details, at: [30, 33], size: [12, 3], tone: blue, in: lld-cron }
+    - { id: b-booking, kind: box, label: Booking, at: [30, 40], size: [12, 3], tone: blue, in: lld-cron }
+    - { id: b-es, kind: oval, label: Elasticsearch, at: [46, 25], size: [14, 4], tone: amber, in: lld-cron }
+    - { id: b-cassandra, kind: oval, label: Cassandra, at: [46, 33], size: [14, 4], tone: amber, in: lld-cron }
+    - { id: b-postgres, kind: oval, label: MySQL or Postgres, at: [46, 39], size: [14, 5], tone: amber, in: lld-cron }
+    - { id: b-movie, kind: note, label: "Spider-Man, seats L12 and L13", at: [7, 53], in: lld-cron }
+    - { id: b-users, kind: note, label: user 1 and user 2 want the same seats, at: [7, 54], in: lld-cron }
+    - { id: b-states, kind: note, label: "seat states: available, reserved, booked", at: [46, 53], in: lld-cron }
+    - { id: b-hold, kind: note, label: reserve holds the seats for 10 minutes, at: [46, 54], in: lld-cron }
+    - { id: b-payment, kind: box, label: Payment gateway, at: [30, 48], size: [12, 3], in: lld-cron }
+    - { id: b-cdc-note, kind: note, label: "CDC, change data capture", at: [55, 30], in: lld-cron }
+    - { id: b-cron, kind: box, label: cron job, at: [63, 39], size: [8, 3], tone: grey, in: lld-cron }
+    - { id: b-cron-note, kind: note, label: cron every minute frees expired holds, at: [46, 55], in: lld-cron }
+    - { id: b-verdict, kind: note, label: "scans every seat each minute, not real time", at: [46, 56], in: lld-cron }
+  arrows:
+    - { id: b-clients-gateway, from: b-clients, to: b-gateway }
+    - { id: b-gateway-search, from: b-gateway, to: b-search }
+    - { id: b-gateway-event, from: b-gateway, to: b-event }
+    - { id: b-gateway-booking, from: b-gateway, to: b-booking }
+    - { id: b-search-es, from: b-search, to: b-es }
+    - { id: b-event-cassandra, from: b-event, to: b-cassandra }
+    - { id: b-booking-postgres, from: b-booking, to: b-postgres }
+    - { id: b-booking-cassandra, from: b-booking, to: b-cassandra }
+    - { id: b-booking-payment, from: b-booking, to: b-payment, label: pay }
+    - { id: b-cdc, from: b-cassandra, to: b-es, label: CDC }
+    - { id: b-cron-cassandra, from: b-cron, to: b-cassandra }
+beats:
+  - point: "The picture so far: search on Elasticsearch, event details on Cassandra, bookings in MySQL or Postgres; now the critical part, the booking service."
+    kind: rule
+    weight: supporting
+    teach:
+      - "Here is the design so far: search reads Elasticsearch, event details read Cassandra, booking writes MySQL or Postgres."
+      - "Now the most critical service, booking: it must keep the data consistent, so no two users get one seat."
+    draw: [lld-cron, b-clients, b-gateway, b-clients-gateway, b-search, b-gateway-search, b-event, b-gateway-event, b-booking, b-gateway-booking, b-es, b-search-es, b-cassandra, b-event-cassandra, b-postgres, b-booking-postgres]
+    check: Which non-functional line is the booking service responsible for?
+    answer: Highly consistent for booking, so a seat is never sold twice.
+  - point: "The problem: two users want the same seats, L12 and L13 for Spider-Man, at the same moment, and exactly one of them may get them."
+    kind: failure
+    weight: core
+    teach:
+      - "Picture it: user 1 and user 2 both open Spider-Man and both pick seats L12 and L13. Both requests reach the booking service at about the same time."
+      - "Exactly one may succeed. The other must be told the seats are taken."
+    draw: [b-movie, b-users]
+    check: Two users ask for seat L12 at once. What must the system guarantee?
+    answer: Exactly one gets it; the other is told it is taken.
+  - point: "A reserve checks the seats are available and marks them reserved for that user for 10 minutes, long enough to pay; a second request finds them reserved and is turned away."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Booking is two steps with a delay between: reserve, then pay. So give each seat a state: available, reserved or booked."
+      - "User 2's request arrives first: the seats are available, so the booking service marks them reserved for user 2 for 10 minutes. User 1's request then finds them reserved and is turned away; the app shows them grey."
+    draw: [b-states, b-hold, b-booking-cassandra]
+    check: User 2 reserved L12 a minute ago. What does user 1 see when they ask for it?
+    answer: The seat is reserved, so the request is turned away and the seat shows as taken.
+    misconceptions:
+      - "Reading available and then writing reserved is safe -> two requests can both read available first; the check and the write must be one atomic step."
+  - point: "The reserving user is sent to the payment gateway; when it reports success, the booking is recorded and the seats become booked, and change data capture shows it to everyone."
+    kind: flow
+    weight: core
+    teach:
+      - "User 2 goes to the payment gateway. When the payment succeeds, the gateway tells the booking service, which records the booking and changes the seats from reserved to booked."
+      - "Change data capture carries that to search, so other users stop seeing the seats as free."
+    draw: [b-payment, b-booking-payment, b-cdc, b-cdc-note]
+    check: What turns a reserved seat into a booked one?
+    answer: The payment gateway reporting a successful payment to the booking service.
+  - point: "If the user never pays, the seats would stay reserved forever, so a cron job runs every minute and frees seats reserved more than 10 minutes ago."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Now the second case: user 2 never pays, or closes the app. The seats would stay reserved forever."
+      - "So add a cron job that runs every minute, finds seats reserved more than 10 minutes ago, and makes them available again."
+    draw: [b-cron, b-cron-cassandra, b-cron-note]
+    check: User 2 closed the app after reserving. What brings the seats back?
+    answer: The cron job, within a minute after the 10-minute hold runs out.
+  - point: "The cron approach is a poor fit: it scans every seat every minute, a load that grows with the catalogue, and frees seats up to a minute late, so it is not real time."
+    kind: decision
+    weight: core
+    teach:
+      - "It works, but look at what the job does: every minute it reads every seat in the database to find the old holds. That load grows with the catalogue, not with the holds."
+      - "And seats come back up to a minute late. Not real time, not reliable. Write the verdict beside it; the next approach removes the job."
+    draw: [b-verdict]
+    check: What are the two flaws of the cron job?
+    answer: It scans every seat every minute, a heavy and growing load, and it frees seats late, so it is not real time.
+asks:
+  - ids: [b-hold]
+    beats: [3]
+    question: "User 2 needs a few minutes to pay. How do you stop user 1 from taking the same seats meanwhile?"
+    hints:
+      - What if a seat had more states than free and sold?
+      - Something between the two, for a limited time.
+  - ids: [b-cron]
+    beats: [5]
+    question: "And if user 2 never pays, the seats stay reserved. What would bring them back?"
+    hints:
+      - Something that checks for old holds regularly.
+      - A task that runs on a schedule.

@@ -1,0 +1,38 @@
+slug: backend-hotel-booking
+title: "The hotel booking interview"
+summary: "A backend design interview for a hotel booking service like Airbnb or Booking.com, run step by step on one whiteboard: requirements with a split CAP choice, entities, the API, a microservice design, then each service opened, ending with how one room is never sold twice."
+outline: "The hotel booking lessons follow the five-step order and the drawings of InterviewWithBunny's System Design 5, Design Hotel Booking App like AirBnb / Booking.com (youtube.com/watch?v=mH2Ye3_vErw), service by service; no text is taken from it, and its factual slips are corrected in the article."
+lessons:
+  - slug: hotel-booking
+    title: "The hotel booking interview: the problem, requirements, entities and API"
+    summary: "The problem at the top of the board, functional and non-functional requirements side by side, the four entities, and the five endpoints."
+    parts:
+      - { title: "The problem, then two lists", minutes: 9, packs: [backend/hotel-booking/end-to-end/problem-statement, backend/hotel-booking/end-to-end/requirements] }
+      - { title: "Entities, then the API", minutes: 8, packs: [backend/hotel-booking/end-to-end/entities, backend/hotel-booking/end-to-end/api] }
+  - slug: hotel-booking-design
+    title: "The hotel booking interview: high-level design, then the user service"
+    summary: "Clients, a load balancer and API gateway, five services and their databases; then the low-level design opens the user service and its MySQL table."
+    parts:
+      - { title: "Microservices behind a gateway", minutes: 8, packs: [backend/hotel-booking/end-to-end/high-level-design] }
+      - { title: "The user service", minutes: 4, packs: [backend/hotel-booking/end-to-end/lld-user-service] }
+  - slug: hotel-booking-data
+    title: "The hotel booking interview: the hotel database"
+    summary: "HotelDB on Postgres: hotels, rooms, prices by date range, two ways to store availability, and images in S3."
+    parts:
+      - { title: "Hotels, rooms, prices, availability", minutes: 12, packs: [backend/hotel-booking/end-to-end/lld-hotel-db] }
+  - slug: hotel-booking-search
+    title: "The hotel booking interview: search and reviews"
+    summary: "Elasticsearch in front of search, four ways to do proximity search and why Elasticsearch wins, the two-phase search with a Redis cache, then the review service."
+    parts:
+      - { title: "Elasticsearch and proximity search", minutes: 15, packs: [backend/hotel-booking/end-to-end/lld-search] }
+      - { title: "The review service", minutes: 3, packs: [backend/hotel-booking/end-to-end/lld-review] }
+  - slug: hotel-booking-booking
+    title: "The hotel booking interview: the booking service"
+    summary: "Payment through a payment service and a third-party gateway, then one booking event on Kafka for notification, the booking record and availability."
+    parts:
+      - { title: "Payment, then events", minutes: 12, packs: [backend/hotel-booking/end-to-end/lld-booking] }
+  - slug: hotel-booking-concurrency
+    title: "The hotel booking interview: no two users book one room"
+    summary: "A check before payment, a Redis lock with a 5-minute TTL, a conditional write behind it, then the booking info service and the requirements read back."
+    parts:
+      - { title: "Check, lock, guard", minutes: 14, packs: [backend/hotel-booking/end-to-end/lld-concurrency] }

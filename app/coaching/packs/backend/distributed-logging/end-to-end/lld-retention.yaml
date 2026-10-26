@@ -1,0 +1,74 @@
+# Distributed logging interview, deep dive, retention: on the same picture, the cron service beside the log DB ("delete older than 45 days") and S3 below Flink as cold storage, then the three lifetimes in one line, as the video adds them. The video calls the S3 copy a soft delete and says Splunk keeps 45 days; the pack calls it an archive and says Splunk's retention is set per index.
+id: backend/distributed-logging/end-to-end/lld-retention
+title: "Deep dive: retention and cold storage"
+source:
+  hash: "0aae3e8ff32a"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/distributed-logging/end-to-end/lld-search
+  assumes:
+    - "Flink writes every clean log to Cassandra and to Elasticsearch, which keeps 14 days."
+    - "Non-functional: no data loss within a stated retention."
+  carries:
+    - "Cassandra keeps 45 days; a daily cron deletes older rows (a TTL per row does the same)."
+    - "Flink also writes every log to S3, the cheapest copy, so retention can be extended later."
+    - "Three lifetimes: Elasticsearch 14 days, Cassandra 45 days, S3 long term."
+  terms:
+    - term: cold storage
+      means: "Cheap, slow storage such as S3 for data that is rarely read but must be kept."
+board:
+  keep: [title, nfr, nfr-scale, nfr-latency, nfr-cap, nfr-reliable, dd, dd-agents, dd-clients, dd-gw, dd-onboard, dd-clientdb, dd-file, dd-agentsvc, dd-kafka, dd-topic-raw, dd-flink-1, dd-flink-2, dd-flink, dd-logdb, dd-clients-gw, dd-gw-onboard, dd-onboard-db, dd-gw-file, dd-gw-agentsvc, dd-file-kafka, dd-agentsvc-kafka, dd-kafka-flink, dd-flink-logdb, dd-search, dd-es, dd-es-days, dd-t1a, dd-t1b, dd-t1c, dd-t2a, dd-t2b, dd-t3a, dd-t3b, dd-gw-search, dd-search-es, dd-flink-es, dd-search-logdb]
+  elements:
+    - { id: dd-cron, kind: box, label: "cron job, daily", at: [96, 56], size: [10, 3], tone: grey }
+    - { id: dd-cron-note, kind: note, label: deletes logs older than 45 days, at: [94, 60] }
+    - { id: dd-s3, kind: oval, label: S3, at: [65, 62], size: [8, 4], tone: grey }
+    - { id: dd-s3-note, kind: note, label: "cold storage, every log, kept long term", at: [57, 67] }
+    - { id: dd-tiers, kind: note, label: "Elasticsearch 14 days, Cassandra 45 days, S3 long term", at: [6, 62] }
+  arrows:
+    - { id: dd-cron-logdb, from: dd-cron, to: dd-logdb, label: delete }
+    - { id: dd-flink-s3, from: dd-flink, to: dd-s3, label: archive }
+beats:
+  - point: "Cassandra is costly at this size, so it keeps 45 days: a cron job runs daily and deletes older rows; 45 days is our policy, since Splunk's retention is set per index."
+    kind: decision
+    weight: core
+    teach:
+      - "Keeping every log in Cassandra gets expensive fast. So it keeps a window, 45 days. A cron job runs every day and deletes rows older than that."
+      - "Writing each row with a TTL does the same inside Cassandra without a daily mass delete. And 45 days is a policy we agree with the business; Splunk lets each index set its own."
+    draw: [dd-cron, dd-cron-logdb, dd-cron-note]
+    check: How do logs leave Cassandra after 45 days?
+    answer: A daily cron job deletes rows older than 45 days, or each row is written with a 45-day TTL.
+  - point: "Deleting outright cannot be undone, so Flink also writes every log to S3, the cheapest store: an archive that lets retention be extended later."
+    kind: mechanism
+    weight: core
+    teach:
+      - "But a hard delete is risky: next year the business may want 60 or 90 days, and deleted logs are gone."
+      - "So every log also goes to S3 or a blob store, cold storage, the cheapest place to keep it. Flink writes it there too. Cassandra's delete now only drops the expensive copy. That is an archive, not a soft delete: the row really is gone, and S3 holds the copy that stays."
+    draw: [dd-s3, dd-flink-s3, dd-s3-note]
+    check: The business wants 90 days of logs next year. Is that possible?
+    answer: Yes; every log was archived to S3, so older logs can be read back even though Cassandra deleted them after 45 days.
+    misconceptions:
+      - "Deleting from Cassandra while keeping S3 is a soft delete -> a soft delete marks a row as deleted; here the row is removed and a separate archive copy remains."
+  - point: "Each copy lives as long as its cost allows: Elasticsearch, the costliest, 14 days; Cassandra 45 days; S3 for the long term, all written by the one Flink job."
+    kind: decision
+    weight: core
+    teach:
+      - "Read the three copies back. Elasticsearch is the costliest, so 14 days. Cassandra, 45 days. S3, the cheapest, for the long term. One Flink job writes all three."
+    draw: [dd-tiers]
+    check: Why does each store keep a different window?
+    answer: Each costs differently per gigabyte; the fast expensive one holds recent logs, the cheap one keeps everything.
+asks:
+  - ids: [dd-cron]
+    beats: [1]
+    question: "Cassandra is expensive at this size. How would you stop it growing forever?"
+    hints:
+      - Logs only need to be searchable for a set time.
+      - Something could run every day and clean up.
+  - ids: [dd-s3]
+    beats: [2]
+    question: "What if the business later wants 90 days of logs, after we've deleted them? What would you add?"
+    hints:
+      - Is there somewhere much cheaper to keep a copy of everything?
+      - Flink could write one more copy as it goes.

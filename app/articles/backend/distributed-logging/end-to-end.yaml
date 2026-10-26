@@ -1,0 +1,805 @@
+# yaml-language-server: $schema=../../../../../lego/content-kit/schema/topic.schema.json
+# provenance: ai-drafted by claude-opus-5-5 on 2026-10-27
+#
+# A whole backend system design interview for a distributed logging platform like Splunk or OpenObserve,
+# run step by step on one whiteboard. The order and the board follow InterviewWithBunny's System Design 16:
+# requirements, core entities, the API (with how a log travels from a microservice to the platform), a
+# high-level design of client, gateway and three services, then a deep dive that opens the services one at
+# a time: agents and onboarding, the ingestion pipeline (Kafka and Flink into Cassandra), search
+# (Elasticsearch for recent logs, Cassandra tables by query), retention (a cron, cold storage in S3) and,
+# as the follow-up, alerting and live tail.
+# Every latency figure is an illustrative round number for the exercise, not a measurement.
+# A backend system of lego-ai's own (app/articles/backend): it stands alone and links to no main-site topic.
+catalogVersion: 5
+title: Designing a distributed logging platform, end to end
+shortTitle: Logging interview
+summary: "A 45-minute backend design interview for a log platform like Splunk, step by step on one board: requirements with numbers, entities, the agent and its endpoints, the high-level design, then a deep dive through onboarding, a Kafka and Flink ingestion pipeline, search over Elasticsearch and Cassandra, tiered retention and alerting."
+group: design
+order: 16
+xp: 260
+difficulty: intermediate
+tags: [interview, logging, streaming, kafka, search, retention, observability]
+eyebrow: Design
+breadcrumb: [Logging platform, Interview walkthrough]
+lede: "You have about forty-five minutes and one whiteboard to design a platform like Splunk: thousands of microservices in many organisations send it their logs, and their developers search those logs seconds later. This walkthrough runs the interview step by step: four requirements and four qualities, three entities, how a log really leaves a service, a small high-level design, then a deep dive that turns one overloaded ingestion service into a pipeline, picks a store for each kind of search, and decides how long each copy of a log lives."
+reviewStatus: draft
+author: rakeshr410
+provenance: ai-drafted
+sources:
+  - title: "System Design 16: Design Distributed Logging System, Splunk, Logstash (InterviewWithBunny, YouTube)"
+    url: https://www.youtube.com/watch?v=cqs5t7zqzCk
+    note: "Order and drawings. Corrected: the node runtime, not kubectl, writes container logs; Splunk's agent is the Universal Forwarder; retention is configurable; ES ages out via ILM, not TTL; S3 archive is not a soft delete; hot partitions."
+  - title: Kubernetes logging architecture (Kubernetes documentation)
+    url: https://kubernetes.io/docs/concepts/cluster-administration/logging/
+    note: "A container's stdout and stderr are written by the container runtime to files on the node, which a node-level agent such as Fluent Bit reads."
+  - title: Fluent Bit documentation
+    url: https://docs.fluentbit.io/manual
+    note: "An open-source log processor and forwarder that tails files and ships records to many back ends."
+  - title: Apache Kafka documentation
+    url: https://kafka.apache.org/documentation/
+    note: "A durable, partitioned log that producers write to and consumer groups read from at their own pace."
+  - title: Apache Flink documentation
+    url: https://nightlies.apache.org/flink/flink-docs-stable/
+    note: "A stream processor for stateful transformations, with Kafka sources and many sinks."
+  - title: Index lifecycle management (Elastic documentation)
+    url: https://www.elastic.co/guide/en/elasticsearch/reference/current/index-lifecycle-management.html
+    note: "Time-based indices rolled over and deleted by age, which is how recent-only search data expires."
+  - title: Apache Cassandra documentation
+    url: https://cassandra.apache.org/doc/latest/
+    note: "A wide-column store with partition and clustering keys, write-optimised, with per-row TTL."
+tutorBrief: >-
+  Interview walkthrough for a distributed logging platform like Splunk, OpenObserve or an ELK stack. 45
+  minutes: requirements within the first 10 to 15, entities and API briefly, high-level design, then the
+  deep dive. Board top to bottom: title and one line (an online platform that collects and monitors logs in
+  one place); 1 functional requirements left, non-functional right; 2 core entities; 3 API, with the log's
+  path drawn first; 4 high-level design; 5 deep dive. Functional: ingest logs from many sources; real-time
+  streaming and batch (offline devices upload later); validate, parse and normalize into one structure;
+  a dashboard to search logs in near real time. Non-functional: scale, millions of events per hour
+  (1M an hour is about 280 a second on average, so peaks matter more than the mean); low latency, near real
+  time; availability over consistency for ingestion; reliable, no data loss within the retention period
+  (logs kept a set time, 30 to 45 days). Entities: log event, ingestion job, source or agent. A log's path:
+  the app logs with Log4j to stdout and stderr; the container runtime on the Kubernetes node writes those
+  streams to a log file on the node (raw.logs in the drawing); a node agent such as Fluent Bit, OpenTelemetry
+  Collector or the Splunk Universal Forwarder tails the file and ships it to the platform. Endpoints: agent
+  ingestion (POST /agents/register, PUT /agents/{agentId}, GET /agents/{agentId}/config, POST
+  /agents/{agentId}/heartbeat, POST /agents/{agentId}/logs); API-based ingestion for microservices (POST
+  /logs/ingest, POST /logs/batch, GET /logs/status/{requestId}); file ingestion for offline or legacy
+  (POST /files/upload, GET /files/{fileId}/status); search (POST /logs/search with paging, full text,
+  regex, filters and time range; GET /logs/{logId}; GET /logs/tail; WS /logs/tail/ws). In an interview
+  write only what is asked. High-level design: clients, load balancer and API gateway, client onboarding
+  service with a client DB, ingestion service and search service sharing a log DB. Deep dive: agents on the
+  client side (real-time agent, offline file uploader); gateway does authentication and authorization, rate
+  limiting and routing, load balancer round robin. Onboarding is per organisation, once: it registers and
+  gets a client ID and token, used by every one of its services; client DB in PostgreSQL (clientId,
+  clientName, token, tokenTTL, env, metadata; later pref); tokens expire and renew; one token per
+  environment (dev, QA, staging, prod). Ingestion split into a file ingestion service (offline) and an
+  agent-based service (real time); a database cannot take every write directly, so both produce to Kafka
+  (topic raw_logs) as a buffer; one consumer per step (validate, parse, enrich) writing topic to topic is
+  possible, but Apache Flink does validation, parsing and normalization, enrichment and deduplication in one
+  job, and writes to the log DB, Cassandra (write-optimised, append-only, time-partitioned). Search: full
+  text over recent logs in Elasticsearch, written by the same Flink job instead of a CDC pipeline; only 14
+  days kept there (daily indices deleted by ILM); older searches go to Cassandra and are slower, stated in
+  the product terms. Cassandra tables by query: logs_by_service (partition service_name and log_date,
+  clustered by timestamp descending; log_id, log_level, host, env, message, namespace, pod_name, trace_id),
+  logs_by_level (log_level, log_date, timestamp, log_id, service_name, message; add an hour or service
+  bucket so one level's day is not one hot partition), logs_by_traceId (trace_id, timestamp, log_id,
+  service_name, log_level, message). Retention: Cassandra keeps 45 days, deleted by a daily cron (or a
+  write TTL); every log also goes to S3 as cold storage, the cheapest copy, so retention can be extended
+  later. Three tiers: Elasticsearch 14 days (costliest), Cassandra 45 days, S3 for the long term. Follow-up,
+  alerting: Flink sees each log's level and writes alert-worthy ones to a second Kafka topic, alert_topic;
+  an alert service consumes it, checks rules in an alert preference DB (such as more than 10 errors on the
+  checkout service), and calls a notification service, which reads the client's pref (xMatters, email,
+  SMS, pager) from the client DB. Live tail: WS /logs/tail/ws pushes new logs over a WebSocket; GET
+  /logs/tail is polled every 5 seconds.
+components:
+  - key: client
+    name: Client services
+    tone: sand
+    kind: client
+    summary: An organisation's microservices and devices, with a log agent or a file uploader beside them.
+    owns: [their own log files]
+    talksTo: [gateway]
+  - key: gateway
+    name: Load balancer and API gateway
+    tone: blue
+    kind: gateway
+    summary: Authenticates the client ID and token, rate-limits, and routes each path to its service; the load balancer spreads requests round robin.
+    owns: [routes, rate limits]
+    talksTo: [onboarding-service, file-ingestion, agent-ingestion, search-service]
+  - key: onboarding-service
+    name: Client onboarding service
+    tone: blue
+    kind: service
+    summary: Registers an organisation once and returns a client ID and a token per environment.
+    owns: [client records]
+    talksTo: [client-db]
+  - key: client-db
+    name: Client DB
+    tone: yellow
+    kind: datastore
+    summary: "PostgreSQL: clientId, clientName, token, tokenTTL, env, metadata, and the alert channel preference."
+    owns: [clients, tokens]
+    talksTo: []
+  - key: ingestion-service
+    name: Ingestion service
+    tone: blue
+    kind: service
+    summary: The high-level design's single service that takes logs in, normalizes them and saves them; the deep dive splits it.
+    owns: [nothing durable]
+    talksTo: [log-db]
+  - key: file-ingestion
+    name: File ingestion service
+    tone: blue
+    kind: service
+    summary: Accepts uploaded log files from offline or legacy clients and writes their records to Kafka.
+    owns: [upload status]
+    talksTo: [kafka]
+  - key: agent-ingestion
+    name: Agent-based ingestion service
+    tone: blue
+    kind: service
+    summary: Accepts batches pushed in near real time by the agents and writes them to Kafka.
+    owns: [nothing durable]
+    talksTo: [kafka]
+  - key: kafka
+    name: Kafka
+    tone: orange
+    kind: queue
+    summary: "The buffer between ingestion and processing; topics raw_logs and, for alerting, alert_topic."
+    owns: [raw_logs, alert_topic]
+    talksTo: []
+  - key: flink
+    name: Apache Flink
+    tone: purple
+    kind: worker
+    summary: One streaming job that validates, parses and normalizes, enriches and deduplicates, then writes every log to Cassandra, Elasticsearch and S3, and alert-worthy ones to alert_topic.
+    owns: [job state]
+    talksTo: [kafka, log-db, elasticsearch, cold-storage]
+  - key: log-db
+    name: Log DB (Cassandra)
+    tone: yellow
+    kind: datastore
+    summary: "Normalized logs for 45 days, one table per query: by service, by level, by trace ID."
+    owns: [logs_by_service, logs_by_level, logs_by_traceId]
+    talksTo: []
+  - key: search-service
+    name: Search service
+    tone: blue
+    kind: service
+    summary: Serves the dashboard; recent searches go to Elasticsearch, older ones to Cassandra.
+    owns: [nothing durable]
+    talksTo: [elasticsearch, log-db]
+  - key: elasticsearch
+    name: Elasticsearch
+    tone: green
+    kind: datastore
+    summary: Full-text index of the last 14 days of logs, in daily indices that age out.
+    owns: [recent log indices]
+    talksTo: []
+  - key: cold-storage
+    name: S3 cold storage
+    tone: gray
+    kind: datastore
+    summary: Every log, compressed, kept past the 45 days; the cheapest copy.
+    owns: [log archive]
+    talksTo: []
+  - key: cleanup
+    name: Cron job
+    tone: gray
+    kind: worker
+    summary: Runs daily and deletes Cassandra rows older than 45 days.
+    owns: [nothing]
+    talksTo: [log-db]
+  - key: alert-service
+    name: Alert service
+    tone: blue
+    kind: service
+    summary: Consumes alert_topic, matches each log against the client's alert rules, and asks for a notification.
+    owns: [nothing durable]
+    talksTo: [kafka, alert-db, notification-service]
+  - key: alert-db
+    name: Alert preference DB
+    tone: yellow
+    kind: datastore
+    summary: The rule book each client sets, such as more than 10 errors from the checkout service.
+    owns: [alert rules]
+    talksTo: []
+  - key: notification-service
+    name: Notification service
+    tone: blue
+    kind: service
+    summary: Reads the client's preferred channel and sends the alert by xMatters, email, SMS or pager.
+    owns: [delivery attempts]
+    talksTo: [client-db]
+content:
+  # ────────────────────────────────────────────────────────────────── Problem statement
+  - __component: sd.section
+    key: problem-statement
+    title: Understanding the problem.
+    railLabel: Problem
+    intro: "The prompt: design a distributed logging platform like Splunk or OpenObserve. Say what it is in one line before anything else: an online platform that collects logs from many services and lets people monitor and search them in one place."
+  - __component: sd.rich-text
+    key: problem-what
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Every service in production writes logs, and when something breaks a developer needs to find the lines that explain it, across every service involved, in seconds. A logging platform collects those logs from all the services it is configured for, wherever they run, stores them in a standard shape, and gives a search bar and a dashboard over them. Splunk, OpenObserve and the ELK stack (Elasticsearch, Logstash, Kibana) are the familiar ones."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Run the interview in five steps and say them once: requirements, core entities, API, high-level design, then the deep dive. Number each step on the board as you reach it. For this system the requirements are short, and the deep dive is where the interview is scored: one overloaded ingestion service becomes a pipeline, and each kind of search gets the store that suits it."
+  - __component: sd.quiz
+    key: problem-quiz
+    title: Quick check
+    questions:
+      - question: What does a distributed logging platform do, in one line?
+        optionA: Runs the microservices for you
+        optionB: Collects logs from many services into one place where they can be monitored and searched
+        optionC: Replaces the application's database
+        optionD: Sends emails to users
+        answer: B
+        explanation: Collection from many sources, a standard structure, and search over all of it.
+  # ────────────────────────────────────────────────────────────────── 1. Requirements
+  - __component: sd.section
+    key: requirements
+    title: Requirements.
+    railLabel: Requirements
+    intro: "Four functional lines on the left, four qualities on the right. The core is one sentence, take in logs from many sources, and the rest says how they arrive, what happens to them, and how people read them."
+  - __component: sd.subsection
+    key: functional-sub
+    title: Functional requirements
+    railLabel: Functional
+  - __component: sd.checklist
+    key: functional
+    idPrefix: FR-
+    items:
+      - text: Ingest logs from many sources, wherever the services run.
+      - text: "Support real-time streaming and batch ingestion: an offline device keeps its logs locally and uploads them when it reconnects."
+        note: Two ways in, one platform.
+      - text: Validate, parse and normalize every log into one standard structure before it is stored.
+        note: Each client logs in its own format; nothing is imposed on them, so the platform does the work.
+      - text: Let users search and view the logs in a dashboard in near real time.
+  - __component: sd.subsection
+    key: non-functional-sub
+    title: Non-functional requirements
+    railLabel: Non-functional
+  - __component: sd.requirement-table
+    key: non-functional
+    rows:
+      - area: Scale
+        requirement: Take in the logs of many organisations' services.
+        targets: [millions of events per hour]
+        note: "A million an hour averages about 280 a second; logs come in bursts, so design for the peaks."
+      - area: Latency
+        requirement: A log is searchable soon after it is written.
+        targets: [near real time, seconds]
+        note: A developer chasing an incident cannot wait minutes for the line that explains it.
+      - area: Availability
+        requirement: Ingestion keeps accepting logs when parts fail.
+        targets: [availability over consistency]
+        note: A log seen a moment late in search costs little; a log refused while a service is failing is lost evidence.
+      - area: Reliability
+        requirement: No log is lost once accepted, for as long as it is kept.
+        targets: [no data loss, a set retention such as 30 to 45 days]
+        note: Nobody keeps every log forever. Say how long they are kept.
+  - __component: sd.rich-text
+    key: requirements-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Ask for the scale first, because it decides everything else; here the interviewer says millions of events per hour, an event being one log. Latency follows from near real time. For CAP, ingestion chooses availability: the platform must keep taking logs, especially during an outage, when they matter most, and a log appearing in search a moment later is acceptable. Reliability means no accepted log is lost, within a retention period you name, 30 or 45 days, not forever."
+  - __component: sd.quiz
+    key: requirements-quiz
+    title: Quick check
+    questions:
+      - question: Why does a logging platform choose availability over consistency for ingestion?
+        optionA: Logs are never read
+        optionB: Refusing logs during an outage loses the evidence people need, while a short delay before a log shows up in search costs little
+        optionC: Consistency is impossible with Kafka
+        optionD: Because it uses Elasticsearch
+        answer: B
+        explanation: The platform is needed most when services fail; it has to keep accepting.
+      - question: What does "reliable, no data loss" need beside it on the board?
+        optionA: Nothing
+        optionB: A retention period, such as 30 or 45 days, since logs are not kept forever
+        optionC: A cache
+        optionD: The number of servers
+        answer: B
+        explanation: No loss within a stated lifetime; after it, logs are deleted or archived on purpose.
+  # ────────────────────────────────────────────────────────────────── 2. Entities
+  - __component: sd.section
+    key: entities
+    title: Core entities.
+    railLabel: Entities
+    intro: "Three nouns come straight out of the functional requirements."
+  - __component: sd.table
+    key: entities-table
+    columns:
+      - { label: Entity, style: strong }
+      - { label: What it is, style: text }
+    rows:
+      - [Log event, "One log line as it arrives and, normalized, as it is stored and searched."]
+      - [Ingestion job, "A batch upload, such as an offline device's file, and its status."]
+      - [Source or agent, "What sends the logs: an agent installed beside the services, or a service calling the API."]
+  - __component: sd.quiz
+    key: entities-quiz
+    title: Quick check
+    questions:
+      - question: Why is the ingestion job an entity?
+        optionA: It is not needed
+        optionB: Batch uploads from offline clients take time, so each has its own record and status to check
+        optionC: Because Kafka needs it
+        optionD: It stores the search results
+        answer: B
+        explanation: The batch requirement brings it in; GET /files/{fileId}/status reads it.
+  # ────────────────────────────────────────────────────────────────── 3. API
+  - __component: sd.section
+    key: api
+    title: API.
+    railLabel: API
+    intro: "Before the endpoints, draw how a log actually leaves a service: nothing calls the platform on every log line. Then the endpoints fall into four groups: the agent, direct ingestion, file uploads and search."
+  - __component: sd.rich-text
+    key: log-path
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "A service logs with a library such as Log4j, which writes to the standard streams, stdout for information and stderr for errors. On Kubernetes, the container runtime on the node captures those streams and writes them to a log file on the node (raw.logs in the drawing). An agent running on the node, such as Fluent Bit, the OpenTelemetry Collector, or Splunk's own Universal Forwarder, tails that file and ships the new lines to the platform in near real time. So the platform's real client is the agent, and the agent has to be onboarded and authenticated before it may send anything."
+  - __component: sd.table
+    key: endpoints
+    title: The endpoints, by group
+    columns:
+      - { label: Group, style: text }
+      - { label: Endpoint, style: mono-strong }
+      - { label: What it does, style: text }
+    rows:
+      - [Agent, POST /agents/register, Registers an agent for an onboarded client.]
+      - [Agent, "PUT /agents/{agentId}", Edits an agent.]
+      - [Agent, "GET /agents/{agentId}/config", "What the agent should read and how often to send."]
+      - [Agent, "POST /agents/{agentId}/heartbeat", Tells the platform the agent is alive.]
+      - [Agent, "POST /agents/{agentId}/logs", The agent's batch of new log lines.]
+      - [Direct, POST /logs/ingest, A microservice sends logs itself.]
+      - [Direct, POST /logs/batch, Several at once.]
+      - [Direct, "GET /logs/status/{requestId}", Whether a submission was accepted.]
+      - [File, POST /files/upload, An offline or legacy client uploads a log file.]
+      - [File, "GET /files/{fileId}/status", The upload's ingestion job status.]
+      - [Search, POST /logs/search, "Full text, regex, filters and a time range, paged."]
+      - [Search, "GET /logs/{logId}", One log in full.]
+      - [Search, GET /logs/tail, Live tail by polling.]
+      - [Search, WS /logs/tail/ws, Live tail pushed over a WebSocket.]
+  - __component: sd.endpoint
+    key: agent-logs
+    method: POST
+    path: "/agents/{agentId}/logs"
+    summary: "The agent's batch of new lines, authenticated with the client's ID and token."
+    requestHeaders: ["Authorization: Bearer <token>"]
+    requestBody:
+      logs:
+        - { timestamp: "2026-10-27T10:00:00.120Z", service: checkout, level: ERROR, message: "payment timeout", traceId: t-81f2 }
+    responses:
+      - label: Accepted
+        status: "202"
+        body:
+          accepted: 1
+  - __component: sd.rich-text
+    key: api-advice
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "In a 45-minute interview do not write all fourteen. Name the groups, write the log submission and the search, and write the rest only if the interviewer asks; the time is better spent on the design."
+  - __component: sd.quiz
+    key: api-quiz
+    title: Quick check
+    questions:
+      - question: How does a log line usually get from a service to the platform?
+        optionA: The service calls the platform on every line
+        optionB: "The service writes to stdout or stderr, the node's container runtime saves it to a file, and an agent tails the file and ships it"
+        optionC: kubectl uploads it
+        optionD: The database replicates it
+        answer: B
+        explanation: The agent is the platform's real client, which is why it is registered and authenticated.
+      - question: Which endpoint serves an offline device that reconnects with a day of logs?
+        optionA: POST /logs/search
+        optionB: POST /files/upload, then GET /files/{fileId}/status
+        optionC: WS /logs/tail/ws
+        optionD: POST /agents/register
+        answer: B
+        explanation: Batch ingestion is a file upload tracked as an ingestion job.
+  # ────────────────────────────────────────────────────────────────── 4. High-level design
+  - __component: sd.section
+    key: high-level-design
+    title: High-level design.
+    railLabel: High level
+    intro: "Only a handful of boxes: clients, a load balancer with an API gateway, three services, client onboarding, ingestion and search, and two databases."
+  - __component: sd.component-diagram
+    key: hld-diagram
+    title: The first design
+    direction: LR
+    nodes:
+      - { key: client, details: [services and devices with agents] }
+      - { key: gateway, details: [routes by path] }
+      - { key: onboarding-service, details: [registers the client] }
+      - { key: ingestion-service, details: [validate, parse, normalize, save] }
+      - { key: search-service, details: [the dashboard's queries] }
+      - { key: client-db }
+      - { key: log-db }
+    edges:
+      - { from: client, to: gateway }
+      - { from: gateway, to: onboarding-service, label: onboard }
+      - { from: gateway, to: ingestion-service, label: logs }
+      - { from: gateway, to: search-service, label: search }
+      - { from: onboarding-service, to: client-db, label: save }
+      - { from: ingestion-service, to: log-db, label: write }
+      - { from: search-service, to: log-db, label: read }
+  - __component: sd.rich-text
+    key: hld-flows
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Each module scales on its own, so these are microservices behind a load balancer and an API gateway that routes by path. A client first goes through onboarding, saved in a client DB. Then its agent reads the local logs and sends them to the ingestion service, which normalizes them and writes them to a log DB. The dashboard is a search service over that log DB: type into a search bar and get the matching logs."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Point out the weak box before the deep dive: the ingestion service does everything, receiving both kinds of traffic, validating, parsing, normalizing and saving at millions of events an hour. One service with all of that is the first thing to break."
+  - __component: sd.quiz
+    key: hld-quiz
+    title: Quick check
+    questions:
+      - question: Which box in the high-level design is overloaded, and why?
+        optionA: The client DB
+        optionB: The ingestion service, which takes both kinds of traffic and does every processing step and the writes itself
+        optionC: The search service
+        optionD: The gateway
+        answer: B
+        explanation: The deep dive splits it and puts a buffer and a stream processor behind it.
+  # ────────────────────────────────────────────────────────────────── 5. Deep dive: agents and onboarding
+  - __component: sd.section
+    key: lld-onboarding
+    title: "Deep dive: agents, the gateway and onboarding."
+    railLabel: Agents, onboarding
+    intro: "Copy the high-level design down the board and start from the left: what runs on the client, what the gateway does, and how a client gets onboarded."
+  - __component: sd.rich-text
+    key: onboarding-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "On the client side there are two ways in: an agent for real-time upload (Fluent Bit, an OpenTelemetry Collector, or our own agent), and a file uploader for offline batches. How the agent is built is out of scope; say that it exists. Requests reach the load balancer, round robin, and the API gateway, which does authentication and authorization, rate limiting and routing."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Onboarding is done once per organisation, not per service. Say a large retailer signs up: it registers as an organisation and gets back a client ID and a token, and every one of its hundreds of services sends logs with those two. The gateway checks them first, at the very edge. The data is small, flat and relational, so the client DB is PostgreSQL. A token has a TTL, since a token that never expires is dangerous if stolen, and a renew flow issues a new one. And there is one token per environment, dev, QA, staging and production, so a test service can never write into production's logs."
+  - __component: sd.db-schema
+    key: client-schema
+    stores:
+      - key: client-store
+        engine: PostgreSQL
+        component: client-db
+        why: Small, flat, relational records read on every authentication.
+        tables:
+          - name: client
+            columns:
+              - { name: client_id, type: uuid, role: primary }
+              - { name: client_name, type: text }
+              - { name: token, type: text, note: "stored hashed" }
+              - { name: token_ttl, type: timestamp }
+              - { name: env, type: text, note: "dev, qa, staging, prod" }
+              - { name: metadata, type: jsonb }
+  - __component: sd.component-diagram
+    key: onboarding-diagram
+    title: Onboarding
+    direction: LR
+    nodes:
+      - { key: client, details: [agent or file uploader] }
+      - { key: gateway, details: [authentication and authorization, rate limiting, routing, round robin] }
+      - { key: onboarding-service, details: [returns client ID and token] }
+      - { key: client-db }
+    edges:
+      - { from: client, to: gateway }
+      - { from: gateway, to: onboarding-service, label: register }
+      - { from: onboarding-service, to: client-db, label: save }
+  - __component: sd.quiz
+    key: onboarding-quiz
+    title: Quick check
+    questions:
+      - question: An organisation with 300 microservices joins. How many times does it onboard?
+        optionA: "300, once per service"
+        optionB: Once, as an organisation; every service uses its client ID and token
+        optionC: Once per log line
+        optionD: Never; agents need no credentials
+        answer: B
+        explanation: Onboarding is per organisation, with one token per environment.
+      - question: Why does the token have a TTL?
+        optionA: To save space
+        optionB: A stolen token that never expires lets anyone write into that client's logs for good; an expiring one with a renew flow limits the damage
+        optionC: Because PostgreSQL requires it
+        optionD: For rate limiting
+        answer: B
+        explanation: Expiry plus renewal bounds how long a leaked token is useful.
+  # ────────────────────────────────────────────────────────────────── 5. Deep dive: ingestion pipeline
+  - __component: sd.section
+    key: lld-ingestion
+    title: "Deep dive: the ingestion pipeline."
+    railLabel: Ingestion
+    intro: "The ingestion service did everything. Split it by how logs arrive, put a buffer behind it, and give the processing to a stream processor."
+  - __component: sd.rich-text
+    key: ingestion-split
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "First split by traffic: a file ingestion service for the offline, batch path and an agent-based service for the real-time path. Each scales to its own load, and a burst of uploaded files cannot slow the live stream."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Next, the writes. At millions of events an hour, arriving in bursts, writing each log straight from the ingestion services into the database ties their speed to the database's worst moment. So both services produce to Kafka, which acts as a buffer: topic raw_logs gets every log as it arrived, unvalidated. Kafka keeps the records durably and replicated, so an accepted log survives a slow or failed consumer, which is how the no-data-loss line is met. Producer and consumer now scale apart."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Then the processing. One option is a consumer service per step: one validates and writes to a validated topic, the next parses and normalizes and writes onward, and so on. That works, but it is a chain of services to run. Simpler: one Apache Flink job, a stream processor that reads raw_logs and does validation, parsing and normalization, enrichment and deduplication in one place, then writes the result to the log DB."
+      - type: paragraph
+        children:
+          - type: text
+            text: "The log DB has to be write-optimised: logs are appended, never updated, at a high rate. Cassandra fits because its writes are append-only, it scales out by adding nodes, and its tables are laid out by the queries that read them, which the search section decides. It is a fit for this workload, not a rule that every write-heavy system takes Cassandra."
+  - __component: sd.component-diagram
+    key: ingestion-diagram
+    title: The ingestion pipeline
+    direction: LR
+    nodes:
+      - { key: gateway }
+      - { key: file-ingestion, details: [offline, batch] }
+      - { key: agent-ingestion, details: [real time] }
+      - { key: kafka, details: [topic raw_logs] }
+      - { key: flink, details: [validate, parse and normalize, enrich, deduplicate] }
+      - { key: log-db }
+    edges:
+      - { from: gateway, to: file-ingestion }
+      - { from: gateway, to: agent-ingestion }
+      - { from: file-ingestion, to: kafka, label: produce }
+      - { from: agent-ingestion, to: kafka, label: produce }
+      - { from: kafka, to: flink, label: consume }
+      - { from: flink, to: log-db, label: write }
+  - __component: sd.quiz
+    key: ingestion-quiz
+    title: Quick check
+    questions:
+      - question: Why put Kafka between the ingestion services and the database?
+        optionA: Kafka is a database
+        optionB: It buffers bursts durably, so ingestion keeps accepting at its own pace and the processing and the database catch up at theirs, without losing logs
+        optionC: To search logs
+        optionD: To authenticate agents
+        answer: B
+        explanation: "Decoupling plus durability: the no-data-loss requirement and bursty load both point to a buffer."
+      - question: What does Flink replace?
+        optionA: Kafka
+        optionB: A chain of consumer services, one per step, each reading one topic and writing the next
+        optionC: The gateway
+        optionD: Cassandra
+        answer: B
+        explanation: One streaming job does validation, parsing and normalization, enrichment and deduplication.
+  # ────────────────────────────────────────────────────────────────── 5. Deep dive: search
+  - __component: sd.section
+    key: lld-search
+    title: "Deep dive: search."
+    railLabel: Search
+    intro: "The dashboard is a search bar: an index name, keywords, filters, a time range. Full-text search over this much data needs a search engine, and how long it keeps data decides what the database must answer."
+  - __component: sd.rich-text
+    key: search-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Add Elasticsearch for full-text search. Rather than a separate change-data-capture pipeline from the log DB into Elasticsearch, let the Flink job write each processed log to both, Cassandra and Elasticsearch. One job, two sinks."
+      - type: paragraph
+        children:
+          - type: text
+            text: "But a year of logs is thousands of terabytes, and an index that size is slow and expensive. So Elasticsearch keeps only 14 days: in daily indices that index lifecycle management deletes once they are older. Recent logs, which are most of what people search, come back fast. Older searches go to Cassandra and take longer; say so in the product terms."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Cassandra can only answer queries its tables were laid out for, so write each log into one table per way people search: by service, by level, and by trace ID. The partition key spreads the data and the clustering key orders it, newest first."
+  - __component: sd.db-schema
+    key: log-schema
+    stores:
+      - key: log-store
+        engine: Apache Cassandra
+        component: log-db
+        why: Append-only writes at a high rate, read by known queries.
+        tables:
+          - name: logs_by_service
+            columns:
+              - { name: service_name, type: text, role: primary, note: "partition, with log_date" }
+              - { name: log_date, type: date, role: primary, note: partition }
+              - { name: timestamp, type: timestamp, note: "clustering, newest first" }
+              - { name: log_id, type: timeuuid }
+              - { name: log_level, type: text }
+              - { name: host, type: text }
+              - { name: env, type: text }
+              - { name: message, type: text }
+              - { name: namespace, type: text }
+              - { name: pod_name, type: text }
+              - { name: trace_id, type: text }
+          - name: logs_by_level
+            columns:
+              - { name: log_level, type: text, role: primary, note: "partition, with log_date and an hour bucket" }
+              - { name: log_date, type: date, role: primary }
+              - { name: timestamp, type: timestamp, note: clustering }
+              - { name: log_id, type: timeuuid }
+              - { name: service_name, type: text }
+              - { name: message, type: text }
+          - name: logs_by_traceId
+            columns:
+              - { name: trace_id, type: text, role: primary, note: partition }
+              - { name: timestamp, type: timestamp, note: clustering }
+              - { name: log_id, type: timeuuid }
+              - { name: service_name, type: text }
+              - { name: log_level, type: text }
+              - { name: message, type: text }
+  - __component: sd.rich-text
+    key: hot-partition
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "One fix to the drawn tables: a partition of log_level and log_date puts every error of a day into one partition, and there are only a handful of levels. Add an hour bucket, or the service, to that partition key so no partition grows without bound."
+  - __component: sd.quiz
+    key: search-quiz
+    title: Quick check
+    questions:
+      - question: Why keep only 14 days in Elasticsearch?
+        optionA: Elasticsearch cannot store more
+        optionB: Most searches are for recent logs, and a full year in the index would make it slow and costly; older searches go to Cassandra
+        optionC: For consistency
+        optionD: Because Kafka keeps 14 days
+        answer: B
+        explanation: Hot data in the expensive fast store, the rest in the cheaper one, with the slower path stated.
+      - question: Why three Cassandra tables holding the same logs?
+        optionA: For backups
+        optionB: Cassandra answers efficiently only the queries a table's keys were designed for, so there is one table per way of searching
+        optionC: Because Flink needs them
+        optionD: To save space
+        answer: B
+        explanation: By service, by level and by trace ID, each partitioned and clustered for its query.
+  # ────────────────────────────────────────────────────────────────── 5. Deep dive: retention
+  - __component: sd.section
+    key: lld-retention
+    title: "Deep dive: retention and cold storage."
+    railLabel: Retention
+    intro: "Cassandra is costly to run at this size, so it keeps a fixed window, and every log also goes somewhere cheap."
+  - __component: sd.rich-text
+    key: retention-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Keep 45 days in Cassandra. A cron job runs every day and deletes rows older than that; a TTL written with each row does the same job inside Cassandra and avoids a daily mass delete. Splunk's retention is set per index, so 45 days here is a policy you choose with the business, not a fixed rule."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Deleting outright is risky: the business may later want 60 or 90 days, and deleted logs cannot be brought back. So every log is also written to S3 or another blob store as cold storage, the cheapest place to keep it, and Cassandra's deletes only drop the expensive copy. That is an archive, not a soft delete: the database row is really gone, and the archive is the copy that stays."
+      - type: paragraph
+        children:
+          - type: text
+            text: "The same Flink job writes all three: Elasticsearch, the costliest, for 14 days; Cassandra for 45; S3 for the long term."
+  - __component: sd.table
+    key: tiers
+    title: Three copies, three lifetimes
+    columns:
+      - { label: Store, style: strong }
+      - { label: Kept, style: mono }
+      - { label: For, style: text }
+      - { label: Expired by, style: text }
+      - { label: Cost, style: text }
+    rows:
+      - [Elasticsearch, 14 days, Fast full-text search of recent logs, Daily indices deleted by lifecycle management, Highest]
+      - [Cassandra, 45 days, "Searches by service, level and trace", "Daily cron, or a TTL per row", Medium]
+      - [S3, Long term, "Recovery, audits, longer retention later", Lifecycle rules if ever, Lowest]
+  - __component: sd.quiz
+    key: retention-quiz
+    title: Quick check
+    questions:
+      - question: Why write every log to S3 as well?
+        optionA: S3 is faster than Cassandra
+        optionB: It is the cheapest copy, so logs deleted from Cassandra after 45 days can still be recovered if retention is extended
+        optionC: For full-text search
+        optionD: Kafka requires it
+        answer: B
+        explanation: Cold storage keeps the option open at little cost.
+  # ────────────────────────────────────────────────────────────────── 5. Deep dive: alerting (follow-up)
+  - __component: sd.section
+    key: lld-alerting
+    title: "Deep dive: alerting, live tail, and the final design."
+    railLabel: Alerting
+    intro: "The usual follow-up: Splunk sends an alert when an error shows up. Add it without touching the ingestion path, then explain the live tail and read the requirements back."
+  - __component: sd.rich-text
+    key: alert-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Flink already reads every log and knows its level. When a log may need an alert, it also writes it to a second Kafka topic, alert_topic. An alert service consumes that topic. Not every error deserves a page, so it checks the client's rules in an alert preference database, such as alert when the checkout service logs more than 10 errors, and when a rule fires it calls a notification service."
+      - type: paragraph
+        children:
+          - type: text
+            text: "The notification service reads how this client wants to be told, a new pref column in the client DB, and sends it by xMatters, email, SMS or pager."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Live tail, from the API: WS /logs/tail/ws opens a WebSocket, a full-duplex connection over which the platform pushes new logs as they arrive; GET /logs/tail is the simpler fallback, which the dashboard polls every 5 seconds."
+  - __component: sd.component-diagram
+    key: final-diagram
+    title: The final design
+    direction: LR
+    nodes:
+      - { key: client }
+      - { key: gateway, details: [authentication, rate limiting, routing] }
+      - { key: onboarding-service }
+      - { key: client-db, details: [pref for alerts] }
+      - { key: file-ingestion }
+      - { key: agent-ingestion }
+      - { key: kafka, details: [raw_logs, alert_topic] }
+      - { key: flink }
+      - { key: log-db, details: [45 days] }
+      - { key: elasticsearch, details: [14 days] }
+      - { key: cold-storage }
+      - { key: cleanup, details: [daily] }
+      - { key: search-service }
+      - { key: alert-service }
+      - { key: alert-db }
+      - { key: notification-service, details: ["xMatters, email, SMS, pager"] }
+    edges:
+      - { from: client, to: gateway }
+      - { from: gateway, to: onboarding-service }
+      - { from: gateway, to: file-ingestion }
+      - { from: gateway, to: agent-ingestion }
+      - { from: gateway, to: search-service }
+      - { from: onboarding-service, to: client-db }
+      - { from: file-ingestion, to: kafka }
+      - { from: agent-ingestion, to: kafka }
+      - { from: kafka, to: flink }
+      - { from: flink, to: log-db }
+      - { from: flink, to: elasticsearch }
+      - { from: flink, to: cold-storage }
+      - { from: cleanup, to: log-db, label: delete older than 45 days }
+      - { from: search-service, to: elasticsearch, label: recent }
+      - { from: search-service, to: log-db, label: older }
+      - { from: alert-service, to: kafka, label: alert_topic }
+      - { from: alert-service, to: alert-db, label: rules }
+      - { from: alert-service, to: notification-service }
+      - { from: notification-service, to: client-db, label: pref }
+  - __component: sd.rich-text
+    key: recap-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Close by reading the non-functional list back against the board. Scale: ingestion services, Kafka partitions, Flink and Cassandra all scale out. Latency: logs reach Elasticsearch within seconds of Kafka. Availability: ingestion only has to reach Kafka, so it keeps accepting while processing or storage is slow. Reliability: Kafka holds accepted logs durably, and S3 keeps them past Cassandra's window."
+  - __component: sd.quiz
+    key: alerting-quiz
+    title: Quick check
+    questions:
+      - question: Where do alerts come from in this design?
+        optionA: The search service polls for errors
+        optionB: Flink writes alert-worthy logs to alert_topic; an alert service checks the client's rules and calls the notification service
+        optionC: Cassandra triggers
+        optionD: The agents send emails
+        answer: B
+        explanation: The stream already sees every log; alerting is one more consumer, off the ingestion path.
+      - question: Why the alert preference database?
+        optionA: To store logs
+        optionB: Not every error should page someone; each client's rules decide which ones do
+        optionC: To hold tokens
+        optionD: For live tail
+        answer: B
+        explanation: Rules such as more than 10 errors on checkout separate noise from incidents.
+      - question: What is the difference between WS /logs/tail/ws and GET /logs/tail?
+        optionA: None
+        optionB: The WebSocket pushes new logs over one open connection; the GET is polled by the dashboard every 5 seconds
+        optionC: The GET is faster
+        optionD: The WebSocket is for agents
+        answer: B
+        explanation: Push over a full-duplex connection versus a repeated pull.

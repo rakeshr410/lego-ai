@@ -1,0 +1,60 @@
+# Collaborative editor interview, low-level design approach 1, file replacement, as the video draws it under the list "1. File Replacement": user A and user B above, the file abc between them, the editor service below; the whole file goes up over HTTP and the change is pushed to the others (server-sent events, which the video calls SSC).
+id: backend/collaborative-editor/end-to-end/lld-file-replacement
+title: "Approach 1: file replacement"
+source:
+  hash: "5881353bece7"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/collaborative-editor/end-to-end/lld-metadata
+  assumes:
+    - "The document editor service handles edits; the content is in blob storage."
+    - "Edits must reach collaborators within about 100 ms."
+  carries:
+    - "File replacement sends the whole file on every change over HTTP and pushes it to the others with server-sent events."
+    - "Its flaws: heavy payloads, and a request plus a push and fetch for every keystroke."
+  terms:
+    - term: server-sent events
+      means: "SSE: a one-way channel over HTTP on which the server pushes messages to the browser."
+board:
+  keep: [title, prompt-desc, nfr, nfr-scale, nfr-cap, nfr-latency, api, api-post, api-get, api-ws]
+  elements:
+    - { id: lld-file, kind: region, label: "Approach 1: file replacement", at: [6, 32], size: [44, 23] }
+    - { id: f-user-a, kind: box, label: user A, at: [8, 35], size: [8, 3], in: lld-file }
+    - { id: f-user-b, kind: box, label: user B, at: [40, 35], size: [8, 3], in: lld-file }
+    - { id: f-file, kind: box, label: "file, abc", at: [24, 40], size: [8, 3], tone: amber, in: lld-file }
+    - { id: f-editor, kind: box, label: Editor service, at: [22, 46], size: [12, 3], tone: blue, in: lld-file }
+    - { id: f-flaw-size, kind: note, label: "flaw, the whole file on every change", at: [8, 51], in: lld-file }
+    - { id: f-flaw-count, kind: note, label: "flaw, a request per keystroke, millions", at: [8, 52], in: lld-file }
+  arrows:
+    - { id: f-a-file, from: f-user-a, to: f-file, label: "whole file, HTTP" }
+    - { id: f-file-editor, from: f-file, to: f-editor }
+    - { id: f-editor-b, from: f-editor, to: f-user-b, label: SSE push }
+beats:
+  - point: "The brute-force way: on every change the client sends the whole file to the editor service over HTTP, the service saves it and pushes the change to the other users with server-sent events, and they reload it."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Now the heart, the editor service. Start brute force. User A and user B have one file open. User A types abc, and the client sends the whole file to the editor service in an HTTP request; the service saves it."
+      - "Then the service pushes a notice to user B over server-sent events, a one-way push from server to browser, and user B's client fetches the file and redraws. Call it file replacement."
+    draw: [lld-file, f-user-a, f-user-b, f-file, f-a-file, f-editor, f-file-editor, f-editor-b]
+    check: What travels to the server when user A types one letter?
+    answer: The whole file, in an HTTP request, and then a push and a fetch of the file for every other user.
+  - point: "Two flaws sink it: every change sends the entire file, and every keystroke is a request plus a push and a fetch for each collaborator, millions of round trips."
+    kind: failure
+    weight: core
+    teach:
+      - "Two problems. The payload: one letter in a long document sends the entire document, every time."
+      - "The count: every keystroke is a request in, then a push and a fetch out to every collaborator. Across millions of users that is millions of round trips. Write both flaws beside it; the next approaches fix them."
+    draw: [f-flaw-size, f-flaw-count]
+    check: Which two costs make file replacement unworkable?
+    answer: The size of each request, the whole file, and the number of requests, one plus a push and fetch per keystroke per collaborator.
+asks:
+  - ids: [f-flaw-size, f-flaw-count]
+    beats: [2]
+    question: "So every change sends the whole file and pushes it to everyone. What goes wrong with that at our scale?"
+    hints:
+      - Think about a long document and a one-letter change.
+      - And how many requests does a minute of typing make?

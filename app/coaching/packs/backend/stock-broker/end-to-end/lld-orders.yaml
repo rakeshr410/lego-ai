@@ -1,0 +1,155 @@
+# Stock broker interview, deep dive into the order flow: under the kept price picture (the API gateway, the price tracker, Kafka and the exchange gateway), the video's last drawing: Kafka with raw, verified and rejected orders and the validator under it, the order service sending verified orders up to the exchange gateway, the order DB and its columns, the order status topic added to the market Kafka, the order tracker writing the trade DB and the order DB, the notification service, and the portfolio reading trades and live prices. The video says the order service forwards orders to the payment gateway; its board and this pack use the exchange gateway.
+id: backend/stock-broker/end-to-end/lld-orders
+title: "Deep dive: the order flow"
+source:
+  hash: "8ae2cbb06073"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/stock-broker/end-to-end/lld-watchlist
+  assumes:
+    - "The exchange gateway is the only door to the exchange and writes its feed into Kafka."
+    - "The price tracker serves live prices; orders and money need consistency."
+  carries:
+    - "Orders go into Kafka topic raw orders; a validator checks KYC, account, funds and margin, market hours, holds the funds, and publishes verified or rejected."
+    - "The order service records every order (pending, trade ID empty) and sends only verified ones through the exchange gateway."
+    - "Fills are events on Kafka topic order status; an order tracker updates the order DB, writes the trade DB and notifies the user."
+    - "The trade DB holds only exchange-accepted trades, is reconciled at the close, and feeds the portfolio's profit and loss with live prices."
+  terms:
+    - term: partial fill
+      means: "Only part of an order executed so far, such as 5 of 20 shares."
+    - term: reconciliation
+      means: "Comparing the broker's trade records with the exchange's at the close so both agree."
+board:
+  keep: [title, nfr, nfr-scale, nfr-cap, nfr-view, nfr-latency, nfr-region, lld-price, pt-open, pt-history, pt-apigw, pt-tracker, pt-kafka, pt-kafka-topic, pt-exgw, pt-exchange, pt-sockets, pt-exchange-exgw, pt-exgw-kafka]
+  elements:
+    - { id: lld-orders, kind: region, label: "5. Deep dive: order service", at: [2, 53], size: [70, 28] }
+    - { id: or-kafka, kind: box, label: "Kafka, orders", at: [13, 64], size: [10, 3], tone: amber, in: lld-orders }
+    - { id: or-topic-raw, kind: note, label: raw orders, at: [4, 64], in: lld-orders }
+    - { id: or-topic-ok, kind: note, label: verified orders, at: [4, 65], in: lld-orders }
+    - { id: or-topic-bad, kind: note, label: rejected orders, at: [4, 66], in: lld-orders }
+    - { id: or-validator, kind: box, label: Validator, at: [13, 72], size: [10, 3], in: lld-orders }
+    - { id: or-checks-1, kind: note, label: "KYC, active account,", at: [4, 76], in: lld-orders }
+    - { id: or-checks-2, kind: note, label: "funds and margin, market hours", at: [4, 77], in: lld-orders }
+    - { id: or-checks-3, kind: note, label: reads the user and payment DBs, at: [4, 78], in: lld-orders }
+    - { id: or-svc, kind: box, label: Order service, at: [60, 64], size: [11, 3], tone: blue, in: lld-orders }
+    - { id: or-db, kind: oval, label: Order DB, at: [44, 72], size: [11, 4], tone: amber, in: lld-orders }
+    - { id: or-schema-1, kind: note, label: "order: orderId, userId, stockId,", at: [56, 72], in: lld-orders }
+    - { id: or-schema-2, kind: note, label: "orderType, price, quantity,", at: [58, 73], in: lld-orders }
+    - { id: or-schema-3, kind: note, label: "tradeId, status pending", at: [58, 74], in: lld-orders }
+    - { id: or-fill, kind: note, label: "market fills now, limit may wait, fills can be partial", at: [36, 69], in: lld-orders }
+    - { id: or-status-topic, kind: note, label: "topic, order status", at: [52, 44], in: lld-price }
+    - { id: or-tracker, kind: box, label: Order tracker, at: [53, 56], size: [11, 3], tone: blue, in: lld-orders }
+    - { id: or-trade-db, kind: oval, label: Trade DB, at: [40, 56], size: [10, 3], tone: amber, in: lld-orders }
+    - { id: or-trade-note, kind: note, label: "trade DB, same columns, accepted only", at: [36, 60], in: lld-orders }
+    - { id: or-notify, kind: box, label: Notification service, at: [76, 56], size: [12, 3], tone: grey }
+    - { id: or-portfolio, kind: box, label: Portfolio service, at: [24, 56], size: [11, 3], in: lld-orders }
+  arrows:
+    - { id: or-gw-kafka, from: pt-apigw, to: or-kafka, label: raw order }
+    - { id: or-kafka-validator, from: or-kafka, to: or-validator, both: true }
+    - { id: or-kafka-svc, from: or-kafka, to: or-svc, label: verified and rejected }
+    - { id: or-svc-db, from: or-svc, to: or-db }
+    - { id: or-svc-exgw, from: or-svc, to: pt-exgw, label: verified only }
+    - { id: or-kafka-tracker, from: pt-kafka, to: or-tracker, label: order status }
+    - { id: or-tracker-db, from: or-tracker, to: or-db }
+    - { id: or-tracker-trade, from: or-tracker, to: or-trade-db }
+    - { id: or-tracker-notify, from: or-tracker, to: or-notify }
+    - { id: or-svc-notify, from: or-svc, to: or-notify }
+    - { id: or-portfolio-trade, from: or-portfolio, to: or-trade-db, label: reads }
+    - { id: or-portfolio-tracker, from: or-portfolio, to: pt-tracker, label: live prices }
+beats:
+  - point: "Millions of users placing orders at once is more than one server can take, and no order may be lost, so every buy or sell goes first into Kafka, topic raw orders."
+    kind: component
+    weight: core
+    teach:
+      - "Last and most important, orders. High-frequency trading from millions of users: no single server takes that, and losing an order is unacceptable."
+      - "So a buffer: every buy or sell goes from the gateway into Kafka, on a topic called raw orders. Draw two more topics now, verified and rejected; you will see why."
+    draw: [lld-orders, or-kafka, or-gw-kafka, or-topic-raw, or-topic-ok, or-topic-bad]
+    check: Why put Kafka in front of the order processing?
+    answer: It absorbs the burst of orders and keeps every one durably until it is processed, so none is lost.
+  - point: "The validator consumes raw orders and checks KYC, an active account, funds and margin and market hours, reading the user and payment DBs, holds the funds, and publishes each order as verified or rejected."
+    kind: mechanism
+    weight: core
+    teach:
+      - "The validator from the high-level design now consumes raw orders. Its checks: the user passed KYC, the account is active, funds and margin cover the order, the market is open. For that it reads the user DB and the payment DB."
+      - "It should also hold the funds when it accepts an order, or two orders at the same instant could spend one balance. Then it publishes each order to verified orders or rejected orders."
+    draw: [or-validator, or-kafka-validator, or-checks-1, or-checks-2, or-checks-3]
+    check: Why must the validator hold the funds, not just check them?
+    answer: Otherwise two orders validated at the same moment could both spend the same balance.
+    misconceptions:
+      - "Checking the balance is enough -> two concurrent orders can both pass the check; the funds must be held as the order is accepted."
+  - point: "The order service consumes verified and rejected orders and writes every one to the order DB: orderId, userId, stockId, orderType, price, quantity, a trade ID still empty, and status pending."
+    kind: decision
+    weight: core
+    teach:
+      - "The order service consumes both topics and writes every order, accepted or not, to the order DB, in Postgres since it is money."
+      - "The row: order ID, user ID, stock ID, order type, market or limit, price, quantity, trade ID and status. A new order has no trade ID yet and status pending."
+    draw: [or-svc, or-kafka-svc, or-db, or-svc-db, or-schema-1, or-schema-2, or-schema-3]
+    check: What do the trade ID and status hold when an order is first written?
+    answer: The trade ID is empty and the status is pending, until the exchange confirms.
+  - point: "Only verified orders go on, through the exchange gateway; a market order fills at once, but a limit order may wait, and either may fill in parts."
+    kind: flow
+    weight: core
+    teach:
+      - "Verified orders go to the exchange through the exchange gateway, the one door to it. Not the payment gateway: that one moves money with banks."
+      - "Then the hard part. A market order fills at once at the current price. A limit order may wait fifteen minutes, or never fill. And fills can be partial: 20 ordered, 5 now, 15 later. So the answer is not a reply; it is events."
+    draw: [or-svc-exgw, or-fill]
+    check: Why can't the order service just wait for the exchange's reply?
+    answer: A limit order may fill much later, and fills can come in parts, so results arrive as later events, not one reply.
+  - point: "The exchange's acknowledgements come back on the same feed into Kafka, topic order status, and an order tracker consumes them and updates each order's status and trade ID."
+    kind: mechanism
+    weight: core
+    teach:
+      - "We already hold an open connection to the exchange. Its acknowledgements arrive there too, so the gateway writes them into the same Kafka, on a second topic, order status."
+      - "An order tracker consumes that topic and, for each fill or rejection, updates the order row: status from pending to filled or rejected, and the trade ID the exchange gave."
+    draw: [or-status-topic, or-tracker, or-kafka-tracker, or-tracker-db]
+    check: How does a fill that happens ten minutes later reach the order DB?
+    answer: The exchange sends it on the feed into the order status topic; the order tracker consumes it and updates the row.
+  - point: "The order tracker also writes a trade DB with the same columns but only orders the exchange accepted, reconciled with the exchange at the close, and notifies the user through a notification service."
+    kind: decision
+    weight: core
+    teach:
+      - "It also writes a trade DB. Same columns, but only what the exchange accepted; the order DB has rejected orders too. At the close the trade DB is reconciled with the exchange's records so both agree."
+      - "And it notifies the user through a notification service; the order service notifies too, when the order is placed."
+    draw: [or-trade-db, or-tracker-trade, or-trade-note, or-notify, or-tracker-notify, or-svc-notify]
+    check: Why keep a trade DB when the order DB has the same columns?
+    answer: It holds only exchange-accepted trades, so it can be reconciled with the exchange and used for holdings and profit and loss.
+  - point: "The portfolio service reads the trade DB, not the order DB, and asks the price tracker for live prices, so profit and loss counts only shares really held at current prices."
+    kind: flow
+    weight: core
+    teach:
+      - "The portfolio service now reads the trade DB, so only shares really bought count. Profit and loss needs the current price too, so it asks the price tracker."
+      - "Close by reading the requirements back: Kafka for scale, the validator and reconciliation for consistency, the price feed for availability, one region and push for latency. Settling money with the exchange is a follow-up of its own."
+    draw: [or-portfolio, or-portfolio-trade, or-portfolio-tracker]
+    check: What two inputs does profit and loss need, and where does each come from?
+    answer: The shares bought and their price from the trade DB, and the current price from the price tracker.
+asks:
+  - ids: [or-kafka]
+    beats: [1]
+    question: "Millions of orders hit us at the open, and none may be lost. What would you put between the gateway and the order logic?"
+    hints:
+      - Something that buffers and keeps every message.
+      - We already use one for prices.
+  - ids: [or-validator]
+    beats: [2]
+    question: "Before an order goes anywhere, what has to be checked, and by what?"
+    hints:
+      - Think of the user, the account, the money and the clock.
+      - We drew this box in the high-level design.
+  - ids: [or-tracker]
+    beats: [5]
+    question: "Fills arrive on the exchange feed, maybe minutes later. What would consume them and update the order?"
+    hints:
+      - They land in Kafka like the prices.
+      - Something has to read that topic and touch the order row.
+  - ids: [or-trade-db]
+    beats: [6]
+    question: "The portfolio should count only what the exchange really executed. Where would you keep that?"
+    hints:
+      - The order DB also has rejected orders.
+      - At the close, what do we compare with the exchange?
+task:
+  prompt: "Draw the order flow: Kafka with raw, verified and rejected orders, the validator, the order service with the order DB, verified orders to the exchange gateway, the order status topic, the order tracker writing the order and trade DBs and notifying the user, and the portfolio reading trades and live prices."
+  expects: [1, 2, 3, 4, 5, 6, 7]

@@ -1,0 +1,86 @@
+# Social media interview, low-level design, the follower service: under the content pipeline, as in the video, the follower service and its Postgres follower DB with the follow table beside it, and why not a graph database. The video calls the relationship one to n; it is many to many, so the pair is unique and indexed both ways.
+id: backend/social-media-feed/end-to-end/lld-follower-service
+title: "Low-level design: the follower service"
+source:
+  hash: "406f2c697218"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/social-media-feed/end-to-end/lld-content-service
+  assumes:
+    - "The follower service keeps a follower DB of who follows whom."
+  carries:
+    - "The follow table: follow_id, follower_id, following_id, status (pending for friend requests), timestamp, in PostgreSQL."
+    - "The pair is unique and indexed both ways: who a user follows, and who follows an author."
+    - "A graph database is only worth it for traversals such as friends-of-friends suggestions."
+  terms:
+    - term: follower_id
+      means: The user who follows.
+    - term: following_id
+      means: The user being followed.
+board:
+  keep: [title, prompt-desc, nfr, nfr-scale, nfr-cap, nfr-latency, lld-head, gw, user-svc, user-db, content-svc, kafka-posts, topics, moderator, post-consumer, post-db, s3, post-schema-1, post-schema-2, post-schema-3, notification, gw-user, user-userdb, gw-content, content-kafka, kafka-moderator, kafka-consumer, consumer-postdb, consumer-s3, kafka-notification]
+  elements:
+    - { id: follower-svc, kind: box, label: Follower service, at: [16, 70], size: [12, 3], tone: blue }
+    - { id: follower-db, kind: oval, label: "Follower DB, Postgres", at: [40, 69], size: [14, 4], tone: amber }
+    - { id: follow-schema-1, kind: note, label: "follow: follow_id, follower_id, following_id,", at: [58, 69] }
+    - { id: follow-schema-2, kind: note, label: "status, timestamp", at: [60, 70] }
+    - { id: follow-unique, kind: note, label: "the pair is unique, indexed both ways", at: [58, 72] }
+    - { id: follow-graph, kind: note, label: "a graph DB only for friend suggestions", at: [58, 73] }
+  arrows:
+    - { id: gw-follower, from: gw, to: follower-svc }
+    - { id: follower-svc-db, from: follower-svc, to: follower-db }
+beats:
+  - point: "The follower service only records relationships, who follows whom, in a follower DB."
+    kind: component
+    weight: core
+    teach:
+      - "Before the feed, finish the services it depends on. The follower service, or friend service on Facebook, only records relationships: who follows whom."
+      - "The only real decision is its table and its database."
+    draw: [follower-svc, gw-follower, follower-db, follower-svc-db]
+    check: What does the follower service store?
+    answer: The relationships, who follows whom.
+  - point: "One row per follow: follow_id, follower_id (who follows), following_id (who is followed), a status for pending friend requests, and a timestamp."
+    kind: decision
+    weight: core
+    teach:
+      - "One row per follow. A generated follow ID, the follower ID, the user who follows, and the following ID, the user being followed. If I follow five people, there are five rows with my ID as follower."
+      - "A status, so a Facebook friend request can sit as pending until accepted, and a timestamp."
+    draw: [follow-schema-1, follow-schema-2]
+    check: If I follow five people, what do the rows look like?
+    answer: Five rows, each with my ID as follower_id and one of the five as following_id.
+  - point: "The relationship is many to many, so the follower and following pair is unique, and both columns are indexed: the feed asks who a user follows and who follows an author."
+    kind: decision
+    weight: core
+    teach:
+      - "A user follows many people and is followed by many: many to many. Make the pair unique, so nobody follows twice."
+      - "Index both directions. Building a reader's feed asks who they follow; pushing a new post asks who follows its author."
+    draw: [follow-unique]
+    check: Why index following_id as well as follower_id?
+    answer: Fan-out asks who follows an author, the opposite direction from who a user follows.
+    misconceptions:
+      - "The generated follow_id is enough to keep rows unique -> it is unique by construction; the follower and following pair needs its own unique key."
+  - point: "A relational table is enough for direct relationships; a graph database earns its place only for traversals such as friends-of-friends suggestions."
+    kind: decision
+    weight: supporting
+    teach:
+      - "Why Postgres and not a graph database? We only store and read direct relationships, simple look-ups."
+      - "If the interviewer adds friend suggestions, friends of friends, that traversal is where a graph database pays off."
+    draw: [follow-graph]
+    check: When would a graph database be worth it here?
+    answer: For traversals like friends-of-friends suggestions; direct follows are simple look-ups.
+asks:
+  - ids: [follow-schema-1, follow-schema-2]
+    beats: [2]
+    question: "What would a row in the follower table hold?"
+    hints:
+      - Two users are involved in every follow.
+      - On Facebook a friend request can be waiting.
+  - ids: [follow-graph]
+    beats: [4]
+    question: "Follows form a graph. Would you use a graph database for this table?"
+    hints:
+      - What queries do we actually run on it?
+      - When would you need to walk several hops?

@@ -6,7 +6,7 @@ decided differently, and its lessons follow the backend order instead of borrowi
 note records that order and the board it draws, as extracted from a backend walkthrough video
 (InterviewWithBunny, System Design 1: Design Tiny URL, youtube.com/watch?v=Y-BO_4XNw8c), and how the URL
 shortener lessons (`app/articles/backend/url-shortener/short-links-end-to-end.yaml`, the packs under
-`app/coaching/packs/backend/`, the `backend-interviews` playlist) carry it. Backend articles and packs
+`app/coaching/packs/backend/`, its playlist `backend-url-shortener`) carry it. Backend articles and packs
 live under `backend/` (coaching.md, Files), so a system can have a frontend and a backend lesson set. coaching.md's pack format and checks apply unchanged.
 
 ## Sections, as the video decides them

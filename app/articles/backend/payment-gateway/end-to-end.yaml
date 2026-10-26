@@ -1,0 +1,812 @@
+# yaml-language-server: $schema=../../../../../lego/content-kit/schema/topic.schema.json
+# provenance: ai-drafted by claude-opus-5-5 on 2026-10-27
+#
+# A whole backend system design interview for a payment gateway like Stripe, PayPal or Razorpay, run
+# step by step on one whiteboard. The order and the board follow a five-step interview framework:
+# requirements, core entities, API, high-level design, then a deep dive that opens the high-level
+# picture one call at a time, as a payment really runs: the payment intent, the checkout session and
+# its hosted card page, the pay call with its checks and the PCI zone that tokenizes the card, the
+# orchestrator that routes to a processor through connectors and records the status, and last the
+# event stream and the reconciliation that confirm the money. Every latency figure is an illustrative
+# round number for the exercise, not a measurement.
+# A backend system of lego-ai's own (app/articles/backend): it stands alone and links to no main-site topic.
+catalogVersion: 5
+title: Designing a payment gateway, end to end
+shortTitle: Payment gateway
+summary: "A backend design interview for a payment gateway like Stripe or Razorpay, step by step on one board: gateway versus processor, requirements with numbers, six entities, four endpoints, the high-level design, then a deep dive through the intent, the checkout session, tokenization in a PCI zone, processor routing and reconciliation."
+group: design
+order: 17
+xp: 280
+difficulty: advanced
+tags: [interview, payments, security, tokenization, consistency, event-driven]
+eyebrow: Design
+breadcrumb: [Payment gateway, Interview walkthrough]
+lede: "You have about forty-five minutes and one whiteboard to design the service that sits between a shop's checkout button and the networks that actually move money. It is a domain question: before any requirement you must say what a gateway does and what it leaves to a processor. This walkthrough runs the interview the way a strong candidate runs it: the definitions, the requirements with numbers, the entities and the three calls a payment makes, the simplest design, then a deep dive that follows one payment from the buy button to the ledger."
+reviewStatus: draft
+author: rakeshr410
+provenance: ai-drafted
+sources:
+  - title: "System Design 17: Design Payment Gateway (InterviewWithBunny, YouTube)"
+    url: https://www.youtube.com/watch?v=7EnqCwQOddY
+    note: "Order and drawings. Corrected: the card fingerprint is a keyed hash of the whole card number; the HSM encrypts the card number; HTTPS is TLS; webhooks are server to server; BINs are 6 to 8 digits; card authorizations answer at once."
+  - title: PCI Security Standards Council
+    url: https://www.pcisecuritystandards.org/
+    note: "Publisher of PCI DSS, the security standard for every system that stores, processes or transmits cardholder data."
+  - title: The PaymentIntents API (Stripe documentation)
+    url: https://docs.stripe.com/payments/payment-intents
+    note: "A payment intent created by the merchant's server first, tracking one payment through its states."
+  - title: Checkout Sessions (Stripe API reference)
+    url: https://docs.stripe.com/api/checkout/sessions
+    note: "A short-lived session whose url is a hosted payment page; sessions expire."
+  - title: Idempotent requests (Stripe API reference)
+    url: https://docs.stripe.com/api/idempotent_requests
+    note: "An idempotency key on a POST lets a client retry without charging twice."
+  - title: Webhooks (Stripe documentation)
+    url: https://docs.stripe.com/webhooks
+    note: "Server-to-server event notifications to an endpoint the merchant registers."
+  - title: Hardware security module (Wikipedia)
+    url: https://en.wikipedia.org/wiki/Hardware_security_module
+    note: "Tamper-resistant hardware that keeps keys inside and performs encryption with them."
+  - title: Payment card number (Wikipedia)
+    url: https://en.wikipedia.org/wiki/Payment_card_number
+    note: "The PAN: an issuer identification number (BIN, 6 to 8 digits) at the front, a check digit (Luhn) at the end."
+  - title: Adapter pattern (Wikipedia)
+    url: https://en.wikipedia.org/wiki/Adapter_pattern
+    note: "One interface over several incompatible ones, the shape of the processor connectors."
+tutorBrief: >-
+  Interview walkthrough for a payment gateway like Stripe, PayPal or Razorpay; illustrative domain
+  pay.gateway.com, illustrative session id sess_f32j. A payment gateway collects card details from the
+  buyer, secures and tokenizes them, orchestrates the flow and talks to a processor: the traffic controller
+  of payments. A payment processor talks to banks and card networks to authorize, capture and settle: it
+  moves the money. The interview designs the gateway only, and is domain heavy, so it is rarely asked of
+  people outside payments. Functional: (1) a client (the merchant) creates a payment intent; (2) the
+  gateway gives a temporary session, a hosted page where the buyer enters card details; (3) card data is
+  handled to PCI DSS; (4) the transaction status is tracked and reported. Out of scope: part payments,
+  returns and refunds. Non-functional: 10,000 transactions per second; consistency over availability;
+  under 200 ms for the gateway's own part of authorization (validation and tokenization, not the bank);
+  security, end-to-end encryption and PCI DSS level 1. Entities: merchant (client), transaction, payment
+  method, customer (user), webhook event, payment session. A payment makes three calls: create an intent
+  (POST /v1/payment-intents, returns paymentIntentId), create a session (POST /v1/payment-sessions with
+  the intent id, returns sessionId and redirectUrl pay.gateway.com/checkout/sess_f32j), pay (POST
+  /v1/checkout/pay from the hosted page with the card); plus GET /v1/payments/{paymentId} for the status.
+  POSTs carry an Idempotency-Key so a retry never charges twice. High-level design: users, the merchant,
+  API gateway and load balancer (microservices at 10k TPS), payment intent service with its database,
+  payment session service returning the checkout page, payment processor service calling the external
+  processor; the processor's answer is not final, a reconciliation job confirms. Deep dive: (1) intent
+  service writes PostgreSQL (consistency first): payment_intent_id, amount, currency, merchant, customer,
+  order_id, payment_method_type, metadata; returns the id. (2) checkout session service stores the
+  session in Redis with a 10-minute TTL (short-lived, fast) and returns sessionId plus redirectUrl; the
+  merchant redirects the buyer; a checkout frontend service behind its own load balancer (no API gateway,
+  it serves a page) returns the HTML and JS; the TTL is the page's countdown. (3) checkout backend service
+  takes the pay call: session exists, not expired, intent valid, merchant matches, session state active
+  (checked against Redis); the merchant never sees the card. It calls the tokenization service in a PCI
+  zone over mutual TLS: validate the card number (Luhn), make a fingerprint (a keyed hash of the full
+  card number, to recognise a repeat card), encrypt the card number with keys held in an HSM and keep it in
+  a card vault; return a token; CVV is never stored. (4) orchestrator service reads the merchant
+  preference DB (which processor the merchant chose at onboarding, fees 1 or 2 percent), records the
+  transaction as SENT in the payment processor DB (txn_id, intent_id, status, amount, currency,
+  merchant_id, payment_method, card_token), calls the processor through a connector (adapter pattern:
+  Razorpay, PayU, Fiserv connectors) and a processor gateway; the result comes back asynchronously to a
+  collector callback service; only the orchestrator writes the status (single writer), DONE; the hosted
+  page polls the checkout backend for the status and shows success or failure; the merchant gets a
+  webhook. (5) callbacks go to Kafka, topic payment.processor.callback.status, which the orchestrator
+  consumes (pub-sub); a day later the processor's final settlement statuses arrive on
+  payment.processor.status (T+1); a reconciliation service tallies them and writes a separate ledger table
+  (who paid, how much, when); mismatches are refunded or corrected, hence 3 to 4 days.
+components:
+  - key: merchant
+    name: Merchant
+    tone: sand
+    kind: client
+    summary: "The business that integrated the gateway (a shop), whose buyers pay through it; it creates intents and sessions from its server."
+    owns: [its orders]
+    talksTo: [api-gateway]
+  - key: api-gateway
+    name: API gateway and load balancer
+    tone: blue
+    kind: gateway
+    summary: "Authenticates the merchant, routes each call to its service and balances load across replicas."
+    owns: [routes, merchant API keys]
+    talksTo: [intent-service, session-service, checkout-backend]
+  - key: intent-service
+    name: Payment intent service
+    tone: blue
+    kind: service
+    summary: "Records what is being paid for (amount, currency, merchant, customer, order) and returns a payment intent id. Never sees a card."
+    owns: [payment intents]
+    talksTo: [intents-db]
+  - key: intents-db
+    name: Payment intent DB
+    tone: yellow
+    kind: datastore
+    summary: PostgreSQL; one row per payment intent.
+    owns: [payment_intent]
+    talksTo: []
+  - key: session-service
+    name: Checkout session service
+    tone: blue
+    kind: service
+    summary: "Creates a short-lived checkout session for an intent, stores it in Redis with a TTL and returns the session id and the hosted page's URL."
+    owns: [nothing durable]
+    talksTo: [session-cache]
+  - key: session-cache
+    name: Redis session store
+    tone: orange
+    kind: cache
+    summary: "Sessions by id, each with its intent, merchant, order and state, expiring after 10 minutes."
+    owns: [checkout sessions]
+    talksTo: []
+  - key: checkout-frontend
+    name: Checkout frontend service
+    tone: green
+    kind: service
+    summary: "Serves the hosted card page at pay.gateway.com/checkout/{sessionId} behind its own load balancer; the page posts the card to the gateway and polls for the status."
+    owns: [the card page]
+    talksTo: [checkout-backend]
+  - key: checkout-backend
+    name: Checkout backend service
+    tone: blue
+    kind: service
+    summary: "Takes the pay call, checks the session against Redis, has the card tokenized, hands the token to the orchestrator and answers the page's status polls."
+    owns: [nothing durable]
+    talksTo: [session-cache, tokenization, orchestrator, transactions-db]
+  - key: tokenization
+    name: Tokenization service
+    tone: purple
+    kind: service
+    summary: "Inside the PCI zone: validates the card number, fingerprints it, encrypts it with an HSM key into the card vault and returns a token."
+    owns: [fingerprints]
+    talksTo: [hsm, card-vault]
+  - key: hsm
+    name: Hardware security module
+    tone: purple
+    kind: external
+    summary: Tamper-resistant hardware that holds the encryption keys and never lets them out.
+    owns: [card encryption keys]
+    talksTo: []
+  - key: card-vault
+    name: Card vault DB
+    tone: yellow
+    kind: datastore
+    summary: "Encrypted card numbers by token, inside the PCI zone; never the CVV."
+    owns: [encrypted card numbers]
+    talksTo: []
+  - key: orchestrator
+    name: Orchestrator service
+    tone: blue
+    kind: service
+    summary: "Picks the merchant's processor, records the transaction, calls the processor through its connector, and is the only writer of the transaction's status."
+    owns: [transaction status]
+    talksTo: [merchant-prefs, connectors, transactions-db, event-bus]
+  - key: merchant-prefs
+    name: Merchant preference DB
+    tone: yellow
+    kind: datastore
+    summary: Which processor each merchant chose when it onboarded.
+    owns: [merchant to processor]
+    talksTo: []
+  - key: connectors
+    name: Processor connectors
+    tone: blue
+    kind: service
+    summary: "One adapter per processor (Razorpay, PayU, Fiserv) that turns the gateway's request into that processor's format."
+    owns: [processor request formats]
+    talksTo: [processor]
+  - key: processor
+    name: Processor gateway and processors
+    tone: gray
+    kind: external
+    summary: "Outside the design: the processor's gateway and the processors that talk to banks and card networks."
+    owns: [the money movement]
+    talksTo: [callback-collector]
+  - key: callback-collector
+    name: Collector callback service
+    tone: green
+    kind: service
+    summary: "Receives the processors' asynchronous results and publishes them to Kafka."
+    owns: [nothing durable]
+    talksTo: [event-bus]
+  - key: event-bus
+    name: Kafka
+    tone: orange
+    kind: queue
+    summary: "Topics payment.processor.callback.status (immediate results) and payment.processor.status (final statuses a day later)."
+    owns: [status events]
+    talksTo: [orchestrator, reconciliation]
+  - key: transactions-db
+    name: Payment processor DB
+    tone: yellow
+    kind: datastore
+    summary: "PostgreSQL; the transaction table with its status, and the ledger table reconciliation writes."
+    owns: [transaction, ledger]
+    talksTo: []
+  - key: reconciliation
+    name: Reconciliation service
+    tone: gray
+    kind: worker
+    summary: "Tallies the processor's next-day statuses against the transactions and writes the ledger."
+    owns: [nothing]
+    talksTo: [event-bus, transactions-db]
+content:
+  # ────────────────────────────────────────────────────────────────── Problem statement
+  - __component: sd.section
+    key: problem-statement
+    title: Understanding the problem.
+    railLabel: Problem
+    intro: "The prompt is one line: design a payment gateway like Stripe or Razorpay. Before any requirement, say what a gateway does and what it does not, because the word is easy to misread and every later step depends on it."
+  - __component: sd.rich-text
+    key: gateway-vs-processor
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "A payment gateway is the platform that collects payment details from the buyer, secures and tokenizes them, orchestrates the transaction and talks to a payment processor. A payment processor is the financial network entity that talks to the banks and the card networks to authorize, capture and settle the money. In one line each: the gateway is the traffic controller of payments; the processor is the system that actually moves the money."
+      - type: paragraph
+        children:
+          - type: text
+            text: "So this design stops at the processor. How money is debited from one bank and credited to another is not ours; what is ours is getting the card details safely from the buyer to the right processor, recording what happened, and telling the merchant. Say that boundary out loud, or the interviewer will expect you to design a card network."
+      - type: paragraph
+        children:
+          - type: text
+            text: "This is a domain question, and it is rarely asked of candidates outside payments. If it comes, run the same five steps as any design, requirements, entities, API, high-level design, deep dive, but expect the requirements to be technical from the start: sessions, PCI data, tokens."
+  - __component: sd.table
+    key: gateway-processor-table
+    title: Gateway or processor
+    columns:
+      - { label: "", style: strong }
+      - { label: Payment gateway, style: text }
+      - { label: Payment processor, style: text }
+    rows:
+      - [Job, "Collect, secure and tokenize card details; orchestrate the flow", "Authorize, capture and settle with banks and card networks"]
+      - [In one line, The traffic controller of payments, The system that moves the money]
+      - [In this design, What we build, "Outside, reached through a connector"]
+  - __component: sd.quiz
+    key: problem-quiz
+    title: Quick check
+    questions:
+      - question: Which part of a card payment does the gateway leave to the processor?
+        optionA: Showing the card form
+        optionB: Talking to the banks and card networks to authorize, capture and settle the money
+        optionC: Tokenizing the card number
+        optionD: Recording the transaction status
+        answer: B
+        explanation: The gateway collects, secures and routes; the processor moves the money with the banks.
+  # ────────────────────────────────────────────────────────────────── 1. Requirements
+  - __component: sd.section
+    key: requirements
+    title: Requirements.
+    railLabel: Requirements
+    intro: "Two lists, side by side: what the gateway does, and how well. Here even the functional list is technical, because the product is a piece of infrastructure."
+  - __component: sd.subsection
+    key: functional-sub
+    title: Functional requirements
+    railLabel: Functional
+  - __component: sd.checklist
+    key: functional
+    idPrefix: FR-
+    items:
+      - text: A client, the merchant, can create a payment intent.
+        note: The merchant's server says a buyer wants to pay this amount for this order, before any card is involved.
+      - text: The gateway creates a temporary session, a hosted page where the buyer enters card details.
+        note: "The card form is the gateway's page, not the shop's; that is what keeps the shop out of PCI scope."
+      - text: Card data is handled securely, to the PCI DSS standard.
+      - text: The transaction's status is tracked and reported to the merchant.
+  - __component: sd.rich-text
+    key: out-of-scope
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Out of scope, said and written: part payments, and returns and refunds. PCI DSS is the global security standard for every entity that stores, processes or transmits cardholder data; the third requirement means the design must keep card numbers inside a small, audited zone."
+  - __component: sd.subsection
+    key: non-functional-sub
+    title: Non-functional requirements
+    railLabel: Non-functional
+  - __component: sd.requirement-table
+    key: non-functional
+    rows:
+      - area: Scale
+        requirement: Serve many merchants and processors at once.
+        targets: ["10,000 transactions per second"]
+        note: Ask for the number; it decides the microservices and the load balancers.
+      - area: Consistency
+        requirement: A payment's state is never ambiguous or duplicated.
+        targets: [consistency over availability]
+        note: "The system may refuse briefly rather than record a payment twice or lose one."
+      - area: Latency
+        requirement: The gateway's own work on a payment is quick.
+        targets: ["under 200 ms for validation and tokenization"]
+        note: "Say where it applies: the bank's part is the processor's, and takes its own time."
+      - area: Security
+        requirement: Card data is protected end to end.
+        targets: [end-to-end encryption, PCI DSS level 1]
+  - __component: sd.rich-text
+    key: cap-choice
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "At 10,000 transactions a second the data is spread over machines, and when the network splits the system must choose between answering anyway and waiting for agreement. For money it waits: a payment recorded twice or lost is a real loss, while a payment that fails for a moment can be retried. That does not mean the gateway may be down for long; it means consistency wins when the two conflict."
+  - __component: sd.quiz
+    key: requirements-quiz
+    title: Quick check
+    questions:
+      - question: Why does a payment gateway choose consistency over availability?
+        optionA: Payments are rare
+        optionB: "A payment recorded twice or lost costs real money, while a brief refusal can be retried"
+        optionC: Consistency is always faster
+        optionD: Because it uses PostgreSQL
+        answer: B
+        explanation: The opposite of a URL shortener, where a moment of staleness is invisible.
+      - question: The latency target is 200 ms. For what?
+        optionA: The whole payment, including the bank
+        optionB: The gateway's own part, validating and tokenizing, before the processor takes over
+        optionC: Loading the merchant's site
+        optionD: Settlement
+        answer: B
+        explanation: The bank's work is the processor's; the gateway can only promise its own steps.
+  # ────────────────────────────────────────────────────────────────── 2. Entities
+  - __component: sd.section
+    key: entities
+    title: Core entities.
+    railLabel: Entities
+    intro: "Read them off the functional requirements. There are six, and more appear in the deep dive."
+  - __component: sd.table
+    key: entities-table
+    columns:
+      - { label: Entity, style: strong }
+      - { label: What it is, style: text }
+    rows:
+      - ["Merchant (client)", "The business that integrated the gateway, a shop; our customer."]
+      - [Transaction, The payment itself as it goes through the gateway.]
+      - [Payment method, "How the buyer pays: a Visa card, a Mastercard."]
+      - ["Customer (user)", "The merchant's buyer, who enters the card details."]
+      - [Webhook event, "A server-to-server message telling the merchant a payment succeeded or failed."]
+      - [Payment session, "The short-lived session a payment happens in; if it expires or does not match, the payment fails."]
+  - __component: sd.rich-text
+    key: webhook-note
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Keep two things apart that are easy to blur. When the buyer lands on a success or failure page after paying, that is the browser being redirected back to the merchant's return URL. A webhook is different: the gateway's server posts the result to an endpoint the merchant's server registered, so the merchant learns the outcome even if the buyer closes the tab."
+  - __component: sd.quiz
+    key: entities-quiz
+    title: Quick check
+    questions:
+      - question: What is a webhook event in this design?
+        optionA: The buyer's browser landing on the success page
+        optionB: "A server-to-server message from the gateway to the merchant's endpoint with the payment's result"
+        optionC: A Kafka topic
+        optionD: The checkout session
+        answer: B
+        explanation: The success page is a browser redirect; the webhook reaches the merchant even if the tab is closed.
+  # ────────────────────────────────────────────────────────────────── 3. API
+  - __component: sd.section
+    key: api
+    title: API.
+    railLabel: API
+    intro: "Before the endpoints, sketch what happens when a buyer clicks buy now, because the API is those steps: an intent, a session, then the pay call; and one read for the status."
+  - __component: sd.rich-text
+    key: three-calls
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "First, the merchant's server sends a payment intent: this buyer wants to pay this much for this order. The gateway saves it and answers with a payment intent id. Second, the merchant asks for a session for that intent; the gateway answers with a session id and the URL of a hosted page where the card is entered, a page with a timer that expires. Third, the buyer fills the card in on that page and clicks pay, and the card goes straight to the gateway, which tokenizes it and passes it on to a processor."
+  - __component: sd.endpoint
+    key: create-intent
+    method: POST
+    path: /v1/payment-intents
+    summary: "The merchant's server records what is being paid for. No card details."
+    requestHeaders: ["Authorization: Bearer <merchant key>", "Idempotency-Key: order-8812"]
+    requestBody:
+      amount: 249900
+      currency: INR
+      orderId: order-8812
+      customerId: cus_41
+    responses:
+      - label: Created
+        status: "201"
+        body:
+          paymentIntentId: pi_7Qx2
+  - __component: sd.endpoint
+    key: create-session
+    method: POST
+    path: /v1/payment-sessions
+    summary: "Opens a short-lived checkout session for an intent and returns the hosted page to redirect the buyer to."
+    requestHeaders: ["Authorization: Bearer <merchant key>"]
+    requestBody:
+      paymentIntentId: pi_7Qx2
+    responses:
+      - label: Created
+        status: "201"
+        body:
+          sessionId: sess_f32j
+          redirectUrl: https://pay.gateway.com/checkout/sess_f32j
+          expiresInSeconds: 600
+  - __component: sd.endpoint
+    key: pay
+    method: POST
+    path: /v1/checkout/pay
+    summary: "Sent by the hosted page, never by the merchant: the card details and the session they belong to."
+    requestBody:
+      sessionId: sess_f32j
+      card: "{ number, expiry, cvv, name }"
+    responses:
+      - label: Accepted
+        status: "202"
+        body:
+          paymentId: txn_901
+          status: pending
+      - label: Session expired
+        status: "410"
+        body:
+          error: session_expired
+  - __component: sd.endpoint
+    key: get-status
+    method: GET
+    path: "/v1/payments/{paymentId}"
+    summary: "The transaction's status, for the merchant and for the hosted page's polling."
+    responses:
+      - label: Found
+        status: "200"
+        body:
+          paymentId: txn_901
+          status: succeeded
+  - __component: sd.rich-text
+    key: idempotency
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "One addition the board does not show but an interviewer will like: every POST takes an idempotency key, so a merchant that retries after a timeout gets the first answer back instead of creating a second intent or charging twice."
+  - __component: sd.quiz
+    key: api-quiz
+    title: Quick check
+    questions:
+      - question: Who sends the pay call with the card number?
+        optionA: The merchant's server
+        optionB: "The gateway's hosted page in the buyer's browser, so the merchant never handles the card"
+        optionC: The processor
+        optionD: The orchestrator
+        answer: B
+        explanation: That is the point of the hosted page; the merchant only ever holds the intent and session ids.
+      - question: What does creating a session return?
+        optionA: The card token
+        optionB: A session id and the URL of the hosted card page, which carries the session id
+        optionC: The payment status
+        optionD: An HTML page in the response body
+        answer: B
+        explanation: The merchant redirects the buyer to that URL; the session id in it is checked when the pay call comes.
+  # ────────────────────────────────────────────────────────────────── 4. High-level design
+  - __component: sd.section
+    key: high-level-design
+    title: High-level design.
+    railLabel: High level
+    intro: "One box per call: an intent service, a session service and a processor service behind an API gateway, with the merchant and its users on the left and the external processor on the right."
+  - __component: sd.component-diagram
+    key: hld-diagram
+    title: The first design
+    direction: LR
+    nodes:
+      - { key: merchant, details: [its users pay through it] }
+      - { key: api-gateway, details: [microservices at 10k TPS] }
+      - { key: intent-service, details: [saves the payment's metadata] }
+      - { key: intents-db }
+      - { key: session-service, details: [returns a checkout web page] }
+      - { key: checkout-backend, details: ["the payment processor service, for now"] }
+      - { key: processor, details: [external, talks to the bank] }
+    edges:
+      - { from: merchant, to: api-gateway }
+      - { from: api-gateway, to: intent-service, label: intent }
+      - { from: intent-service, to: intents-db, label: save }
+      - { from: api-gateway, to: session-service, label: session }
+      - { from: api-gateway, to: checkout-backend, label: pay }
+      - { from: checkout-backend, to: processor, label: secure call }
+  - __component: sd.rich-text
+    key: hld-flows
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "At 10,000 transactions a second with tokenization and routing to do, the back end is a set of microservices, so an API gateway and a load balancer sit in front, routing each call. The payment intent service takes the first call and stores the payment's metadata, the item, amount and currency, but never a card. The session service takes the second and returns a secure checkout page; the merchant must not build its own card form, which would pull it into PCI scope. The payment processor service takes the pay call and calls the external processor over a secure connection."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Warn the interviewer of one thing here: what comes back from the processor is not the last word. A payment can look failed in the browser while the bank shows a debit, or succeed on screen and be declined later. A reconciliation job behind the scenes settles the truth; the deep dive draws it."
+  - __component: sd.quiz
+    key: hld-quiz
+    title: Quick check
+    questions:
+      - question: Why does the session service return the gateway's own checkout page instead of letting the merchant build one?
+        optionA: It looks nicer
+        optionB: "So the card is typed into the gateway's page and the merchant never handles card data or carries the PCI burden"
+        optionC: Merchants cannot write HTML
+        optionD: To save a request
+        answer: B
+        explanation: Card data stays inside the gateway's environment from the keyboard to the vault.
+  # ────────────────────────────────────────────────────────────────── 5. Deep dive, 1: payment intent
+  - __component: sd.section
+    key: lld-payment-intent
+    title: "Deep dive, 1: the payment intent."
+    railLabel: Deep dive, intent
+    intro: "Copy the high-level design down the board and open each box in the order a payment uses it. The first call is the intent."
+  - __component: sd.rich-text
+    key: intent-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "The merchant and its buyers stay on the left, then the API gateway and load balancer, which authenticate the merchant, route the call and spread the load. The payment intent service takes the buy-now request and writes the payment's metadata to its database. Because the system chose consistency, and a payment wants transactions that either commit whole or not at all, the database is relational: PostgreSQL (MySQL would do)."
+      - type: paragraph
+        children:
+          - type: text
+            text: "The row: a generated payment intent id, the amount, the currency, the merchant, the customer, the order id, the payment method type, and more metadata to check the order against later. The response is just the payment intent id. That is all this service does."
+  - __component: sd.db-schema
+    key: intent-table
+    stores:
+      - key: intents-store
+        engine: PostgreSQL
+        component: intents-db
+        why: Payments want transactions and consistency.
+        tables:
+          - name: payment_intent
+            columns:
+              - { name: payment_intent_id, type: text, role: primary }
+              - { name: amount, type: bigint, note: in the smallest unit }
+              - { name: currency, type: text }
+              - { name: merchant_id, type: text }
+              - { name: customer_id, type: text }
+              - { name: order_id, type: text }
+              - { name: payment_method_type, type: text }
+              - { name: metadata, type: jsonb }
+  - __component: sd.quiz
+    key: intent-quiz
+    title: Quick check
+    questions:
+      - question: What does the payment intent service store, and what does it never touch?
+        optionA: "The card number; nothing else"
+        optionB: "The payment's metadata (amount, currency, merchant, customer, order); never the card details"
+        optionC: The session
+        optionD: The processor's response
+        answer: B
+        explanation: The intent exists before any card does; card data only ever enters through the hosted page.
+  # ────────────────────────────────────────────────────────────────── 5. Deep dive, 2: checkout session
+  - __component: sd.section
+    key: lld-checkout-session
+    title: "Deep dive, 2: the checkout session and the hosted page."
+    railLabel: Deep dive, session
+    intro: "The high-level design black-boxed the session; open it. Rename the box to what it does, the checkout session service, and add what serves the page."
+  - __component: sd.rich-text
+    key: session-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "The second call brings the payment intent id and the rest of the metadata: transaction, user, order. A session lives at most about 10 minutes, so it does not belong in the database: the checkout session service writes it to a Redis cluster with a 10-minute TTL. Reading it back is quick, which helps the 200 ms target, and it removes itself when it expires."
+      - type: paragraph
+        children:
+          - type: text
+            text: "The response is not a web page but where to find one: the session id, and a redirect URL on the gateway's own domain ending in that id, pay.gateway.com/checkout/sess_f32j, plus the session's time limit. The session id is in the URL so the pay call can be checked against the session in Redis later; a tampered id fails. The merchant redirects the buyer there, which is the small refresh and change of address you see after clicking buy now, and the countdown on the page is the Redis TTL."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Someone has to serve that page: the checkout frontend service, which returns the HTML and JavaScript for the URL. Every session created is a page opened, so it takes the same 10,000 requests a second, behind a load balancer of its own. It needs no API gateway: it serves one page from replicas of one server, not an API."
+  - __component: sd.quiz
+    key: session-quiz
+    title: Quick check
+    questions:
+      - question: Why keep checkout sessions in Redis rather than the database?
+        optionA: Redis is more consistent
+        optionB: "They live about 10 minutes, a TTL expires them by itself, and reads are fast enough for the 200 ms target"
+        optionC: The database cannot store text
+        optionD: Sessions are never read again
+        answer: B
+        explanation: Short-lived, read once or twice, and the TTL doubles as the page's countdown.
+      - question: Why does the checkout frontend sit behind a plain load balancer and not the API gateway?
+        optionA: It is not important
+        optionB: "It serves a web page from replicas of one service, so there is no API routing or auth to do, just load to spread"
+        optionC: The API gateway cannot take 10,000 requests
+        optionD: Browsers cannot reach API gateways
+        answer: B
+        explanation: Same traffic as the session calls, different kind of request.
+  # ────────────────────────────────────────────────────────────────── 5. Deep dive, 3: checkout backend and the PCI zone
+  - __component: sd.section
+    key: lld-checkout-backend
+    title: "Deep dive, 3: the pay call and the PCI zone."
+    railLabel: Deep dive, tokenize
+    intro: "The buyer types the card in and clicks pay. Rename the payment processor service to the checkout backend service: it handles what the hosted page sends, and here the real work starts."
+  - __component: sd.rich-text
+    key: backend-checks
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Notice first what the design has bought: the card was typed into the gateway's page and posted to the gateway's back end, so the merchant never sees it. Then the checkout backend checks the request is genuine against the session in Redis: the session exists, it has not expired (its TTL), the payment intent is valid, the merchant matches, and the session's state is still active. Any mismatch, and the request is rejected."
+  - __component: sd.rich-text
+    key: pci-zone
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "A valid request still cannot store the card or send it raw to a processor; PCI DSS says it must be protected. So the backend calls the tokenization service inside a PCI zone, a small, isolated, audited part of the system, over mutual TLS. Inside: validate the card number (length and the Luhn check digit); make a fingerprint, a keyed hash of the full card number, so the same card can be recognised later without keeping the number readable; and encrypt the card number with a key that lives in a hardware security module and never leaves it, storing the ciphertext in a card vault. The answer is a token that stands for the card. The CVV is used for this authorization and never stored."
+      - type: paragraph
+        children:
+          - type: text
+            text: "The card number is the PAN, the primary account number. Its first 6 to 8 digits are the BIN, the bank identification number, which says which bank issued it; the last four are what receipts show. The token is what travels onward through the gateway; only the PCI zone can turn it back into a card number when a processor needs it."
+  - __component: sd.table
+    key: tokenize-steps
+    title: Inside the PCI zone
+    columns:
+      - { label: Step, style: strong }
+      - { label: What happens, style: text }
+    rows:
+      - [Validate, "The card number's length and Luhn check digit, the expiry"]
+      - [Fingerprint, "A keyed hash (HMAC) of the full card number, to spot the same card again"]
+      - [Encrypt, "The card number, with a key held in the HSM; the ciphertext goes to the card vault"]
+      - [Return, A token that stands for the card]
+  - __component: sd.quiz
+    key: tokenize-quiz
+    title: Quick check
+    questions:
+      - question: What does the hardware security module do here?
+        optionA: Stores every card number in plain text
+        optionB: "Holds the encryption key and does the encryption, so the key never leaves the hardware"
+        optionC: Hashes the BIN
+        optionD: Talks to the bank
+        answer: B
+        explanation: Keys kept in a file or a cloud store can be copied; keys in an HSM cannot be read out.
+      - question: Why is a fingerprint made from the whole card number with a secret key, not from the BIN, last four and expiry?
+        optionA: It is shorter
+        optionB: "Many cards share a BIN and last four, and an unkeyed hash of card numbers can be brute-forced; a keyed hash of the whole number is unique and safe"
+        optionC: The BIN is secret
+        optionD: The processor asks for it
+        answer: B
+        explanation: Only about a billion numbers share a BIN; without a secret key their hashes can all be tried.
+  # ────────────────────────────────────────────────────────────────── 5. Deep dive, 4: orchestrator
+  - __component: sd.section
+    key: lld-orchestrator
+    title: "Deep dive, 4: routing to a processor and recording the status."
+    railLabel: Deep dive, route
+    intro: "The checkout backend now holds a token. Which processor does the payment go to, how does the gateway call processors that each speak differently, and how does the buyer learn the result?"
+  - __component: sd.rich-text
+    key: orchestrator-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Each merchant chose its processor when it onboarded, Razorpay or PayU or another, often on price: one takes 1 percent, another 2. The checkout backend hands the token to an orchestrator service, which reads the merchant preference database for that choice. Each processor wants a different request, so the orchestrator talks to them through connectors, one per processor, the adapter pattern: a Razorpay connector, a PayU connector, a Fiserv connector, each turning one internal request into its processor's format and calling it through the processor's gateway. The processor gateway and the processors behind it are outside the design."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Before calling, the orchestrator records the transaction in the payment processor database, the core table of every payment, with status sent. The result comes back later, to a collector callback service, because an external party cannot be expected to answer at once and many methods, 3-D Secure, UPI, bank redirects, finish asynchronously. Only the orchestrator writes the status: one writer means no two services race to set it, and the status becomes done, succeeded or failed."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Meanwhile the hosted page polls the checkout backend with the payment id, and the backend reads the status from the payment processor database; when it changes, the page shows success or failure. The merchant is told by a webhook."
+  - __component: sd.db-schema
+    key: transaction-table
+    stores:
+      - key: transactions-store
+        engine: PostgreSQL
+        component: transactions-db
+        why: "The record of every payment; one writer, transactional updates."
+        tables:
+          - name: transaction
+            columns:
+              - { name: txn_id, type: text, role: primary }
+              - { name: intent_id, type: text }
+              - { name: status, type: text, note: "SENT, then DONE (succeeded or failed)" }
+              - { name: amount, type: bigint }
+              - { name: currency, type: text }
+              - { name: merchant_id, type: text }
+              - { name: payment_method, type: text }
+              - { name: card_token, type: text, note: "a token, never the card number" }
+  - __component: sd.quiz
+    key: orchestrator-quiz
+    title: Quick check
+    questions:
+      - question: Why one connector per processor?
+        optionA: To call every processor for each payment
+        optionB: "Each processor takes a different request; an adapter per processor keeps the orchestrator's request the same"
+        optionC: Connectors store the card
+        optionD: For the load balancer
+        answer: B
+        explanation: Adding a processor means adding a connector, not changing the orchestrator.
+      - question: Why does only the orchestrator update the transaction's status?
+        optionA: It is the fastest service
+        optionB: "With one writer, no two services can race and leave the status duplicated or inconsistent"
+        optionC: The callback service cannot reach the database
+        optionD: The processor asks for it
+        answer: B
+        explanation: Consistency was the requirement; a single writer per row is the simplest way to keep it.
+  # ────────────────────────────────────────────────────────────────── 5. Deep dive, 5: Kafka and reconciliation
+  - __component: sd.section
+    key: lld-reconciliation
+    title: "Deep dive, 5: events and reconciliation."
+    railLabel: Deep dive, reconcile
+    intro: "Two loose ends: the callback service handing results straight to the orchestrator does not hold up at thousands a second, and the processor's first answer is not final."
+  - __component: sd.rich-text
+    key: kafka-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Make it event driven. The collector callback service publishes every result to a Kafka broker, on the topic payment.processor.callback.status, and the orchestrator consumes that topic and updates the status: publish and subscribe, with Kafka as the buffer when results arrive faster than they are applied."
+      - type: paragraph
+        children:
+          - type: text
+            text: "The first answer can still be wrong in the end: a payment approved now can fail at settlement, or a debit can show at the bank while the page said failed. A day later the processor sends the final status of every transaction, which goes to a second topic, payment.processor.status, T plus 1. A reconciliation service consumes it, tallies each final status against the transaction the gateway recorded, and writes the outcome to a separate ledger table in the payment processor database: who paid, how much, and when. Mismatches are refunded or corrected, which is the three or four days a shop's support quotes for a failed payment that was debited."
+  - __component: sd.component-diagram
+    key: final-diagram
+    title: The final design
+    direction: LR
+    nodes:
+      - { key: merchant }
+      - { key: api-gateway, details: [auth, routing, load balancing] }
+      - { key: intent-service }
+      - { key: intents-db }
+      - { key: session-service }
+      - { key: session-cache, details: [10-minute TTL] }
+      - { key: checkout-frontend, details: [own load balancer] }
+      - { key: checkout-backend, details: [session checks, status polls] }
+      - { key: tokenization, details: [PCI zone, mutual TLS] }
+      - { key: hsm }
+      - { key: card-vault }
+      - { key: orchestrator, details: [single writer of status] }
+      - { key: merchant-prefs }
+      - key: connectors
+        parts: [{ name: Razorpay connector }, { name: PayU connector }, { name: Fiserv connector }]
+      - { key: processor }
+      - { key: callback-collector }
+      - { key: event-bus, details: [callback status, T+1 status] }
+      - { key: transactions-db, details: [transaction, ledger] }
+      - { key: reconciliation }
+    edges:
+      - { from: merchant, to: api-gateway }
+      - { from: api-gateway, to: intent-service, label: intent }
+      - { from: intent-service, to: intents-db }
+      - { from: api-gateway, to: session-service, label: session }
+      - { from: session-service, to: session-cache }
+      - { from: merchant, to: checkout-frontend, label: buyer redirected }
+      - { from: api-gateway, to: checkout-backend, label: pay }
+      - { from: checkout-backend, to: session-cache, label: validate }
+      - { from: checkout-backend, to: tokenization, label: TLS }
+      - { from: tokenization, to: hsm }
+      - { from: tokenization, to: card-vault }
+      - { from: checkout-backend, to: orchestrator, label: card token }
+      - { from: orchestrator, to: merchant-prefs }
+      - { from: orchestrator, to: transactions-db, label: status }
+      - { from: orchestrator, to: connectors }
+      - { from: connectors, to: processor }
+      - { from: processor, to: callback-collector, label: result }
+      - { from: callback-collector, to: event-bus }
+      - { from: event-bus, to: orchestrator, label: callback status }
+      - { from: event-bus, to: reconciliation, label: next-day status }
+      - { from: reconciliation, to: transactions-db, label: ledger }
+  - __component: sd.rich-text
+    key: recap
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Close by reading the non-functional list back against the board. Scale: stateless services behind load balancers, Kafka absorbing bursts. Consistency: PostgreSQL, a single writer of each status, reconciliation for the final word. Latency: sessions in Redis, tokenization in one internal hop. Security: the card is typed into the gateway's page, tokenized in a PCI zone with HSM-held keys, and nothing outside that zone holds a card number."
+  - __component: sd.quiz
+    key: reconcile-quiz
+    title: Quick check
+    questions:
+      - question: Why put Kafka between the collector callback service and the orchestrator?
+        optionA: Kafka stores cards
+        optionB: "Results arrive in bursts from many processors; a topic buffers them and the orchestrator consumes at its own pace without losing any"
+        optionC: To call the processor
+        optionD: It replaces the database
+        answer: B
+        explanation: Publish and subscribe decouples the two and keeps every result.
+      - question: What does reconciliation compare?
+        optionA: Two Redis caches
+        optionB: "The processor's final next-day status of each transaction against what the gateway recorded, written to a ledger"
+        optionC: The merchant's prices
+        optionD: The session TTLs
+        answer: B
+        explanation: The processor's first answer is not final; settlement is the truth.

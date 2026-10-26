@@ -1,0 +1,103 @@
+# Food delivery interview, deep dive 6, the last hops, drawn beside the matching picture as the video adds them: the delivery acceptance service offering the order through a partner API gateway (first accept wins, back to Kafka), the WebSocket manager and gateway pushing the partner's location to users, and the order confirmation service telling the partner the food is ready.
+id: backend/food-delivery/end-to-end/lld-tracking
+title: "Deep dive: acceptance, tracking, pickup"
+source:
+  hash: "e153ba3825d5"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/food-delivery/end-to-end/lld-matching
+  assumes:
+    - "Matching finds nearby idle partners from Redis; partners' pings flow through Kafka to the location update service."
+    - "Order events, including the restaurant's, travel on Kafka and the order consumer updates the order DB."
+  carries:
+    - "The delivery acceptance service offers the order to several nearby idle partners through a partner API gateway; the first accept wins by a conditional update and goes to Kafka."
+    - "After pickup the user's app holds a WebSocket to a WebSocket gateway; a manager tracks which server holds whom and pushes the partner's location."
+    - "The order confirmation service reads the food-ready event and tells the assigned partner to come."
+  terms:
+    - term: WebSocket
+      means: "A connection kept open so the server can push messages to the app."
+    - term: conditional update
+      means: "Change a row only if it still has the expected value, such as no partner yet, in one atomic step."
+board:
+  keep: [title, prompt-desc, nfr, nfr-scale, nfr-available, nfr-consistent, lld-matching, m-kafka, m-assigned, m-matching, m-geohash, m-redis, m-ttl, m-driver-db, m-location, m-kafka-loc, m-gateway, m-partners, m-ping, m-reads, m-nearest, m-ping-in, m-to-log, m-consume, m-geoadd, m-through]
+  elements:
+    - { id: lld-tracking, kind: region, label: "5. Deep dive, acceptance and tracking", at: [74, 20], size: [44, 50] }
+    - { id: t-accept, kind: box, label: Delivery acceptance service, at: [76, 24], size: [16, 3], in: lld-tracking, tone: blue }
+    - { id: t-partner-gw, kind: box, label: Partner API gateway, at: [76, 32], size: [16, 3], in: lld-tracking }
+    - { id: t-first, kind: note, label: "first accept wins, a conditional update", at: [94, 33], in: lld-tracking }
+    - { id: t-ws-mgr, kind: box, label: WebSocket manager, at: [96, 44], size: [16, 3], in: lld-tracking, tone: blue }
+    - { id: t-ws-note, kind: note, label: tracks which server holds each user, at: [76, 48], in: lld-tracking }
+    - { id: t-ws-gw, kind: box, label: WebSocket gateway, at: [96, 52], size: [16, 3], in: lld-tracking }
+    - { id: t-users, kind: box, label: "users, live map", at: [96, 60], size: [16, 3], in: lld-tracking }
+    - { id: t-confirm, kind: box, label: Order confirmation service, at: [76, 65], size: [16, 3], in: lld-tracking, tone: blue }
+    - { id: t-ready, kind: note, label: reads the food-ready event, at: [94, 66], in: lld-tracking }
+  arrows:
+    - { id: t-candidates, from: m-matching, to: t-accept, label: nearby idle partners }
+    - { id: t-offer, from: t-accept, to: t-partner-gw, label: offer }
+    - { id: t-accepted, from: t-accept, to: m-kafka, label: partner accepted }
+    - { id: t-stream, from: m-redis, to: t-ws-mgr, label: partner location }
+    - { id: t-route, from: t-ws-mgr, to: t-ws-gw }
+    - { id: t-push, from: t-ws-gw, to: t-users, label: push }
+    - { id: t-come, from: t-confirm, to: m-partners, label: "food ready, come" }
+beats:
+  - point: "Partners are offered orders, not assigned blindly: matching passes the nearby idle partners to a delivery acceptance service, which sends the offer to all of them through a partner API gateway."
+    kind: mechanism
+    weight: core
+    teach:
+      - "One piece is missing. Real apps don't just assign the nearest partner; they offer the order to several nearby, and whoever accepts gets it. It works like the restaurant's accept."
+      - "Matching hands its list to a delivery acceptance service, which sends the offer to each of those partners through an API gateway for their apps."
+    draw: [lld-tracking, t-accept, t-candidates, t-partner-gw, t-offer]
+    check: Why offer an order to several partners instead of one?
+    answer: Any one may decline or not answer; offering to several nearby gets someone quickly.
+  - point: "The first to accept wins, by a conditional update that assigns only if no partner is set; the acceptance goes to Kafka and the order consumer writes the driver id."
+    kind: failure
+    weight: core
+    teach:
+      - "Two partners may tap accept at once. Assign only if no partner is set yet, in one atomic step, so exactly one wins and the other is told it was taken."
+      - "The acceptance goes onto Kafka, and from there it is as before: the order consumer writes the driver id."
+    draw: [t-first, t-accepted]
+    check: Two partners accept the same offer within a second. Who gets it?
+    answer: The one whose conditional update finds no partner set; the other's update does nothing and they are told it was taken.
+  - point: "After pickup, the user's app holds a WebSocket to a WebSocket gateway, and the partner's location, already streaming in, is pushed down it; a manager tracks which server holds each connection."
+    kind: mechanism
+    weight: core
+    teach:
+      - "The last requirement: the live map after pickup. Use a WebSocket, a connection the server can push on. The partner's location is already flowing in every few seconds; push it to the user who ordered."
+      - "Open connections cost memory, so a WebSocket manager tracks which gateway server holds each user, routes each update there, and closes the connection when the order is delivered."
+    draw: [t-ws-mgr, t-stream, t-ws-note, t-ws-gw, t-route, t-users, t-push]
+    check: Why a WebSocket instead of the app polling the tracking endpoint?
+    answer: The server pushes each new position as it arrives, without the app asking every second.
+  - point: "When the kitchen marks the food ready, the event goes on Kafka and an order confirmation service tells the assigned partner to come for pickup. Every requirement is now covered."
+    kind: flow
+    weight: core
+    teach:
+      - "And how does the partner know the food is ready? The restaurant marks it ready, its order service puts that on Kafka, and an order confirmation service reads it and notifies the assigned partner."
+      - "Now read the requirements back against the board. In a real interview you would be asked for one actor's flow in this depth, not all three."
+    draw: [t-confirm, t-ready, t-come]
+    check: How does the partner learn the food is ready?
+    answer: The restaurant marks it ready, the event goes on Kafka, and the order confirmation service notifies the assigned partner.
+asks:
+  - ids: [t-accept]
+    beats: [1]
+    question: "Matching has a list of nearby idle partners. How would you get one of them to actually take the order?"
+    hints:
+      - Think of how the restaurant accepted.
+      - Offer it, and let them say yes.
+  - ids: [t-ws-gw]
+    beats: [3]
+    question: "After pickup, the user wants to watch the partner move on a map. How would you get those positions to their app?"
+    hints:
+      - The server should push, not wait to be asked.
+      - A connection that stays open.
+  - ids: [t-confirm]
+    beats: [4]
+    question: "The food is ready. How does the assigned partner find out?"
+    hints:
+      - The restaurant marks it ready.
+      - Some service reads that event and tells the partner.
+task:
+  prompt: "Draw the delivery side end to end: accepted orders on Kafka read by the matching service, partners' pings through a gateway and Kafka to the location service and Redis, the acceptance service offering the order, the WebSocket gateway pushing location to users, and the order confirmation service telling the partner to come."
+  expects: [1, 3, 4]

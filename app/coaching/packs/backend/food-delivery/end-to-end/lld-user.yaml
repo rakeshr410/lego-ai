@@ -1,0 +1,57 @@
+# Food delivery interview, deep dive 1, the user service: under "5. Deep dive" the user service and its user DB (MySQL or Postgres) with the schema written beside it and the JWT at login, as the video starts its low-level design.
+id: backend/food-delivery/end-to-end/lld-user
+title: "Deep dive: the user service"
+source:
+  hash: "794bbbc8bd6c"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/food-delivery/end-to-end/high-level-design
+  assumes:
+    - "The high-level design has a user service and a user DB behind the API gateway."
+  carries:
+    - "The user service registers users and, at login, checks the password hash and returns a signed JWT used on every later call."
+    - "Users live in MySQL or Postgres: userId, unique email, password hash, address, metadata."
+  terms:
+    - term: JWT
+      means: "A signed token naming the user, sent with every request and verified by the gateway."
+board:
+  keep: [title, prompt-desc, fr, fr-register, fr-nearby, fr-search, fr-menu, fr-cart, fr-assign, fr-live, fr-notify, nfr, nfr-scale, nfr-available, nfr-consistent, entities, ent-user, ent-restaurant, ent-menu, ent-partner, ent-payment, api, api-register, api-nearby, api-search, api-restaurant, api-menu, api-cart, api-order, api-payment, api-track, hld, hld-users, hld-gateway, hld-duties, hld-user-svc, hld-user-db, hld-search-svc, hld-rest-db, hld-cart-svc, hld-cart-db, hld-order-svc, hld-order-db, hld-payment, hld-rest-svc, hld-rest-orders, hld-rest-gw, hld-restaurants, hld-matching, hld-driver-db, hld-location, hld-partners, hld-partner-gw, hld-ping, hld-gaps, hld-users-gw, hld-gw-user, hld-gw-search, hld-gw-cart, hld-gw-order, hld-user-to-db, hld-search-to-db, hld-cart-to-db, hld-order-to-db, hld-order-pay, hld-rest-in, hld-rgw-svc, hld-rgw-orders, hld-rest-write, hld-new-order, hld-match-orders, hld-match-drivers, hld-partners-gw, hld-pgw-location, hld-location-db, hld-live]
+  elements:
+    - { id: lld-user, kind: region, label: "5. Deep dive, the user service", at: [2, 93], size: [46, 11] }
+    - { id: u-svc, kind: box, label: "User service, issues a JWT", at: [4, 96], size: [14, 3], in: lld-user, tone: blue }
+    - { id: u-db, kind: oval, label: "User DB, MySQL or Postgres", at: [28, 96], size: [16, 3], in: lld-user, tone: amber }
+    - { id: u-schema, kind: note, label: "users: userId, email, password hash, address, metadata", at: [4, 100], in: lld-user }
+    - { id: u-jwt, kind: note, label: "login checks the password hash, returns a signed JWT", at: [4, 101], in: lld-user }
+  arrows:
+    - { id: u-check, from: u-svc, to: u-db, label: check password }
+beats:
+  - point: "The user service registers users and logs them in: it checks the password hash in the user DB and returns a signed JWT the app sends on every later call."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Step five, the deep dive: take the high-level picture and open each service, starting with the simplest, users."
+      - "It onboards new customers and logs them in. At login it checks the credentials against the user DB and, if they match, returns a JWT, a signed token the app sends with every later request; the gateway checks it."
+    draw: [lld-user, u-svc, u-db, u-check, u-jwt]
+    check: Why return a JWT at login instead of checking the password on every call?
+    answer: The signed token proves who the caller is, so the gateway can verify each request without going back to the user service and database.
+  - point: "Users are relational rows with a unique email, so MySQL or Postgres: userId, email, password hash, address and metadata."
+    kind: decision
+    weight: core
+    teach:
+      - "The user DB is plainly relational: MySQL or Postgres. Write the table beside it: user id, email, password, address and other metadata."
+      - "Say password hash, salted, never the password itself."
+    draw: [u-schema]
+    check: What is stored for the password?
+    answer: A salted hash of it, never the password.
+    misconceptions:
+      - "Store the password encrypted so it can be emailed back -> store a one-way salted hash; resets replace it."
+asks:
+  - ids: [u-jwt]
+    beats: [1]
+    question: "After a user logs in, how do later calls prove who they are without sending the password every time?"
+    hints:
+      - Something the server signs and hands back.
+      - The gateway checks it on every request.

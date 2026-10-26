@@ -1,0 +1,75 @@
+# Stock broker interview, deep dive into the watchlist: under the price tracker picture, the watchlist service with the watch DB and its two tables beside it, and an arrow up to the price tracker, as in the video.
+id: backend/stock-broker/end-to-end/lld-watchlist
+title: "Deep dive: the watchlist"
+source:
+  hash: "fff052e2c705"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/stock-broker/end-to-end/lld-price-tracker
+  assumes:
+    - "The price tracker is a WebSocket server reading InfluxDB for history and Redis pub/sub for live prices."
+  carries:
+    - "Watch DB in Postgres: a user has many watchlists (watchlistId generated, the key), each a list of symbols."
+    - "An open watchlist gets live prices from the price tracker; only the price tracker reads InfluxDB and Redis."
+  terms:
+    - term: one to many
+      means: One row on one side relates to many on the other, as one user to many watchlists.
+board:
+  keep: [title, nfr, nfr-scale, nfr-cap, nfr-view, nfr-latency, nfr-region, lld-price, pt-poll, pt-sse, pt-ws, pt-exgw, pt-exchange, pt-sockets, pt-open, pt-kafka, pt-kafka-topic, pt-ingester, pt-influx, pt-influx-note, pt-redis, pt-redis-note, pt-tracker, pt-history, pt-clients, pt-apigw, pt-wsgw, pt-wsgw-note, pt-exchange-exgw, pt-exgw-kafka, pt-kafka-ingester, pt-ingester-influx, pt-ingester-redis, pt-redis-tracker, pt-tracker-influx, pt-clients-apigw, pt-clients-wsgw, pt-wsgw-tracker]
+  elements:
+    - { id: lld-wl, kind: region, label: "5. Deep dive: watchlist", at: [22, 53], size: [51, 11] }
+    - { id: wl-svc, kind: box, label: Watchlist service, at: [26, 57], size: [11, 3], tone: blue, in: lld-wl }
+    - { id: wl-db, kind: oval, label: Watch DB, at: [44, 57], size: [10, 3], tone: amber, in: lld-wl }
+    - { id: wl-schema-1, kind: note, label: "watchlist: userId, watchlistId", at: [56, 57], in: lld-wl }
+    - { id: wl-schema-2, kind: note, label: "symbols: watchlistId, symbol", at: [56, 58], in: lld-wl }
+    - { id: wl-pg, kind: note, label: "Postgres, one user, many lists", at: [56, 59], in: lld-wl }
+    - { id: wl-note, kind: note, label: live prices only through the price tracker, at: [26, 61], in: lld-wl }
+  arrows:
+    - { id: wl-svc-db, from: wl-svc, to: wl-db }
+    - { id: wl-svc-tracker, from: wl-svc, to: pt-tracker, label: live prices }
+beats:
+  - point: "A watchlist is a saved list of symbols, kept by the watchlist service in a relational watch DB."
+    kind: component
+    weight: core
+    teach:
+      - "Next, the watchlist: a saved list of favourite stocks. The service is plain CRUD over its own database."
+      - "The data is relational, users, lists and symbols, so Postgres or MySQL."
+    draw: [lld-wl, wl-svc, wl-db, wl-svc-db]
+    check: Why a relational database for watchlists?
+    answer: Users, their lists and the symbols in them are related rows, a natural fit for Postgres.
+  - point: "One user has many watchlists, each with a generated watchlistId as its key, and a second table maps each watchlist to its symbols."
+    kind: decision
+    weight: core
+    teach:
+      - "A user may keep several lists, a finance list, a pharma list: one to many. So a watchlist table with the user ID and a generated watchlist ID, which alone is the key; index the user ID."
+      - "Each list holds many symbols, so a second table of watchlist ID and symbol."
+    draw: [wl-schema-1, wl-schema-2, wl-pg]
+    check: What identifies one watchlist row?
+    answer: Its generated watchlist ID; the user ID is indexed to find a user's lists.
+    misconceptions:
+      - "User ID and watchlist ID together form the key -> the generated watchlist ID is unique on its own; index the user ID."
+  - point: "An open watchlist gets its live prices from the price tracker, the only reader of InfluxDB and Redis, so every live view stays consistent."
+    kind: flow
+    weight: core
+    teach:
+      - "When I open a list of five stocks I want all five live. The watchlist service does not read the price stores itself: it goes through the price tracker, history from InfluxDB, live from Redis, over the user's WebSocket."
+      - "Rule of thumb: anything that needs real-time prices goes through the price tracker."
+    draw: [wl-svc-tracker, wl-note]
+    check: Why does the watchlist service not read Redis itself?
+    answer: The price tracker owns the price stores and the subscriptions; going through it keeps one path for every live view.
+asks:
+  - ids: [wl-schema-1, wl-schema-2]
+    beats: [2]
+    question: "A user can keep several watchlists, each with many stocks. What tables would you make?"
+    hints:
+      - Who owns a list, and how is a list identified?
+      - Where do the symbols of a list go?
+  - ids: [wl-note]
+    beats: [3]
+    question: "When the user opens a watchlist, where should its live prices come from?"
+    hints:
+      - Which service already streams prices?
+      - Should two services read the price stores?

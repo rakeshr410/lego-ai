@@ -1,0 +1,495 @@
+# yaml-language-server: $schema=../../../../../lego/content-kit/schema/topic.schema.json
+# provenance: ai-drafted by claude-opus-5-5 on 2026-10-27
+#
+# Proximity search, the building block behind "find restaurants, drivers or hotels near me", taught the way
+# InterviewWithBunny's System Design 7 teaches it: the problem in one line, then four numbered approaches on
+# one board, each built and judged before the next: 1 a quadtree, 2 geohash, 3 PostgreSQL with the PostGIS
+# extension, 4 Elasticsearch, and the choice between them. It is rarely the whole interview question; it is the
+# part of Uber, a food delivery app or a hotel booking design that answers "what is near this point".
+# Every latency figure is an illustrative round number, not a measurement.
+# A backend system of lego-ai's own (app/articles/backend): it stands alone and links to no main-site topic.
+catalogVersion: 5
+title: Proximity search, end to end
+shortTitle: Proximity search
+summary: "How to find everything within 5 km of a user, four ways on one board: a quadtree and why it is hard to run, geohash cells and prefix queries, PostgreSQL with PostGIS and ST_DWithin, Elasticsearch's built-in geo queries, and which one to pick when the search is by location alone or by name too."
+group: design
+order: 1
+xp: 200
+difficulty: intermediate
+tags: [interview, geospatial, indexing, geohash, quadtree, search]
+eyebrow: Design
+breadcrumb: [Proximity search, Interview walkthrough]
+lede: "Uber needs the drivers near a rider, a food app the restaurants near a hungry user, a hotel site the rooms near a landmark. Interviewers rarely ask for proximity search by name, but almost every location-based design needs it, and you are expected to say how it works. This walkthrough builds the four answers candidates give, one after another on one board: a quadtree, geohash, PostgreSQL with PostGIS, and Elasticsearch, then picks between them."
+reviewStatus: draft
+author: rakeshr410
+provenance: ai-drafted
+sources:
+  - title: "System Design 7: Design Proximity Search | Quad Tree vs Geohash vs PostGIS vs Elasticsearch (InterviewWithBunny, YouTube)"
+    url: https://www.youtube.com/watch?v=6K6ihHNkO_0
+    note: "The four approaches and their order. Corrected: quadtree depth ~22 levels, insert splits one leaf; R-tree is not a quadtree; geohash is base32, 32 cells a character; neighbours share a prefix; PostGIS uses a GiST index; pg_trgm for fuzzy."
+  - title: Quadtree (Wikipedia)
+    url: https://en.wikipedia.org/wiki/Quadtree
+    note: "A tree whose every internal node has four children, each a quarter of its parent's square; a point quadtree splits a leaf when it fills."
+  - title: R-tree (Wikipedia)
+    url: https://en.wikipedia.org/wiki/R-tree
+    note: "A balanced tree of bounding rectangles, the structure behind most spatial database indexes."
+  - title: Geohash (Wikipedia)
+    url: https://en.wikipedia.org/wiki/Geohash
+    note: "Interleaved longitude and latitude bits written in base32, five bits a character; cell sizes by length; the edge cases where close points share no prefix."
+  - title: ST_DWithin (PostGIS documentation)
+    url: https://postgis.net/docs/ST_DWithin.html
+    note: "True when two geometries or geographies are within a distance; for geography the distance is in metres, and it uses a spatial index."
+  - title: fuzzystrmatch (PostgreSQL documentation)
+    url: https://www.postgresql.org/docs/current/fuzzystrmatch.html
+    note: "Levenshtein distance, Soundex and Metaphone for comparing strings."
+  - title: pg_trgm (PostgreSQL documentation)
+    url: https://www.postgresql.org/docs/current/pgtrgm.html
+    note: "Trigram similarity with GIN and GiST index support for fuzzy matching and LIKE."
+  - title: Geo-distance query (Elasticsearch reference)
+    url: https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-geo-distance-query.html
+    note: "Matches geo_point values within a distance of a central point, built into Elasticsearch."
+tutorBrief: >-
+  Proximity search: given a user's latitude and longitude, return the places (restaurants, hotels, drivers)
+  within a radius, say 5 km. Rarely asked on its own; it is a building block of Uber, Rapido, a food delivery
+  app or hotel booking. Four approaches, numbered on the board in this order. (1) Quadtree: a tree where each
+  node is a square of the map with four children, its quarters (north-west, north-east, south-west,
+  south-east); the root is the whole world; a leaf holds one place or a small group, and a leaf that fills
+  up (say past 100 places) splits into four. Real data is uneven (no restaurants in oceans, Greenland or
+  Antarctica), so dense cities split deep and empty areas stay shallow: the tree is unbalanced by design.
+  Depth is logarithmic, not thousands of levels: 22 halvings of the 40,075 km equator give cells of about
+  10 m. The video's search for 5 km: the user's leaf is empty, go up to the parent, check its four children
+  (2 restaurants, 0, 0), not enough, go up again and repeat; a proper range search descends from the root into
+  every cell the circle touches. Costs: neighbour cells can sit under different parents, so finding them walks
+  the tree; the tree lives in memory, not in a database, must be built from all listings at start-up, kept in
+  sync as places are added (an insert walks to a leaf and splits only that leaf, no full rebuild), and kept as
+  copies on every search server (the video: a read copy and a write copy). The video advises avoiding it in an
+  interview. R-tree (balanced bounding rectangles) is a different spatial index, the one databases use; it is
+  not an enhanced quadtree. (2) Geohash: interleave the bits of longitude and latitude and write them in base32
+  (0-9 and b-z without a, i, l, o), 5 bits a character, so each character splits a cell into 32 smaller cells;
+  the video illustrates the idea with quarters numbered 0 to 3 (00 to 03 inside 0, and so on), and calls the
+  encoding base64, which it is not. Example: Bangalore is under t, then d, then r; a McDonald's in Koramangala
+  is tdr1wk96. Places close together usually share a long prefix; a nearby place differs in the last
+  characters. Cell sizes by length: 1 = 4992.6 x 5009.4 km, 5 = 4.9 x 4.9 km, 6 = 1.2 km x 609.4 m, 7 = 152.5 x
+  152.9 m, 8 = 19 x 38.2 m, 9 = 4.8 x 4.8 m. Pick the length whose cell is about the radius: 5 for 5 km, 6 for
+  500 m. Store it as a column (restaurants: id, name, latitude, longitude, geohash, with a B-tree index on
+  geohash) computed once from the owner's latitude and longitude at onboarding, by a library. Query the user's
+  cell and its 8 neighbours by prefix (geohash LIKE 'sgkztus%' OR LIKE 'sgkztur%' ...), then filter by exact
+  distance: two places a few metres apart can sit on either side of a cell edge and share no prefix, which is
+  why the neighbours are always searched. The video calls geohash the best approach and the one for
+  location-only searches like drivers near a rider. (3) PostgreSQL with the PostGIS extension: a location
+  column of type geography; INSERT INTO restaurants (name, location) VALUES ('Taco Bell',
+  ST_GeogFromText('SRID=4326;POINT(77.5946 12.9716)')), longitude first; SELECT * FROM restaurants WHERE
+  ST_DWithin(location, ST_GeogFromText('SRID=4326;POINT(77.6000 12.9700)'), 5000), 5000 metres = 5 km. It
+  needs a GiST index on location (an R-tree style index), not geohash. (4) Elasticsearch: a geo_point field
+  and a geo_distance query are built in, no extension. Choice: avoid the quadtree; location only (drivers near
+  a rider in Uber or Rapido): geohash; location plus text, such as a restaurant by a misspelled name:
+  PostgreSQL with PostGIS plus a fuzzy text extension (the video names fuzzystrmatch, which compares strings
+  by Levenshtein, Soundex or Metaphone; pg_trgm adds indexable trigram similarity), or Elasticsearch, which
+  does both natively; with both extensions, PostgreSQL and Elasticsearch are about equal.
+components:
+  - key: client
+    name: User app
+    tone: sand
+    kind: client
+    summary: The rider's or diner's app; it sends the user's latitude, longitude and a radius.
+    owns: [the user's location]
+    talksTo: [search-service]
+  - key: search-service
+    name: Search service
+    tone: blue
+    kind: service
+    summary: Turns a location and a radius into the list of places near it, using whichever index the design chose.
+    owns: [nothing durable]
+    talksTo: [quadtree-index, places-db, postgis-db, elasticsearch]
+  - key: quadtree-index
+    name: In-memory quadtree
+    tone: orange
+    kind: cache
+    summary: The quadtree built from every listing, held in memory on each search server, a read copy serving queries and a write copy taking new places.
+    owns: [the tree of cells and the places in its leaves]
+    talksTo: []
+  - key: places-db
+    name: Places database
+    tone: yellow
+    kind: datastore
+    summary: Any relational database; the restaurants table with a geohash column and a B-tree index on it.
+    owns: [restaurants]
+    talksTo: []
+  - key: postgis-db
+    name: PostgreSQL with PostGIS
+    tone: yellow
+    kind: datastore
+    summary: PostgreSQL with the PostGIS extension; a geography column with a GiST index answers ST_DWithin.
+    owns: [restaurants, with a location column]
+    talksTo: []
+  - key: elasticsearch
+    name: Elasticsearch
+    tone: purple
+    kind: datastore
+    summary: A search engine with geo_point fields and geo_distance queries built in, alongside full-text and fuzzy matching.
+    owns: [the restaurants index]
+    talksTo: []
+content:
+  # ────────────────────────────────────────────────────────────────── Problem statement
+  - __component: sd.section
+    key: problem-statement
+    title: The problem.
+    railLabel: Problem
+    intro: "Design a proximity search: given where a user is, find the restaurants, drivers or hotels near that point, say within 5 km. It is seldom the question itself; it is the piece of a bigger design that the interviewer will ask you to open."
+  - __component: sd.rich-text
+    key: problem-why
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "A ride-hailing app looks for drivers near a rider; a food delivery app for restaurants near a diner; a hotel booking site for rooms near a landmark. Each stores places with a latitude and a longitude, and each must answer the same question fast: which of millions of points lie within a radius of this one? Comparing the user against every row is a full scan and does not scale, so the answer is always an index built for space."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Four approaches come up again and again, and this walkthrough numbers them on the board in that order: a quadtree, geohash, PostgreSQL with the PostGIS extension, and Elasticsearch. Each is built, then judged, and the last section picks between them by the kind of search the product needs."
+  - __component: sd.card-grid
+    key: approaches
+    title: The four approaches
+    columns: 2
+    cards:
+      - title: 1. Quadtree
+        text: Split the map into four quarters, again and again; easy to explain, hard to run.
+      - title: 2. Geohash
+        text: A short string per cell, so nearby places share a prefix and a database index finds them.
+      - title: 3. PostgreSQL with PostGIS
+        text: An extension that gives the database location columns and a within-distance query.
+      - title: 4. Elasticsearch
+        text: Geo queries built in, next to full-text search.
+  - __component: sd.quiz
+    key: problem-quiz
+    title: Quick check
+    questions:
+      - question: Why not just compute the distance from the user to every restaurant?
+        optionA: Distance cannot be computed from latitude and longitude
+        optionB: It reads every row on every search, which does not scale to millions of places and many searches a second
+        optionC: Restaurants move
+        optionD: It is less accurate than an index
+        answer: B
+        explanation: A spatial index narrows the search to the cells near the user, so only a few rows are checked.
+  # ────────────────────────────────────────────────────────────────── 1. Quadtree
+  - __component: sd.section
+    key: quadtree
+    title: "1. A quadtree."
+    railLabel: 1. Quadtree
+    intro: "Most walkthroughs reach for a quadtree first. It is easy to draw and explain, and it is worth knowing why it is hard to run in production."
+  - __component: sd.rich-text
+    key: quadtree-idea
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "A binary tree node has two children; a quadtree node has four. The root is the whole world map. Its four children are its quarters, north-west, north-east, south-west and south-east, and each quarter is split into four again, recursively, until a cell holds only one place or a small group of places close together. A leaf that fills up past a limit, say 100 places, splits into four."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Places are not spread evenly. There are no restaurants in the ocean, in Greenland or in Antarctica, and thousands in a city centre. So a quarter that holds nothing stays a leaf, while a dense quarter keeps splitting: the tree is deep over cities and shallow everywhere else. That is the point of the structure, small leaves where the data is, but it makes the tree unbalanced. It is still not thousands of levels deep: each level halves the cell's side, and 22 halvings of the 40,075 km equator already give cells of about 10 metres."
+  - __component: sd.subsection
+    key: quadtree-search-sub
+    title: Searching 5 km around a user
+  - __component: sd.rich-text
+    key: quadtree-search
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Walk down from the root to the leaf that holds the user. Say that leaf is empty. Go up to its parent and look at the parent's four children: one holds 2 restaurants, the other two hold none. Two is not everything within 5 km, because the circle around the user spills into cells under other parents, so go up again and search that node's children, and so on until the circle is covered."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Done properly, a range search starts at the root and descends into every cell the circle touches, skipping the rest, so it reads a handful of nodes rather than the whole tree. The awkward part is that cells next to each other on the map can sit far apart in the tree, under different grandparents, so finding neighbours means walking up and down it."
+  - __component: sd.component-diagram
+    key: quadtree-diagram
+    title: Where a quadtree lives
+    direction: LR
+    nodes:
+      - { key: client, details: ["latitude, longitude, 5 km"] }
+      - { key: search-service, details: [walks the tree] }
+      - { key: quadtree-index, details: [read copy for searches, write copy for new places] }
+      - { key: places-db, details: [every listing, read at start-up] }
+    edges:
+      - { from: client, to: search-service, label: places near me }
+      - { from: search-service, to: quadtree-index, label: range search }
+      - { from: places-db, to: quadtree-index, label: build at start-up }
+  - __component: sd.rich-text
+    key: quadtree-costs
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "The bigger cost is operational. A quadtree is a data structure, not a database: it lives in the memory of the search servers, has to be built from every listing when a server starts, and has to be kept in sync as restaurants join. An insert walks to the right leaf and splits that leaf if it overflows; nothing else is rebuilt, but every server's copy must apply it, and many designs keep a read copy that serves searches and a write copy that takes changes, swapped in from time to time. Millions of listings, copies on every server, and updates that must reach all of them: that is why the advice is to avoid it in the interview unless asked."
+      - type: paragraph
+        children:
+          - type: text
+            text: "You may hear the R-tree suggested instead. It is not an enhanced quadtree but a different index, a balanced tree of bounding rectangles, and it is what spatial databases such as PostGIS use under the hood, which is where the third approach goes."
+  - __component: sd.quiz
+    key: quadtree-quiz
+    title: Quick check
+    questions:
+      - question: Why is a real-world quadtree unbalanced?
+        optionA: Because it has four children instead of two
+        optionB: Places are uneven, so dense cities keep splitting while empty oceans and deserts stay single leaves
+        optionC: Because inserts are random
+        optionD: It is not; every leaf is at the same depth
+        answer: B
+        explanation: Leaves split where the data is. That keeps leaves small but makes depth vary by region.
+      - question: The user's leaf holds no restaurants. What does the search do next?
+        optionA: Returns nothing
+        optionB: Goes up to the parent, checks its other children, and keeps widening until the 5 km circle is covered
+        optionC: Rebuilds the tree
+        optionD: Scans the database
+        answer: B
+        explanation: Nearby cells can sit under other parents, which is why neighbour search walks the tree.
+      - question: A new restaurant joins. What happens to the quadtree?
+        optionA: The whole tree is rebuilt
+        optionB: It is placed in its leaf, which splits if it overflows, and every server's copy must apply the change
+        optionC: Nothing until the next day
+        optionD: The root moves
+        answer: B
+        explanation: Only one leaf changes, but the tree lives in memory on every server, and keeping those copies in sync is the hard part.
+  # ────────────────────────────────────────────────────────────────── 2. Geohash
+  - __component: sd.section
+    key: geohash
+    title: "2. Geohash."
+    railLabel: 2. Geohash
+    intro: "Geohash cuts the map into cells the same way, but names each cell with a short string, so the tree disappears into an ordinary database column and finding nearby places becomes a prefix query."
+  - __component: sd.rich-text
+    key: geohash-idea
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Picture it first with quarters: the world split into four cells numbered 0, 1, 2 and 3; cell 0 split into 00, 01, 02 and 03; cell 00 into 000 to 003. Every cell's name starts with its parent's name, so the name is the path down the tree. Real geohash goes faster: it interleaves the bits of the longitude and the latitude and writes them five bits at a time in base32 (the digits and the letters b to z without a, i, l and o), so each character splits a cell into 32 smaller ones. It is base32, not base64."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Follow one place down. Bangalore lies in cell t, then d inside it, then r; keep zooming through Koramangala and a McDonald's there is tdr1wk96. A shop a hundred metres away shares most of that string and differs only in its last characters. That shared prefix is what makes nearby places easy to find."
+  - __component: sd.table
+    key: geohash-precision
+    title: Cell size by geohash length
+    columns:
+      - { label: Length, style: mono-strong }
+      - { label: Cell, style: text }
+      - { label: Use it for, style: text }
+    rows:
+      - ["1", 4992.6 km by 5009.4 km, a continent]
+      - ["5", 4.9 km by 4.9 km, a 5 km search]
+      - ["6", 1.2 km by 609.4 m, a 500 m search]
+      - ["7", 152.5 m by 152.9 m, a few streets]
+      - ["8", 19 m by 38.2 m, a building]
+      - ["9", 4.8 m by 4.8 m, a shop front]
+  - __component: sd.db-schema
+    key: geohash-schema
+    stores:
+      - key: places-store
+        engine: Any relational database
+        component: places-db
+        why: The geohash is a plain string, so an ordinary B-tree index answers prefix queries.
+        tables:
+          - name: restaurants
+            columns:
+              - { name: id, type: bigint, role: primary }
+              - { name: name, type: text }
+              - { name: latitude, type: double }
+              - { name: longitude, type: double }
+              - { name: geohash, type: varchar(12), role: index, note: "computed once from latitude and longitude at onboarding" }
+  - __component: sd.code
+    key: geohash-query
+    title: The user's cell and its neighbours
+    snippets:
+      - label: Prefix query
+        language: sql
+        code: |
+          SELECT * FROM restaurants
+          WHERE geohash LIKE 'sgkztus%'   -- the user's cell
+             OR geohash LIKE 'sgkztur%'   -- a neighbour
+             OR geohash LIKE 'sgkztuq%'   -- ... all 8 neighbours
+          -- then keep only rows within the exact radius
+  - __component: sd.rich-text
+    key: geohash-query-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "When an owner onboards a restaurant they give its latitude and longitude; a library computes the geohash once and it is stored beside them. To search, compute the user's geohash at the length whose cell matches the radius, 5 characters for about 5 km, 6 for about 500 m, and ask for every row whose geohash starts with the user's cell or one of its eight neighbours. A library computes the neighbours too. Then drop the rows beyond the exact distance."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Why the neighbours? A prefix is shared by places in the same cell, but two places a few metres apart on either side of a cell edge can share no prefix at all, and near the equator or the prime meridian even their first character differs. Searching the 3 by 3 block of cells covers that. With no tree to walk and no memory to keep in sync, the video calls this the best approach in practice."
+  - __component: sd.quiz
+    key: geohash-quiz
+    title: Quick check
+    questions:
+      - question: Why do nearby places tend to have similar geohashes?
+        optionA: The hash is random
+        optionB: Each character narrows the cell inside the previous one, so places in the same small cell share the leading characters
+        optionC: Geohash sorts places by name
+        optionD: Because it is base64
+        answer: B
+        explanation: The string is the path down the cells; a shared prefix means a shared cell.
+      - question: Why does the query also search the eight neighbouring cells?
+        optionA: To return more ads
+        optionB: Two places either side of a cell edge can share no prefix, and the radius spills over the user's cell
+        optionC: Because geohash cells overlap
+        optionD: It does not need to
+        answer: B
+        explanation: Prefix matching alone misses places just over the edge; the 3 by 3 block plus an exact distance filter is correct.
+      - question: Which length fits a search of about 500 m?
+        optionA: "1"
+        optionB: "4"
+        optionC: "6"
+        optionD: "9"
+        answer: C
+        explanation: Length 6 cells are about 1.2 km by 609 m; length 9 cells are under 5 m, far too small.
+  # ────────────────────────────────────────────────────────────────── 3. PostGIS
+  - __component: sd.section
+    key: postgis
+    title: "3. PostgreSQL with the PostGIS extension."
+    railLabel: 3. PostGIS
+    intro: "Probably the simplest of the four: install the PostGIS extension on PostgreSQL and the database itself understands locations and distances."
+  - __component: sd.rich-text
+    key: postgis-idea
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "PostGIS adds spatial types and functions to PostgreSQL. Store each restaurant's location in a column of type geography, written with ST_GeogFromText as a point with longitude first, then latitude, in SRID 4326, the latitude and longitude system GPS uses. To find what is near a user, ST_DWithin keeps the rows within a distance of the user's point; on a geography column the distance is in metres, so 5000 is 5 km."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Under the hood it is not geohash. Create a GiST index on the location column, an R-tree style index of bounding boxes, and ST_DWithin uses it to look only at nearby rows; without the index it compares every row."
+  - __component: sd.code
+    key: postgis-code
+    title: Insert a place, then search 5 km
+    snippets:
+      - label: Insert
+        language: sql
+        code: |
+          INSERT INTO restaurants (name, location)
+          VALUES (
+            'Taco Bell',
+            ST_GeogFromText('SRID=4326;POINT(77.5946 12.9716)')
+          );
+      - label: Search
+        language: sql
+        code: |
+          SELECT * FROM restaurants
+          WHERE ST_DWithin(
+            location,
+            ST_GeogFromText('SRID=4326;POINT(77.6000 12.9700)'), -- the user
+            5000                                                 -- metres
+          );
+  - __component: sd.db-schema
+    key: postgis-schema
+    stores:
+      - key: postgis-store
+        engine: PostgreSQL with PostGIS
+        component: postgis-db
+        why: The database computes distances and indexes locations itself.
+        tables:
+          - name: restaurants
+            columns:
+              - { name: id, type: bigint, role: primary }
+              - { name: name, type: text }
+              - { name: location, type: "geography(Point, 4326)", role: index }
+            indexes:
+              - { name: restaurants_location_idx, columns: [location], using: gist, note: "lets ST_DWithin read only nearby rows" }
+  - __component: sd.quiz
+    key: postgis-quiz
+    title: Quick check
+    questions:
+      - question: "In ST_DWithin(location, user_point, 5000) on a geography column, what is 5000?"
+        optionA: 5000 kilometres
+        optionB: 5000 metres, so 5 km
+        optionC: 5000 degrees
+        optionD: The number of rows to return
+        answer: B
+        explanation: Geography distances are in metres.
+      - question: What makes the PostGIS query fast?
+        optionA: A geohash column it creates
+        optionB: A GiST index on the location column, which lets it read only the rows near the point
+        optionC: Caching every result
+        optionD: Nothing; it always scans
+        answer: B
+        explanation: Without the GiST index ST_DWithin has to test every row.
+  # ────────────────────────────────────────────────────────────────── 4. Elasticsearch, and choosing
+  - __component: sd.section
+    key: elasticsearch
+    title: "4. Elasticsearch, and which one to choose."
+    railLabel: 4. Elasticsearch
+    intro: "Elasticsearch already does searching of every kind, and geo search is built in: no extension to install. With all four on the board, choose by what the product searches by."
+  - __component: sd.rich-text
+    key: es-idea
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Map the restaurant's location as a geo_point field and ask with a geo_distance query: a centre point and a distance such as 5km. It works out of the box, and the same query can also match a name, filter by cuisine and rank results, which is where it earns its place."
+  - __component: sd.code
+    key: es-code
+    title: A geo-distance query
+    snippets:
+      - label: Search body
+        language: json
+        code: |
+          { "query": { "bool": {
+              "filter": { "geo_distance": {
+                  "distance": "5km",
+                  "location": { "lat": 12.97, "lon": 77.60 } } } } } }
+  - __component: sd.subsection
+    key: choosing-sub
+    title: Which approach to choose
+  - __component: sd.table
+    key: choice-table
+    columns:
+      - { label: Approach, style: strong }
+      - { label: Choose it when, style: text }
+    rows:
+      - [Quadtree, "Avoid it in the interview: easy to explain, hard to keep in memory and in sync."]
+      - [Geohash, "The search is by location only, such as drivers near a rider in Uber or Rapido."]
+      - [PostgreSQL with PostGIS, "Location plus text, with a fuzzy text extension installed too."]
+      - [Elasticsearch, "Location plus text, both built in."]
+  - __component: sd.rich-text
+    key: choosing-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "If the only question is what is near this point, geohash is enough and fast. If users also search by name, say a restaurant whose name they half remember, location alone does not help: you need fuzzy text matching too. Elasticsearch does both natively. PostgreSQL does both with two extensions, PostGIS for location and a fuzzy one for text: the video names fuzzystrmatch, which compares strings by Levenshtein distance, Soundex or Metaphone, and pg_trgm adds trigram similarity that an index can serve. With both installed, PostgreSQL and Elasticsearch are about equal, so pick the one the rest of the design already runs."
+  - __component: sd.component-diagram
+    key: choice-diagram
+    title: One search service, the store that fits the search
+    direction: LR
+    nodes:
+      - { key: client }
+      - { key: search-service, details: [location only, or location and text] }
+      - { key: places-db, details: ["geohash prefix, location only"] }
+      - { key: postgis-db, details: ["ST_DWithin plus fuzzy text"] }
+      - { key: elasticsearch, details: ["geo_distance plus full text"] }
+    edges:
+      - { from: client, to: search-service }
+      - { from: search-service, to: places-db, label: drivers near me }
+      - { from: search-service, to: postgis-db, label: name and place }
+      - { from: search-service, to: elasticsearch, label: name and place }
+  - __component: sd.quiz
+    key: choice-quiz
+    title: Quick check
+    questions:
+      - question: You are designing Uber and need the drivers near a rider. Which approach does the walkthrough pick?
+        optionA: A quadtree
+        optionB: Geohash, since the search is by location only
+        optionC: Elasticsearch, always
+        optionD: A full table scan
+        answer: B
+        explanation: Location only, simple and fast; no text search is needed.
+      - question: Users search restaurants by a misspelled name near them. What fits?
+        optionA: Geohash alone
+        optionB: Elasticsearch, or PostgreSQL with PostGIS plus a fuzzy text extension
+        optionC: A quadtree
+        optionD: Sort by distance and read the names
+        answer: B
+        explanation: Location narrows the area; fuzzy text matching finds the name. Both stores can do both.

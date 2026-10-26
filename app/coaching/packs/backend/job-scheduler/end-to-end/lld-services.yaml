@@ -1,0 +1,119 @@
+# Job scheduler interview, low-level design, the services: under "5. Low-level design", the high-level picture copied and opened: the job service split into a job service for writes and a job search service for reads, writes through Kafka to a consumer service, the job database (Postgres) with the jobs and job runs tables beside it, as in the video (the tables sit under the gateway here, for room).
+id: backend/job-scheduler/end-to-end/lld-services
+title: "Low-level design: split the job service, buffer writes, and the tables"
+source:
+  hash: "e2c774eca058"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/job-scheduler/end-to-end/high-level-design
+  assumes:
+    - "The high-level design: clients, a gateway, a job service, a job database, a job executor."
+    - "Non-functional: 10k jobs a second at peak, availability over consistency."
+  carries:
+    - "A job service takes writes (create, edit, cancel, trigger); a job search service answers reads straight from the database."
+    - "Writes go to Kafka, and a consumer service is the only writer to the job database."
+    - "PostgreSQL: a jobs table (id, name, scheduleType, status, scheduleTime, cronExpression, payload, maxRetries) and a job runs table (id, jobId, status, times, executorId, attemptNumber, errorMessage)."
+  terms:
+    - term: Kafka
+      means: "A durable log of messages in topics; producers append, consumers read at their own pace."
+    - term: consumer service
+      means: The one service that reads job writes and status updates from Kafka and writes them to the database.
+    - term: job run
+      means: "One execution of a job, with its status (queued, running, success, failed), times, executor and attempt number."
+board:
+  keep: [title, prompt-desc, prompt-use, fr, fr-create, fr-monitor, fr-cancel, fr-scope, nfr, nfr-scale, nfr-cap, nfr-once, nfr-latency, entities, ent-job, ent-schedule, ent-executor, api, api-post, api-body-1, api-body-2, api-get, api-status, api-put, api-cancel, api-run, hld, hld-clients, hld-gateway, hld-gw-note, hld-svc, hld-db, hld-exec, hld-pull, hld-update, hld-clients-gateway, hld-gateway-svc, hld-svc-db, hld-exec-db]
+  elements:
+    - { id: l-heading, kind: note, label: 5. Low-level design, at: [4, 54] }
+    - { id: l-users, kind: box, label: users, at: [4, 61], size: [7, 3] }
+    - { id: l-gateway, kind: box, label: LB and gateway, at: [14, 57], size: [8, 14] }
+    - { id: l-job-svc, kind: box, label: "Job service, writes", at: [27, 57], size: [11, 3], tone: blue }
+    - { id: l-search, kind: box, label: Job search service, at: [25, 68], size: [10, 3], tone: blue }
+    - { id: l-kafka, kind: box, label: "Kafka, job writes", at: [62, 57], size: [10, 3], tone: amber }
+    - { id: l-consumer, kind: box, label: Consumer service, at: [46, 60], size: [12, 3] }
+    - { id: l-db, kind: oval, label: "Job DB, Postgres", at: [46, 68], size: [12, 5], tone: amber }
+    - { id: s-jobs-1, kind: note, label: "jobs: id, name, scheduleType, status,", at: [5, 72] }
+    - { id: s-jobs-2, kind: note, label: "scheduleTime, cronExpression,", at: [7, 73] }
+    - { id: s-jobs-3, kind: note, label: "payload, maxRetries", at: [7, 74] }
+    - { id: s-runs-1, kind: note, label: "job runs: id, jobId, status,", at: [5, 75] }
+    - { id: s-runs-2, kind: note, label: "startTime, endTime, modifiedTime,", at: [7, 76] }
+    - { id: s-runs-3, kind: note, label: "executorId, attemptNumber, errorMessage", at: [7, 77] }
+  arrows:
+    - { id: l-users-gateway, from: l-users, to: l-gateway }
+    - { id: l-gateway-svc, from: l-gateway, to: l-job-svc }
+    - { id: l-gateway-search, from: l-gateway, to: l-search }
+    - { id: l-search-db, from: l-search, to: l-db, label: read }
+    - { id: l-svc-kafka, from: l-job-svc, to: l-kafka, label: "submit, edit jobs" }
+    - { id: l-kafka-consumer, from: l-kafka, to: l-consumer }
+    - { id: l-consumer-db, from: l-consumer, to: l-db, label: write }
+beats:
+  - point: "One job service doing every operation is a poor split, so divide it: a job service for writes (create, edit, cancel, trigger) and a job search service for reads (details and status)."
+    kind: decision
+    weight: core
+    teach:
+      - "Step five, the low-level design. Copy the high-level picture down and open it. Users, the load balancer and gateway as before; leave user onboarding out, it is not this problem."
+      - "The single job service runs every endpoint. Split it: the job service takes every write, create, edit, delete, trigger; a job search service takes every read, a job's details and its status."
+    draw: [l-heading, l-users, l-gateway, l-users-gateway, l-job-svc, l-gateway-svc, l-search, l-gateway-search]
+    check: Which requests go to the search service, and which to the job service?
+    answer: "Reads, a job's details and status, go to the search service; creates, edits, cancels and triggers go to the job service."
+  - point: "The search service reads the job database directly: it looks jobs up by id and status, never by free text, so a search engine like Elasticsearch adds nothing."
+    kind: decision
+    weight: core
+    teach:
+      - "Does search need Elasticsearch? Look at the queries: a job by its id, a job's status. No titles, no free text."
+      - "So the search service reads the job database directly; the database's own indexes answer those."
+    draw: [l-db, l-search-db]
+    check: Why not put Elasticsearch behind the search service?
+    answer: "Reads are by id and status only, which the database answers; a search engine earns its place for free-text search."
+  - point: "Writes arrive in bursts of thousands a second, so the job service publishes each write to Kafka, and a consumer service reads it and writes the database, the database's only writer."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Ten thousand users may submit jobs in the same second. One service inserting all of that straight into the database would swamp it."
+      - "So the job service publishes each create or edit to Kafka, and a consumer service reads the topic and writes the job database at its own pace."
+      - "The cost: a create is accepted before it is stored, so the job service makes the jobId itself and returns it at once, and the dashboard may lag a moment, which availability over consistency allows."
+    draw: [l-kafka, l-svc-kafka, l-consumer, l-kafka-consumer, l-consumer-db]
+    check: What does putting Kafka between the job service and the database buy, and what does it cost?
+    answer: "It absorbs bursts, so the database takes writes at its own pace; the cost is that a job is accepted before it is stored, so its id is made up front and the dashboard may lag."
+    misconceptions:
+      - "Kafka makes the write faster to store -> it makes accepting fast; storing happens a moment later."
+  - point: "The job database is PostgreSQL with two tables: jobs, describing each job and its schedule, and job runs, one row per execution with its status, times, executor and attempt."
+    kind: decision
+    weight: core
+    teach:
+      - "The data is flat job records, so PostgreSQL. The jobs table: id, name, schedule type, status such as scheduled, paused or cancelled, schedule time, cron expression, payload, and max retries, three by default."
+      - "A cron expression says when it repeats: five fields, minute, hour, day of month, month, day of week; 0 9 star star 5 is nine every Friday. Some schedulers add seconds in front."
+      - "The job runs table: one row per run. Id, jobId, status queued, running, success or failed, start and end time, modified time, the executor's id, the attempt number, and the error message."
+    draw: [s-jobs-1, s-jobs-2, s-jobs-3, s-runs-1, s-runs-2, s-runs-3]
+    check: Which table tells you a job is running right now, and where?
+    answer: "The job runs table: its status and its executor id."
+    misconceptions:
+      - "A cron expression starts with seconds -> standard cron has five fields starting at minutes; only some schedulers, such as Quartz, add seconds."
+  - point: "A run's row changes as it goes: queued with attempt 1 when picked up, running with a start time when it starts, modified time moving with every update, then success or failed."
+    kind: flow
+    weight: supporting
+    teach:
+      - "Follow a run: a Friday nine o'clock job. At nine a row appears, queued, attempt 1, no start time yet. When it starts: running, with a start time. Each update moves the modified time. At the end: success or failed."
+    check: When a run is first picked up, what does its row say?
+    answer: "Status queued, attempt number 1, no start or end time yet."
+asks:
+  - ids: [l-job-svc, l-search]
+    beats: [1]
+    question: "The one job service handles every endpoint. How would you split it?"
+    hints:
+      - Look at which endpoints change a job and which only read one.
+      - What if each kind had its own service?
+  - ids: [l-kafka, l-consumer]
+    beats: [3]
+    question: "Ten thousand users submit jobs in the same second. How would you keep that from swamping the database?"
+    hints:
+      - Something could hold the writes for a moment.
+      - And then who writes them into the database?
+  - ids: [s-jobs-1, s-runs-1]
+    beats: [4]
+    question: "What tables would the job database need? Tell me what each one holds."
+    hints:
+      - One describes the job and its schedule.
+      - The other records each time it ran.

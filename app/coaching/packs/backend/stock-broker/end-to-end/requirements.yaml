@@ -1,0 +1,101 @@
+# Stock broker interview, requirements: "1. Functional requirements" on the left, five lines, and "Non-functional requirements" on the right, scale, CAP (consistency for orders, availability for prices), latency, as the video lays them out.
+id: backend/stock-broker/end-to-end/requirements
+title: Five features, and the numbers
+source:
+  hash: "8a5b1b161a05"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/stock-broker/end-to-end/problem-statement
+  assumes:
+    - "A broker forwards orders to the exchange, a black box, and streams prices to users."
+  carries:
+    - "Functional: KYC onboarding; live prices and history; place, modify, cancel market and limit orders; watchlists with live prices; a dashboard of holdings, trades, P and L."
+    - "Non-functional: millions of users and trades, 8 to 10k stocks; consistency for orders and money; price views available; orders under 100 ms, prices under 50 ms; one region."
+  terms:
+    - term: KYC
+      means: "Know your customer: verifying a user's identity before they may trade."
+    - term: limit order
+      means: "An order to buy or sell only at a named price or better; a market order takes the current price."
+board:
+  keep: [title, prompt-desc, prompt-example]
+  elements:
+    - { id: fr, kind: region, label: 1. Functional requirements, at: [2, 5], size: [30, 14], dashed: true }
+    - { id: fr-kyc, kind: note, label: "register, log in, KYC verification", at: [3, 7], in: fr }
+    - { id: fr-prices, kind: note, label: see live prices and price history, at: [3, 9], in: fr }
+    - { id: fr-orders, kind: note, label: "place, modify, cancel market and limit orders", at: [3, 11], in: fr }
+    - { id: fr-watch, kind: note, label: watchlists with live prices, at: [3, 13], in: fr }
+    - { id: fr-dash, kind: note, label: "dashboard of holdings, trades, profit and loss", at: [3, 15], in: fr }
+    - { id: nfr, kind: region, label: Non-functional requirements, at: [36, 5], size: [32, 14], dashed: true }
+    - { id: nfr-scale, kind: note, label: "scale, millions of users and trades, 8 to 10k stocks", at: [37, 7], in: nfr }
+    - { id: nfr-cap, kind: note, label: consistency over availability for orders and money, at: [37, 9], in: nfr }
+    - { id: nfr-view, kind: note, label: viewing prices stays highly available, at: [37, 11], in: nfr }
+    - { id: nfr-latency, kind: note, label: "latency, orders under 100 ms, prices under 50 ms", at: [37, 13], in: nfr }
+    - { id: nfr-region, kind: note, label: "one country, every server in one region", at: [37, 15], in: nfr }
+  arrows: []
+  lists:
+    - { id: fr-list, in: fr, at: [3, 7], step: 2, slots: 6, width: 28, items: [fr-kyc, fr-prices, fr-orders, fr-watch, fr-dash] }
+    - { id: nfr-list, in: nfr, at: [37, 7], step: 2, slots: 6, width: 29, items: [nfr-scale, nfr-cap, nfr-view, nfr-latency, nfr-region] }
+beats:
+  - point: "Users register, log in and pass KYC before trading, and see stock prices in near real time along with their history."
+    kind: requirement
+    weight: core
+    teach:
+      - "Step one, on the left: functional requirements. First, a user registers, logs in and passes KYC verification; in India no broker lets you trade without it."
+      - "Second, prices: the current price of any stock in near real time, and its history over whatever range they pick, a day, a week, a year."
+    draw: [fr, fr-kyc, fr-prices]
+    check: Why is KYC a requirement before trading at all?
+    answer: Brokers must verify who a user is before letting them trade; in India it is mandatory.
+  - point: "Users place, modify and cancel market and limit orders with accurate status, keep watchlists with live prices, and see a dashboard of holdings, trades and profit and loss."
+    kind: requirement
+    weight: core
+    teach:
+      - "Third, orders: buy or sell, at the market price or at a limit price you name, and modify or cancel them, with the status kept accurate."
+      - "Fourth, watchlists that show live prices. Fifth, a dashboard: current holdings, trade history, profit and loss, performance."
+    draw: [fr-orders, fr-watch, fr-dash]
+    check: What is the difference between a market order and a limit order?
+    answer: A market order buys or sells at the current price at once; a limit order only at the price the user names or better, so it may wait.
+  - point: "The scale: millions of users, millions of trades a day, and 8 to 10 thousand stocks, since NSE and BSE list about 5 to 6 thousand."
+    kind: metric
+    weight: core
+    teach:
+      - "On the right, non-functional requirements. Scale first, because it decides the architecture: millions of users, millions of trades a day, high frequency."
+      - "But the number of stocks is small and bounded: about 5 to 6 thousand are listed in India, so plan for 8 to 10 thousand."
+    draw: [nfr, nfr-scale]
+    check: Which number here is small, and why does that help?
+    answer: The number of stocks, 8 to 10 thousand at most; the broker can subscribe to every one of them.
+  - point: "Orders and money need consistency over availability, while viewing prices should stay highly available."
+    kind: requirement
+    weight: core
+    teach:
+      - "CAP. This system moves money, so on the order path we pick consistency: a few minutes down is acceptable, money taken with no shares booked is not. A wrong balance or a duplicate trade can cost a fortune."
+      - "But viewing prices is the other way: showing a price a moment old is better than showing nothing, so that path stays highly available."
+    draw: [nfr-cap, nfr-view]
+    check: Why choose differently for orders and for viewing prices?
+    answer: A wrong balance or duplicate trade is real money lost, so orders need consistency; a slightly stale price on screen harms no one, so price views favour availability.
+    misconceptions:
+      - "The whole system picks one side of CAP -> the choice is per path: consistency for orders and money, availability for price views."
+  - point: "Latency: an order placed in under 100 ms and a price update in under 50 ms, reachable because a broker serves one country from one region."
+    kind: metric
+    weight: core
+    teach:
+      - "Latency, with numbers: placing an order under 100 milliseconds, a price change on screen under 50."
+      - "That is aggressive for a distributed system, but a broker is national: Zerodha does not serve the US market. Every server and cache can sit in one region, near the users and the exchange."
+    draw: [nfr-latency, nfr-region]
+    check: What makes those latency targets achievable?
+    answer: The broker serves one country, so all its servers and caches are in one region, with no cross-continent hops.
+asks:
+  - list: fr-list
+    beats: [1, 2]
+    question: "So what should a broker app let its users do? Give me the features one at a time, and I'll write them down."
+    hints:
+      - Think of a new user's first day, from signing up to buying a share.
+      - And afterwards, what do they come back to check?
+  - list: nfr-list
+    beats: [3, 4, 5]
+    question: "Now the qualities. How big, how correct, how fast should it be? A number where you can."
+    hints:
+      - How many users and stocks, and what happens if a balance is wrong?
+      - How quickly must a price change reach the screen?

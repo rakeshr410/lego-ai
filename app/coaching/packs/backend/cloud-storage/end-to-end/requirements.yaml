@@ -1,0 +1,108 @@
+# Cloud storage interview, requirements: "1. Functional requirements" on the left and "Non functional requirements" on the right, under the title, as the video lays them out; collaborative editing named as out of scope.
+id: backend/cloud-storage/end-to-end/requirements
+title: "Two lists, functional and non-functional"
+source:
+  hash: "4046a10a3e69"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/cloud-storage/end-to-end/problem-statement
+  assumes:
+    - "A cloud storage platform uploads, downloads, shares and syncs files across devices."
+  carries:
+    - "Functional: account; upload of any size, resumable, and download; sync to all devices; share with permission; folder create, delete, rename; a quota per user, 15 GB free."
+    - "Non-functional: millions of users, billions of files; availability first for upload and sync, consistency for metadata; large files; low upload and sync latency; no data loss."
+    - "Real-time collaborative editing is out of scope."
+  terms:
+    - term: "functional requirement"
+      means: "What the system does."
+    - term: "non-functional requirement"
+      means: "A quality of the system, stated with a number or where it applies."
+    - term: "eventual consistency"
+      means: "Other devices see a change a moment later, but they get there."
+board:
+  keep: [title, desc]
+  elements:
+    - { id: "fr", kind: "region", label: "1. Functional requirements", at: [2, 5], size: [58, 16], dashed: true }
+    - { id: "fr-account", kind: "note", label: "create an account", at: [3, 7], in: "fr" }
+    - { id: "fr-upload", kind: "note", label: "upload any size, resume after a drop, download anywhere", at: [3, 9], in: "fr" }
+    - { id: "fr-sync", kind: "note", label: "changes sync to all of a user's devices automatically", at: [3, 11], in: "fr" }
+    - { id: "fr-share", kind: "note", label: "share files and folders with other users, with permission", at: [3, 13], in: "fr" }
+    - { id: "fr-folders", kind: "note", label: "create, delete, rename folders and organise files", at: [3, 15], in: "fr" }
+    - { id: "fr-quota", kind: "note", label: "a storage quota per user, 15 GB free", at: [3, 17], in: "fr" }
+    - { id: "fr-out", kind: "note", label: "out of scope, real-time co-editing of one document", at: [3, 19], in: "fr", tone: "grey" }
+    - { id: "nfr", kind: "region", label: "Non functional requirements", at: [62, 5], size: [56, 16], dashed: true }
+    - { id: "nfr-scale", kind: "note", label: "scale, millions of users, billions of files", at: [63, 7], in: "nfr" }
+    - { id: "nfr-cap", kind: "note", label: "availability over consistency, strong for metadata", at: [63, 9], in: "nfr" }
+    - { id: "nfr-large", kind: "note", label: "large files, 2 to 3 GB videos and more", at: [63, 11], in: "nfr" }
+    - { id: "nfr-latency", kind: "note", label: "upload and sync latency as low as possible", at: [63, 13], in: "nfr" }
+    - { id: "nfr-durable", kind: "note", label: "durable and secure, no data loss", at: [63, 15], in: "nfr" }
+  arrows: []
+  lists:
+    - { id: "fr-list", in: "fr", at: [3, 7], step: 2, slots: 6, width: 54, items: ["fr-account", "fr-upload", "fr-sync", "fr-share", "fr-folders", "fr-quota"] }
+    - { id: "nfr-list", in: "nfr", at: [63, 7], step: 2, slots: 6, width: 52, items: ["nfr-scale", "nfr-cap", "nfr-large", "nfr-latency", "nfr-durable"] }
+beats:
+  - point: "The core functional requirements: a user creates an account, uploads files of any size, resuming after a dropped connection, and downloads them from anywhere."
+    kind: requirement
+    weight: core
+    teach:
+      - "Step one, on the left: what the system does. A user can create an account."
+      - "Once onboarded, they upload files, folders, any size, and if the connection drops halfway the upload resumes. And they download them from anywhere in the world."
+    draw: [fr, fr-account, fr-upload]
+    check: "What are the first things a user must be able to do?"
+    answer: "Create an account, upload files of any size with resume after a drop, and download them from anywhere."
+  - point: "Changes sync to every device on the account automatically, and a user can share files and folders with other users, with a permission."
+    kind: requirement
+    weight: core
+    teach:
+      - "One account on a phone, a tablet and a laptop: upload on one, and the others update by themselves."
+      - "And sharing: give family access to a folder, with a permission, reader or writer."
+    draw: [fr-sync, fr-share]
+    check: "A user uploads a photo on the laptop. What should happen on their phone?"
+    answer: "It should appear there automatically; changes sync to every device on the account."
+  - point: "Users create, delete and rename folders and organise files, and each user has a storage quota, 15 GB free; real-time co-editing is out of scope."
+    kind: requirement
+    weight: supporting
+    teach:
+      - "A directory structure: folders, subfolders, create, delete, rename, move files around."
+      - "Then the quota, easy to forget: 15 GB free on Google Drive, more if you pay, so an upload past it must be refused."
+      - "And say what you leave out: several people editing one document live is a design of its own."
+    draw: [fr-folders, fr-quota, fr-out]
+    check: "Why does the storage quota belong in the functional requirements?"
+    answer: "Every upload has to be checked against what the user has left, 15 GB on the free plan, so it changes what the upload does."
+  - point: "Non-functional: millions of users and billions of files; and availability over consistency for upload and sync, with strong consistency for metadata."
+    kind: metric
+    weight: core
+    teach:
+      - "On the right, the qualities. Ask for the scale first: millions of users storing billions of files. It decides the architecture later."
+      - "Then CAP: when the network splits, a system answers anyway or waits for the copies to agree. For upload and sync, answer: the app must take an upload whenever it is opened, and the family seeing a photo a few seconds later is fine. For metadata, wait: the folder tree, versions and permissions must never disagree."
+    draw: [nfr, nfr-scale, nfr-cap]
+    check: "Where is eventual consistency fine here, and where is it not?"
+    answer: "Fine for uploads and syncing to other devices, which may lag by seconds; not for metadata such as the folder tree, versions and permissions."
+    misconceptions:
+      - "CAP means a system is either available or consistent, full stop -> the choice is made during a network partition, and can differ per kind of data: here upload and sync choose availability, metadata chooses consistency."
+  - point: "Large files of 2 to 3 GB and more, upload and sync latency as low as the bandwidth allows, and durability: nothing uploaded is ever lost."
+    kind: requirement
+    weight: core
+    teach:
+      - "Large files: a 2 or 3 GB video, or 10 to 15 GB, anything up to the free space."
+      - "Latency in two places: uploading, limited by the user's bandwidth, and syncing, which should lag by seconds at most."
+      - "And the most important one: durable and secure. Whatever crashes in the backend, a copy of every file survives. Zero data loss."
+    draw: [nfr-large, nfr-latency, nfr-durable]
+    check: "Name the two places latency matters in this system."
+    answer: "Uploading a file, which the bandwidth limits, and syncing a change to the other devices."
+asks:
+  - list: fr-list
+    beats: [1, 2, 3]
+    question: "So what should a Google Drive let a user do? Tell me the features one at a time, and I'll write them down."
+    hints:
+      - "Think of what you do with your own files there."
+      - "And what happens on your phone when you add a file on your laptop?"
+  - list: nfr-list
+    beats: [4, 5]
+    question: "Now the qualities. How big, how reliable, how fast? A number if you have one."
+    hints:
+      - "How many users and files are we talking about?"
+      - "And what must never happen to a file once it is uploaded?"

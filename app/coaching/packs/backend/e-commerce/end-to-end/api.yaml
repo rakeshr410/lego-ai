@@ -1,0 +1,83 @@
+# E-commerce interview, API: "3. API Designing" beside the entities, the endpoints numbered down the board as in the video: search, details, add to cart, checkout then payment, status.
+id: backend/e-commerce/end-to-end/api
+title: Endpoints from the requirements
+source:
+  hash: "af1df1240e7b"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/e-commerce/end-to-end/entities
+  assumes:
+    - "Functional: search, details, cart, pay and check out, order status, limited stock."
+    - "The core entities are user, product, cart, order and checkout."
+  carries:
+    - "GET /v1/product/search?q=term returns a page of products with partial data; GET /v1/product/{productId} returns the details."
+    - "POST /v1/cart/add with productId and qty, the user from the header, returns cartId."
+    - "Checkout is two calls: POST /v1/checkout returns orderId, POST /v1/payment pays for it; GET /v1/status/{orderId} reads the status."
+  terms:
+    - term: pagination
+      means: Returning results a page at a time with a cursor for the next page.
+board:
+  keep: [title, prompt-desc, prompt-scope, fr, fr-search, fr-details, fr-cart, fr-pay, fr-status, fr-limited, nfr, nfr-scale, nfr-available, nfr-consistent, nfr-latency, entities, ent-user, ent-product, ent-cart, ent-order, ent-checkout]
+  elements:
+    - { id: api, kind: region, label: 3. API designing, at: [24, 24], size: [34, 14], dashed: true }
+    - { id: api-search, kind: note, label: "GET /v1/product/search?q=term, a page of products", at: [25, 26], in: api }
+    - { id: api-product, kind: note, label: "GET /v1/product/{productId}, the details as JSON", at: [25, 28], in: api }
+    - { id: api-cart, kind: note, label: "POST /v1/cart/add, productId and qty, returns cartId", at: [25, 30], in: api }
+    - { id: api-checkout, kind: note, label: "POST /v1/checkout, items with qty and price, returns orderId", at: [25, 32], in: api }
+    - { id: api-payment, kind: note, label: "POST /v1/payment, orderId and card details, a confirmation", at: [25, 33], in: api }
+    - { id: api-status, kind: note, label: "GET /v1/status/{orderId}, the order's status", at: [25, 35], in: api }
+  arrows: []
+beats:
+  - point: "Search is a GET on /v1/product/search with the search term, returning a page of matching products as partial data; the details are a GET on /v1/product/{productId}."
+    kind: flow
+    weight: core
+    teach:
+      - "Step three, the API, almost one to one with the requirements. Search reads, so a GET on v1 product search with q equals the term. It returns product ids with partial data, a thumbnail and a price."
+      - "Thousands can match, so say it returns pages: everything at once would blow the 200 milliseconds and hang the page. Then a GET on v1 product slash the product id returns its details as JSON."
+    draw: [api, api-search, api-product]
+    check: Why must the search endpoint return pages?
+    answer: Thousands of matches sent at once would be slow to send and render; a page and a cursor keep it within the latency target.
+  - point: "Adding to the cart is a POST to /v1/cart/add with the product id and quantity, the user identified from the header, returning the cart id; update and delete are said, not written."
+    kind: flow
+    weight: core
+    teach:
+      - "Adding to the cart writes, so a POST to v1 cart add. The body has the product id and the quantity; the user comes from the header, so we know whose cart it is. It returns the cart id."
+      - "Update and delete on the cart exist too; say them out loud and move on, there is no time to write every endpoint."
+    draw: [api-cart]
+    check: Where does the user id come from in the add-to-cart call?
+    answer: From the request header, the logged-in user's token, not from the body.
+  - point: "Checkout is two calls: POST /v1/checkout with the items, quantities and prices returns an order id, then POST /v1/payment with that order id and the payment details returns a confirmation or a failure."
+    kind: flow
+    weight: core
+    teach:
+      - "Checkout is two steps. POST v1 checkout with every product id, quantity and price; it returns an order id."
+      - "Then POST v1 payment with that order id and the payment details. It goes to the payment gateway, and the answer, confirmed or failed, marks the order placed or failed."
+    draw: [api-checkout, api-payment]
+    check: Why does checkout return an order id before payment?
+    answer: So the payment has an order to pay for, and the gateway's answer can mark that order placed or failed.
+    misconceptions:
+      - "Send the raw card number and CVV in the body -> send a token from the payment gateway; the shop should not handle raw card data."
+  - point: "Order status is a GET on /v1/status/{orderId}; that covers every functional requirement."
+    kind: flow
+    weight: supporting
+    teach:
+      - "Last, a GET on v1 status slash the order id. Read the requirements back: each one now has its endpoint."
+    draw: [api-status]
+    check: Which requirement does the status endpoint serve?
+    answer: Checking the status of an order.
+asks:
+  - ids: [api-search, api-product]
+    beats: [1]
+    question: "Start with the first two requirements. What endpoints would search and the product page need? Method and path."
+    hints:
+      - Both only read data.
+      - Search takes a term; the product page takes an id.
+  - ids: [api-checkout, api-payment]
+    beats: [3]
+    question: "How would you shape the checkout and the payment as endpoints?"
+    hints:
+      - Does the payment need something to pay for?
+      - What could the first call return that the second one uses?

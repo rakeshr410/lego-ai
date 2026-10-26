@@ -1,0 +1,43 @@
+# Social media interview, the problem statement: the title and one line on what the platform does, written at the top of the board as the video does; the five steps said once (said, not drawn).
+id: backend/social-media-feed/end-to-end/problem-statement
+title: The problem, in one line
+source:
+  hash: "157cb2d1bf52"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: null
+  assumes: []
+  carries:
+    - "A social platform lets users share text, photos and videos with friends and followers and see a feed of what the people they follow post."
+    - "The interview runs in five steps: requirements, core entities, API, high-level design, low-level design; the feed gets most of the low-level time."
+  terms:
+    - term: feed
+      means: "The list of posts from the people a user follows, shown when the app opens."
+board:
+  keep: []
+  elements:
+    - { id: title, kind: note, label: "Social media platform like Facebook or Instagram", at: [34, 0] }
+    - { id: prompt-desc, kind: note, label: "users share photos and videos with friends and followers", at: [32, 2] }
+  arrows: []
+beats:
+  - point: "A platform like Facebook or Instagram lets users share text, photos and videos with friends and followers; everyone knows it, so say it in one line and move on."
+    kind: rule
+    weight: core
+    teach:
+      - "Write the title: a social media platform like Facebook or Instagram. Under it one line: users share photos and videos with their friends and followers."
+      - "The interviewer knows you know the product, so do not spend minutes describing it. One sentence, then the requirements."
+    draw: [title, prompt-desc]
+    check: In one sentence, what does this platform let a user do?
+    answer: Share text, photos and videos with friends and followers, and see what the people they follow post.
+  - point: "Five steps, each numbered on the board when reached: requirements, core entities, API, high-level design, low-level design, with most of the low-level time on the feed."
+    kind: rule
+    weight: core
+    teach:
+      - "Say the plan once: requirements, functional and non-functional; core entities; the API; a high-level design; then the low-level design."
+      - "Most of this system is ordinary services and tables. The hard part is the feed at this scale, so settle the rest quickly and save time for it."
+      - Said, not written; each step gets its number on the board as we reach it.
+    check: Which part of this design deserves most of the low-level time?
+    answer: Generating each user's feed at scale.

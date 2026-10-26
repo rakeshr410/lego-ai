@@ -1,0 +1,87 @@
+# Rate limiter interview, deep dive 3: sliding window counter. Under "5. Deep dive: 3. Sliding window counter": the previous window (0 to 10 s, 5 requests) and the current one (10 to 20 s, none yet) side by side, the sliding window from 2 to 12 s under them, and the weighted estimate worked out beside it, as the video draws it. The video weights the current window by 20 percent; this pack counts it whole, the standard formula.
+id: backend/rate-limiter/end-to-end/lld-sliding-counter
+title: "Deep dive, 3: sliding window counter"
+source:
+  hash: "ec322f2e8f5b"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/rate-limiter/end-to-end/lld-sliding-log
+  assumes:
+    - "Fixed window leaks at its edges; the sliding window log is exact but stores every request."
+  carries:
+    - "Sliding window counter: two counts, previous and current window; estimate = previous times its overlap share, plus current."
+    - "At 12 s with 5 before and 0 now: 5 times 0.8 plus 0 is 4, plus this request is 5, allowed."
+    - "Two numbers per client; approximate, because it assumes the previous window's requests were even."
+  terms:
+    - term: overlap share
+      means: "How much of the previous window the sliding window still covers: from 2 to 10 seconds is 80 percent."
+board:
+  keep: [title, nfr, nfr-scale, nfr-cap, nfr-latency]
+  elements:
+    - { id: lld-sc, kind: region, label: "5. Deep dive: 3. Sliding window counter", at: [4, 24], size: [44, 23] }
+    - { id: sc-idea, kind: note, label: "two counters per client, previous window and current", at: [6, 27], in: lld-sc }
+    - { id: sc-prev, kind: box, label: "previous window, 0 to 10 s, 5 requests", at: [6, 29], size: [18, 3], in: lld-sc, tone: amber }
+    - { id: sc-curr, kind: box, label: "current window, 10 to 20 s, none yet", at: [26, 29], size: [18, 3], in: lld-sc, tone: amber }
+    - { id: sc-sliding, kind: box, label: "sliding window, 2 to 12 s", at: [10, 34], size: [20, 3], in: lld-sc, dashed: true }
+    - { id: sc-new, kind: note, label: new request at 12 s, at: [32, 35], in: lld-sc }
+    - { id: sc-overlap, kind: note, label: it covers 80 percent of the previous window, at: [6, 38], in: lld-sc }
+    - { id: sc-formula, kind: note, label: "estimate, previous times overlap, plus current", at: [6, 40], in: lld-sc }
+    - { id: sc-calc, kind: note, label: "5 times 0.8 plus 0 is 4; with this one 5, allowed", at: [6, 41], in: lld-sc }
+    - { id: sc-assume, kind: note, label: "assumes the previous window's requests were even", at: [6, 43], in: lld-sc }
+    - { id: sc-verdict, kind: note, label: "two numbers per client; close, not exact", at: [6, 44], in: lld-sc }
+  arrows: []
+beats:
+  - point: "The sliding window counter keeps the sliding window but drops the log: only two counts per client, the previous window's and the current window's."
+    kind: mechanism
+    weight: core
+    teach:
+      - "The log's trouble was memory. Keep the idea of a sliding window, but store just two numbers: how many requests the client made in the previous fixed window, and how many so far in the current one."
+      - "Say the limit is 5 per 10 seconds. The previous window, 0 to 10 seconds, had 5. The current one, 10 to 20, has none yet."
+    draw: [lld-sc, sc-idea, sc-prev, sc-curr]
+    check: What does the sliding window counter store instead of a log?
+    answer: "Two counts per client: the previous fixed window's and the current window's."
+  - point: "A request at 12 seconds makes the sliding window 2 to 12 seconds, which still covers 80 percent of the previous window."
+    kind: mechanism
+    weight: core
+    teach:
+      - "A new request arrives at 12 seconds. The sliding window is the last 10 seconds: from 2 to 12."
+      - "It covers 8 of the previous window's 10 seconds, 80 percent, and the first 2 seconds of the current one."
+    draw: [sc-sliding, sc-new, sc-overlap]
+    check: "A request arrives at 15 seconds. What share of the previous window does the sliding window cover?"
+    answer: "From 5 to 10 seconds, half of it, 50 percent."
+  - point: "Estimate the sliding window's count as the previous count times its overlap share, plus the current count taken whole: 5 times 0.8 plus 0 is 4, and with this request 5, so it is allowed."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Assume the previous window's requests were spread evenly, so 80 percent of its window holds 80 percent of its requests: 5 times 0.8 is 4."
+      - "Add the current window's count whole, 0 so far. Four already in the window; this request makes 5, which is within the limit, so it passes. A sixth now would be refused."
+    draw: [sc-formula, sc-calc]
+    check: "Previous window 5, current window 2, overlap share 50 percent, limit 5. Is a new request allowed?"
+    answer: "The estimate is 5 times 0.5 plus 2, which is 4.5; with the request 5.5, over 5, so it gets 429."
+    misconceptions:
+      - "Weight the current window by its elapsed share too -> the current window's requests all lie inside the sliding window, so its count is added whole."
+  - point: "It costs two numbers per client and smooths the edge burst, but it is an approximation: it assumes the previous window's requests were even."
+    kind: decision
+    weight: core
+    teach:
+      - "Two numbers per client, cheap, and the edge burst is smoothed away."
+      - "But it is an estimate, not a count. If the previous window's requests bunched at its end, the guess is low and a few extra requests can pass. Close enough for most APIs."
+    draw: [sc-assume, sc-verdict]
+    check: When does the sliding window counter's estimate go wrong?
+    answer: "When the previous window's requests were bunched rather than even, for example all at its end, so the weighted share misjudges them."
+asks:
+  - ids: [sc-prev, sc-curr]
+    beats: [1]
+    question: "The log stores every request. What's the least we could store per client and still estimate a sliding window?"
+    hints:
+      - The fixed window kept one count. What if we kept one more?
+      - Which two windows does a sliding window overlap?
+  - ids: [sc-calc]
+    beats: [3]
+    question: "Previous window 5 requests, the current one none, and the sliding window covers 80 percent of the previous. How many requests do we estimate are in it, and does this new one pass?"
+    hints:
+      - Assume the previous window's requests were spread evenly.
+      - Then add the current window's count, and this request.

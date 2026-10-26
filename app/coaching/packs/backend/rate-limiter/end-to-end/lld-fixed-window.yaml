@@ -1,0 +1,98 @@
+# Rate limiter interview, deep dive 1: fixed window counter. Under "5. Deep dive: 1. Fixed window counter": the five algorithms named, the windows on a time line (0 to 10, 10 to 20, 20 to 30 seconds), the limit of 5, and the edge burst of 5 at 9.9 s and 5 at 10.1 s, as the video draws it. The video says ten pass in 0.3 s and that the algorithm cannot support bursts; this pack teaches 0.2 s and that it lets twice the limit through at an edge.
+id: backend/rate-limiter/end-to-end/lld-fixed-window
+title: "Deep dive, 1: fixed window counter"
+source:
+  hash: "9de9873744c3"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/rate-limiter/end-to-end/high-level-design
+  assumes:
+    - "Counters live in one shared Redis, updated atomically, because the gateway is replicated."
+    - "Functional: handle bursts. Non-functional: 1M rps, under 5 ms."
+  carries:
+    - "Five algorithms: fixed window counter, sliding window log, sliding window counter, token bucket, leaky bucket."
+    - "Fixed window: one counter per client per window, reset at each window start; in Redis an atomic INCR on a key that expires with the window."
+    - "Its flaw: 5 at 9.9 s and 5 at 10.1 s let 10 through in 0.2 s, twice the limit."
+  terms:
+    - term: fixed window
+      means: "A window that starts and ends on the clock, such as 0 to 10 seconds, then 10 to 20."
+board:
+  keep: [title, prompt-desc, prompt-example, fr, fr-limit, fr-config, fr-429, fr-burst, fr-tier, nfr, nfr-scale, nfr-cap, nfr-latency, hld, c1, c2, c3, lbgw, svc-image, svc-text, svc-other, opt-client, opt-service, opt-gateway, places, tier, g-clients, g-lb, g-rl, g-backends, flow-1, flow-2, g-redis, redis-why, redis-atomic, g-policy, g-policydb, eventual, schema-1, schema-2, schema-3, schema-4, schema-5, schema-6, c1-lbgw, c2-lbgw, c3-lbgw, lbgw-image, lbgw-text, lbgw-other, g-clients-lb, g-lb-rl, g-rl-backends, g-rl-redis, g-rl-policy, g-policy-db, g-policy-redis]
+  elements:
+    - { id: lld-fw, kind: region, label: "5. Deep dive: 1. Fixed window counter", at: [4, 73], size: [66, 21] }
+    - { id: fw-five-1, kind: note, label: "five: fixed window, sliding log, sliding counter,", at: [6, 76], in: lld-fw }
+    - { id: fw-five-2, kind: note, label: "token bucket, leaky bucket", at: [8, 77], in: lld-fw }
+    - { id: fw-idea, kind: note, label: "one counter per client per window, reset at each start", at: [6, 78], in: lld-fw }
+    - { id: fw-rule, kind: note, label: "window 10 seconds, at most 5 requests", at: [6, 79], in: lld-fw }
+    - { id: fw-w1, kind: box, label: 0 to 10 seconds, at: [8, 81], size: [12, 3], in: lld-fw }
+    - { id: fw-w2, kind: box, label: 10 to 20 seconds, at: [22, 81], size: [12, 3], in: lld-fw }
+    - { id: fw-w3, kind: box, label: 20 to 30 seconds, at: [36, 81], size: [12, 3], in: lld-fw }
+    - { id: fw-sixth, kind: note, label: a sixth in one window gets 429, at: [50, 82], in: lld-fw }
+    - { id: fw-burst-1, kind: note, label: 5 at 9.9 s, at: [12, 85], in: lld-fw }
+    - { id: fw-burst-2, kind: note, label: 5 at 10.1 s, at: [22, 85], in: lld-fw }
+    - { id: fw-redis, kind: note, label: "Redis: atomic INCR on the window key, expiring with it", at: [6, 87], in: lld-fw }
+    - { id: fw-flaw, kind: note, label: "10 pass in 0.2 seconds, twice the limit at the edge", at: [6, 89], in: lld-fw }
+    - { id: fw-verdict, kind: note, label: "simple, two numbers per client, but edges leak", at: [6, 91], in: lld-fw }
+  arrows: []
+beats:
+  - point: "A rate limiter is an algorithm run against the client's rule and counter; there are five common ones: fixed window counter, sliding window log, sliding window counter, token bucket and leaky bucket."
+    kind: rule
+    weight: core
+    teach:
+      - "Step five, the deep dive. Inside, the limiter is an algorithm that takes the rule and the counter and filters requests."
+      - "Name all five first: fixed window counter, sliding window log, sliding window counter, token bucket, leaky bucket. In the interview, name them, say which you would use, then expect to code it."
+    draw: [lld-fw, fw-five-1, fw-five-2]
+    check: Name the five common rate limiting algorithms.
+    answer: "Fixed window counter, sliding window log, sliding window counter, token bucket and leaky bucket."
+  - point: "Fixed window: cut time into windows of 10 seconds, keep one counter per client per window, allow up to 5, refuse the sixth with 429, and start again at zero when the next window opens."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Cut the time line into fixed windows: 0 to 10 seconds, 10 to 20, 20 to 30. The rule says at most 5 requests per window."
+      - "Each request adds one to the client's counter for the current window. Five pass; the sixth gets 429. When the clock reaches the next window, the counter starts again at zero."
+    draw: [fw-idea, fw-rule, fw-w1, fw-w2, fw-w3, fw-sixth]
+    check: "Limit 5 per 10 seconds. A client sends its sixth request at 7 seconds, then another at 11 seconds. What happens to each?"
+    answer: "The one at 7 seconds is refused with 429; the one at 11 seconds is in a new window whose counter started at zero, so it passes."
+  - point: "In the shared Redis, the counter is one atomic INCR on a key named for the client and window, set to expire when the window ends."
+    kind: mechanism
+    weight: supporting
+    teach:
+      - "Only two numbers per client: the count and its window. In Redis that is one key per client and window, incremented atomically with INCR, and set to expire when the window ends, so old windows clean themselves up."
+    draw: [fw-redis]
+    check: Why an atomic INCR rather than reading the count and writing it back?
+    answer: "Two gateways reading and writing separately can both see 4 and both allow; INCR gives each a distinct count."
+  - point: "The flaw is at the edges: 5 requests at 9.9 seconds and 5 at 10.1 seconds all pass, 10 in 0.2 seconds, twice the limit, because the windows reset on the clock."
+    kind: failure
+    weight: core
+    teach:
+      - "Now the edge. A client sends 5 at 9.9 seconds: the first window allows them. At 10.1 seconds the counter has reset, so 5 more pass."
+      - "Ten requests in two tenths of a second, twice what the rule meant. The problem is not that it cannot take a burst; it lets too much of one through at a boundary."
+    draw: [fw-burst-1, fw-burst-2, fw-flaw]
+    check: "Limit 5 per 10 seconds. How can a client get 10 requests through in well under a second?"
+    answer: "Send 5 just before a window ends and 5 just after it starts; the counter resets in between."
+    misconceptions:
+      - "The fixed window cannot handle bursts -> it lets too much burst through: up to twice the limit across a window edge."
+  - point: "Fixed window is simple and cheap, two numbers per client, but its edges leak; the next algorithms make the window slide."
+    kind: decision
+    weight: supporting
+    teach:
+      - "Write the verdict: simple, two numbers per client, but the edges leak. The fix is to stop the windows standing still: let the window slide with time."
+    draw: [fw-verdict]
+    check: What would fix the edge problem?
+    answer: "A window that slides with time, so any 10-second span is checked, not just the clock's windows."
+asks:
+  - ids: [fw-idea]
+    beats: [2]
+    question: "What's the simplest way to count a client's requests against 5 per 10 seconds?"
+    hints:
+      - Think of chopping time into equal pieces.
+      - One counter per piece, and then what happens when a piece ends?
+  - ids: [fw-flaw]
+    beats: [4]
+    question: "Here's a client sending 5 requests at 9.9 seconds and 5 more at 10.1. What does the fixed window do with them, and why is that a problem?"
+    hints:
+      - Which window does each group fall in?
+      - How many passed in that fraction of a second, against the limit?

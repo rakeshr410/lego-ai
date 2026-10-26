@@ -1,0 +1,102 @@
+# Job scheduler interview, low-level design, the execution path: under the services, as in the video, a watcher reading the job database every 20 s for the next five minutes, a Kafka run queue, a job consumer service and a column of executor services, their status going up through Kafka to the consumer service.
+id: backend/job-scheduler/end-to-end/lld-execution
+title: "Low-level design: watcher, run queue, executors"
+source:
+  hash: "b2357979cb32"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/job-scheduler/end-to-end/lld-services
+  assumes:
+    - "Writes go through Kafka to a consumer service, the job database's only writer."
+    - "The job runs table holds each run's status, times, executor and attempt number."
+    - "Non-functional: 10k jobs a second, a job starts within 2 s of its time."
+  carries:
+    - "A watcher reads the database every 10 to 20 s for jobs due in the next 5 minutes, marks each run queued and pushes it to a Kafka run topic."
+    - "A job consumer service reads the run topic, holds each job until its time, and hands it to one of many executor services."
+    - "Executors report status every 10 s through Kafka; the consumer service writes it, moving modifiedTime."
+  terms:
+    - term: watcher
+      means: The service that moves due jobs from the database to the run queue in bulk; it runs nothing.
+    - term: run topic
+      means: The Kafka topic of jobs ready to run.
+board:
+  keep: [title, prompt-desc, prompt-use, fr, fr-create, fr-monitor, fr-cancel, fr-scope, nfr, nfr-scale, nfr-cap, nfr-once, nfr-latency, entities, ent-job, ent-schedule, ent-executor, api, api-post, api-body-1, api-body-2, api-get, api-status, api-put, api-cancel, api-run, hld, hld-clients, hld-gateway, hld-gw-note, hld-svc, hld-db, hld-exec, hld-pull, hld-update, hld-clients-gateway, hld-gateway-svc, hld-svc-db, hld-exec-db, l-heading, l-users, l-gateway, l-job-svc, l-search, l-kafka, l-consumer, l-db, s-jobs-1, s-jobs-2, s-jobs-3, s-runs-1, s-runs-2, s-runs-3, l-users-gateway, l-gateway-svc, l-gateway-search, l-search-db, l-svc-kafka, l-kafka-consumer, l-consumer-db]
+  elements:
+    - { id: x-watcher, kind: box, label: Watcher service, at: [24, 81], size: [10, 3], tone: blue }
+    - { id: x-watcher-note, kind: note, label: "every 20 s, jobs due in the next 5 min, queued", at: [5, 85] }
+    - { id: x-run-kafka, kind: box, label: "Kafka, run queue", at: [39, 81], size: [10, 3], tone: amber }
+    - { id: x-topic-run, kind: note, label: topic run, at: [40, 85] }
+    - { id: x-job-consumer, kind: box, label: Job consumer service, at: [52, 82], size: [10, 3], tone: blue }
+    - { id: x-jc-note, kind: note, label: holds each job until its time, at: [50, 85] }
+    - { id: x-exec-1, kind: box, label: Executor 1, at: [65, 73], size: [8, 3], tone: green }
+    - { id: x-exec-2, kind: box, label: Executor 2, at: [65, 81], size: [8, 3], tone: green }
+    - { id: x-exec-3, kind: box, label: Executor 3, at: [65, 87], size: [8, 3], tone: green }
+  arrows:
+    - { id: x-watcher-db, from: x-watcher, to: l-db, label: read every 20 s }
+    - { id: x-watcher-kafka, from: x-watcher, to: x-run-kafka }
+    - { id: x-jc-kafka, from: x-job-consumer, to: x-run-kafka }
+    - { id: x-jc-exec-1, from: x-job-consumer, to: x-exec-1 }
+    - { id: x-jc-exec-2, from: x-job-consumer, to: x-exec-2 }
+    - { id: x-jc-exec-3, from: x-job-consumer, to: x-exec-3 }
+    - { id: x-exec-status, from: x-exec-1, to: l-kafka, label: status every 10 s }
+beats:
+  - point: "Scanning the job table every second is not feasible, so a watcher service reads it every 10 to 20 seconds for every job due in the next five minutes, and marks each run queued."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Now the heart: how does a job get picked up? Scanning the whole table every second for what is due does not scale."
+      - "So a watcher service reads less often, every 20 seconds, but looks ahead: every job due between now and five minutes from now, in one bulk read. For each, it adds a job run, status queued."
+    draw: [x-watcher, x-watcher-db, x-watcher-note]
+    check: Why read five minutes ahead every 20 seconds instead of what is due every second?
+    answer: "Scanning every second costs too much; fewer, larger reads move the due jobs out in bulk while the database load stays low."
+  - point: "The watcher runs nothing: it pushes the due jobs to a Kafka topic named run, the queue of jobs ready to run."
+    kind: component
+    weight: core
+    teach:
+      - "Where do those jobs go? Into a queue: a second Kafka, with a topic named run."
+      - "The watcher only moves jobs from the database to the queue. Queued in the table means exactly that: picked, waiting in the run topic."
+    draw: [x-run-kafka, x-watcher-kafka, x-topic-run]
+    check: What does the watcher do with the jobs it reads?
+    answer: "Marks each run queued and pushes the job onto the Kafka run topic; it does not run them."
+  - point: "A job consumer service reads the run topic and, when each job's time comes, hands it to one of many executor services, which do the actual work."
+    kind: mechanism
+    weight: core
+    teach:
+      - "On the other side, a job consumer service reads the run topic. Kafka delivers a message as soon as it is published, not at a set time, so the consumer holds each job until it is due; that is how a job starts within 2 seconds."
+      - "Then it hands the job to an executor service: run a Python script, start a Docker image, update a database. Many executors, as many as ten thousand jobs a second need."
+    draw: [x-job-consumer, x-jc-kafka, x-jc-note, x-exec-1, x-jc-exec-1, x-exec-2, x-jc-exec-2, x-exec-3, x-jc-exec-3]
+    check: Who makes sure a job queued five minutes early does not start early?
+    answer: "The job consumer, which holds each job until its scheduled time before handing it to an executor; Kafka itself delivers at once."
+    misconceptions:
+      - "Kafka delivers each message at its scheduled time -> Kafka delivers as soon as a message is published; the consumer has to wait for the time."
+  - point: "While a job runs, its executor reports status every 10 seconds, not to the database but through Kafka, and the consumer service writes it, moving the run's modified time."
+    kind: flow
+    weight: core
+    teach:
+      - "A job may run for ten minutes; the dashboard wants to know. The executor reports every 10 seconds: started, still running, done."
+      - "Thousands of executors writing the database every 10 seconds would swamp it, and many writers on one row clash. So they publish to the Kafka we already have, and the consumer service, still the only writer, updates the job run: start time, status running, executor id, and the modified time on every report."
+    draw: [x-exec-status]
+    check: Why do executors send status through Kafka instead of writing the job runs table?
+    answer: "Many executors writing every 10 seconds would load the database and clash; through Kafka, the one consumer service writes them."
+asks:
+  - ids: [x-watcher]
+    beats: [1]
+    question: "Scanning the whole table every second won't scale. How would you find the jobs that are about to be due?"
+    hints:
+      - What if you looked less often, but further ahead?
+      - Something whose only job is to watch the table.
+  - ids: [x-run-kafka]
+    beats: [2]
+    question: "The watcher has a batch of jobs due in the next few minutes. Where should it put them?"
+    hints:
+      - Somewhere that holds them in order until something picks them up.
+      - We already use one for writes.
+  - ids: [x-job-consumer, x-exec-1, x-exec-2, x-exec-3]
+    beats: [3]
+    question: "And who takes them off the queue and actually runs them?"
+    hints:
+      - One service reads the queue.
+      - The work itself is spread over many machines.

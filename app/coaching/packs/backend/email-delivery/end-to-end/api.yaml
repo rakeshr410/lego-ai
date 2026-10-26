@@ -1,0 +1,74 @@
+# Email delivery interview, API: "3. API Designing" beside the entities, five endpoints written as requests, the send body as code lines, and the attachment uploaded first, as in the video.
+id: backend/email-delivery/end-to-end/api
+title: Five endpoints
+source:
+  hash: "df7c2251eeb8"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/email-delivery/end-to-end/entities
+  assumes:
+    - "Functional: accounts, compose and send, folders, search, attachments, threads."
+    - "The core entities are the user, the email, the thread and the email metadata."
+  carries:
+    - "POST /v1/accounts/register; POST /v1/emails/send with { to: [], cc: [], bcc: [], subject, body, attachmentIds: [] }; GET /v1/emails/{emailId}; GET /v1/search?q=...&limit=20."
+    - "POST /v1/attachments/upload returns an attachment ID and a signed upload URL: files go up first, so the send request stays small."
+    - The user always comes from the auth token, never from a parameter.
+  terms:
+    - term: endpoint
+      means: A method and a path the service answers, with what it takes and what it returns.
+    - term: signed URL
+      means: "A short-lived link that lets the client upload one file straight to blob storage."
+board:
+  keep: [title, prompt-desc, fr, fr-account, fr-send, fr-folders, fr-search, fr-attach, fr-threads, nfr, nfr-scale, nfr-available, nfr-signup, nfr-durable, entities, ent-user, ent-email, ent-thread, ent-meta]
+  elements:
+    - { id: api, kind: region, label: 3. API designing, at: [26, 24], size: [27, 17], dashed: true }
+    - { id: api-register, kind: note, label: "POST /v1/accounts/register, creates the account", at: [27, 26], in: api }
+    - { id: api-send, kind: note, label: POST /v1/emails/send, at: [27, 28], in: api }
+    - { id: api-send-1, kind: note, label: "{ to: [], cc: [], bcc: [],", at: [29, 29], in: api }
+    - { id: api-send-2, kind: note, label: "subject, body, attachmentIds: [] }", at: [31, 30], in: api }
+    - { id: api-get, kind: note, label: "GET /v1/emails/{emailId}, the full email", at: [27, 32], in: api }
+    - { id: api-search, kind: note, label: "GET /v1/search?q=meeting tomorrow&limit=20", at: [27, 34], in: api }
+    - { id: api-search-1, kind: note, label: "{ results: [ metadata and snippets ] }", at: [29, 35], in: api }
+    - { id: api-upload, kind: note, label: POST /v1/attachments/upload, at: [27, 37], in: api }
+    - { id: api-upload-1, kind: note, label: "{ attachmentId, uploadUrl }", at: [29, 38], in: api }
+  arrows: []
+beats:
+  - point: "Creating an account is a POST to register; sending is a POST whose body holds to, cc and bcc as arrays, the subject, the body and attachment IDs."
+    kind: flow
+    weight: core
+    teach:
+      - "Step three, the API. Ask first whether the interviewer wants it, because it eats time. If yes: creating an account submits data, so a POST to v1 accounts register."
+      - "Sending is a POST to v1 emails send. To, cc and bcc are arrays, because one email goes to many people; then subject, body, and the IDs of attachments already uploaded."
+    draw: [api, api-register, api-send, api-send-1, api-send-2]
+    check: Why are to, cc and bcc arrays?
+    answer: Because one email can go to several recipients in each field.
+  - point: "Reading is a GET of one email by its unique ID, returning the full email; search is a GET with free text and a limit, returning metadata and snippets."
+    kind: flow
+    weight: core
+    teach:
+      - "Opening an email is a GET on its unique ID, a UUID, and returns the whole thing: subject, body, attachment links."
+      - "Search is a GET with the free text, q, and a limit of 20, returning metadata and a snippet per match. The user comes from the auth token, not a userId parameter, or anyone could search anyone's mail."
+    draw: [api-get, api-search, api-search-1]
+    check: Where should the search endpoint get the user from?
+    answer: From the authentication token, so a user can only ever search their own mail.
+    misconceptions:
+      - "Pass userId in the search query -> a caller could name someone else's mailbox; take the user from the token."
+  - point: "Attachments are uploaded first in a separate call that returns an attachment ID and a signed URL; the send only carries the ID, so it never becomes a heavy request that times out."
+    kind: decision
+    weight: core
+    teach:
+      - "Last, uploading an attachment. Sending a file happens in two steps: upload it first and get back an attachment ID and a signed URL the client puts the file to."
+      - "Why? An email body plus a big PDF in one request is a heavy payload that can time out. Split, the send request carries only the ID."
+    draw: [api-upload, api-upload-1]
+    check: Why is sending an email with an attachment two requests, not one?
+    answer: One request with the body and a large file is heavy and can time out; uploading first lets the send carry only the attachment ID.
+asks:
+  - ids: [api-register, api-send, api-get, api-search, api-upload]
+    beats: [1, 2, 3]
+    question: "Looking at the requirements, which endpoints do we need? Give me the method and the path, and I'll write them."
+    hints:
+      - One for each thing a user does, sign up, send, open, search.
+      - How would a large attachment get to the server?

@@ -1,0 +1,44 @@
+# Collaborative editor interview, the problem statement: the title and one line on what Google Docs is, at the top of the board as the video writes them, then the five steps said once (said, not drawn).
+id: backend/collaborative-editor/end-to-end/problem-statement
+title: The problem, and the five steps
+source:
+  hash: "b7babe1e5da5"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: null
+  assumes: []
+  carries:
+    - "Google Docs is an online word processor for creating and formatting documents and editing them with others in near real time."
+    - "The interview runs in five steps: requirements, core entities, API, high-level design, low-level design."
+    - "The hard part is keeping every open copy of a document identical while several people edit it at once."
+  terms:
+    - term: collaborator
+      means: Another user who has the same document open for editing at the same time.
+board:
+  keep: []
+  elements:
+    - { id: title, kind: note, label: Real-time text editor like Google Docs, at: [33, 0] }
+    - { id: prompt-desc, kind: note, label: "online word processor, edit with others in real time", at: [8, 2] }
+  arrows: []
+beats:
+  - point: "Google Docs is an online word processor: you create and format documents and edit them with other people in near real time."
+    kind: rule
+    weight: core
+    teach:
+      - "Write the title: a real-time text editor like Google Docs. Under it, one line on what it is: an online word processor where you create and format documents, and work on them with other people in near real time."
+      - "Everyone has used one, so keep it short: two people type into one document and each sees the other's letters appear a moment later."
+    draw: [title, prompt-desc]
+    check: In one sentence, what makes Google Docs different from a word processor on your laptop?
+    answer: Several people can edit the same document at the same time and see each other's changes in near real time.
+  - point: "The interview runs in five steps, and the low-level design of simultaneous editing is where it is decided."
+    kind: rule
+    weight: core
+    teach:
+      - "Say the plan once: functional and non-functional requirements, then the core entities, the API, a high-level design, and the low-level design, where most of the time goes."
+      - "Storing documents is ordinary. Keeping every open copy identical while several people type at once is the real problem, and the deep dive is about that."
+      - Said, not written; each step gets its number on the board when we reach it.
+    check: Which part of this design is the hard one?
+    answer: Merging simultaneous edits to one document so that every open copy ends up identical.

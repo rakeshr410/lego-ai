@@ -1,0 +1,82 @@
+# Job scheduler interview, high-level design: "4. High-level design" under the entities and API, clients, a tall load balancer and API gateway with its three jobs, a job service, a job database, and a job executor under the database with its two responsibilities as notes, as in the video.
+id: backend/job-scheduler/end-to-end/high-level-design
+title: Clients, gateway, job service, database, executor
+source:
+  hash: "6c969f888b12"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/job-scheduler/end-to-end/api
+  assumes:
+    - "The API: create, read details, read status, update, cancel, run now."
+    - "Non-functional: 10k jobs a second, availability, at least once, within 2 s."
+  carries:
+    - "The high-level design: clients, a load balancer and API gateway, a job service, a job database, a job executor."
+    - "The gateway authenticates and authorizes, rate-limits, and routes by path."
+    - "The executor pulls the jobs that are due from the database and updates each job's status."
+  terms:
+    - term: API gateway
+      means: "The front door: authentication and authorization, rate limiting, and routing each request to its service."
+board:
+  keep: [title, prompt-desc, prompt-use, fr, fr-create, fr-monitor, fr-cancel, fr-scope, nfr, nfr-scale, nfr-cap, nfr-once, nfr-latency, entities, ent-job, ent-schedule, ent-executor, api, api-post, api-body-1, api-body-2, api-get, api-status, api-put, api-cancel, api-run]
+  elements:
+    - { id: hld, kind: region, label: 4. High-level design, at: [4, 35], size: [70, 16] }
+    - { id: hld-clients, kind: box, label: clients, at: [6, 40], size: [7, 3] }
+    - { id: hld-gateway, kind: box, label: Load balancer and API gateway, at: [17, 38], size: [10, 7] }
+    - { id: hld-gw-note, kind: note, label: "authentication, rate limiting, routing", at: [13, 46], in: hld }
+    - { id: hld-svc, kind: box, label: Job service, at: [33, 40], size: [10, 3] }
+    - { id: hld-db, kind: oval, label: Job DB, at: [50, 39], size: [10, 5], tone: amber }
+    - { id: hld-exec, kind: box, label: Job executor, at: [50, 47], size: [10, 3] }
+    - { id: hld-pull, kind: note, label: pulls the jobs that are due, at: [35, 48], in: hld }
+    - { id: hld-update, kind: note, label: "updates each job's status", at: [61, 48], in: hld }
+  arrows:
+    - { id: hld-clients-gateway, from: hld-clients, to: hld-gateway }
+    - { id: hld-gateway-svc, from: hld-gateway, to: hld-svc }
+    - { id: hld-svc-db, from: hld-svc, to: hld-db, label: save }
+    - { id: hld-exec-db, from: hld-exec, to: hld-db, both: true }
+beats:
+  - point: "Requests from clients reach a load balancer and API gateway, which authenticates and authorizes them, rate-limits them and routes each to its service."
+    kind: component
+    weight: core
+    teach:
+      - "Step four, the high-level design: just enough boxes to meet the functional requirements. On the left, the clients, the users scheduling jobs."
+      - "This is a service for a lot of traffic, so in front of it a load balancer and API gateway: authentication and authorization, rate limiting, and routing each request evenly to the backend."
+    draw: [hld, hld-clients, hld-gateway, hld-clients-gateway, hld-gw-note]
+    check: Name the three jobs of the API gateway here.
+    answer: "Authentication and authorization, rate limiting, and routing requests to the right service."
+  - point: "A job service handles the API's operations and saves each job in a job database."
+    kind: component
+    weight: core
+    teach:
+      - "Behind the gateway, a job service: the microservice that creates, updates and cancels jobs and answers their status."
+      - "Whatever the user creates must survive, so the job service saves it in a job database holding the jobs' metadata."
+    draw: [hld-svc, hld-gateway-svc, hld-db, hld-svc-db]
+    check: Walk me through what happens when a user creates a job.
+    answer: The request goes through the gateway to the job service, which saves the job in the job database.
+  - point: "A job executor is the core: it pulls the jobs that are due from the database, runs them, and updates each job's status, which is how the dashboard shows it."
+    kind: component
+    weight: core
+    teach:
+      - "Now running. A job is due at 5:30; something must pick it up then. A job executor: it looks in the job database for what is due now, say at 5:00, and runs it."
+      - "And it writes back how it went, running, succeeded, failed, so a status request to the job service reads it. Every functional requirement is met; how often it looks, and how thousands run, is the low-level design."
+    draw: [hld-exec, hld-exec-db, hld-pull, hld-update]
+    check: What are the executor's two responsibilities?
+    answer: Pull the jobs that are due from the database, and update each job's status as it runs.
+asks:
+  - ids: [hld-gateway, hld-svc, hld-db]
+    beats: [1, 2]
+    question: "What's the smallest set of boxes that lets a user create a job and keep it? Name them and I'll draw them."
+    hints:
+      - Something in front to check who is calling and route the request.
+      - Then something that handles the job, and somewhere to keep it.
+  - ids: [hld-exec]
+    beats: [3]
+    question: "The job is saved. What makes it actually run at its time?"
+    hints:
+      - Something has to look for the jobs that are due.
+      - And it should record how each run went.
+task:
+  prompt: "Draw the high-level design: clients, a load balancer and API gateway, a job service, a job database, and a job executor that pulls due jobs and updates their status."
+  expects: [1, 2, 3]

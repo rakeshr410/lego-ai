@@ -1,0 +1,58 @@
+# Notification system interview, deep dive 5: using the preferences. As in the video: every provider checks the user's preference before sending, through a preference cache drawn between the providers and the preference DB.
+id: backend/notification-system/end-to-end/lld-preference-cache
+title: "Deep dive: checking preferences, through a cache"
+source:
+  hash: "f250db0c11a7"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/notification-system/end-to-end/lld-delivery-status
+  assumes:
+    - "Preferences are stored in the preference DB, keyed by client and external user id."
+    - "Providers consume their topics and call the external senders."
+  carries:
+    - "Each provider checks the user's preference before sending and drops the message if the channel is off."
+    - "A preference cache in front of the preference DB serves those million-a-minute look-ups."
+  terms:
+    - term: cache
+      means: "A fast in-memory copy of hot data, read first, with the database behind it on a miss."
+board:
+  keep: [title, fr, fr-channels, fr-templates, fr-prefs, fr-schedule, fr-status, nfr, nfr-scale, nfr-cap, nfr-latency, hld, hld-clients, hld-gw, hld-tpl-svc, hld-tpl-db, hld-pref-svc, hld-pref-db, hld-notif-svc, hld-provider, hld-provider-note, hld-clients-gw, hld-gw-tpl, hld-tpl-db-arrow, hld-gw-pref, hld-pref-db-arrow, hld-gw-notif, hld-notif-provider, hld-notif-pref, lld, lld-clients, lld-gw, gw-jobs-1, gw-jobs-2, tpl-svc, tpl-db, tpl-table-1, tpl-table-2, tpl-table-3, lld-clients-gw, gw-tpl, tpl-svc-db, pref-svc, pref-scale, pref-kafka, pref-consumer, pref-db, pref-table-1, pref-table-2, pref-table-3, gw-pref, pref-svc-kafka, pref-kafka-consumer, pref-consumer-db, notif-svc, sms-prov, email-prov, inapp-prov, twilio, sendgrid, fcm, fcm-note, queue, topic-critical, topic-standard, topic-promo, topic-bulk, topic-retry, gw-notif, sms-twilio, email-sendgrid, inapp-fcm, notif-queue, queue-sms, queue-email, queue-inapp, notif-consumer, notif-db, notif-table-1, notif-table-2, notif-table-3, status-note, writers-note, delivery-kafka, delivery-consumer, reporting, event-db, queue-notif-consumer, notif-consumer-db, sms-delivery, email-delivery, inapp-delivery, delivery-kafka-consumer, delivery-consumer-db, gw-reporting, reporting-db, delivery-consumer-events, reporting-events]
+  elements:
+    - { id: pref-check, kind: note, label: "providers check preferences, skip if off", at: [21, 79], in: lld }
+    - { id: pref-cache, kind: oval, label: Preference cache, at: [60, 79], size: [10, 3], tone: green }
+  arrows:
+    - { id: sms-cache, from: sms-prov, to: pref-cache }
+    - { id: email-cache, from: email-prov, to: pref-cache }
+    - { id: inapp-cache, from: inapp-prov, to: pref-cache }
+    - { id: cache-pref-db, from: pref-cache, to: pref-db }
+beats:
+  - point: "The stored preferences are not used yet: each provider must check the user's preference before calling its external sender, and drop the message if that channel is off."
+    kind: mechanism
+    weight: core
+    teach:
+      - "We save every user's preference, but nothing in the sending flow reads it. A user who turned SMS off would still get texts."
+      - "So each provider, before it calls Twilio or SendGrid, checks the user's preference; if that channel is false, it drops the message."
+    draw: [pref-check]
+    check: Why check in the provider and not when the request arrives?
+    answer: "It is the last moment before sending, so even a fresh opt-out is honoured, and each provider knows its own channel."
+  - point: "A look-up per message, a million a minute, would load the preference DB, so a preference cache sits in front of it; providers read the cache and go to the database only on a miss."
+    kind: mechanism
+    weight: core
+    teach:
+      - "That's a look-up for every SMS and every email. With a key on client and user each is an index read, not a scan of the table, but a million a minute still loads the database and slows every send."
+      - "Put a preference cache in front. Providers read the cache and fall back to the DB on a miss. A just-changed preference may be stale for a moment, which availability over consistency allows."
+    draw: [pref-cache, sms-cache, email-cache, inapp-cache, cache-pref-db]
+    check: What does the cache cost us?
+    answer: "A changed preference may be served stale briefly, until the entry expires or is refreshed; the requirements accept that."
+    misconceptions:
+      - "Each preference check scans the whole table -> with a key on client id and user id it is an index look-up; the cache is about the sheer number of look-ups."
+asks:
+  - ids: [pref-cache]
+    beats: [2]
+    question: "Every provider now reads the preference DB for every message, a million a minute. How would you take that load off?"
+    hints:
+      - The same users' preferences are read again and again.
+      - Something in memory, in front of the database.

@@ -1,0 +1,106 @@
+# Email delivery interview, deep dive into the user service, under "5. Deep Dive Designing" as in the video: the five cases of the To field, the user cache above the service with what it holds, the user DB with the look-up steps, sharding by email ID with consistent hashing, the primary key and the users table. The video says sharding makes look-ups fast; this pack teaches it is for size and throughput, with an index for the look-up.
+id: backend/email-delivery/end-to-end/lld-user-service
+title: "Deep dive: the user service"
+source:
+  hash: "fc91a4f97a41"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/email-delivery/end-to-end/high-level-design
+  assumes:
+    - "A user service with a user DB onboards users; sign-up must be strongly consistent."
+    - "Scale of 1.8 billion plus users."
+  carries:
+    - "Autocomplete suggests only the user's recent recipients and contacts, held in a per-user cache; a miss looks the user DB up only on Enter."
+    - "The user DB is sharded by email ID with consistent hashing, and the email ID is the primary key, so a duplicate sign-up fails."
+  terms:
+    - term: consistent hashing
+      means: "Shards and keys placed on a ring, so adding a shard moves only the keys next to it."
+    - term: shard
+      means: One of the databases a large table is split across.
+board:
+  keep: [title, nfr, nfr-scale, nfr-available, nfr-signup, nfr-durable, hld, hld-clients, hld-lb, hld-user, hld-compose, hld-send, hld-search, hld-user-db, hld-draft-db, hld-smtp, hld-mailbox-db, hld-outside, hld-clients-lb, hld-lb-user, hld-lb-compose, hld-lb-send, hld-lb-search, hld-user-db-arrow, hld-compose-db, hld-send-smtp, hld-send-mailbox, hld-smtp-outside, hld-search-mailbox]
+  elements:
+    - { id: lld-user, kind: region, label: "5. Deep dive: the user service", at: [6, 68], size: [64, 26] }
+    - { id: u-case-1, kind: note, label: "unknown, first time: no suggestion", at: [44, 71], in: lld-user }
+    - { id: u-case-2, kind: note, label: "other domain, first time: no suggestion", at: [44, 72], in: lld-user }
+    - { id: u-case-3, kind: note, label: "mailed before: suggest", at: [44, 73], in: lld-user }
+    - { id: u-case-4, kind: note, label: "in your contacts: suggest", at: [44, 74], in: lld-user }
+    - { id: u-case-5, kind: note, label: "unknown in our domain: contact card on Enter", at: [44, 75], in: lld-user }
+    - { id: u-cache, kind: oval, label: User cache, at: [8, 72], size: [12, 4], tone: green }
+    - { id: u-cache-holds, kind: note, label: "25 to 50 recent recipients, plus contacts", at: [21, 73], in: lld-user }
+    - { id: u-svc, kind: box, label: "User service, opened up", at: [8, 80], size: [12, 3], tone: blue }
+    - { id: u-db, kind: oval, label: "User DB, sharded", at: [34, 80], size: [12, 3], tone: amber }
+    - { id: u-step-1, kind: note, label: 1. check the user cache, at: [50, 78], in: lld-user }
+    - { id: u-step-2, kind: note, label: "2. hit: suggest recent and contacts", at: [50, 79], in: lld-user }
+    - { id: u-step-3, kind: note, label: "3. miss: look up the user DB on Enter", at: [50, 80], in: lld-user }
+    - { id: u-shard, kind: note, label: "user DB sharded by email ID, consistent hashing", at: [8, 86], in: lld-user }
+    - { id: u-modulo, kind: note, label: "hash mod N remaps almost every key when N grows", at: [8, 87], in: lld-user }
+    - { id: u-index, kind: note, label: "an index on email ID inside each shard", at: [8, 88], in: lld-user }
+    - { id: u-pk, kind: note, label: "email ID is the primary key, a duplicate fails", at: [8, 90], in: lld-user }
+    - { id: u-store, kind: note, label: "Spanner or Bigtable, or sharded Postgres", at: [8, 91], in: lld-user }
+    - { id: u-table-1, kind: note, label: "users: email_id, user_id,", at: [48, 86], in: lld-user }
+    - { id: u-table-2, kind: note, label: "password_hash, status, metadata", at: [50, 87], in: lld-user }
+  arrows:
+    - { id: u-svc-cache, from: u-svc, to: u-cache }
+    - { id: u-svc-db, from: u-svc, to: u-db, label: on Enter }
+beats:
+  - point: "The user service is hit not only at sign-up but whenever someone types in the To field, and autocomplete has five cases: suggestions only for addresses you have mailed before or saved as contacts."
+    kind: rule
+    weight: core
+    teach:
+      - "Step five, the deep dive: copy the picture down and open the user service. Sign-up checks the address is free and inserts it. But it is also hit every time someone types a recipient."
+      - "Five cases. Someone you never mailed: no suggestion. Another domain, first time: none. Someone you mailed before: suggested. Someone in your contacts: suggested. An unknown address in our own domain: no suggestion, but on Enter we show their contact card."
+    draw: [lld-user, u-case-1, u-case-2, u-case-3, u-case-4, u-case-5]
+    check: When does Gmail suggest an address as you type it?
+    answer: When you have mailed it before or it is in your contacts.
+  - point: "So a per-user cache holds the 25 to 50 most recent recipients and the contacts: a hit is suggested at once, and only a miss on Enter reaches the user DB."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Every suggestion comes from the user's own recent list or contacts. Keep exactly that in a user cache: the 25 to 50 people they mail most, plus their contacts. Each user's list is their own."
+      - "Check the cache first; a hit is suggested. On a miss, nothing is suggested, and the user DB is read only when they press Enter. A billion users typing would crush the database otherwise."
+    draw: [u-cache, u-svc, u-svc-cache, u-cache-holds, u-db, u-svc-db, u-step-1, u-step-2, u-step-3]
+    check: Why not look the user DB up on every keystroke?
+    answer: Suggestions only come from the user's recent recipients and contacts, which the cache holds; the database is needed only on Enter.
+  - point: "The user DB is sharded by email ID with consistent hashing, because hash mod N remaps almost every key when a shard is added; sharding handles size and throughput, and an index on email ID makes each look-up fast."
+    kind: mechanism
+    weight: core
+    teach:
+      - "A billion accounts do not fit one database, so shard by email ID. Simple version: hash the address, mod 10 shards, store it there. But grow to 12 shards and almost every key now maps elsewhere, and look-ups miss."
+      - "Consistent hashing puts shards and keys on a ring, so a new shard takes only its neighbours' keys. Sharding is for size and load; inside each shard, an index on the email ID makes the look-up quick. Google uses Spanner or Bigtable; sharded Postgres is fine here."
+    draw: [u-shard, u-modulo, u-index, u-store]
+    check: What goes wrong with hash mod 10 when you move to 12 shards?
+    answer: Almost every key maps to a different shard, so look-ups miss until the data moves; consistent hashing moves only a small share.
+    misconceptions:
+      - "Sharding is what makes a look-up fast -> an index does that; sharding spreads the size and the traffic across machines."
+  - point: "Two people signing up for one address at once: the email ID is the primary key, and both land on the same shard, so the second insert fails. The users table holds email ID, user ID, password hash, status and metadata."
+    kind: decision
+    weight: core
+    teach:
+      - "The follow-up question: two people register the same address at the same moment. Make the email ID the primary key. Since the shard is picked by email ID, both reach the same shard, and the second insert fails."
+      - "The table: email ID, user ID, a hash of the password, never the password, a status, and metadata."
+    draw: [u-pk, u-table-1, u-table-2]
+    check: Why is checking whether an address is free, then inserting, not enough?
+    answer: Two sign-ups can both pass the check before either inserts; a primary key on the one shard that owns the address lets only one insert succeed.
+asks:
+  - ids: [u-cache]
+    beats: [2]
+    question: "Suggestions only come from people you've mailed or saved. How would you serve them without hitting the database on every keystroke?"
+    hints:
+      - Each user's list of likely recipients is small.
+      - Somewhere fast, in memory, per user.
+  - ids: [u-shard]
+    beats: [3]
+    question: "A billion accounts won't fit one database. How would you split the user DB, and by what?"
+    hints:
+      - What is every account looked up by?
+      - And how would you add databases later without moving everything?
+  - ids: [u-pk]
+    beats: [4]
+    question: "Two people try to register the same address at the same moment. How do you make sure only one gets it?"
+    hints:
+      - A check and then an insert can race.
+      - What can the database itself refuse?

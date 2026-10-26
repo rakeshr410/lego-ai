@@ -1,0 +1,93 @@
+# Cloud storage interview, deep dive, sync: the sync service under Kafka with "1. Pull" and "2. Push (Fanout)" written under it, the sync engine added to the client, the refresh path through the gateway, and the metadata tables written beside the metadata database, as in the video.
+id: backend/cloud-storage/end-to-end/lld-sync
+title: "Sync across devices, and the metadata tables"
+source:
+  hash: "36f1215e8ba8"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/cloud-storage/end-to-end/lld-commit
+  assumes:
+    - "A file-changed event goes to Kafka after the file is saved."
+    - "The local metadata index records each file's version and chunk hashes."
+  carries:
+    - "The sync service pushes file-changed events from Kafka to the online devices that care (fan-out)."
+    - "A device's sync engine pulls on refresh or reconnect, sending its local versions; the sync service answers with the files whose version differs."
+    - "Tables: folders, files, file versions, version chunks, chunks, permissions."
+  terms:
+    - term: "fan-out"
+      means: "Sending one event to every device that should hear it."
+    - term: "sync engine"
+      means: "The part of the app that talks to the sync service and keeps the device's files current."
+board:
+  keep: [title, desc, fr, fr-account, fr-upload, fr-sync, fr-share, fr-folders, fr-quota, fr-out, nfr, nfr-scale, nfr-cap, nfr-large, nfr-latency, nfr-durable, hld, hld-phone, hld-laptop, hld-tablet, hld-clients, hld-gateway, hld-user-svc, hld-uploader, hld-meta-svc, hld-user-db, hld-blob, hld-meta-db, hld-phone-gw, hld-laptop-gw, hld-tablet-gw, hld-gw-user, hld-gw-uploader, hld-gw-meta, hld-user-db-arrow, hld-blob-arrow, hld-meta-db-arrow, lld-head, lc-client, lc-chunker, lc-upload-mgr, lc-index, lk-gateway, lk-user-svc, lk-users-db, lk-users-1, lk-users-2, lk-client-gw, lk-gw-user, lk-user-db, lk-uploader, s1, s1-post, s1-req-1, s1-req-2, s1-req-3, s1-resp-1, s1-resp-2, s1-resp-3, s1-resp-4, s1-quota, s1-resume-1, s1-resume-2, s1-resume-3, s1-resume-4, lk-gw-uploader, lk-quota, s2, s2-chunk, s3-post, s3-body, s3-sign, s3-resp, s4-upload, lk-s3, lk-redis, lk-redis-1, lk-redis-2, lk-sign, lk-state, s5, s5-commit, s5-validate, s6-save, s6-publish, lk-meta-svc, lk-meta-db, lk-kafka, lk-gw-meta, lk-up-meta, lk-meta-db-arrow, lk-publish]
+  elements:
+    - { id: "lc-sync-engine", kind: "box", label: "sync engine", at: [14, 54], size: [10, 3], in: "lc-client" }
+    - { id: "lk-sync", kind: "box", label: "Sync service", at: [54, 74], size: [11, 3], tone: "blue" }
+    - { id: "lk-sync-pull", kind: "note", label: "pull, on refresh or reconnect", at: [54, 78] }
+    - { id: "lk-sync-push", kind: "note", label: "push, fan-out to online devices", at: [54, 79] }
+    - { id: "lk-tables-head", kind: "note", label: "metadata tables", at: [68, 64] }
+    - { id: "lk-t-folders", kind: "note", label: "folders: folderId, parentFolderId, ownerId, name, createdAt", at: [68, 65] }
+    - { id: "lk-t-files", kind: "note", label: "files: fileId, parentFolderId, ownerId, name, size,", at: [68, 66] }
+    - { id: "lk-t-files-2", kind: "note", label: "currentVersionId, isDeleted", at: [70, 67] }
+    - { id: "lk-t-versions", kind: "note", label: "file versions: versionId, fileId, size, createdBy, createdAt", at: [68, 68] }
+    - { id: "lk-t-vchunks", kind: "note", label: "version chunks: versionId, chunkIndex, chunkId", at: [68, 69] }
+    - { id: "lk-t-chunks", kind: "note", label: "chunks: chunkId, objectKey s3 path, size, checksum", at: [68, 70] }
+    - { id: "lk-t-perms", kind: "note", label: "permissions: id, resourceType, resourceId, userId, role", at: [68, 71] }
+  arrows:
+    - { id: "lk-consume", from: "lk-kafka", to: "lk-sync" }
+    - { id: "lk-gw-sync", from: "lk-gateway", to: "lk-sync", label: "pull and push", both: true }
+    - { id: "lk-sync-meta", from: "lk-sync", to: "lk-meta-svc" }
+beats:
+  - point: "A sync service consumes the file-changed events from Kafka and pushes each to the online devices that care, the owner's and the sharers': a fan-out."
+    kind: mechanism
+    weight: core
+    teach:
+      - "A file was uploaded on the laptop; the phone and the tablet must get it. A sync service consumes the events from Kafka."
+      - "Push, or fan-out: for each event it notifies the connected devices interested in that file, the owner's other devices and the people it is shared with, through the gateway. Their apps then download the new version. The same fan-out idea as a news feed."
+    draw: [lk-sync, lk-consume, lk-gw-sync, lk-sync-push]
+    check: "Which devices does the sync service push a change to?"
+    answer: "The online devices interested in that file: the owner's other devices and the users it is shared with."
+  - point: "A device that missed the pushes pulls: its sync engine sends the versions in its local metadata index, and the sync service compares them with the metadata DB and answers with the files to download."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Push only reaches devices that are online. So the app gets one more part, a sync engine. On start or refresh it pulls: it sends the sync service the versions in its local metadata index."
+      - "The sync service asks the metadata service for the latest versions and answers with every file whose version differs; the device downloads those."
+    draw: [lc-sync-engine, lk-sync-meta, lk-sync-pull]
+    check: "A tablet was off all weekend. How does it catch up?"
+    answer: "Its sync engine pulls: it sends its local versions, and the sync service answers with every file whose version in the metadata DB is newer."
+    misconceptions:
+      - "Kafka keeps the events, so an offline device just reads them later -> devices do not read Kafka; a device that missed pushes pulls by comparing versions with the metadata."
+  - point: "Everything hangs on the metadata tables: folders, files with a current version, file versions, each version's chunk list, chunks with their S3 key and checksum, and permissions."
+    kind: decision
+    weight: core
+    teach:
+      - "Write the tables beside the metadata database. Folders, with a parent; null marks the root. Files, with their folder, owner, size and current version."
+      - "File versions; each version's chunk list, by index; chunks, with the S3 object key and the checksum; and permissions: a resource, file or folder, a user and a role."
+    draw: [lk-tables-head, lk-t-folders, lk-t-files, lk-t-files-2, lk-t-versions, lk-t-vchunks, lk-t-chunks, lk-t-perms]
+    check: "Which table tells the sync service a device's copy is out of date?"
+    answer: "The files table's current version, compared with the version the device sent; the file versions and version chunks tables say what to download."
+  - point: "Sync runs after the upload, through Kafka, so other devices catch up a moment later: the eventual consistency agreed in the requirements."
+    kind: rule
+    weight: supporting
+    teach:
+      - "Read it back against the right-hand list: because the event goes through Kafka after the upload, the phone sees the photo a second or two later."
+      - "That is the eventual consistency on sync we accepted, and the price of keeping uploads fast."
+    check: "Why do the other devices see a new file a moment late, and is that a problem?"
+    answer: "The change reaches them through Kafka after the upload; a few seconds of lag is the eventual consistency the requirements accepted."
+asks:
+  - ids: [lk-sync]
+    beats: [1]
+    question: "The file is saved and the event is in Kafka. What should read it, and how do the online devices hear about it?"
+    hints:
+      - "A service that consumes the events."
+      - "It sends each change out to the devices that care."
+  - ids: [lc-sync-engine]
+    beats: [2]
+    question: "A phone was offline and missed the pushes. How should it catch up when it comes back?"
+    hints:
+      - "The phone knows which versions it has."
+      - "Who could compare them with the latest?"

@@ -1,0 +1,90 @@
+# Distributed logging interview, requirements: "1. Functional requirements" on the left and "Non-functional requirements" on the right, under the title, as the video lays them out.
+id: backend/distributed-logging/end-to-end/requirements
+title: Two lists, functional and non-functional
+source:
+  hash: "0508a217d01f"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/distributed-logging/end-to-end/problem-statement
+  assumes:
+    - "A logging platform collects logs from many services into one searchable place."
+  carries:
+    - "Functional: ingest from many sources; real-time streaming and batch; validate, parse and normalize; search in a dashboard in near real time."
+    - "Non-functional: millions of events per hour; near real time; availability over consistency for ingestion; no data loss within a 30 to 45 day retention."
+  terms:
+    - term: batch ingestion
+      means: "Logs kept on an offline device and uploaded together when it reconnects."
+    - term: normalize
+      means: Turn each client's own log format into the platform's one standard structure.
+board:
+  keep: [title, prompt-desc, prompt-example]
+  elements:
+    - { id: fr, kind: region, label: 1. Functional requirements, at: [4, 5], size: [30, 14], dashed: true }
+    - { id: fr-ingest, kind: note, label: ingest logs from many sources, at: [5, 7], in: fr }
+    - { id: fr-modes, kind: note, label: real-time streaming and batch ingestion, at: [5, 9], in: fr }
+    - { id: fr-normalize, kind: note, label: "validate, parse and normalize into one structure", at: [5, 11], in: fr }
+    - { id: fr-dashboard, kind: note, label: see logs in a dashboard in near real time, at: [5, 13], in: fr }
+    - { id: nfr, kind: region, label: Non-functional requirements, at: [42, 5], size: [32, 14], dashed: true }
+    - { id: nfr-scale, kind: note, label: "scale, millions of events per hour", at: [43, 7], in: nfr }
+    - { id: nfr-latency, kind: note, label: "low latency, near real time", at: [43, 9], in: nfr }
+    - { id: nfr-cap, kind: note, label: availability over consistency for ingestion, at: [43, 11], in: nfr }
+    - { id: nfr-reliable, kind: note, label: "reliable, no data loss, kept 30 to 45 days", at: [43, 13], in: nfr }
+  arrows: []
+  lists:
+    - { id: fr-list, in: fr, at: [5, 7], step: 2, slots: 6, width: 28, items: [fr-ingest, fr-modes, fr-normalize, fr-dashboard] }
+    - { id: nfr-list, in: nfr, at: [43, 7], step: 2, slots: 6, width: 28, items: [nfr-scale, nfr-latency, nfr-cap, nfr-reliable] }
+beats:
+  - point: "The core functional requirement is to ingest logs from many sources, and they arrive two ways: streamed in real time, and in batches from devices that were offline."
+    kind: requirement
+    weight: core
+    teach:
+      - "Step one, on the left: what the platform does. The heart of it is one line: take in logs from many sources, wherever in the world the services run."
+      - "And two ways in. Normally a service's logs stream in near real time. But a device running offline keeps its logs locally and uploads them in a batch when it reconnects. We support both."
+    draw: [fr, fr-ingest, fr-modes]
+    check: Why does the platform need batch ingestion as well as streaming?
+    answer: A client running offline keeps its logs locally and can only send them later, in one batch, when it reconnects.
+  - point: "Every log is validated, parsed and normalized into one standard structure before it is stored, and users search the logs in a dashboard in near real time."
+    kind: requirement
+    weight: core
+    teach:
+      - "Clients log in their own formats; we impose no template. So instead of dumping logs into a database, we validate them, checking for malicious or malformed content, then parse and normalize them into one structure."
+      - "That standard shape is what lets the last requirement work: a dashboard with a search bar, like Splunk's, where a developer finds logs in near real time."
+    draw: [fr-normalize, fr-dashboard]
+    check: Why normalize logs instead of storing them as they arrive?
+    answer: Every client uses its own format, so a single structure is what makes them searchable and displayable the same way.
+  - point: "Non-functional requirements start with scale, millions of events per hour, then latency: near real time."
+    kind: metric
+    weight: core
+    teach:
+      - "On the right, the qualities. Ask for the scale first; it decides everything. The interviewer says millions of events per hour, an event being one log."
+      - "A million an hour is only about 280 a second on average, but logs come in bursts, so the peaks are what we design for. Latency: near real time, so a log is searchable seconds after it is written."
+    draw: [nfr, nfr-scale, nfr-latency]
+    check: Why ask for the scale before anything else?
+    answer: It decides the architecture; millions of events an hour needs buffering and scale-out that a small system would not.
+  - point: "Ingestion chooses availability over consistency, and the platform is reliable, losing no accepted log within a stated retention such as 30 to 45 days."
+    kind: requirement
+    weight: core
+    teach:
+      - "CAP: the platform must keep accepting logs, most of all during an outage, when they matter. A log showing up in search a moment late is fine, so availability wins."
+      - "Reliability: no accepted log is lost. But nobody keeps every log forever, so say how long: a retention of 30 or 45 days, configurable."
+    draw: [nfr-cap, nfr-reliable]
+    check: Why is availability the right choice for ingestion?
+    answer: Refusing logs while services are failing loses the evidence people need; a short delay before a log is searchable costs little.
+    misconceptions:
+      - "No data loss means keeping every log forever -> it means no loss within the retention period you state; after that logs are deleted or archived on purpose."
+asks:
+  - list: fr-list
+    beats: [1, 2]
+    question: "So what should this logging platform do? Tell me the features one at a time, and I'll write them down."
+    hints:
+      - Where do the logs come from, and how do they arrive?
+      - And what happens to a log before anyone reads it, and how do they read it?
+  - list: nfr-list
+    beats: [3, 4]
+    question: "Now the qualities. How big, how fast, how reliable should it be? A number if you have one."
+    hints:
+      - How many logs arrive, and how soon must they be searchable?
+      - When machines fail, what matters more, and how long are logs kept?

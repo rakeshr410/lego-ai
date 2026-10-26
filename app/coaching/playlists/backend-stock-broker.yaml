@@ -1,0 +1,32 @@
+slug: backend-stock-broker
+title: "The stock broker interview"
+summary: "A backend design interview for a broker like Zerodha, Groww or Upstox, run step by step on one whiteboard: requirements with numbers, entities, six groups of endpoints, a gateway and six services, then a deep dive into users and payments, live prices, watchlists and the order flow."
+outline: "The stock broker lessons follow the five-step order and the drawings of InterviewWithBunny's System Design 12, Design Stock Broker Trading Application (youtube.com/watch?v=W5FJnSywmLE), section by section; no text is taken from it, and its factual slips are corrected in the article."
+lessons:
+  - slug: stock-broker
+    title: "The stock broker interview: the problem, requirements, entities and API"
+    summary: "A broker, not an exchange; five functional requirements and the numbers beside them; six entities; six groups of endpoints."
+    parts:
+      - { title: "The problem, then two lists", minutes: 10, packs: [backend/stock-broker/end-to-end/problem-statement, backend/stock-broker/end-to-end/requirements] }
+      - { title: "Entities, then the API", minutes: 10, packs: [backend/stock-broker/end-to-end/entities, backend/stock-broker/end-to-end/api] }
+  - slug: stock-broker-design
+    title: "The stock broker interview: high-level design, users and payments"
+    summary: "Clients, one gateway, six services and the exchange as a black box; then the deep dive opens the user and payment services and their tables."
+    parts:
+      - { title: "One gateway, six services", minutes: 12, packs: [backend/stock-broker/end-to-end/high-level-design] }
+      - { title: "Users and payments", minutes: 7, packs: [backend/stock-broker/end-to-end/lld-user-payment] }
+  - slug: stock-broker-prices
+    title: "The stock broker interview: live prices"
+    summary: "Polling, server-sent events or WebSocket; the exchange gateway, Kafka, a price ingester, InfluxDB and Redis pub/sub; the price tracker as a WebSocket server behind its own gateway."
+    parts:
+      - { title: "From the exchange to the screen", minutes: 18, packs: [backend/stock-broker/end-to-end/lld-price-tracker] }
+  - slug: stock-broker-watchlist
+    title: "The stock broker interview: the watchlist"
+    summary: "Watchlists and their symbols in Postgres, with live prices only through the price tracker."
+    parts:
+      - { title: "Lists of symbols, live", minutes: 5, packs: [backend/stock-broker/end-to-end/lld-watchlist] }
+  - slug: stock-broker-orders
+    title: "The stock broker interview: the order flow"
+    summary: "Kafka in front of orders, a validator, the order service and its table, fills as events through an order tracker, the trade table, notifications and the portfolio."
+    parts:
+      - { title: "From order to trade", minutes: 18, packs: [backend/stock-broker/end-to-end/lld-orders] }

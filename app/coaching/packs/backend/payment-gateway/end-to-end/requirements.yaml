@@ -1,0 +1,98 @@
+# Payment gateway interview, requirements: "1. Functional requirements" on the left with the out-of-scope line under it, and "Non-functional requirements" on the right, under the definitions, as the video lays them out.
+id: backend/payment-gateway/end-to-end/requirements
+title: "Two lists, functional and non-functional"
+source:
+  hash: "935a8d5357eb"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/payment-gateway/end-to-end/problem-statement
+  assumes:
+    - "The gateway collects and tokenizes card details and routes payments; the processor moves the money."
+  carries:
+    - "Functional: the merchant creates a payment intent; the gateway gives a temporary session page for the card; card data is handled to PCI DSS; the transaction status is tracked and reported."
+    - "Out of scope: part payments, returns and refunds."
+    - "Non-functional: 10,000 transactions per second; consistency over availability; under 200 ms for the gateway's part; end-to-end encryption and PCI DSS level 1."
+  terms:
+    - term: payment intent
+      means: "The merchant's statement that a buyer wants to pay an amount for an order, made before any card is involved."
+    - term: PCI DSS
+      means: The global security standard for every system that stores, processes or transmits cardholder data.
+board:
+  keep: [title, prompt-desc, def-gateway, def-gateway-2, def-processor, def-processor-2]
+  elements:
+    - { id: fr, kind: region, label: 1. Functional requirements, at: [4, 8], size: [52, 16], dashed: true }
+    - { id: fr-intent, kind: note, label: the client creates a payment intent, at: [5, 10], in: fr }
+    - { id: fr-session, kind: note, label: a temporary session page for the card details, at: [5, 12], in: fr }
+    - { id: fr-pci, kind: note, label: card data handled to PCI DSS, at: [5, 14], in: fr }
+    - { id: fr-status, kind: note, label: track and report the transaction status, at: [5, 16], in: fr }
+    - { id: fr-oos, kind: note, label: "out of scope, part payments, returns and refunds", at: [5, 22], in: fr }
+    - { id: nfr, kind: region, label: Non-functional requirements, at: [60, 8], size: [56, 14], dashed: true }
+    - { id: nfr-scale, kind: note, label: "scale, 10,000 transactions per second", at: [61, 10], in: nfr }
+    - { id: nfr-cap, kind: note, label: consistency over availability, at: [61, 12], in: nfr }
+    - { id: nfr-latency, kind: note, label: "under 200 ms for the gateway's own part", at: [61, 14], in: nfr }
+    - { id: nfr-security, kind: note, label: "end-to-end encryption, PCI DSS level 1", at: [61, 16], in: nfr }
+  arrows: []
+  lists:
+    - { id: fr-list, in: fr, at: [5, 10], step: 2, slots: 6, width: 50, items: [fr-intent, fr-session, fr-pci, fr-status] }
+    - { id: nfr-list, in: nfr, at: [61, 10], step: 2, slots: 6, width: 50, items: [nfr-scale, nfr-cap, nfr-latency, nfr-security] }
+beats:
+  - point: "The first two functional requirements follow a payment: the merchant creates a payment intent, and the gateway gives a temporary session, a hosted page where the buyer enters the card."
+    kind: requirement
+    weight: core
+    teach:
+      - "Step one, on the left: what the gateway does. First, a client, which for us is the merchant, a shop, can create a payment intent: this buyer wants to pay this much."
+      - "Second, the gateway creates a temporary session, the page with the card form that appears after buy now. That page is the gateway's, not the shop's."
+    draw: [fr, fr-intent, fr-session]
+    check: Who builds the page where the buyer types the card number?
+    answer: "The gateway; it hands the merchant a temporary session page, so the shop never builds its own card form."
+  - point: "Card data must be handled to the PCI DSS standard, and the transaction's status must be tracked and reported back to the merchant."
+    kind: requirement
+    weight: core
+    teach:
+      - "Third, card data is handled securely, to PCI DSS, the global standard for anyone who stores, processes or transmits cardholder data."
+      - "Fourth, once the payment is done, the merchant can see its status: tracked and reported."
+    draw: [fr-pci, fr-status]
+    check: What is PCI DSS, in a sentence?
+    answer: The global security standard every system that stores, processes or transmits cardholder data must meet.
+  - point: "Part payments, returns and refunds are out of scope, said and written down."
+    kind: rule
+    weight: supporting
+    teach:
+      - "Name what you leave out: part payments, and returns and refunds. Write it under the list and move on."
+    draw: [fr-oos]
+  - point: "Non-functional: a scale of 10,000 transactions per second, and consistency over availability, because a payment recorded twice or lost is a real loss."
+    kind: metric
+    weight: core
+    teach:
+      - "On the right, the qualities. Ask the scale: say 10,000 transactions per second, many merchants talking to many processors."
+      - "Then CAP. For money it is consistency first. That does not mean the gateway may sit down; it means that when the two conflict, it refuses rather than record a payment twice or lose one."
+    draw: [nfr, nfr-scale, nfr-cap]
+    check: Why does a payment gateway pick consistency over availability?
+    answer: "A duplicated or lost payment costs real money; a brief refusal can be retried."
+    misconceptions:
+      - "Consistency first means the gateway can be down -> it should still stay up; consistency only wins when the two truly conflict."
+  - point: "The gateway's own part, validation and tokenization, takes under 200 ms; the bank's part is the processor's. And security means end-to-end encryption and PCI DSS level 1."
+    kind: metric
+    weight: core
+    teach:
+      - "Latency, with a number and a place: under 200 milliseconds for the gateway's work, validating and tokenizing. The bank's work is the processor's and takes its own time."
+      - "Last, security: end-to-end encryption, and PCI DSS level 1, the strictest level, for a provider handling this many cards."
+    draw: [nfr-latency, nfr-security]
+    check: The latency target is 200 ms. For which part of the payment?
+    answer: "The gateway's own steps, validation and tokenization, before the processor and the bank take over."
+asks:
+  - list: fr-list
+    beats: [1, 2]
+    question: "So what should this gateway do? Think about what happens from the buy button on. Tell me the features one at a time, and I'll write them."
+    hints:
+      - What does the shop tell the gateway before any card is typed?
+      - And where does the buyer type the card, and what does the shop need to know afterwards?
+  - list: nfr-list
+    beats: [4, 5]
+    question: "Now the qualities. How much traffic, what matters more when machines fail, how fast, how safe?"
+    hints:
+      - "Think of a number of transactions per second, and of CAP for money."
+      - And what must be true of the card data at every step?

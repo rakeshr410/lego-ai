@@ -1,0 +1,56 @@
+# Stock broker interview, the problem statement: the title, one line on what a broker is and one on what it is not (the exchange, a black box), at the top of the board as the video writes them; the five steps said once.
+id: backend/stock-broker/end-to-end/problem-statement
+title: A broker, not an exchange
+source:
+  hash: "96f970204249"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: null
+  assumes: []
+  carries:
+    - "A stock broker is the platform in front of the exchange: it onboards users, streams prices, validates and forwards orders, and shows holdings."
+    - "The exchange, NSE or BSE, matches orders and allocates shares; here it is a black box."
+    - "The interview runs in five steps: requirements, core entities, API, high-level design, deep dive."
+  terms:
+    - term: exchange
+      means: "The market that keeps the order book and matches buyers with sellers, NSE or BSE in India."
+    - term: broker
+      means: "The platform users trade through; it forwards their orders to the exchange."
+board:
+  keep: []
+  elements:
+    - { id: title, kind: note, label: "Stock broker like Zerodha, Groww, Upstox", at: [20, 0] }
+    - { id: prompt-desc, kind: note, label: an online low-cost platform to trade and track stocks, at: [4, 2] }
+    - { id: prompt-example, kind: note, label: "a broker, not the exchange; NSE or BSE is a black box", at: [4, 3] }
+  arrows: []
+beats:
+  - point: "A stock broker like Zerodha, Groww or Upstox is an online, low-cost platform for trading and monitoring stocks."
+    kind: rule
+    weight: core
+    teach:
+      - "Write the title: a stock broker like Zerodha, Groww or Upstox. Under it, what it is: an online, low-cost platform where people trade and track stocks."
+      - "Low-cost, not free: Zerodha charges nothing on delivery trades but does charge on intraday and futures and options."
+    draw: [title, prompt-desc]
+    check: In one sentence, what does a stock broker app let people do?
+    answer: Buy and sell stocks and follow their prices, holdings and profit and loss online.
+  - point: "A broker is not the exchange: the exchange matches orders and allocates shares, and the broker treats it as a black box behind its interfaces."
+    kind: rule
+    weight: core
+    teach:
+      - "Make sure which system is meant. The exchange, NSE or BSE, keeps the order book and matches buyers with sellers. That is a different interview."
+      - "The broker sits in front of it: onboarding, prices, orders, the dashboard. For us the exchange is a black box we talk to through what it offers."
+    draw: [prompt-example]
+    check: Which of the two matches a buy order with a sell order?
+    answer: The exchange; the broker validates the order and forwards it.
+    misconceptions:
+      - "The broker matches orders -> matching happens on the exchange; the broker only forwards and tracks them."
+  - point: "The interview runs in five steps: requirements, core entities, API, high-level design, then a deep dive into each service."
+    kind: rule
+    weight: supporting
+    teach:
+      - "Say the plan once: requirements, functional and non-functional; the core entities; the API; a high-level design; and a deep dive, service by service. Each step gets its number on the board when we reach it."
+    check: What comes right after the requirements?
+    answer: Identifying the core entities, then the API.

@@ -1,0 +1,45 @@
+# Top K leaderboard interview, core entities: "2. Core entities" under the functional list, three lines, as in the video.
+id: backend/top-k-leaderboard/end-to-end/entities
+title: Three entities
+source:
+  hash: "3313f74bc408"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/top-k-leaderboard/end-to-end/requirements
+  assumes:
+    - "Functional: insert scores, query the top K by region, time windows, real-time for live leaderboards."
+  carries:
+    - "The core entities are the score (view, like), the item (player, video, song) and the time frame."
+  terms:
+    - term: core entity
+      means: A noun the system stores and moves.
+board:
+  keep: [title, prompt-desc, prompt-example, fr, fr-insert, fr-query, fr-window, fr-realtime, nfr, nfr-scale, nfr-cap, nfr-latency, nfr-exact]
+  elements:
+    - { id: entities, kind: region, label: 2. Core entities, at: [6, 22], size: [22, 11], dashed: true }
+    - { id: ent-score, kind: note, label: "score, view or like", at: [7, 24], in: entities }
+    - { id: ent-item, kind: note, label: "player, video or song", at: [7, 26], in: entities }
+    - { id: ent-time, kind: note, label: "time frame, hour, day or month", at: [7, 28], in: entities }
+  arrows: []
+  lists:
+    - { id: entity-list, in: entities, at: [7, 24], step: 2, slots: 4, width: 20, items: [ent-score, ent-item, ent-time] }
+beats:
+  - point: "Three core entities: the score (a view or a like) items are ranked by, the item itself (a player, video or song), and the time frame a ranking covers."
+    kind: component
+    weight: core
+    teach:
+      - "Step two, the core entities. First, the attribute we rank by: a score, a view, a like. Second, what owns it: a player, a video, a song."
+      - "Third, the time frame, an hour, a day, a month, because every ranking is kept per window. We may find more as we design; these come from the requirements."
+    draw: [entities, ent-score, ent-item, ent-time]
+    check: Why is the time frame an entity and not just a query parameter?
+    answer: "Rankings are kept per window, so the window shapes what is stored, not only what is asked."
+asks:
+  - list: entity-list
+    beats: [1]
+    question: "What are the core entities here, the things this system keeps track of?"
+    hints:
+      - What is counted, and what is it counted for?
+      - And over what period does a ranking hold?

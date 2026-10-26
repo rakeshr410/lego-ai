@@ -1,0 +1,131 @@
+# Chat app interview, low-level design, WebSocket chat servers: the video copies the high-level design, removes the chat service and draws, under the "LB + Gateway", a "WebSocket Gateway+LB" feeding three "Chat Svc (WS)" boxes, the four-step handshake, send(msg, user1, user4), and the "Redis Cache, Websocket Registry" of user to connection with a TTL. Corrected: the registry is a key look-up, not a scan, and a reconnect may land on any server.
+id: backend/chat-app/end-to-end/lld-websocket
+title: "Low-level design: WebSocket servers and the registry"
+source:
+  hash: "1e6d688a8bac"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/chat-app/end-to-end/lld-connections
+  assumes:
+    - "The chat service runs on WebSockets: one persistent full-duplex connection per user."
+    - "The high-level design: users, the API gateway, user, chat and group services with their stores."
+    - "Non-functional: under 300 ms sender to receiver, 1 billion users."
+  carries:
+    - "Chat servers are replicated behind a dedicated WebSocket gateway and load balancer; REST calls still go through the API gateway."
+    - "A WebSocket starts as an HTTP request asking to upgrade, answered 101 Switching Protocols, then both ways until one side closes."
+    - "A WebSocket registry in Redis maps user id to chat server and connection, looked up by key; each entry has a TTL refreshed by heartbeats."
+  terms:
+    - term: WebSocket registry
+      means: "Redis keys from user id to the chat server and connection holding that user."
+    - term: TTL
+      means: "Time to live: the entry expires unless heartbeats refresh it."
+    - term: handshake
+      means: "The HTTP exchange that upgrades a connection to a WebSocket."
+board:
+  keep: [title, nfr, nfr-scale, nfr-volume, nfr-cap, nfr-latency, nfr-reliable, conn, conn-http, v-http, conn-long, v-long, conn-sse, v-sse, conn-ws, v-ws]
+  elements:
+    - { id: w-head, kind: note, label: "the high-level design, copied and grown", at: [30, 37] }
+    - { id: w-user-1, kind: box, label: user 1, at: [4, 50], size: [7, 3] }
+    - { id: w-user-4, kind: box, label: user 4, at: [4, 72], size: [7, 3] }
+    - { id: w-lb, kind: box, label: Load balancer and API gateway, at: [15, 44], size: [10, 16] }
+    - { id: w-lb-note, kind: note, label: "auth, routing, rate limiting", at: [15, 61] }
+    - { id: w-user-svc, kind: box, label: User service, at: [30, 48], size: [13, 3], tone: blue }
+    - { id: w-userdb, kind: oval, label: UserDB, at: [66, 48], size: [12, 3], tone: amber }
+    - { id: w-group-svc, kind: box, label: Group service, at: [30, 56], size: [13, 3], tone: blue }
+    - { id: w-groupdb, kind: oval, label: Group DB, at: [66, 56], size: [10, 3], tone: amber }
+    - { id: w-ws-gw, kind: box, label: WebSocket gateway and LB, at: [15, 64], size: [10, 18] }
+    - { id: w-ws-note, kind: note, label: only WebSocket traffic, at: [3, 78] }
+    - { id: w-chat-1, kind: box, label: "Chat server 1, WebSocket", at: [30, 64], size: [13, 3], tone: blue }
+    - { id: w-chat-2, kind: box, label: "Chat server 2, WebSocket", at: [30, 71], size: [13, 3], tone: blue }
+    - { id: w-chat-3, kind: box, label: "Chat server 3, WebSocket", at: [30, 78], size: [13, 3], tone: blue }
+    - { id: w-hs, kind: region, label: WebSocket handshake, at: [66, 80], size: [28, 8] }
+    - { id: hs-1, kind: note, label: "step 1, an HTTP request asks to upgrade", at: [67, 82], in: w-hs }
+    - { id: hs-2, kind: note, label: "step 2, server answers 101, switching protocols", at: [67, 83], in: w-hs }
+    - { id: hs-3, kind: note, label: "step 3, messages flow both ways", at: [67, 84], in: w-hs }
+    - { id: hs-4, kind: note, label: "step 4, either side closes", at: [67, 85], in: w-hs }
+    - { id: w-send, kind: note, label: "send: message, from user 1, to user 4", at: [44, 79] }
+    - { id: w-registry, kind: box, label: "Redis cache, WebSocket registry", at: [15, 89], size: [22, 4], tone: amber }
+    - { id: w-reg-1, kind: note, label: "user 1: chat server 3, connection 1, TTL", at: [16, 94] }
+    - { id: w-reg-2, kind: note, label: "user 4: chat server 2, connection 4, TTL", at: [16, 95] }
+    - { id: w-ttl, kind: note, label: "TTL refreshed by heartbeats, about a minute", at: [16, 97] }
+  arrows:
+    - { id: w-u1-lb, from: w-user-1, to: w-lb }
+    - { id: w-u4-lb, from: w-user-4, to: w-lb }
+    - { id: w-lb-user, from: w-lb, to: w-user-svc }
+    - { id: w-user-db, from: w-user-svc, to: w-userdb }
+    - { id: w-lb-group, from: w-lb, to: w-group-svc }
+    - { id: w-group-db, from: w-group-svc, to: w-groupdb }
+    - { id: w-u1-ws, from: w-user-1, to: w-ws-gw }
+    - { id: w-u4-ws, from: w-user-4, to: w-ws-gw }
+    - { id: w-ws-c1, from: w-ws-gw, to: w-chat-1 }
+    - { id: w-ws-c2, from: w-ws-gw, to: w-chat-2 }
+    - { id: w-ws-c3, from: w-ws-gw, to: w-chat-3 }
+    - { id: w-c3-reg, from: w-chat-3, to: w-registry, label: who is where }
+    - { id: w-ws-reg, from: w-ws-gw, to: w-registry }
+    - { id: w-c3-c2, from: w-chat-3, to: w-chat-2 }
+beats:
+  - point: "The low-level picture starts as the high-level design copied down: users, the API gateway, the user service and the group service with their databases; the chat service is taken out to be rebuilt."
+    kind: component
+    weight: supporting
+    teach:
+      - "Copy the high-level design down: the users, here user 1 and user 4, the load balancer and API gateway, the user service with its UserDB and the group service with its Group DB."
+      - "The chat service is the one we rebuild, so it comes out of the copy."
+    draw: [w-head, w-user-1, w-user-4, w-lb, w-u1-lb, w-u4-lb, w-lb-note, w-user-svc, w-lb-user, w-userdb, w-user-db, w-group-svc, w-lb-group, w-groupdb, w-group-db]
+    check: Which box of the high-level design is being rebuilt, and why?
+    answer: "The chat service, because it has to run on WebSockets and is the heart of the system."
+  - point: "The chat service becomes several WebSocket chat servers behind a dedicated WebSocket gateway and load balancer, doing authentication, rate limiting and routing; phones talk to both gateways."
+    kind: component
+    weight: core
+    teach:
+      - "Millions of users are connected at once, so the chat service is replicated: chat servers one, two and three, each holding WebSocket connections."
+      - "Most load balancers handle HTTP and WebSockets alike, but this traffic lives on long connections, so give it a gateway of its own, with the same duties: authentication and authorization, rate limiting, routing. The phones send REST calls to the API gateway and chat to the WebSocket gateway."
+    draw: [w-ws-gw, w-u1-ws, w-u4-ws, w-ws-note, w-chat-1, w-ws-c1, w-chat-2, w-ws-c2, w-chat-3, w-ws-c3]
+    check: Why give the chat servers a gateway of their own?
+    answer: "Their traffic is long-lived WebSocket connections, unlike short REST calls, so a dedicated gateway handles their auth, rate limits and routing."
+  - point: "A WebSocket begins as an HTTP request asking to upgrade; the server answers 101 Switching Protocols, then messages flow both ways until either side closes."
+    kind: mechanism
+    weight: core
+    teach:
+      - "You cannot open a WebSocket directly. Step one, the client sends an ordinary HTTP request asking to upgrade. Step two, the server validates it and answers 101, switching protocols."
+      - "Step three, messages flow both ways on that one connection. Step four, either side closes it. Every WebSocket starts life as an HTTP call."
+    draw: [w-hs, hs-1, hs-2, hs-3, hs-4]
+    check: How does a WebSocket connection get established?
+    answer: "An HTTP request asks to upgrade, the server answers 101 Switching Protocols, and the connection then carries messages both ways."
+  - point: "User 1 and user 4 sit on different chat servers, so the sender's server looks user 4 up in a WebSocket registry in Redis, keyed by user id, and forwards the message to user 4's server."
+    kind: mechanism
+    weight: core
+    teach:
+      - "User 1 sends: message, from user 1, to user 4. User 1 is on chat server 3, user 4 on chat server 2. Server 3 must find where user 4 is."
+      - "So keep a registry in a Redis cache: user id to chat server and connection. It is a key look-up by user id, never a scan, so it stays inside 300 milliseconds. Server 3 finds user 4 on server 2 and forwards the message; server 2 writes it down user 4's socket. The gateway records each new connection there too."
+    draw: [w-send, w-registry, w-c3-reg, w-ws-reg, w-c3-c2, w-reg-1, w-reg-2]
+    check: How does chat server 3 deliver a message to user 4, who is on chat server 2?
+    answer: "It looks user 4 up in the registry by user id, finds chat server 2, and forwards the message there to go down user 4's socket."
+    misconceptions:
+      - "The server scans the whole user-to-connection map for each message -> it is a key look-up by user id in Redis."
+  - point: "Each registry entry has a TTL refreshed by heartbeats, so when a phone drops off its entry expires after about a minute; a reconnect may land on any server, which writes a new entry."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Connections are heavy, and phones drop off networks. So each entry carries a TTL: heartbeats refresh it while the app is open, and about a minute after they stop, the entry is gone, so the registry never points at a dead socket."
+      - "When user 4 comes back, the new connection may land on any chat server, and that server writes a fresh entry."
+    draw: [w-ttl]
+    check: User 4 loses signal. What happens to their registry entry?
+    answer: "Heartbeats stop, the TTL runs out after about a minute, and the entry disappears until they reconnect and a server writes a new one."
+    misconceptions:
+      - "A reconnecting user must go back to the same chat server -> any server can take the new connection; it just updates the registry."
+asks:
+  - ids: [w-ws-gw]
+    beats: [2]
+    question: "We now have several WebSocket chat servers. What sits in front of them, and why not just reuse the API gateway?"
+    hints:
+      - Something still has to authenticate and spread the connections.
+      - How long does a chat connection live compared with a REST call?
+  - ids: [w-registry]
+    beats: [4]
+    question: "User 1 is on chat server 3, user 4 on chat server 2. How does server 3 know where to send user 4's message?"
+    hints:
+      - Something must remember which server each user is connected to.
+      - It must answer in a millisecond or two, by user id.

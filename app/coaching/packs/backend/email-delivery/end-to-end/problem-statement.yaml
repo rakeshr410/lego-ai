@@ -1,0 +1,43 @@
+# Email delivery interview, the problem statement: the title and the one line the video writes under it, then the five steps said once (said, not drawn).
+id: backend/email-delivery/end-to-end/problem-statement
+title: The problem, and the five steps
+source:
+  hash: "8bb86dec5a94"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: null
+  assumes: []
+  carries:
+    - "An email platform like Gmail or Outlook lets users send, receive, store, search and manage email across devices, at global scale."
+    - "The interview runs in five steps: requirements, core entities, API, high-level design, deep dive."
+  terms:
+    - term: domain
+      means: "The part of an address after the at sign, gmail.com or outlook.com; mail inside our domain never leaves our network."
+board:
+  keep: []
+  elements:
+    - { id: title, kind: note, label: Email sending platform like Gmail or Outlook, at: [24, 0] }
+    - { id: prompt-desc, kind: note, label: "send, receive, store, search, manage email, worldwide", at: [8, 2] }
+  arrows: []
+beats:
+  - point: "An email platform like Gmail or Outlook lets users reliably send, receive, store, search and manage email across devices, for well over a billion people."
+    kind: rule
+    weight: core
+    teach:
+      - "Write the title: an email sending platform, like Gmail or Outlook. Everyone has used one, so do not spend long explaining it."
+      - "One line under it: a globally scalable platform to send, receive, store, search and manage email across devices. That line already holds most of the requirements."
+    draw: [title, prompt-desc]
+    check: In one sentence, what does this platform have to do?
+    answer: Let users send, receive, store, search and manage email across their devices, at global scale.
+  - point: "The interview runs in five steps: requirements, core entities, API, high-level design, then the deep dive, where most of the time goes."
+    kind: rule
+    weight: core
+    teach:
+      - "Say the plan once: requirements first, functional and non-functional, then the core entities, the API, a high-level design, and last the deep dive."
+      - "The inbox looks simple, but the deep dive is where the work is: unique sign-ups, never losing a sent email, checking mail without slowing it, and talking to other providers."
+      - Said, not written; each step gets its number on the board when we reach it.
+    check: Which step gets most of the time, and why?
+    answer: The deep dive, because that is where the hard parts are, such as never losing an email and sending to other providers.

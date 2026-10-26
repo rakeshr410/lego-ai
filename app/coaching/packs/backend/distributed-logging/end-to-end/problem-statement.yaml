@@ -1,0 +1,43 @@
+# Distributed logging interview, the problem statement: the title, what the platform is in one line and one example, written at the top of the board as the video does, then the five steps said once (said, not drawn).
+id: backend/distributed-logging/end-to-end/problem-statement
+title: The problem, and the five steps
+source:
+  hash: "08aa66994a6f"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: null
+  assumes: []
+  carries:
+    - "A distributed logging platform collects logs from many services into one place where they are monitored and searched."
+    - "The interview runs in five steps: requirements, core entities, API, high-level design, deep dive."
+  terms:
+    - term: log event
+      means: "One log line a service writes, such as an error with its time, service and message."
+board:
+  keep: []
+  elements:
+    - { id: title, kind: note, label: "Distributed logging platform, like Splunk or OpenObserve", at: [36, 0] }
+    - { id: prompt-desc, kind: note, label: collects and monitors logs from many services in one place, at: [36, 2] }
+    - { id: prompt-example, kind: note, label: "checkout logs an error, a developer finds it in seconds", at: [37, 3] }
+  arrows: []
+beats:
+  - point: "A distributed logging platform like Splunk or OpenObserve collects the logs of many services, wherever they run, into one place where people monitor and search them."
+    kind: rule
+    weight: core
+    teach:
+      - "Write the title: a distributed logging platform, like Splunk or OpenObserve. Under it, one line: an online platform that collects and monitors logs in one place."
+      - "Then an example. The checkout service logs an error; a developer searching the platform finds that line, among millions from other services, within seconds."
+    draw: [title, prompt-desc, prompt-example]
+    check: What does a logging platform give a developer that the services' own log files don't?
+    answer: All the services' logs collected in one place, in one structure, searchable within seconds.
+  - point: "The interview runs in five steps: requirements, core entities, API, high-level design, then the deep dive."
+    kind: rule
+    weight: core
+    teach:
+      - "Say the plan once: functional and non-functional requirements, the core entities, the API, a high-level design, and then the deep dive, where most of the time goes."
+      - Said, not written; each step gets its number on the board when we reach it.
+    check: Which step comes straight after the requirements?
+    answer: Identifying the core entities, then the API.

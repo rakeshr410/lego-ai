@@ -1,0 +1,126 @@
+# Hotel booking interview, low-level design, the booking service: the video reorganizes the board to open the booking service. Drawn as there: booking service, payment service under it and the third-party payment gateway under that, PaymentDB with its columns to the right; then Kafka beside the booking service, with the notification service, the consumer writing BookingDB, and the room availability service writing HotelDB. The video calls the direct updates a two-phase commit; this pack calls it a dual write and adds the outbox and idempotent consumers Kafka needs.
+id: backend/hotel-booking/end-to-end/lld-booking
+title: "Low-level design: the booking service"
+source:
+  hash: "43e95fc19959"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/hotel-booking/end-to-end/lld-review
+  assumes:
+    - "Booking is two steps: pay, then confirm; the booking service calls a payment gateway and saves to BookingDB."
+    - "HotelDB holds the availability table."
+  carries:
+    - "The booking service calls a payment service, which calls a third-party payment gateway and records the outcome in PaymentDB on MySQL."
+    - "After payment the booking service publishes one booking event to Kafka; a notification service, a consumer writing BookingDB, and the availability service act on it."
+    - "The availability service is the only writer of the availability table."
+    - "Direct writes to two databases can half-fail; Kafka with an outbox and idempotent consumers gives eventual consistency."
+  terms:
+    - term: dual write
+      means: "One service writing two separate stores in turn, which can leave them disagreeing if one write fails."
+    - term: outbox
+      means: "A table written in the same transaction as the state change, from which events are relayed to the broker, so none is lost."
+    - term: idempotent
+      means: Safe to apply twice; a repeated event changes nothing.
+board:
+  keep: [title, nfr, nfr-scale, nfr-available, nfr-consistent]
+  elements:
+    - { id: lld-booking, kind: region, label: "5. Low-level design: booking service", at: [4, 21], size: [70, 36] }
+    - { id: bk-two-step, kind: note, label: "book, then pay, then confirm", at: [6, 25], in: lld-booking }
+    - { id: bk-gateway, kind: box, label: API gateway, at: [6, 34], size: [10, 3], in: lld-booking }
+    - { id: bk-booking, kind: box, label: Booking service, at: [22, 34], size: [13, 3], tone: blue, in: lld-booking }
+    - { id: bk-payment, kind: box, label: Payment service, at: [22, 40], size: [13, 3], tone: blue, in: lld-booking }
+    - { id: bk-pgw, kind: box, label: "Payment gateway, third party", at: [22, 46], size: [13, 3], tone: grey, in: lld-booking }
+    - { id: bk-payment-db, kind: oval, label: "PaymentDB, MySQL", at: [40, 46], size: [13, 3], tone: amber, in: lld-booking }
+    - { id: bk-pay-schema-1, kind: note, label: "payment: userId, bookingId,", at: [40, 51], in: lld-booking }
+    - { id: bk-pay-schema-2, kind: note, label: "amount, currency, date", at: [42, 52], in: lld-booking }
+    - { id: bk-kafka, kind: box, label: Kafka, at: [44, 34], size: [10, 3], tone: grey, in: lld-booking }
+    - { id: bk-dual-write, kind: note, label: two direct writes can half-fail, at: [6, 52], in: lld-booking }
+    - { id: bk-notify, kind: box, label: Notification service, at: [60, 35], size: [13, 3], tone: blue, in: lld-booking }
+    - { id: bk-consumer, kind: box, label: Consumer service, at: [60, 41], size: [13, 3], tone: blue, in: lld-booking }
+    - { id: bk-booking-db, kind: oval, label: BookingDB, at: [60, 47], size: [13, 3], tone: amber, in: lld-booking }
+    - { id: bk-avail, kind: box, label: "Availability service, only writer", at: [60, 29], size: [13, 3], tone: green, in: lld-booking }
+    - { id: bk-hotel-db, kind: oval, label: "HotelDB, availability", at: [60, 23], size: [13, 3], tone: amber, in: lld-booking }
+    - { id: bk-outbox, kind: note, label: "outbox, then idempotent consumers", at: [6, 53], in: lld-booking }
+  arrows:
+    - { id: bk-gw-booking, from: bk-gateway, to: bk-booking }
+    - { id: bk-booking-pay, from: bk-booking, to: bk-payment }
+    - { id: bk-pay-pgw, from: bk-payment, to: bk-pgw }
+    - { id: bk-pay-db, from: bk-payment, to: bk-payment-db }
+    - { id: bk-booking-kafka, from: bk-booking, to: bk-kafka, label: booking event }
+    - { id: bk-kafka-notify, from: bk-kafka, to: bk-notify }
+    - { id: bk-kafka-consumer, from: bk-kafka, to: bk-consumer }
+    - { id: bk-consumer-db, from: bk-consumer, to: bk-booking-db }
+    - { id: bk-kafka-avail, from: bk-kafka, to: bk-avail }
+    - { id: bk-avail-db, from: bk-avail, to: bk-hotel-db }
+beats:
+  - point: "Booking is a two-step flow: the booking service calls a payment service, which takes the card details and calls a third-party payment gateway that moves the money with the bank."
+    kind: flow
+    weight: core
+    teach:
+      - "Now the booking service. A guest confirms, and booking is two steps: pay, then confirm."
+      - "The booking service calls a payment service, which collects the card details and the one-time password and calls a third-party payment gateway; the gateway does the transaction with the bank and answers success or failure."
+    draw: [lld-booking, bk-two-step, bk-gateway, bk-booking, bk-gw-booking, bk-payment, bk-booking-pay, bk-pgw, bk-pay-pgw]
+    check: Who actually moves the money?
+    answer: The third-party payment gateway, called by the payment service.
+  - point: "The payment service records every attempt and its outcome in PaymentDB on MySQL, chosen for ACID transactions: user, booking id, amount, currency and date."
+    kind: decision
+    weight: core
+    teach:
+      - "Every payment is logged: the payment service writes the attempt and its result to a payment database."
+      - "MySQL, for its ACID transactions: money rows are written once, with their status. The columns: user id, booking id, amount, currency, date."
+    draw: [bk-payment-db, bk-pay-db, bk-pay-schema-1, bk-pay-schema-2]
+    check: Why a transactional database like MySQL for payments?
+    answer: Payment records need ACID transactions so each one is written exactly once with its status.
+    misconceptions:
+      - "MySQL gives payments both high consistency and high availability -> it is chosen for ACID transactions; under a partition it still has to give up one."
+  - point: "After payment, the booking service publishes one booking event to Kafka instead of updating the booking and hotel databases itself, because two direct writes can half-fail."
+    kind: mechanism
+    weight: core
+    teach:
+      - "On success, three things must happen: save the booking, mark the room booked, tell the guest. If the booking service wrote the booking database and the hotel database itself, one could succeed and the other fail."
+      - "That is a dual write. Instead it publishes a single booking event to Kafka, and each piece of work becomes a consumer of it."
+    draw: [bk-kafka, bk-booking-kafka, bk-dual-write]
+    check: What goes wrong if the booking service updates both databases directly?
+    answer: One write can succeed and the other fail, leaving the databases disagreeing.
+  - point: "Consumers do one job each: a notification service tells the guest, a consumer service writes BookingDB, and the availability service, the only writer of availability, marks the room booked in HotelDB."
+    kind: component
+    weight: core
+    teach:
+      - "Off Kafka: a notification service that tells the guest it is confirmed. A consumer service that writes the booking and its status to the booking database."
+      - "And an availability service that marks the room booked in the hotel database. It is the only service allowed to write the availability table, so no two services race on it."
+    draw: [bk-notify, bk-kafka-notify, bk-consumer, bk-kafka-consumer, bk-booking-db, bk-consumer-db, bk-avail, bk-kafka-avail, bk-hotel-db, bk-avail-db]
+    check: Why let only one service write the availability table?
+    answer: A single writer means no two services race on the same rows.
+  - point: "Kafka gives eventual consistency, not a transaction: the event goes through an outbox written with the booking's state, and each consumer is idempotent, keyed by booking id, so a retried event changes nothing."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Kafka keeps the event until each consumer has processed it, so a failed consumer retries and the databases converge. Eventual consistency, not a distributed transaction."
+      - "Two details make it hold: write the event to an outbox table in the same transaction as the booking's state, so it can't be lost between payment and publish; and make every consumer idempotent by booking id, since an event can arrive twice."
+    draw: [bk-outbox]
+    check: A consumer writes the booking, then crashes before committing its offset. What protects you?
+    answer: The write is idempotent, keyed by booking id, so processing the event again changes nothing.
+    misconceptions:
+      - "Kafka makes the two updates one atomic commit -> each consumer applies the event on its own; it is eventual consistency, with retries and idempotent writes."
+asks:
+  - ids: [bk-payment]
+    beats: [1]
+    question: "The guest clicks confirm. What does the booking service call to take the money?"
+    hints:
+      - A service of our own that records payments.
+      - Which in turn talks to a third party.
+  - ids: [bk-kafka]
+    beats: [3]
+    question: "After payment, the booking must be saved, the room marked booked and the guest told. How would you do all three without one failure leaving things half done?"
+    hints:
+      - What if the booking service only announced that a booking happened?
+      - Something durable that others read from.
+  - ids: [bk-notify, bk-consumer, bk-avail]
+    beats: [4]
+    question: "Who reads that booking event? Name a service for each job."
+    hints:
+      - One tells the guest.
+      - One saves the booking, and one updates availability.

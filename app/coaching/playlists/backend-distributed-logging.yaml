@@ -1,0 +1,37 @@
+slug: backend-distributed-logging
+title: "The distributed logging interview"
+summary: "A backend design interview for a log platform like Splunk, step by step on one whiteboard: requirements with numbers, entities, how a log leaves a service and the endpoints, a high-level design, then a deep dive through onboarding, a Kafka and Flink pipeline, search, retention and alerting."
+outline: "The distributed logging lessons follow the five-step order and the drawings of InterviewWithBunny's System Design 16, Design Distributed Logging System (youtube.com/watch?v=cqs5t7zqzCk), section by section; no text is taken from it, and its factual slips are corrected in the article."
+lessons:
+  - slug: distributed-logging
+    title: "The logging interview: the problem, requirements, entities and API"
+    summary: "The problem at the top of the board, functional and non-functional requirements side by side, three entities, how a log travels from a service to the platform, and the endpoints in four groups."
+    parts:
+      - { title: "The problem, then two lists", minutes: 9, packs: [backend/distributed-logging/end-to-end/problem-statement, backend/distributed-logging/end-to-end/requirements] }
+      - { title: "Entities, then the API", minutes: 10, packs: [backend/distributed-logging/end-to-end/entities, backend/distributed-logging/end-to-end/api] }
+  - slug: distributed-logging-design
+    title: "The logging interview: high-level design, then agents and onboarding"
+    summary: "Clients, a gateway and three services with their databases; then the deep dive starts on the left: agents, the gateway's duties, and onboarding an organisation with a client ID and token."
+    parts:
+      - { title: "Clients, gateway, three services", minutes: 7, packs: [backend/distributed-logging/end-to-end/high-level-design] }
+      - { title: "Agents, the gateway and onboarding", minutes: 8, packs: [backend/distributed-logging/end-to-end/lld-onboarding] }
+  - slug: distributed-logging-ingestion
+    title: "The logging interview: the ingestion pipeline"
+    summary: "The ingestion service split by traffic, Kafka as a durable buffer, one Flink job for validation, parsing, enrichment and deduplication, and Cassandra for the writes."
+    parts:
+      - { title: "Split, buffer, process, store", minutes: 12, packs: [backend/distributed-logging/end-to-end/lld-ingestion] }
+  - slug: distributed-logging-search
+    title: "The logging interview: search"
+    summary: "Elasticsearch for 14 days of full-text search, written by the same Flink job; older searches on Cassandra, with one table per query."
+    parts:
+      - { title: "Elasticsearch and Cassandra tables", minutes: 11, packs: [backend/distributed-logging/end-to-end/lld-search] }
+  - slug: distributed-logging-retention
+    title: "The logging interview: retention and cold storage"
+    summary: "A daily cron keeps Cassandra to 45 days, S3 keeps every log cheaply, and each copy lives as long as its cost allows."
+    parts:
+      - { title: "Three copies, three lifetimes", minutes: 7, packs: [backend/distributed-logging/end-to-end/lld-retention] }
+  - slug: distributed-logging-alerting
+    title: "The logging interview: alerting, live tail and finishing"
+    summary: "An alert topic, an alert service with the client's rules, a notification service with each client's channel, live tail by WebSocket or polling, and the requirements read back against the board."
+    parts:
+      - { title: "Alerts, live tail, the recap", minutes: 12, packs: [backend/distributed-logging/end-to-end/lld-alerting] }

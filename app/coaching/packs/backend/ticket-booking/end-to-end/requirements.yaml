@@ -1,0 +1,84 @@
+# Ticket booking interview, requirements: "1. Functional requirements" on the left and "Non-functional requirements" on the right, under the problem statement, as the video lays them out; the CAP line split into its two halves, available for search and view, consistent for booking.
+id: backend/ticket-booking/end-to-end/requirements
+title: Two lists, functional and non-functional
+source:
+  hash: "3af2cb8d6c9e"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/ticket-booking/end-to-end/problem-statement
+  assumes:
+    - "A ticket booking service lets users find events and buy tickets for seats."
+  carries:
+    - "Functional: search events by title, location and date; view an event's details and seats; book seats."
+    - "Non-functional: 100M daily active users; highly available for search and viewing; highly consistent for booking."
+    - "CAP is a choice made under a network partition, and it can differ per operation."
+  terms:
+    - term: functional requirement
+      means: What the system does for the user.
+    - term: non-functional requirement
+      means: "A quality of the system, such as scale or consistency, with a number or a clear rule."
+    - term: CAP
+      means: "When the network splits, a replicated store either keeps answering, maybe stale, or refuses until its copies agree."
+board:
+  keep: [title, prompt-desc]
+  elements:
+    - { id: fr, kind: region, label: 1. Functional requirements, at: [6, 5], size: [36, 14], dashed: true }
+    - { id: fr-search, kind: note, label: "search events by title, location and date", at: [7, 7], in: fr }
+    - { id: fr-view, kind: note, label: "view an event's details, seats, description, metadata", at: [7, 9], in: fr }
+    - { id: fr-book, kind: note, label: book seats for that event, at: [7, 11], in: fr }
+    - { id: nfr, kind: region, label: Non-functional requirements, at: [44, 5], size: [34, 14], dashed: true }
+    - { id: nfr-scale, kind: note, label: "scale, 100M daily active users", at: [45, 7], in: nfr }
+    - { id: nfr-available, kind: note, label: highly available for searching and viewing events, at: [45, 9], in: nfr }
+    - { id: nfr-consistent, kind: note, label: highly consistent for booking a seat, at: [45, 11], in: nfr }
+  arrows: []
+  lists:
+    - { id: fr-list, in: fr, at: [7, 7], step: 2, slots: 5, width: 34, items: [fr-search, fr-view, fr-book] }
+    - { id: nfr-list, in: nfr, at: [45, 7], step: 2, slots: 5, width: 32, items: [nfr-scale, nfr-available, nfr-consistent] }
+beats:
+  - point: "The functional requirements follow the user's path: search for an event by title, location and date; view its details and seats; book seats."
+    kind: requirement
+    weight: core
+    teach:
+      - "Step one, on the left: functional requirements. In a booking app a user only does a few things, and those steps are the requirements."
+      - "First, search for an event, a movie or a concert, by a title, a location or a date. Second, open it and see its details: who performs, what it is about, and the seats."
+      - "Third, book seats for that event. Three requirements: search, view, book."
+    draw: [fr, fr-search, fr-view, fr-book]
+    check: What are the three things a user must be able to do?
+    answer: Search for an event by title, location and date; view its details and seats; book seats.
+  - point: "The first non-functional requirement is the scale: 100 million daily active users, which decides much of the design."
+    kind: metric
+    weight: core
+    teach:
+      - "On the right, the non-functional requirements: the qualities. Ask for the scale first; the interviewer gives a ballpark."
+      - "Say 100 million daily active users. That is a lot of traffic, and it will push us to many machines and to separate services."
+    draw: [nfr, nfr-scale]
+    check: Why ask for the number of users before designing anything?
+    answer: Because the scale drives the critical decisions, such as how many machines and which databases.
+  - point: "CAP is chosen per operation: the system is highly available for searching and viewing events and highly consistent for booking, so no two users get one seat."
+    kind: requirement
+    weight: core
+    teach:
+      - "Then CAP. When the network between replicas splits, a store either keeps answering, maybe with stale data, or refuses until its copies agree. You choose, but you can choose per operation."
+      - "Searching and viewing must stay up and be fast, so they are highly available. Booking must never sell one seat twice, so it is highly consistent. Write both lines."
+    draw: [nfr-available, nfr-consistent]
+    check: Which part of this system must be consistent, and which available?
+    answer: Booking must be consistent so one seat is sold once; searching and viewing must be available.
+    misconceptions:
+      - "CAP means you pick availability or consistency once for the whole system -> it is a choice under a partition, and each operation can make its own."
+      - "Without a partition you still cannot have both -> the trade-off only bites when the network splits."
+asks:
+  - list: fr-list
+    beats: [1]
+    question: "So what should a user be able to do in this app? Walk me through it, one step at a time, and I'll write them down."
+    hints:
+      - Think of the path from opening the app to holding a ticket.
+      - How do they find a movie, and what do they look at before paying?
+  - list: nfr-list
+    beats: [2, 3]
+    question: "Now the qualities. How big is it, and which parts must stay up versus stay exact?"
+    hints:
+      - Start with how many users we are designing for.
+      - What would go wrong if two people got the same seat? And if search went down?

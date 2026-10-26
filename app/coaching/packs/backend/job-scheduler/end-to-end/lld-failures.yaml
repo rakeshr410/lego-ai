@@ -1,0 +1,88 @@
+# Job scheduler interview, low-level design, failures: on the same picture, as in the video, the failed job sent from an executor back to the run queue's retry topic, the topics retry and dead under the queue, the attempt number raised by the consumer service, and the watcher's second query for running jobs silent for 15 s.
+id: backend/job-scheduler/end-to-end/lld-failures
+title: "Low-level design: retries and dead executors"
+source:
+  hash: "4fce423d5bca"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/job-scheduler/end-to-end/lld-execution
+  assumes:
+    - "A watcher queues due jobs on a Kafka run topic; a job consumer hands them to executors."
+    - "Executors report status every 10 s through Kafka; the consumer service writes it and moves modifiedTime."
+    - "Every job runs at least once."
+  carries:
+    - "A failed job goes to a retry topic and its attempt number goes up; at maxRetries it goes to a dead topic and is marked failed."
+    - "A dead executor reports nothing; the watcher also re-queues runs that are running with modifiedTime older than 15 s."
+    - "Both paths can run a job twice, so jobs should be idempotent."
+  terms:
+    - term: retry topic
+      means: The Kafka topic of jobs that failed and will be run again.
+    - term: dead topic
+      means: "Where a job goes once it has used all its retries; nothing reads it to run it again."
+    - term: heartbeat
+      means: "The executor's report every 10 s; its absence past 15 s means the executor died."
+board:
+  keep: [title, prompt-desc, prompt-use, fr, fr-create, fr-monitor, fr-cancel, fr-scope, nfr, nfr-scale, nfr-cap, nfr-once, nfr-latency, entities, ent-job, ent-schedule, ent-executor, api, api-post, api-body-1, api-body-2, api-get, api-status, api-put, api-cancel, api-run, hld, hld-clients, hld-gateway, hld-gw-note, hld-svc, hld-db, hld-exec, hld-pull, hld-update, hld-clients-gateway, hld-gateway-svc, hld-svc-db, hld-exec-db, l-heading, l-users, l-gateway, l-job-svc, l-search, l-kafka, l-consumer, l-db, s-jobs-1, s-jobs-2, s-jobs-3, s-runs-1, s-runs-2, s-runs-3, l-users-gateway, l-gateway-svc, l-gateway-search, l-search-db, l-svc-kafka, l-kafka-consumer, l-consumer-db, x-watcher, x-watcher-note, x-run-kafka, x-topic-run, x-job-consumer, x-jc-note, x-exec-1, x-exec-2, x-exec-3, x-watcher-db, x-watcher-kafka, x-jc-kafka, x-jc-exec-1, x-jc-exec-2, x-jc-exec-3, x-exec-status]
+  elements:
+    - { id: f-topics, kind: note, label: topics retry and dead, at: [40, 86] }
+    - { id: f-attempt, kind: note, label: each retry raises the attempt number, at: [40, 87] }
+    - { id: f-dead, kind: note, label: "past max retries, dead topic, failed", at: [40, 88] }
+    - { id: f-stale, kind: note, label: "and running jobs silent 15 s, re-queued", at: [5, 86] }
+    - { id: f-idem, kind: note, label: "a job may run twice, keep jobs idempotent", at: [5, 87] }
+  arrows:
+    - { id: f-retry, from: x-exec-1, to: x-run-kafka, label: "failed, to retry" }
+beats:
+  - point: "When a job fails, its executor publishes it to a retry topic; the job consumer reads that topic too and runs it again, and the consumer service raises the run's attempt number."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Loopholes, one by one. First: a job fails on its executor. Nothing so far runs it again."
+      - "So the executor publishes the failed job to a second topic, retry. The job consumer reads retry as well as run and starts it again, and a status update through Kafka has the consumer service raise the attempt number, from 1 to 2."
+    draw: [f-retry, f-topics, f-attempt]
+    check: A job fails on its first attempt. What happens next?
+    answer: "The executor puts it on the retry topic, the job consumer runs it again, and the attempt number goes to 2."
+  - point: "When the attempts reach the job's max retries, three by default, the job goes to a dead topic, is not retried again, and is marked failed."
+    kind: failure
+    weight: core
+    teach:
+      - "Without a limit a job that can never succeed runs forever. That is what max retries in the jobs table is for, three by default."
+      - "On the last failure the job goes to a third topic, dead. Nothing runs it again, and the consumer service marks it failed."
+    draw: [f-dead]
+    check: What stops a job that always fails from retrying forever?
+    answer: "Max retries: once the attempts reach it, the job goes to the dead topic and is marked failed."
+  - point: "An executor that dies sends nothing, so its job stays running forever; but a live one moves modified time every 10 seconds, so the watcher also re-queues runs that are running and silent for more than 15 seconds."
+    kind: failure
+    weight: core
+    teach:
+      - "Second: the executor itself dies mid-job. It cannot report anything, so the run would say running forever."
+      - "But a live executor moves modified time every 10 seconds. Allow some slack: running, and modified time more than 15 seconds old, means the executor is dead."
+      - "So the watcher adds a second query to its loop: fetch those runs and push them back to the queue, attempt number raised."
+    draw: [f-stale]
+    check: How does the system notice an executor died in the middle of a job?
+    answer: "Its run is still running but modified time has not moved for more than 15 seconds; the watcher queries for exactly that and re-queues it."
+    misconceptions:
+      - "A dying executor reports its failure -> a crashed machine sends nothing; silence past the heartbeat is the only signal."
+  - point: "Both recovery paths can run a job twice, a slow executor finishing after its job was re-queued, so at least once means jobs should be idempotent."
+    kind: rule
+    weight: supporting
+    teach:
+      - "An executor that is slow, not dead, may still finish after its job was handed to another. That is at least once from the requirements: a rare duplicate instead of a lost job. Say jobs should be idempotent."
+    draw: [f-idem]
+    check: Why might a job run twice, even with nothing failing for good?
+    answer: "A slow executor can miss the 15-second window, its job is re-queued and run elsewhere, and the first one still finishes."
+asks:
+  - ids: [f-topics]
+    beats: [1]
+    question: "A job fails on its executor. How would you run it again?"
+    hints:
+      - The executor can tell the queue it failed.
+      - What if failed jobs had their own topic?
+  - ids: [f-stale]
+    beats: [3]
+    question: "Now the executor itself crashes mid-job and can't report anything. How would you notice?"
+    hints:
+      - A live executor updates its run every 10 seconds.
+      - What would a run look like if nobody updated it?

@@ -1,0 +1,48 @@
+slug: backend-email-delivery
+title: "The email delivery interview"
+summary: "A backend design interview for an email platform like Gmail or Outlook, run step by step on one whiteboard: requirements, entities, the API, four services, then a deep dive that follows one email from the compose window to a mailbox, here or at another provider."
+outline: "The email delivery lessons follow the five-step order and the drawings of InterviewWithBunny's System Design 20, Design an Email Delivery System (youtube.com/watch?v=87GhPP3jMp0), section by section; no text is taken from it, and its factual slips are corrected in the article."
+lessons:
+  - slug: email-delivery
+    title: "The email interview: the problem, requirements, entities and API"
+    summary: "The problem written at the top of the board, functional and non-functional requirements side by side, the four entities, and the five endpoints."
+    parts:
+      - { title: "The problem, then two lists", minutes: 10, packs: [backend/email-delivery/end-to-end/problem-statement, backend/email-delivery/end-to-end/requirements] }
+      - { title: "Entities, then the API", minutes: 7, packs: [backend/email-delivery/end-to-end/entities, backend/email-delivery/end-to-end/api] }
+  - slug: email-delivery-design
+    title: "The email interview: high-level design, then the user service"
+    summary: "Clients, a gateway and four services with their stores; then the deep dive opens the user service: autocomplete from a per-user cache, a sharded user DB and unique sign-ups."
+    parts:
+      - { title: "Four services", minutes: 8, packs: [backend/email-delivery/end-to-end/high-level-design] }
+      - { title: "The user service", minutes: 12, packs: [backend/email-delivery/end-to-end/lld-user-service] }
+  - slug: email-delivery-outbox
+    title: "The email interview: drafts, then the outbox"
+    summary: "Drafts saved as you type with attachments uploaded straight to S3; then send writes the email to an outbox table, and an outbox consumer publishes it to Kafka, so no email is lost."
+    parts:
+      - { title: "Compose and drafts", minutes: 6, packs: [backend/email-delivery/end-to-end/lld-compose] }
+      - { title: "The mail send service and the outbox", minutes: 10, packs: [backend/email-delivery/end-to-end/lld-outbox] }
+  - slug: email-delivery-checks
+    title: "The email interview: checking the email"
+    summary: "An orchestrator runs the spam, policy and attachment checks in parallel, a validation DB keeps one slow checker from blocking the rest, and attachments are scanned on upload."
+    parts:
+      - { title: "The checks", minutes: 12, packs: [backend/email-delivery/end-to-end/lld-validation] }
+  - slug: email-delivery-smtp
+    title: "The email interview: sending to other domains over SMTP"
+    summary: "The orchestrator routes by domain; relay workers find the receiving server by an MX lookup and hand the email over in an SMTP conversation, from EHLO to the final 250."
+    parts:
+      - { title: "The relay and the SMTP conversation", minutes: 14, packs: [backend/email-delivery/end-to-end/lld-smtp-relay] }
+  - slug: email-delivery-delivery
+    title: "The email interview: delivery and notifications"
+    summary: "A delivery consumer moves mail inside our domain from the outbox to the inbox, the relay's 250 marks outside mail sent, and a notification service tells senders and recipients."
+    parts:
+      - { title: "Delivery and notifications", minutes: 7, packs: [backend/email-delivery/end-to-end/lld-delivery] }
+  - slug: email-delivery-search
+    title: "The email interview: search"
+    summary: "Full-text search in Elasticsearch, bodies and metadata in separate stores, and an aggregator that joins them once, at write time."
+    parts:
+      - { title: "Search", minutes: 7, packs: [backend/email-delivery/end-to-end/lld-search] }
+  - slug: email-delivery-inbound
+    title: "The email interview: receiving mail, and finishing"
+    summary: "An inbound SMTP service feeds mail from other providers into the existing delivery flow; then the main tables, the Kafka topics, and the requirements read back against the design."
+    parts:
+      - { title: "Receiving mail, tables and topics", minutes: 10, packs: [backend/email-delivery/end-to-end/lld-inbound] }

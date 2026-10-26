@@ -1,0 +1,116 @@
+# Hotel booking interview, low-level design, the hotel database: inside the search service's deep dive the video writes "HotelDB (Postgres)" and its tables beside it (hotel, rooms, price), then "Availability" and "Availability (2)", the two ways to store availability, and an S3 store for images. Drawn here in the same order, the tables to the right of the database, the two availability designs side by side under them.
+id: backend/hotel-booking/end-to-end/lld-hotel-db
+title: "Low-level design: the hotel database"
+source:
+  hash: "67ec00e854ef"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/hotel-booking/end-to-end/lld-user-service
+  assumes:
+    - "The search service reads the hotel database to find hotels by name, location and date."
+    - "Non-functional: 1M hotels; booking never sells one room twice on a date."
+  carries:
+    - "HotelDB is Postgres: hotel (id, name, address, geolocation), rooms (type, capacity), price per room per date range."
+    - "Availability is either one row per room per day (simple, about 110 billion rows a year at 1M hotels) or one row per date range (fewer rows, but bookings split ranges)."
+    - Images go to S3 blob storage; rows keep their URLs.
+  terms:
+    - term: geolocation
+      means: "A hotel's latitude and longitude, what a proximity search reads."
+    - term: blob storage
+      means: "A store for large files such as images, like S3, addressed by URL."
+board:
+  keep: [title, nfr, nfr-scale, nfr-available, nfr-consistent]
+  elements:
+    - { id: lld-hotel, kind: region, label: "5. Low-level design: hotel database", at: [6, 21], size: [64, 28] }
+    - { id: hd-search, kind: box, label: Search service, at: [8, 25], size: [12, 3], tone: blue, in: lld-hotel }
+    - { id: hd-db, kind: oval, label: "HotelDB, Postgres", at: [26, 24], size: [14, 4], tone: amber, in: lld-hotel }
+    - { id: hd-hotel-1, kind: note, label: "hotel: hotelId, name, address,", at: [44, 24], in: lld-hotel }
+    - { id: hd-hotel-2, kind: note, label: "geolocation, latitude and longitude", at: [46, 25], in: lld-hotel }
+    - { id: hd-rooms-1, kind: note, label: "rooms: hotelId, roomId, roomType,", at: [44, 27], in: lld-hotel }
+    - { id: hd-rooms-2, kind: note, label: "capacity, metadata", at: [46, 28], in: lld-hotel }
+    - { id: hd-price-1, kind: note, label: "price: hotelId, roomId, price, currency,", at: [44, 30], in: lld-hotel }
+    - { id: hd-price-2, kind: note, label: "startDate, endDate", at: [46, 31], in: lld-hotel }
+    - { id: hd-price-eg, kind: note, label: "1,200 in January, 1,400 on 1 to 15 February", at: [44, 32], in: lld-hotel }
+    - { id: hd-av1-1, kind: note, label: "availability: hotelId, roomId, date, status", at: [8, 35], in: lld-hotel }
+    - { id: hd-av1-2, kind: note, label: "status is AVL, BOOKED or MAINTNC", at: [10, 36], in: lld-hotel }
+    - { id: hd-av1-size, kind: note, label: "300 rooms times 365 days, 109,500 rows a hotel", at: [8, 38], in: lld-hotel }
+    - { id: hd-av1-verdict, kind: note, label: "simple to search, but a lot of data", at: [8, 39], in: lld-hotel }
+    - { id: hd-av2-1, kind: note, label: "availability two: roomId, startDate, endDate, status", at: [40, 35], in: lld-hotel }
+    - { id: hd-av2-size, kind: note, label: "a few rows a room, far less data", at: [40, 38], in: lld-hotel }
+    - { id: hd-av2-verdict, kind: note, label: "a booking splits a range, computed first", at: [40, 39], in: lld-hotel }
+    - { id: hd-s3, kind: oval, label: S3 blob storage, at: [8, 43], size: [14, 3], tone: amber, in: lld-hotel }
+    - { id: hd-s3-note, kind: note, label: "hotel and room images, URLs in the rows", at: [24, 44], in: lld-hotel }
+  arrows:
+    - { id: hd-search-db, from: hd-search, to: hd-db, label: reads }
+beats:
+  - point: "Hotels, rooms, prices and availability are related at every step, so HotelDB is Postgres, which keeps the relations and scales with replicas and partitions."
+    kind: decision
+    weight: core
+    teach:
+      - "Now the search service, and first what it searches: the hotel database. A hotel has rooms, a room has prices and availability by date. Related data at every step."
+      - "So HotelDB is Postgres: the relations stay enforced, and it scales with read replicas and partitioning."
+    draw: [lld-hotel, hd-search, hd-db, hd-search-db]
+    check: Why a relational database for the hotel data?
+    answer: Hotels, rooms, prices and availability are related rows that are queried together.
+  - point: "The hotel table holds the id, name, text address and the geolocation as latitude and longitude for proximity search; the rooms table holds each room's type and capacity."
+    kind: component
+    weight: core
+    teach:
+      - "Write the tables beside it. Hotel: the id, the name, the address as text to show the guest, and the geolocation, latitude and longitude, for searching by distance."
+      - "Rooms: the hotel id, room id, the type, deluxe or standard, the capacity and other metadata."
+    draw: [hd-hotel-1, hd-hotel-2, hd-rooms-1, hd-rooms-2]
+    check: Why store the geolocation separately from the address?
+    answer: The address is text for people; latitude and longitude are what a search by distance computes on.
+  - point: "Price is a row per room per date range with a currency, so seasonal and festival prices, 1,200 in January and 1,400 early February, are just new rows."
+    kind: mechanism
+    weight: core
+    teach:
+      - "A room's price changes with the date: festivals, seasons. So the price table holds the hotel, the room, a price and currency, and a start and end date."
+      - "January at 1,200, the first half of February at 1,400: two rows, and the room itself never changes."
+    draw: [hd-price-1, hd-price-2, hd-price-eg]
+    check: How would you store a higher price for a festival week?
+    answer: A new price row for that room with the festival's start and end dates.
+  - point: "Availability as one row per room per day, with a status of available, booked or maintenance, is simple to search and update but huge: 300 rooms times 365 days is 109,500 rows a hotel a year."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Availability is the hard one, because every search filters on it. First design: one row per room per day, with a status, available, booked or under maintenance."
+      - "Easy to query, is every night of the stay free, and easy to update. But 300 rooms times 365 days is 109,500 rows per hotel a year; for a million hotels, about 110 billion."
+    draw: [hd-av1-1, hd-av1-2, hd-av1-size, hd-av1-verdict]
+    check: What is good and what is bad about one row per room per day?
+    answer: Simple to search and to update, but the row count is enormous, about 110 billion a year at a million hotels.
+  - point: "Availability as one row per date range stores far less, but a booking inside a free range splits it into up to three rows, computed before the write; name both and the trade-off."
+    kind: decision
+    weight: core
+    teach:
+      - "Second design: one row per range, a start date, an end date and a status. A room free all spring is one row: far less data."
+      - "The cost: a two-night booking in the middle of that range splits it into free, booked, free, worked out before the write. Give the interviewer both and the trade-off."
+    draw: [hd-av2-1, hd-av2-size, hd-av2-verdict]
+    check: A guest books two nights in the middle of a free range. What must the range design do?
+    answer: Split the range into a free part, a booked part and a free part, computed before writing.
+    misconceptions:
+      - "The range design is simply better because it is smaller -> every booking has to rewrite ranges, which is more complex and easier to get wrong."
+  - point: "Images do not go in Postgres: hotel and room photos go to S3 blob storage, and the rows keep their URLs."
+    kind: decision
+    weight: supporting
+    teach:
+      - "Last, the photos. Not in Postgres: large files go to blob storage like S3, and the database keeps their URLs."
+    draw: [hd-s3, hd-s3-note]
+    check: Where do the hotel photos live?
+    answer: In S3 blob storage, with their URLs in the database rows.
+asks:
+  - ids: [hd-db]
+    beats: [1]
+    question: "Hotels, rooms, prices, availability. What kind of database would you keep them in?"
+    hints:
+      - How are these things connected to each other?
+      - Do you need those relations kept and queried together?
+  - ids: [hd-av1-1]
+    beats: [4]
+    question: "How would you store which rooms are free on which dates?"
+    hints:
+      - Think of a calendar for each room.
+      - What would one row mean?

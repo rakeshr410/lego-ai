@@ -1,0 +1,43 @@
+# Notification system interview, the problem statement: the title, what the service is and one example line, written at the top of the board as the video does, then the five steps said once (said, not drawn).
+id: backend/notification-system/end-to-end/problem-statement
+title: The problem, and the five steps
+source:
+  hash: "996b62dbe483"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: null
+  assumes: []
+  carries:
+    - "The service is a platform other companies call to notify their users by email, SMS and in-app push."
+    - "The interview runs in five steps: requirements, core entities, API, high-level design, deep dive."
+  terms:
+    - term: notification system
+      means: "A service that delivers timely messages to people through email, SMS or in-app push, on behalf of other applications."
+board:
+  keep: []
+  elements:
+    - { id: title, kind: note, label: Design a notification system, at: [26, 0] }
+    - { id: prompt-desc, kind: note, label: "a service other apps call to message their users", at: [8, 2] }
+    - { id: prompt-example, kind: note, label: "an order email, a bank OTP by SMS, an in-app push", at: [8, 3] }
+  arrows: []
+beats:
+  - point: "A notification system delivers timely messages through email, SMS and in-app push, and here it is a platform that companies like Amazon or Uber call instead of building their own."
+    kind: rule
+    weight: core
+    teach:
+      - "Write the title: design a notification system. Earlier designs used one as a black box, to email a ticket or push a chat message. Today we build that box."
+      - "One line on what it is: a service other apps call to message their users. Then the examples: an order email, a bank OTP by SMS, an in-app push."
+    draw: [title, prompt-desc, prompt-example]
+    check: Who calls this service, and who receives the messages?
+    answer: "Other companies' back ends, like Amazon or Uber, call it; their users, the people, receive the messages."
+  - point: "The interview runs in five steps: requirements, core entities, API, high-level design, then the deep dive."
+    kind: rule
+    weight: core
+    teach:
+      - "Say the plan once: requirements, functional and non-functional; the core entities; the API; a high-level design; and last the deep dive, where most of the time goes."
+      - Said, not written; each step gets its number on the board when we reach it.
+    check: Which step gets the most time?
+    answer: The deep dive, the low-level design, after the high-level picture.

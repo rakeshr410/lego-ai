@@ -1,0 +1,42 @@
+slug: backend-chat-app
+title: "The chat app interview"
+summary: "A backend design interview for a chat app like WhatsApp, step by step on one whiteboard: requirements with numbers, entities, the REST and WebSocket API, a high-level design, then a low-level design taken one service at a time."
+outline: "The chat app lessons follow the order and the drawings of InterviewWithBunny's System Design 8, Design Chat Application like WhatsApp (youtube.com/watch?v=3HXFy_7M12E), section by section; no text is taken from it, and its factual slips are corrected in the article."
+lessons:
+  - slug: chat-app
+    title: "The chat app interview: the problem, requirements, entities and API"
+    summary: "The prompt at the top of the board, six functional and four non-functional requirements side by side, three entities, and the REST and WebSocket calls."
+    parts:
+      - { title: "The problem, then two lists", minutes: 10, packs: [backend/chat-app/end-to-end/problem-statement, backend/chat-app/end-to-end/requirements] }
+      - { title: "Entities, then the API", minutes: 9, packs: [backend/chat-app/end-to-end/entities, backend/chat-app/end-to-end/api] }
+  - slug: chat-app-design
+    title: "The chat app interview: high-level design, then users and groups"
+    summary: "Users, the gateway, the user, chat and group services with their stores; then the low-level design opens the user and group services and their tables."
+    parts:
+      - { title: "Gateway, services, stores", minutes: 8, packs: [backend/chat-app/end-to-end/high-level-design] }
+      - { title: "Users and groups, in tables", minutes: 6, packs: [backend/chat-app/end-to-end/lld-user-group] }
+  - slug: chat-app-connections
+    title: "The chat app interview: four ways to connect"
+    summary: "HTTP, long polling, server-sent events and WebSockets, each weighed against a chat, and why the chat service runs on WebSockets."
+    parts:
+      - { title: "HTTP to WebSocket", minutes: 8, packs: [backend/chat-app/end-to-end/lld-connections] }
+  - slug: chat-app-websocket
+    title: "The chat app interview: WebSocket servers and the registry"
+    summary: "The high-level design copied and grown: a WebSocket gateway, replicated chat servers, the handshake, and a Redis registry that finds which server holds each user."
+    parts:
+      - { title: "Chat servers and the registry", minutes: 14, packs: [backend/chat-app/end-to-end/lld-websocket] }
+  - slug: chat-app-offline
+    title: "The chat app interview: offline users and storage"
+    summary: "A Redis stream between the chat servers and storage, a message service writing to Cassandra, the message table and its keys, and push notifications for offline users."
+    parts:
+      - { title: "Stream, store, notify", minutes: 14, packs: [backend/chat-app/end-to-end/lld-offline] }
+  - slug: chat-app-groups-media
+    title: "The chat app interview: groups, media and search"
+    summary: "Group messages fanned out to each member, media uploaded to S3 and sent as a URL, search over Elasticsearch fed by CDC, a CDN, and history kept on the phone."
+    parts:
+      - { title: "Groups, media, search, CDN", minutes: 15, packs: [backend/chat-app/end-to-end/lld-group-media] }
+  - slug: chat-app-presence
+    title: "The chat app interview: presence, catch-up and receipts"
+    summary: "Online status and last seen from the registry, undelivered messages fetched on connect, the three ticks, then the whole data flow read back against the requirements."
+    parts:
+      - { title: "Presence, catch-up, ticks", minutes: 14, packs: [backend/chat-app/end-to-end/lld-presence] }

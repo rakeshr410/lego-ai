@@ -1,0 +1,46 @@
+# Email delivery interview, core entities: "2. Core Entities" under the functional list, four lines, as in the video.
+id: backend/email-delivery/end-to-end/entities
+title: Four entities
+source:
+  hash: "a10c5563df53"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/email-delivery/end-to-end/requirements
+  assumes:
+    - "Functional: accounts, compose and send, folders, search, attachments, threads."
+  carries:
+    - "The core entities are the user, the message or email, the thread or conversation, and the email metadata."
+  terms:
+    - term: core entity
+      means: A noun the system stores and moves.
+board:
+  keep: [title, prompt-desc, fr, fr-account, fr-send, fr-folders, fr-search, fr-attach, fr-threads, nfr, nfr-scale, nfr-available, nfr-signup, nfr-durable]
+  elements:
+    - { id: entities, kind: region, label: 2. Core entities, at: [6, 24], size: [17, 12], dashed: true }
+    - { id: ent-user, kind: note, label: users, at: [7, 26], in: entities }
+    - { id: ent-email, kind: note, label: message or email, at: [7, 28], in: entities }
+    - { id: ent-thread, kind: note, label: thread or conversation, at: [7, 30], in: entities }
+    - { id: ent-meta, kind: note, label: email metadata, at: [7, 32], in: entities }
+  arrows: []
+  lists:
+    - { id: entity-list, in: entities, at: [7, 26], step: 2, slots: 5, width: 14, items: [ent-user, ent-email, ent-thread, ent-meta] }
+beats:
+  - point: "Four core entities come straight from the requirements: the user, the message or email, the thread or conversation that groups replies, and the email's metadata."
+    kind: component
+    weight: core
+    teach:
+      - "Step two: the core entities, the nouns the system keeps. The user, and the message, the email itself."
+      - "The thread, because replies are grouped into a conversation. And the metadata that travels with every email: sender, recipients, subject, type, attachment types."
+    draw: [entities, ent-user, ent-email, ent-thread, ent-meta]
+    check: Why keep the email's metadata as an entity apart from its body?
+    answer: Much of what the system does, folders and searching by sender, works on the metadata, not the body.
+asks:
+  - list: entity-list
+    beats: [1]
+    question: "What are the core entities here, the things this system keeps track of?"
+    hints:
+      - Who sends, and what do they send?
+      - What groups replies, and what travels with every email besides its body?

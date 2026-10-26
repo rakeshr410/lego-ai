@@ -1,0 +1,146 @@
+# Ride-sharing interview, low-level design, live locations: the video's picture at this stage, redrawn: riders and drivers, the API gateway, the notification service and a WebSocket gateway (authentication, session stickiness) under it, the location update service as the WebSocket server, Redis of active drivers between it and the drivers database, ZooKeeper under driver matching, and the loop notes (every 5 to 10 s, top five, 10 s timeout). Corrected here: HTTP is request-response, not one-way, and a WebSocket cuts the cost of each update, not the number of updates.
+id: backend/ride-sharing/end-to-end/lld-location
+title: "Low-level design: live locations"
+source:
+  hash: "4357834586ed"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/ride-sharing/end-to-end/lld-matching
+  assumes:
+    - "Matching finds nearby idle drivers by geohash proximity search over the drivers database."
+    - "A matching server locks a driver with an ephemeral ZooKeeper znode before offering, and releases it on deny or timeout."
+  carries:
+    - "Drivers and riders send their location every 5 to 10 seconds over WebSockets, through a dedicated WebSocket gateway with sticky sessions, to the location update service."
+    - "Only active drivers' locations go into a Redis cache, a geo index that matching queries instead of the database."
+    - "Matching walks the top K = 5 nearest drivers: lock, notify, wait up to 10 s, release on deny or timeout; on accept it sends both sides the details over their sockets."
+  terms:
+    - term: WebSocket
+      means: "One connection, upgraded from HTTP, that carries small messages both ways for as long as it is open."
+    - term: sticky session
+      means: A client's connection stays on the same server for its whole life.
+    - term: top K
+      means: "Only the K nearest free drivers are tried, here 5, so the search fits the time limit."
+board:
+  keep: [title, nfr, nfr-scale, nfr-rider, nfr-match, nfr-latency]
+  elements:
+    - { id: lld-location, kind: region, label: "5. Low-level design: live locations", at: [6, 20], size: [70, 33] }
+    - { id: l-riders, kind: box, label: riders, at: [8, 24], size: [8, 3] }
+    - { id: l-drivers, kind: box, label: drivers, at: [8, 40], size: [8, 3] }
+    - { id: l-gateway, kind: box, label: API gateway, at: [20, 22], size: [10, 11] }
+    - { id: l-matching, kind: box, label: Driver matching service, at: [39, 24], size: [14, 4], tone: blue }
+    - { id: l-ride, kind: oval, label: Ride DB, at: [61, 22], size: [10, 3], tone: amber }
+    - { id: l-drivers-db, kind: oval, label: Drivers DB, at: [61, 27], size: [12, 3], tone: amber }
+    - { id: l-update-note, kind: note, label: location every 5 to 10 s, at: [8, 49], in: lld-location }
+    - { id: l-ws-why, kind: note, label: "one open socket each way, no request per update", at: [39, 46], in: lld-location }
+    - { id: l-ws, kind: box, label: "WebSocket gateway, auth, sticky sessions", at: [20, 38], size: [10, 10], tone: blue }
+    - { id: l-loc, kind: box, label: "Location update service, WebSocket server", at: [39, 40], size: [16, 4], tone: blue }
+    - { id: l-slow, kind: note, label: too many writes for Postgres, at: [61, 31], in: lld-location, tone: red }
+    - { id: l-redis, kind: oval, label: "Redis, active drivers", at: [61, 34], size: [14, 4], tone: green }
+    - { id: l-redis-note, kind: note, label: off-duty drivers left out, at: [61, 39], in: lld-location }
+    - { id: l-zk, kind: box, label: "ZooKeeper, a lock per driver", at: [39, 32], size: [14, 3], tone: grey }
+    - { id: l-notify, kind: box, label: Notification service, at: [20, 34], size: [12, 3] }
+    - { id: l-timeout, kind: note, label: "no answer in 10 s, lock deleted", at: [39, 36], in: lld-location }
+    - { id: l-push, kind: note, label: "on accept, details to both over sockets", at: [39, 50], in: lld-location }
+    - { id: l-topk, kind: note, label: "top five, 10 s each, inside 1 minute", at: [39, 48], in: lld-location }
+  arrows:
+    - { id: l-riders-gw, from: l-riders, to: l-gateway, both: true }
+    - { id: l-drivers-gw, from: l-drivers, to: l-gateway, both: true }
+    - { id: l-gw-matching, from: l-gateway, to: l-matching, label: accept or deny }
+    - { id: l-matching-ride, from: l-matching, to: l-ride }
+    - { id: l-matching-drivers, from: l-matching, to: l-drivers-db, label: fetch details }
+    - { id: l-drivers-ws, from: l-drivers, to: l-ws }
+    - { id: l-riders-ws, from: l-riders, to: l-ws }
+    - { id: l-ws-loc, from: l-ws, to: l-loc }
+    - { id: l-loc-redis, from: l-loc, to: l-redis, label: update }
+    - { id: l-matching-redis, from: l-matching, to: l-redis, label: nearest five }
+    - { id: l-matching-zk, from: l-matching, to: l-zk }
+    - { id: l-matching-notify, from: l-matching, to: l-notify, label: offer }
+    - { id: l-notify-drivers, from: l-notify, to: l-drivers }
+beats:
+  - point: "Matching assumed every driver's location in the database was fresh; in the real world it has to be streamed in."
+    kind: rule
+    weight: supporting
+    teach:
+      - "The picture so far: riders and drivers, the gateway, driver matching, the ride and drivers databases. Matching assumed the drivers' locations in the database were current. They are not, unless every driver keeps sending them."
+    draw: [lld-location, l-riders, l-drivers, l-gateway, l-riders-gw, l-drivers-gw, l-matching, l-gw-matching, l-ride, l-matching-ride, l-drivers-db, l-matching-drivers]
+    check: What did the matching design assume about driver locations?
+    answer: That the location in the drivers database was near real time for every driver.
+  - point: "Every active driver sends a location every 5 to 10 seconds; as separate HTTP requests each one carries a full request's overhead, so they go over one open WebSocket that also lets the server push."
+    kind: decision
+    weight: core
+    teach:
+      - "Drivers, and riders on a trip, send a position every 5 to 10 seconds. HTTP is request and response: as HTTP each update is a new request with all its headers, and the server cannot push anything without being asked."
+      - "A WebSocket is one connection that stays open and carries small messages both ways. The updates still come every few seconds, but each costs a few bytes, and the server can push offers and the other side's position down the same socket."
+    draw: [l-update-note, l-ws-why]
+    check: What does a WebSocket save over sending each location as an HTTP request?
+    answer: The per-request overhead; and the server can push to the phone on the same open connection.
+    misconceptions:
+      - "HTTP is one-way -> it is request and response; the limit is that the server cannot speak first and each update is a whole request."
+      - "A WebSocket means fewer location updates -> the count is the same; each update is just much cheaper."
+  - point: "A dedicated WebSocket gateway authenticates the connections and keeps each one sticky to its server; behind it the location update service is the WebSocket server."
+    kind: component
+    weight: core
+    teach:
+      - "Give the sockets their own gateway beside the HTTP one. Modern gateways do both, but a socket-heavy app is better with a dedicated one: it authenticates and keeps each connection sticky, on the same server for the driver's whole shift."
+      - "Behind it, the location update service is the WebSocket server that receives every position."
+    draw: [l-ws, l-drivers-ws, l-riders-ws, l-loc, l-ws-loc]
+    check: Why must a WebSocket connection be sticky?
+    answer: It is one long-lived connection held by one server; moving it would break the open socket.
+  - point: "Millions of positions every few seconds are too many writes for PostgreSQL, so the location update service keeps only active drivers' positions in a Redis cache."
+    kind: decision
+    weight: core
+    teach:
+      - "Millions of drivers every 5 seconds is hundreds of thousands of writes a second; updating PostgreSQL rows at that rate is a bad design."
+      - "So the location update service writes positions into a Redis cache instead, and only for active drivers; off-duty drivers are left out. Redis keeps them in a geo index that answers radius queries from memory."
+    draw: [l-slow, l-redis, l-loc-redis, l-redis-note]
+    check: Why put active drivers' positions in Redis rather than the location table?
+    answer: The write rate is too high for database rows, and Redis answers radius queries in memory.
+  - point: "Matching now queries Redis for the nearest free drivers, then for each one locks it in ZooKeeper and sends the offer through the notification service."
+    kind: flow
+    weight: core
+    teach:
+      - "Now matching asks Redis, not the database, for the drivers nearest the pick-up. Being a cache, it answers in milliseconds."
+      - "It walks them one at a time: take driver 1, create its lock in ZooKeeper, and send the offer through the notification service."
+    draw: [l-matching-redis, l-zk, l-matching-zk, l-notify, l-matching-notify, l-notify-drivers]
+    check: Where does matching look for nearby drivers now, and what does it do before each offer?
+    answer: In Redis; and it locks the driver in ZooKeeper before sending the offer.
+  - point: "On deny or no answer in 10 seconds the lock is deleted and the next driver tried; on accept, matching reads the driver's details and sends both sides the pick-up and driver location over their sockets."
+    kind: flow
+    weight: core
+    teach:
+      - "If driver 1 declines, or says nothing for 10 seconds, the answer comes back through the gateway, matching deletes the lock, and moves to driver 2."
+      - "If the driver accepts, matching fetches the driver's details from the drivers database and sends both of them the pick-up point and the driver's location over their open WebSockets."
+    draw: [l-timeout, l-push]
+    check: What happens when the driver does not answer within 10 seconds?
+    answer: The lock is deleted and matching offers the ride to the next driver.
+  - point: "Only the top K = 5 nearest drivers are tried: at 10 seconds per offer, six would take the whole minute, so five leave time for the network."
+    kind: metric
+    weight: core
+    teach:
+      - "There may be thousands of drivers near, so take only the top K. Each offer can take 10 seconds to time out; six of them is the whole minute we promised, with nothing left for the network."
+      - "So K is 5, and the latency line on the right is met: a driver, or a clean failure, inside a minute."
+    draw: [l-topk]
+    check: Why offer the ride to at most five drivers?
+    answer: Each offer may take up to 10 seconds, so five fit inside the one-minute target with time for the network.
+asks:
+  - ids: [l-ws-why]
+    beats: [2]
+    question: "Every driver sends its position every few seconds. How would you carry all those updates to the backend?"
+    hints:
+      - A new HTTP request every five seconds per driver is a lot of overhead.
+      - What kind of connection stays open and works both ways?
+  - ids: [l-redis]
+    beats: [4]
+    question: "Writing every one of those positions into PostgreSQL won't keep up. Where would you keep them instead?"
+    hints:
+      - The data is hot, small and changes every few seconds.
+      - Something in memory that can search by radius.
+  - ids: [l-topk]
+    beats: [7]
+    question: "Each driver gets 10 seconds to answer, and we promised a driver within a minute. How many drivers can we try?"
+    hints:
+      - Divide the minute by the timeout.
+      - And leave a little time for the network.

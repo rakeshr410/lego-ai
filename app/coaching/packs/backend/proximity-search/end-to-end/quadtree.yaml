@@ -1,0 +1,165 @@
+# Proximity search, 1. Quadtree: under the title, "1. Quad Tree" on the left with the tree as the video draws it (the world map at the root, four quarters, one quarter split again, three empty leaves and a dense one that keeps splitting), and on the right the 5 km search the video marks on its grid: the user's empty cell, up to the parent and its children (2, 0, 0), up again; then the costs and the verdict. Corrected: depth is about 22 levels, not thousands; an insert splits one leaf, no rebuild; an R-tree is a different index.
+id: backend/proximity-search/end-to-end/quadtree
+title: "1. A quadtree"
+source:
+  hash: "d79c479c21bc"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/proximity-search/end-to-end/problem-statement
+  assumes:
+    - "Proximity search returns the places within a radius of the user, say 5 km, and needs a spatial index."
+  carries:
+    - "A quadtree's root is the whole world map; each node has four children, its quarters; a full leaf splits into four."
+    - "Real places are uneven, so the tree is deep over cities and shallow over oceans, yet only about 22 levels reach 10 m cells."
+    - "Searching 5 km walks from the user's leaf up to parents and across their children, because neighbouring cells sit under other parents."
+    - "It lives in memory on every search server, built at start-up, with read and write copies kept in sync: hard to run, so avoid it in the interview."
+  terms:
+    - term: quadtree
+      means: "A tree in which every internal node is a square of the map with four children, its quarters."
+    - term: leaf
+      means: "A cell that is not split further; it holds one place or a small group."
+board:
+  keep: [title, prompt-desc, prompt-example]
+  elements:
+    - { id: qt, kind: region, label: 1. Quadtree, at: [2, 5], size: [56, 29] }
+    - { id: qt-root, kind: oval, label: whole world map, at: [21, 8], size: [12, 3], in: qt, tone: blue }
+    - { id: qt-nw, kind: oval, label: north-west, at: [4, 16], size: [11, 3], in: qt }
+    - { id: qt-ne, kind: oval, label: north-east, at: [17, 16], size: [11, 3], in: qt }
+    - { id: qt-sw, kind: oval, label: south-west, at: [30, 16], size: [11, 3], in: qt }
+    - { id: qt-se, kind: oval, label: south-east, at: [45, 16], size: [11, 3], in: qt }
+    - { id: qt-ocean, kind: box, label: "ocean, empty leaf", at: [16, 26], size: [9, 3], in: qt, tone: grey }
+    - { id: qt-desert, kind: box, label: "desert, empty leaf", at: [26, 26], size: [9, 3], in: qt, tone: grey }
+    - { id: qt-one, kind: box, label: one restaurant leaf, at: [36, 26], size: [9, 3], in: qt }
+    - { id: qt-dense, kind: box, label: "dense city, splits again", at: [46, 26], size: [9, 3], in: qt, tone: red }
+    - { id: qt-uneven, kind: note, label: "uneven data, so uneven depth", at: [4, 30], in: qt }
+    - { id: qt-depth, kind: note, label: "about 22 levels reach 10 metre cells, not thousands", at: [4, 31], in: qt }
+    - { id: qs, kind: region, label: "Searching 5 km around the user", at: [63, 5], size: [54, 37] }
+    - { id: qs-grand, kind: box, label: grandparent cell, at: [84, 8], size: [12, 3], in: qs }
+    - { id: qs-parent, kind: box, label: parent cell, at: [84, 16], size: [12, 3], in: qs }
+    - { id: qs-yours, kind: box, label: "your cell, none", at: [65, 24], size: [11, 3], in: qs, tone: red }
+    - { id: qs-next, kind: box, label: "next cell, 2 found", at: [78, 24], size: [11, 3], in: qs, tone: green }
+    - { id: qs-third, kind: box, label: "third cell, none", at: [91, 24], size: [11, 3], in: qs }
+    - { id: qs-fourth, kind: box, label: "fourth cell, none", at: [104, 24], size: [11, 3], in: qs }
+    - { id: qs-spill, kind: note, label: "the 5 km circle spills into other parents' cells", at: [65, 29], in: qs }
+    - { id: qs-range, kind: note, label: "a range search descends into every cell the circle touches", at: [65, 30], in: qs }
+    - { id: qs-memory, kind: note, label: "a data structure in memory, not a database", at: [65, 33], in: qs }
+    - { id: qs-copies, kind: note, label: "built at start-up, a read copy and a write copy", at: [65, 34], in: qs }
+    - { id: qs-insert, kind: note, label: "a new place splits one leaf, every copy must apply it", at: [65, 35], in: qs }
+    - { id: qs-verdict, kind: note, label: "hard to run, avoid it in the interview", at: [65, 37], in: qs }
+    - { id: qs-rtree, kind: note, label: "an R-tree is a different index, the one databases use", at: [65, 38], in: qs }
+  arrows:
+    - { id: qt-root-nw, from: qt-root, to: qt-nw }
+    - { id: qt-root-ne, from: qt-root, to: qt-ne }
+    - { id: qt-root-sw, from: qt-root, to: qt-sw }
+    - { id: qt-root-se, from: qt-root, to: qt-se }
+    - { id: qt-sw-ocean, from: qt-sw, to: qt-ocean }
+    - { id: qt-sw-desert, from: qt-sw, to: qt-desert }
+    - { id: qt-sw-one, from: qt-sw, to: qt-one }
+    - { id: qt-sw-dense, from: qt-sw, to: qt-dense }
+    - { id: qs-up-1, from: qs-yours, to: qs-parent, label: go up }
+    - { id: qs-check-next, from: qs-parent, to: qs-next }
+    - { id: qs-check-third, from: qs-parent, to: qs-third }
+    - { id: qs-check-fourth, from: qs-parent, to: qs-fourth }
+    - { id: qs-up-2, from: qs-parent, to: qs-grand, label: go up again }
+beats:
+  - point: "A quadtree is a tree whose every node has four children: the root is the whole world map, and its children are its four quarters, north-west, north-east, south-west and south-east."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Number one, the quadtree. A binary tree node has two children; a quadtree node has four, hence the name."
+      - "The root is the whole world map. Split it into four quarters: north-west, north-east, south-west and south-east. Those are the root's four children."
+    draw: [qt, qt-root, qt-nw, qt-ne, qt-sw, qt-se, qt-root-nw, qt-root-ne, qt-root-sw, qt-root-se]
+    check: What does each child of a quadtree node stand for?
+    answer: One quarter of its parent's square of the map.
+  - point: "Each quarter splits into four again, recursively, until a leaf holds one place or a small group; because places are uneven, empty areas stay single leaves while a dense city keeps splitting."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Keep splitting each quarter into four until a cell holds one restaurant, or a few close together. That cell is a leaf."
+      - "But restaurants are not spread evenly. Split the south-west: the ocean quarter holds nothing, the desert quarter nothing, one quarter holds a single restaurant, and the dense city quarter has to split again, and again."
+      - "So the tree is deep over cities and shallow everywhere else: unbalanced. That is by design, small leaves where the data is."
+    draw: [qt-ocean, qt-desert, qt-one, qt-dense, qt-sw-ocean, qt-sw-desert, qt-sw-one, qt-sw-dense, qt-uneven]
+    check: Why does the tree end up unbalanced?
+    answer: Places are uneven; empty areas stop splitting at once while dense cities keep splitting, so depth differs by region.
+  - point: "The tree is still shallow: each level halves the cell's side, so about 22 levels already reach cells of about 10 metres, not thousands of levels."
+    kind: metric
+    weight: supporting
+    teach:
+      - "How deep does it get? Each level halves the side of a cell. Halve the 40,075 kilometre equator 22 times and the cells are about 10 metres across."
+      - "So depth grows with the logarithm of the detail, about 22 levels, not the thousands of levels you sometimes hear."
+    draw: [qt-depth]
+    check: Roughly how many levels does a quadtree need to reach 10 metre cells?
+    answer: About 22, because each level halves the cell's side.
+    misconceptions:
+      - "A world quadtree has thousands of levels -> each level halves the cell, so about 22 levels reach 10 metres."
+  - point: "To search 5 km, start at the user's leaf; if it is empty, go up to the parent and check its other children (here 2 restaurants, 0, 0), and if that is not enough, go up again."
+    kind: flow
+    weight: core
+    teach:
+      - "Now search. The user sits in a leaf with no restaurants. Go up one level to its parent and look at the parent's four children."
+      - "The next cell has two restaurants, the third none, the fourth none. Two found, but the 5 km circle reaches further, so go up again to the grandparent and search its children too."
+    draw: [qs, qs-grand, qs-parent, qs-yours, qs-next, qs-third, qs-fourth, qs-up-1, qs-check-next, qs-check-third, qs-check-fourth, qs-up-2]
+    check: The user's own leaf has no restaurants. What does the search do next?
+    answer: It goes up to the parent and checks the parent's other children, and keeps going up until the 5 km circle is covered.
+  - point: "Neighbouring cells on the map can sit under different parents in the tree, so the walk goes up and down; done properly, a range search descends from the root into every cell the circle touches."
+    kind: mechanism
+    weight: supporting
+    teach:
+      - "Why so much walking? The circle spills into cells that belong to other parents, even other grandparents, so cells side by side on the map can be far apart in the tree."
+      - "The tidy version starts at the root and goes down only into cells the circle touches. It reads a handful of nodes, but finding neighbours is still more work than it looks."
+    draw: [qs-spill, qs-range]
+    check: Why can't the search stop at the user's parent?
+    answer: The circle crosses into cells under other parents, so nearby places can be in a different branch of the tree.
+  - point: "The real cost is running it: a quadtree is an in-memory data structure, built from every listing at start-up, kept as a read copy and a write copy on every search server, and every new place must reach every copy."
+    kind: failure
+    weight: core
+    teach:
+      - "A quadtree is a data structure, not a database. It lives in the memory of each search server, and with millions of listings it has to be built from all of them when the server starts."
+      - "New restaurants keep joining. An insert walks to its leaf and splits that leaf if it overflows; nothing else is rebuilt. But every server's copy must apply it, so designs keep a read copy for searches and a write copy for changes."
+    draw: [qs-memory, qs-copies, qs-insert]
+    check: What makes a quadtree hard to run in production?
+    answer: It lives in memory on every server, must be built from all listings at start-up, and every change must reach every copy, read and write.
+    misconceptions:
+      - "Adding a restaurant rebuilds the whole quadtree -> it goes into one leaf, which splits if full; the hard part is updating every server's copy."
+  - point: "Verdict: easy to explain, hard to run, so avoid it in the interview; the R-tree you may hear about is a different, balanced index of rectangles, the kind databases use."
+    kind: decision
+    weight: supporting
+    teach:
+      - "Write the verdict: hard to run, avoid it in the interview unless asked."
+      - "You may hear an R-tree suggested instead. It is not an enhanced quadtree but a different index, a balanced tree of bounding rectangles, and spatial databases use it inside. We meet it again in approach three."
+    draw: [qs-verdict, qs-rtree]
+    check: Why do we avoid the quadtree in an interview answer?
+    answer: It is easy to draw but hard to run, an in-memory tree on every server kept in sync as places change.
+asks:
+  - ids: [qt-nw, qt-ne, qt-sw, qt-se]
+    beats: [1]
+    frame: [qt, qt-root]
+    question: "The root is the whole world map. What would its four children be?"
+    hints:
+      - Cut a square map once across and once down.
+      - Name each piece by its compass corner.
+  - ids: [qt-dense]
+    beats: [2]
+    question: "We split the south-west quarter again. One part is ocean, one desert. What happens to the part over a big city?"
+    hints:
+      - How many restaurants sit in a city centre?
+      - What does a leaf do when it holds too many places?
+  - ids: [qs-parent]
+    beats: [4]
+    frame: [qs, qs-yours]
+    question: "The user's own cell has no restaurants. Where does the search look next?"
+    hints:
+      - Think one level up the tree.
+      - Which cells share a parent with the user's cell?
+  - ids: [qs-memory]
+    beats: [6]
+    question: "Searching works. What makes a quadtree painful to run in production?"
+    hints:
+      - Is a quadtree a database, or something else?
+      - What happens on every server when a new restaurant joins?
+task:
+  prompt: "Draw a quadtree for the world map: the root, its four quarters, one quarter split again with two empty leaves, a leaf with one restaurant and a dense city that splits further, then show where a 5 km search goes from an empty leaf."
+  expects: [1, 2, 4]

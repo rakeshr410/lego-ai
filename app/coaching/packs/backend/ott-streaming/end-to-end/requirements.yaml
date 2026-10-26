@@ -1,0 +1,102 @@
+# OTT streaming interview, requirements: "1. Functional requirement" on the left and "Non-functional requirement" on the right, under the title, as the video lays them out; the recommendation engine written out of scope, and the scale read as a reason for microservices.
+id: backend/ott-streaming/end-to-end/requirements
+title: Two lists, functional and non-functional
+source:
+  hash: "bc4c7cb72db5"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/ott-streaming/end-to-end/problem-statement
+  assumes:
+    - "An OTT platform streams films and shows to subscribers over the internet."
+  carries:
+    - "Functional: create an account and opt for a plan; search movies and shows by title or name; watch at 480p, 720p, 1080p or 4K."
+    - "Out of scope: the recommendation engine, and uploading, done by an internal team."
+    - "Non-functional: 200M users and 10,000 videos of about an hour; availability over consistency, except payments; zero or negligible buffering."
+    - "At this scale the design is separate services, not a monolith."
+  terms:
+    - term: functional requirement
+      means: What the system does.
+    - term: non-functional requirement
+      means: "A quality of the system, with a number where there is one: scale, availability, buffering."
+board:
+  keep: [title, prompt-desc]
+  elements:
+    - { id: fr, kind: region, label: 1. Functional requirements, at: [2, 5], size: [34, 14], dashed: true }
+    - { id: fr-account, kind: note, label: create an account and opt for a plan, at: [3, 7], in: fr }
+    - { id: fr-search, kind: note, label: search movies and shows by title or name, at: [3, 9], in: fr }
+    - { id: fr-watch, kind: note, label: "watch in 480p, 720p, 1080p or 4K", at: [3, 11], in: fr }
+    - { id: fr-out, kind: note, label: "out of scope, recommendations and uploads", at: [3, 17], in: fr, tone: grey }
+    - { id: nfr, kind: region, label: Non-functional requirements, at: [40, 5], size: [34, 14], dashed: true }
+    - { id: nfr-scale, kind: note, label: "scale, 200M users, 10k videos of an hour", at: [41, 7], in: nfr }
+    - { id: nfr-cap, kind: note, label: availability over consistency, at: [41, 9], in: nfr }
+    - { id: nfr-buffer, kind: note, label: zero or negligible buffering, at: [41, 11], in: nfr }
+    - { id: nfr-micro, kind: note, label: "so microservices, not a monolith", at: [41, 17], in: nfr }
+  arrows: []
+  lists:
+    - { id: fr-list, in: fr, at: [3, 7], step: 2, slots: 5, width: 30, items: [fr-account, fr-search, fr-watch] }
+    - { id: nfr-list, in: nfr, at: [41, 7], step: 2, slots: 5, width: 30, items: [nfr-scale, nfr-cap, nfr-buffer] }
+beats:
+  - point: "Three functional requirements: create an account and opt for a subscription, search movies and shows by title or name, and watch at any resolution from 480p to 4K."
+    kind: requirement
+    weight: core
+    teach:
+      - "Step one, on the left: what the platform does. A user lands, registers and picks a monthly or yearly plan; as on Netflix, nothing plays without one."
+      - "Then the home page and search: find a movie or a show by its title or name."
+      - "And play it at the resolution the device and network allow, 480p, 720p, 1080p, up to 4K."
+    draw: [fr, fr-account, fr-search, fr-watch]
+    check: What are the three things a user must be able to do?
+    answer: Create an account and subscribe, search titles by name, and watch at a resolution from 480p to 4K.
+  - point: "Ask about the recommendation engine and leave it out of scope; it is an ML system of its own. Uploading is done by an internal team, also out of scope."
+    kind: decision
+    weight: supporting
+    teach:
+      - "Before moving on, ask whether recommendations are wanted. The home page is built from them, but they are a machine learning problem of their own, and the interviewer usually parks them."
+      - "Uploads are the company's own team, not users. Write both as out of scope."
+    draw: [fr-out]
+    check: Why is the recommendation engine usually left out?
+    answer: It is a machine learning system of its own, too big for this interview; the interviewer parks it.
+  - point: "Scale: 200 million users worldwide, but only about 10,000 videos of an hour each, because only the company uploads."
+    kind: metric
+    weight: core
+    teach:
+      - "On the right, the qualities. Scale first: a global audience of about 200 million users."
+      - "The catalogue is small, about 10,000 videos of around an hour, because nobody but the company uploads. The audience is what is huge."
+    draw: [nfr, nfr-scale]
+    check: Why is the catalogue so small next to the audience?
+    answer: Only the company uploads, so there are about 10,000 curated titles while there are 200 million viewers.
+  - point: "Availability over consistency for browsing and playback, since a new title can appear minutes late; payments and subscriptions are the part that must be consistent."
+    kind: requirement
+    weight: core
+    teach:
+      - "CAP: the platform must be up all the time, so availability wins. The team uploads and processes a title well before anyone watches it, so nobody needs it in real time."
+      - "The exception is billing: a payment and a subscription must be recorded exactly, so that module is consistent."
+    draw: [nfr-cap]
+    check: Which part of this system cannot trade consistency away, and why?
+    answer: Payments and subscriptions; a charge recorded twice or lost is real money, while a title appearing late harms nobody.
+    misconceptions:
+      - "The whole system is either AP or CP -> the choice is per module; video is available-first, billing consistent."
+  - point: "Zero or negligible buffering is the requirement that shapes the design; at 200 million users it also means separate services, not one monolith."
+    kind: requirement
+    weight: core
+    teach:
+      - "The crucial one: once a film starts, practically no buffering. Quality may soften for a moment; the picture must not freeze."
+      - "And read the scale back: no single server takes 200 million users, let alone streams video to them, so this is a microservice design."
+    draw: [nfr-buffer, nfr-micro]
+    check: What does the scale tell you about the architecture before drawing anything?
+    answer: No single server can carry it, so the design is distributed, separate services rather than a monolith.
+asks:
+  - list: fr-list
+    beats: [1]
+    question: "So what should this platform let a user do? Tell me the features one at a time and I'll write them down."
+    hints:
+      - Think of the first visit, before anything plays.
+      - And then finding something, and pressing play.
+  - list: nfr-list
+    beats: [3, 4, 5]
+    question: "Now the qualities. How big is it, what matters when machines fail, and what must watching feel like?"
+    hints:
+      - How many users, and how many videos?
+      - What would annoy a viewer most in the middle of a film?

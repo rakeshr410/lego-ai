@@ -1,0 +1,47 @@
+# Food delivery interview, core entities: "2. Identify core entity" under the functional list, five lines, as in the video.
+id: backend/food-delivery/end-to-end/entities
+title: Five entities
+source:
+  hash: "e04cfaee2cc1"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/food-delivery/end-to-end/requirements
+  assumes:
+    - "Functional: browse, search, menu, cart and pay, restaurant accepts, partner assigned, live location, notifications."
+  carries:
+    - "The core entities are the user, the restaurant, the food menu, the delivery partner and the payment."
+  terms:
+    - term: core entity
+      means: A noun the system stores and moves.
+board:
+  keep: [title, prompt-desc, fr, fr-register, fr-nearby, fr-search, fr-menu, fr-cart, fr-assign, fr-live, fr-notify, nfr, nfr-scale, nfr-available, nfr-consistent]
+  elements:
+    - { id: entities, kind: region, label: 2. Identify core entities, at: [2, 29], size: [24, 14], dashed: true }
+    - { id: ent-user, kind: note, label: user, at: [3, 31], in: entities }
+    - { id: ent-restaurant, kind: note, label: restaurant, at: [3, 33], in: entities }
+    - { id: ent-menu, kind: note, label: food menu, at: [3, 35], in: entities }
+    - { id: ent-partner, kind: note, label: delivery partner, at: [3, 37], in: entities }
+    - { id: ent-payment, kind: note, label: payment, at: [3, 39], in: entities }
+  arrows: []
+  lists:
+    - { id: entity-list, in: entities, at: [3, 31], step: 2, slots: 6, width: 20, items: [ent-user, ent-restaurant, ent-menu, ent-partner, ent-payment] }
+beats:
+  - point: "Five core entities, read off the requirements: the user, the restaurant, the food menu, the delivery partner and the payment."
+    kind: component
+    weight: core
+    teach:
+      - "Step two, the core entities: read the nouns off the requirements. The user, the restaurant, and the food menu, the items the user is looking for."
+      - "The delivery partner, assigned once the order is confirmed, and the payment that confirms it."
+    draw: [entities, ent-user, ent-restaurant, ent-menu, ent-partner, ent-payment]
+    check: Why is the delivery partner its own entity and not just a name on the order?
+    answer: It has its own state, a live location and idle or busy, that matching reads before any order points at it.
+asks:
+  - list: entity-list
+    beats: [1]
+    question: "What are the core entities, the things this system keeps track of?"
+    hints:
+      - Look at the actors, and what the user is choosing from.
+      - What confirms an order?

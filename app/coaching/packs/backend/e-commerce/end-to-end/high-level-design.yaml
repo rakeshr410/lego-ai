@@ -1,0 +1,130 @@
+# E-commerce interview, high-level design: "4. High Level Design" under the requirements, as in the video: four user boxes on the left, a tall load balancer and API gateway, a column of services, their databases on the right, checkout calling payment and payment calling the payment gateway below.
+id: backend/e-commerce/end-to-end/high-level-design
+title: A service per requirement
+source:
+  hash: "e2a3988fc5d0"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/e-commerce/end-to-end/api
+  assumes:
+    - "Endpoints for search, product details, add to cart, checkout then payment, and order status."
+    - "Scale: 10M monthly users, 10 orders a second."
+  carries:
+    - "Clients reach a round-robin load balancer and an API gateway that routes, authenticates and rate-limits."
+    - "One microservice per requirement: user, search, product, cart, order status, checkout, payment, each with its database."
+    - "Checkout calls payment, payment calls the third-party payment gateway; order status reads the order DB."
+  terms:
+    - term: microservice
+      means: A small service owning one function and its own data, scaled on its own.
+    - term: API gateway
+      means: "The single entry point: routes each path to its service, checks who the caller is, limits their rate."
+board:
+  keep: [title, prompt-desc, prompt-scope, fr, fr-search, fr-details, fr-cart, fr-pay, fr-status, fr-limited, nfr, nfr-scale, nfr-available, nfr-consistent, nfr-latency]
+  elements:
+    - { id: hld, kind: region, label: 4. High-level design, at: [2, 24], size: [55, 40] }
+    - { id: hld-u1, kind: box, label: user 1, at: [3, 29], size: [7, 3], in: hld }
+    - { id: hld-u2, kind: box, label: user 2, at: [3, 35], size: [7, 3], in: hld }
+    - { id: hld-u3, kind: box, label: user 3, at: [3, 41], size: [7, 3], in: hld }
+    - { id: hld-u4, kind: box, label: user 4, at: [3, 47], size: [7, 3], in: hld }
+    - { id: hld-gw, kind: box, label: "API gateway and load balancer: routing, auth, rate limiting", at: [13, 27], size: [10, 24], tone: blue, in: hld }
+    - { id: hld-user, kind: box, label: User service, at: [27, 27], size: [13, 3], in: hld }
+    - { id: hld-search, kind: box, label: Search service, at: [27, 31], size: [13, 3], in: hld }
+    - { id: hld-product, kind: box, label: Product service, at: [27, 35], size: [13, 3], in: hld }
+    - { id: hld-cart, kind: box, label: Cart service, at: [27, 39], size: [13, 3], in: hld }
+    - { id: hld-status, kind: box, label: Order status service, at: [27, 43], size: [13, 3], in: hld }
+    - { id: hld-checkout, kind: box, label: Checkout service, at: [27, 47], size: [13, 3], in: hld }
+    - { id: hld-payment, kind: box, label: Payment service, at: [27, 53], size: [13, 3], in: hld }
+    - { id: hld-pg, kind: box, label: "Payment gateway, third party", at: [27, 59], size: [13, 3], tone: grey, dashed: true, in: hld }
+    - { id: hld-userdb, kind: oval, label: User DB, at: [44, 27], size: [11, 3], tone: amber, in: hld }
+    - { id: hld-productdb, kind: oval, label: Product DB, at: [44, 32], size: [11, 6], tone: amber, in: hld }
+    - { id: hld-cartdb, kind: oval, label: Cart DB, at: [44, 39], size: [11, 3], tone: amber, in: hld }
+    - { id: hld-orderdb, kind: oval, label: Order DB, at: [44, 44], size: [11, 6], tone: amber, in: hld }
+    - { id: hld-paymentdb, kind: oval, label: Payment DB, at: [44, 53], size: [11, 3], tone: amber, in: hld }
+  arrows:
+    - { id: hld-u1-gw, from: hld-u1, to: hld-gw }
+    - { id: hld-u2-gw, from: hld-u2, to: hld-gw }
+    - { id: hld-u3-gw, from: hld-u3, to: hld-gw }
+    - { id: hld-u4-gw, from: hld-u4, to: hld-gw }
+    - { id: hld-gw-user, from: hld-gw, to: hld-user }
+    - { id: hld-gw-search, from: hld-gw, to: hld-search }
+    - { id: hld-gw-product, from: hld-gw, to: hld-product }
+    - { id: hld-gw-cart, from: hld-gw, to: hld-cart }
+    - { id: hld-gw-status, from: hld-gw, to: hld-status }
+    - { id: hld-gw-checkout, from: hld-gw, to: hld-checkout }
+    - { id: hld-user-db, from: hld-user, to: hld-userdb }
+    - { id: hld-search-db, from: hld-search, to: hld-productdb }
+    - { id: hld-product-db, from: hld-product, to: hld-productdb }
+    - { id: hld-cart-db, from: hld-cart, to: hld-cartdb }
+    - { id: hld-status-db, from: hld-status, to: hld-orderdb }
+    - { id: hld-checkout-db, from: hld-checkout, to: hld-orderdb }
+    - { id: hld-checkout-payment, from: hld-checkout, to: hld-payment }
+    - { id: hld-payment-db, from: hld-payment, to: hld-paymentdb }
+    - { id: hld-payment-pg, from: hld-payment, to: hld-pg }
+beats:
+  - point: "At this scale one server is not enough, so users reach a round-robin load balancer and an API gateway that routes each request, authenticates and authorizes the caller, and rate-limits."
+    kind: component
+    weight: core
+    teach:
+      - "Step four, the high-level design. Thousands of users on the left. Ten million a month is more than one server takes, so we build microservices, and in front of them a load balancer, round robin, and an API gateway."
+      - "The gateway has three jobs: route each request to its service, authenticate and authorize the user, and rate-limit."
+    draw: [hld, hld-u1, hld-u2, hld-u3, hld-u4, hld-gw, hld-u1-gw, hld-u2-gw, hld-u3-gw, hld-u4-gw]
+    check: What are the API gateway's three jobs?
+    answer: Routing to the right service, authentication and authorization, and rate limiting.
+  - point: "Read the services off the requirements, one each: user (sign-up and login), search, product, cart, order status and checkout, all behind the gateway."
+    kind: component
+    weight: core
+    teach:
+      - "Now the services, straight from the requirements: a search service, a product service that puts the catalogue in, a cart service, a checkout service, an order status service."
+      - "And one the requirements hide: a user service for sign-up and login, or we would not know the address or contact to deliver to."
+    draw: [hld-user, hld-gw-user, hld-search, hld-gw-search, hld-product, hld-gw-product, hld-cart, hld-gw-cart, hld-status, hld-gw-status, hld-checkout, hld-gw-checkout]
+    check: Which service is not named by any requirement but is needed anyway, and why?
+    answer: The user service, for sign-up and login, so the shop knows who is ordering and where to deliver.
+  - point: "Each service keeps its own database: user DB; product DB, filled by the product service and queried by search; cart DB; order DB, written by checkout and read by order status."
+    kind: flow
+    weight: core
+    teach:
+      - "Give each service its data. The product service writes products into a product DB, and the search service queries that same DB. Which database, and its fields, waits for the low-level design."
+      - "The cart service has a cart DB, the user service a user DB. Checkout saves the order, failed or successful, in an order DB, and the order status service reads it back."
+    draw: [hld-userdb, hld-user-db, hld-productdb, hld-search-db, hld-product-db, hld-cartdb, hld-cart-db, hld-orderdb, hld-checkout-db, hld-status-db]
+    check: Which two services touch the order DB, and how?
+    answer: Checkout writes each order and its status; the order status service reads it.
+  - point: "Checkout calls a payment service, which calls a third-party payment gateway and records every payment, paid or failed, in a payment DB."
+    kind: flow
+    weight: core
+    teach:
+      - "Checkout calls a payment service, and the payment service calls the payment gateway, a third party we do not design."
+      - "Every payment, successful or failed, goes into a payment DB. Now walk a shopper through: sign up, search, cart, checkout and payment, status. Every requirement has a path."
+    draw: [hld-payment, hld-checkout-payment, hld-pg, hld-payment-pg, hld-paymentdb, hld-payment-db]
+    check: Why record failed payments too?
+    answer: So every attempt and its outcome can be looked up later, whether it went through or not.
+asks:
+  - ids: [hld-gw]
+    beats: [1]
+    question: "Thousands of users, many services behind. What sits between them, and what does it do?"
+    hints:
+      - Something spreads the load, and something decides which service a request goes to.
+      - What should be checked before any service sees the request?
+  - ids: [hld-user, hld-search, hld-product, hld-cart, hld-status, hld-checkout]
+    beats: [2]
+    question: "Looking at the requirements, which services would you create? Name them and I'll draw them."
+    hints:
+      - One per requirement is a good start.
+      - And who handles sign-up and login?
+  - ids: [hld-userdb, hld-productdb, hld-cartdb, hld-orderdb]
+    beats: [3]
+    question: "Where does each service keep its data? Which databases do we need?"
+    hints:
+      - Search and the product service work on the same data.
+      - Where would the order status service look?
+  - ids: [hld-payment, hld-pg]
+    beats: [4]
+    question: "Checkout has to take the money. What does it call?"
+    hints:
+      - We don't charge cards ourselves.
+      - Something of ours talks to a third party.
+task:
+  prompt: "Draw the high-level design: users, the load balancer and API gateway, the user, search, product, cart, order status and checkout services, payment and the payment gateway, and each one's database."
+  expects: [1, 2, 3, 4]

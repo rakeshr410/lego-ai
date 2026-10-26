@@ -1,0 +1,46 @@
+# Hotel booking interview, core entities: "2. Identify core entity" under the functional list, four lines, as in the video.
+id: backend/hotel-booking/end-to-end/entities
+title: Four entities
+source:
+  hash: "0bbd7d255643"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/hotel-booking/end-to-end/requirements
+  assumes:
+    - "Functional: accounts, search hotels by location, name and date, book an available room, pay, past bookings."
+  carries:
+    - "The core entities are the user, the hotel, the room and the booking."
+  terms:
+    - term: core entity
+      means: A noun the system stores and moves.
+board:
+  keep: [title, prompt-desc, fr, fr-account, fr-search, fr-book, fr-pay, fr-past, nfr, nfr-scale, nfr-available, nfr-consistent]
+  elements:
+    - { id: entities, kind: region, label: 2. Identify core entities, at: [2, 21], size: [20, 13], dashed: true }
+    - { id: ent-user, kind: note, label: user, at: [3, 23], in: entities }
+    - { id: ent-hotel, kind: note, label: hotel, at: [3, 25], in: entities }
+    - { id: ent-room, kind: note, label: room, at: [3, 27], in: entities }
+    - { id: ent-booking, kind: note, label: booking, at: [3, 29], in: entities }
+  arrows: []
+  lists:
+    - { id: entity-list, in: entities, at: [3, 23], step: 2, slots: 5, width: 14, items: [ent-user, ent-hotel, ent-room, ent-booking] }
+beats:
+  - point: "Four core entities: the user who books, the hotel, the room that is actually booked, and the booking itself."
+    kind: component
+    weight: core
+    teach:
+      - "Step two: identify the core entities, read straight off the requirements. The user who is booking. The hotel."
+      - "The room, because guests book rooms, not hotels, and each room's price and availability change by date. And the booking itself."
+    draw: [entities, ent-user, ent-hotel, ent-room, ent-booking]
+    check: Why is the room an entity of its own, apart from the hotel?
+    answer: Guests book rooms, and each room's price and availability vary by date.
+asks:
+  - list: entity-list
+    beats: [1]
+    question: "What are the core entities here, the things this system keeps track of?"
+    hints:
+      - Read the nouns in the requirements on the left.
+      - What exactly does a guest reserve inside a hotel?

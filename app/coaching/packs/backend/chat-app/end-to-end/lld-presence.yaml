@@ -1,0 +1,97 @@
+# Chat app interview, low-level design, presence, pending messages and receipts: the video's last additions: a "User management Svc" that updates status and last seen from the "Websocket Registry", a "Msg Svc" that "retrieves all unsend msg" from Chat DB when a user connects, the ticks over the WebSocket, then the data flow read back. Corrected: key-expiry events, not CDC, from Redis; look up by receiver, not a scan; read is blue ticks; order by messageId.
+id: backend/chat-app/end-to-end/lld-presence
+title: "Low-level design: presence, catch-up, receipts"
+source:
+  hash: "fcd69dd80b95"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/chat-app/end-to-end/lld-group-media
+  assumes:
+    - "The registry holds a user's entry while their WebSocket lives, with a TTL refreshed by heartbeats."
+    - "Offline messages are stored in the chat DB with a deliveryStatus."
+  carries:
+    - "Online while the registry holds the entry; on expiry a user management service saves lastSeen in the user DB."
+    - "On connect, the chat server asks a message service for undelivered messages, looked up by receiver, and sends them."
+    - "One tick stored, two ticks delivered (the phone acks), blue ticks read (the phone reports it), all over the WebSocket."
+  terms:
+    - term: presence
+      means: "Whether a user is online now, and when they were last seen."
+    - term: key-expiry event
+      means: "A notice Redis can publish when a key's TTL runs out."
+board:
+  keep: [title, nfr, nfr-scale, nfr-volume, nfr-cap, nfr-latency, nfr-reliable, conn, conn-http, v-http, conn-long, v-long, conn-sse, v-sse, conn-ws, v-ws, w-head, w-user-1, w-user-4, w-lb, w-lb-note, w-user-svc, w-userdb, w-group-svc, w-groupdb, w-ws-gw, w-ws-note, w-chat-1, w-chat-2, w-chat-3, w-hs, hs-1, hs-2, hs-3, hs-4, w-send, w-registry, w-reg-1, w-reg-2, w-ttl, w-u1-lb, w-u4-lb, w-lb-user, w-user-db, w-lb-group, w-group-db, w-u1-ws, w-u4-ws, w-ws-c1, w-ws-c2, w-ws-c3, w-c3-reg, w-ws-reg, w-c3-c2, o-stream, o-stream-note, o-ack-note, o-msg-svc, o-chatdb, o-schema-1, o-schema-2, o-schema-3, o-key, o-notif, o-push, o-push-note, o-c1-stream, o-c2-stream, o-c3-stream, o-stream-msg, o-msg-db, o-stream-notif, o-notif-push, g-fanout, g-media-svc, g-s3, g-url-note, g-search-svc, g-elastic, g-cdn, g-local, g-c1-group, g-lb-media, g-media-s3, g-lb-search, g-search-elastic, g-db-elastic, g-u1-cdn, g-cdn-s3]
+  elements:
+    - { id: p-presence, kind: box, label: User management service, at: [48, 89], size: [15, 3], tone: blue }
+    - { id: p-pres-1, kind: note, label: online while the registry has the entry, at: [48, 93] }
+    - { id: p-pres-2, kind: note, label: "on expiry, saves lastSeen in UserDB", at: [48, 94] }
+    - { id: p-unsent, kind: box, label: Undelivered message service, at: [50, 62], size: [13, 3], tone: blue }
+    - { id: p-unsent-note, kind: note, label: "by receiver, not a scan", at: [50, 60] }
+    - { id: p-r1, kind: note, label: "one tick, stored on the server", at: [70, 90] }
+    - { id: p-r2, kind: note, label: "two ticks, the phone acks delivery", at: [70, 91] }
+    - { id: p-r3, kind: note, label: "blue ticks, the phone reports it read", at: [70, 92] }
+    - { id: p-order, kind: note, label: each chat ordered by its messageId, at: [70, 94] }
+  arrows:
+    - { id: p-reg-presence, from: w-registry, to: p-presence, label: on expiry }
+    - { id: p-c1-unsent, from: w-chat-1, to: p-unsent }
+    - { id: p-unsent-db, from: p-unsent, to: o-chatdb }
+beats:
+  - point: "A user is online while the registry holds their entry; when it expires, a key-expiry event tells a user management service to save their last seen time in the user DB."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Who is online falls out of the registry: if your entry is there, your WebSocket is alive, so you are online."
+      - "When the TTL runs out, Redis can announce the expiry. A user management service hears it and saves last seen in the user database, which is what friends see as last seen at."
+    draw: [p-presence, p-reg-presence, p-pres-1, p-pres-2]
+    check: How does the system know when a user was last seen?
+    answer: "When their registry entry expires, a key-expiry event reaches the user management service, which saves lastSeen in the user DB."
+    misconceptions:
+      - "A CDC pipeline on Redis reports the expiry -> Redis has no CDC for this; it can publish key-expiry events, or the chat server reports the disconnect."
+  - point: "When a user connects, the chat server asks an undelivered-message service for what is waiting, looked up by receiver and status rather than a scan, and sends it down the new socket."
+    kind: mechanism
+    weight: core
+    teach:
+      - "User 4 comes back. Once the WebSocket is up, the chat server asks a message service: anything waiting for user 4? It fetches the undelivered messages from the chat DB and sends them down the socket."
+      - "Find them by receiver and status, in a table keyed by receiver, an inbox of undelivered messages, never by scanning the whole chat DB."
+    draw: [p-unsent, p-c1-unsent, p-unsent-db, p-unsent-note]
+    check: How does a returning user get what they missed?
+    answer: "On connect, the chat server fetches their undelivered messages by receiver from the chat DB and sends them over the WebSocket."
+  - point: "Receipts ride the WebSocket: one tick when the server has stored the message, two when the receiver's phone acknowledges it, blue when the phone reports it was read; each updates deliveryStatus."
+    kind: mechanism
+    weight: core
+    teach:
+      - "The ticks need no endpoint. One tick: the server stored the message. Two ticks: the receiver's phone acknowledged it over its socket, status delivered."
+      - "Blue ticks: the receiver opened the chat and the phone reported it, status read. Each change goes back to the sender over their socket."
+    draw: [p-r1, p-r2, p-r3]
+    check: Which event turns two grey ticks blue?
+    answer: "The receiver's phone reporting that the chat was opened; the status becomes read."
+    misconceptions:
+      - "Read shows as a double tick -> two grey ticks mean delivered; blue ticks mean read."
+  - point: "The whole flow: register, connect by upgrade and register in the registry, catch up, then send online through the receiver's server or offline through the stream, groups fanned out, each chat ordered by messageId."
+    kind: flow
+    weight: core
+    teach:
+      - "Read the data flow back. Register with the user service. Connect: no registry entry, so the HTTP request upgrades to a WebSocket and an entry is written. Catch up on undelivered messages and ack them."
+      - "Send: if the receiver is online, the registry names their server and the message is delivered; if not, the stream stores it and a push goes out. A group is each member in turn. Order each chat by its message id, assigned by the server, not by phones' clocks."
+      - "Then check the requirements on the right: scale and writes from Cassandra and the stream, availability with no single box on the path, latency from WebSockets and the registry look-up, no loss from storing before the tick."
+    draw: [p-order]
+    check: User 1 messages user 4, who is offline. Walk me through it.
+    answer: "Chat server finds no registry entry, puts the message in the stream, the message service stores it in Cassandra, a push goes out, and on reconnect it is fetched and delivered."
+asks:
+  - ids: [p-presence]
+    beats: [1]
+    question: "How would you show whether a friend is online, and their last seen time?"
+    hints:
+      - Which store already knows who has a live connection?
+      - What happens to that entry when the connection dies?
+  - ids: [p-unsent]
+    beats: [2]
+    question: "User 4 was offline for a day and just opened the app. How do they get the messages they missed?"
+    hints:
+      - The messages are in the chat DB, marked undelivered.
+      - Who should fetch them, and when?
+task:
+  prompt: "Draw the final design: users, the CDN, the API gateway with the user, media upload, search and group services, the WebSocket gateway and chat servers, the registry and the user management service, the Redis stream with the message and notification services, the chat DB, S3 and Elasticsearch."
+  expects: [1, 2, 3]

@@ -1,0 +1,74 @@
+# Top K leaderboard interview, high-level design: "4. High-level design" under the entities and API, as in the video: clients on the left, a tall API gateway and load balancer with its duties under it, the score service above the ranking service, and the score DB on the right that both reach.
+id: backend/top-k-leaderboard/end-to-end/high-level-design
+title: Gateway, two services, one database
+source:
+  hash: "8531f61b7736"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/top-k-leaderboard/end-to-end/api
+  assumes:
+    - "POST /api/v1/scores puts data in; GET /leaderboards/{id}/top reads the top K."
+    - "Non-functional: 1M writes a second, top K in 100 ms."
+  carries:
+    - "The high-level design: clients, an API gateway and load balancer, a score service writing a score DB, a ranking service reading it."
+    - "The gateway authenticates, authorizes, routes and rate limits; the load balancer spreads requests round robin."
+    - "It meets the functional requirements but neither the write rate nor the 100 ms top K."
+  terms:
+    - term: API gateway
+      means: "The front door to the microservices: authentication, authorization, routing and rate limiting."
+board:
+  keep: [title, prompt-desc, prompt-example, fr, fr-insert, fr-query, fr-window, fr-realtime, nfr, nfr-scale, nfr-cap, nfr-latency, nfr-exact, entities, ent-score, ent-item, ent-time, api, api-post, api-top, api-top-query, api-top-limit, api-rank, api-rank-query]
+  elements:
+    - { id: hld, kind: region, label: 4. High-level design, at: [6, 37], size: [68, 16] }
+    - { id: hld-clients, kind: box, label: "clients, users", at: [8, 43], size: [8, 3], in: hld }
+    - { id: hld-gateway, kind: box, label: API gateway and load balancer, at: [21, 40], size: [12, 10], in: hld }
+    - { id: hld-duties, kind: note, label: "auth, routing, rate limiting, round robin", at: [19, 51], in: hld }
+    - { id: hld-score, kind: box, label: Score service, at: [40, 40], size: [12, 3], in: hld, tone: blue }
+    - { id: hld-ranking, kind: box, label: Ranking service, at: [40, 47], size: [12, 3], in: hld, tone: blue }
+    - { id: hld-db, kind: oval, label: Score DB, at: [60, 41], size: [10, 7], in: hld, tone: amber }
+  arrows:
+    - { id: hld-clients-gateway, from: hld-clients, to: hld-gateway }
+    - { id: hld-gateway-score, from: hld-gateway, to: hld-score }
+    - { id: hld-gateway-ranking, from: hld-gateway, to: hld-ranking }
+    - { id: hld-score-db, from: hld-score, to: hld-db, label: write }
+    - { id: hld-ranking-db, from: hld-ranking, to: hld-db, label: read top K }
+beats:
+  - point: "At this scale it is microservices, so clients reach them through an API gateway and load balancer: authentication and authorization, routing, rate limiting, round robin."
+    kind: component
+    weight: core
+    teach:
+      - "Step four, the high-level design: only what the two main requirements need, putting data in and getting the top K out. On the left, the clients."
+      - "The scale says microservices, so an API gateway and a load balancer in front. The gateway authenticates and authorizes, routes each endpoint to its service and rate limits; the load balancer spreads requests round robin."
+    draw: [hld, hld-clients, hld-gateway, hld-clients-gateway, hld-duties]
+    check: What does the gateway do that the load balancer does not?
+    answer: "Authentication and authorization, routing each endpoint to its service, and rate limiting; the load balancer only spreads the requests."
+  - point: "Writes go to a score service that saves each score in a score DB; reads go to a ranking service that looks into the score DB for the top K."
+    kind: flow
+    weight: core
+    teach:
+      - "Inserting: the gateway routes a new view or score to a score service, which persists it in a score database."
+      - "Reading: a separate ranking service looks into the score database for the top scorers of a board and returns them. Two flows, two services, one database."
+    draw: [hld-score, hld-gateway-score, hld-db, hld-score-db, hld-ranking, hld-gateway-ranking, hld-ranking-db]
+    check: Walk me through a new view arriving, then someone asking for the top 10.
+    answer: "The view goes through the gateway to the score service, which writes it to the score DB; the top 10 request goes to the ranking service, which reads the highest scores from the score DB."
+  - point: "This meets the functional requirements but not the numbers: no single service writes a million events a second, and ranking billions of rows per query misses 100 ms."
+    kind: failure
+    weight: core
+    teach:
+      - "That is the whole high-level design. But hold it against the right-hand list: a million writes a second into one service and one database will not go."
+      - "And ranking billions of scores on every request will not answer in 100 milliseconds. Those two are the deep dive's job."
+    check: Which two non-functional numbers does this design miss?
+    answer: "The million writes a second, and the top K in 100 ms."
+asks:
+  - ids: [hld-gateway, hld-score, hld-ranking, hld-db]
+    beats: [1, 2]
+    question: "What's the smallest set of boxes that lets clients put scores in and get the top K out? Name them and I'll draw them."
+    hints:
+      - Something at the front for authentication and routing.
+      - One service per requirement, and somewhere the scores live.
+task:
+  prompt: "Draw the high-level design: clients, an API gateway and load balancer, a score service and a ranking service, and the score DB that one writes and the other reads."
+  expects: [1, 2]

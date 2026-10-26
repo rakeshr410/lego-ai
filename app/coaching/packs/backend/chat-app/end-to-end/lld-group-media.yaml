@@ -1,0 +1,115 @@
+# Chat app interview, low-level design, groups and media: as the video goes on, the chat server asks the "Group Svc" for members; a "Media Upload Svc" stores images and video in "S3" and returns the URL; a "Msg Search Svc" reads "Elastic Search", fed from "Chat DB"; a "CDN" in front of S3; phones keep history locally. Corrected: Elasticsearch indexes a CDC copy, it does not query the chat DB; WhatsApp deletes messages once delivered.
+id: backend/chat-app/end-to-end/lld-group-media
+title: "Low-level design: groups, media, search"
+source:
+  hash: "5de3f3596d1b"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/chat-app/end-to-end/lld-offline
+  assumes:
+    - "Online delivery goes through the registry to the receiver's chat server; offline messages go into the Redis stream, the chat DB and a push."
+    - "The group service returns a group's members."
+  carries:
+    - "A group message is sent to each member separately, online or offline, so each has their own receipts."
+    - "Media is uploaded over HTTP to a media upload service, stored in S3, and its URL sent as a message."
+    - "A message search service reads Elasticsearch, fed from the chat DB by CDC; a CDN serves media near the user."
+    - "Phones keep history locally; WhatsApp keeps messages on its servers only until delivered."
+  terms:
+    - term: fan-out
+      means: "Sending one message to many receivers, one copy each."
+    - term: CDC
+      means: "Change data capture: every change in a database streamed to another system."
+    - term: CDN
+      means: "Servers near the users that cache files such as images and videos."
+board:
+  keep: [title, nfr, nfr-scale, nfr-volume, nfr-cap, nfr-latency, nfr-reliable, conn, conn-http, v-http, conn-long, v-long, conn-sse, v-sse, conn-ws, v-ws, w-head, w-user-1, w-user-4, w-lb, w-lb-note, w-user-svc, w-userdb, w-group-svc, w-groupdb, w-ws-gw, w-ws-note, w-chat-1, w-chat-2, w-chat-3, w-hs, hs-1, hs-2, hs-3, hs-4, w-send, w-registry, w-reg-1, w-reg-2, w-ttl, w-u1-lb, w-u4-lb, w-lb-user, w-user-db, w-lb-group, w-group-db, w-u1-ws, w-u4-ws, w-ws-c1, w-ws-c2, w-ws-c3, w-c3-reg, w-ws-reg, w-c3-c2, o-stream, o-stream-note, o-ack-note, o-msg-svc, o-chatdb, o-schema-1, o-schema-2, o-schema-3, o-key, o-notif, o-push, o-push-note, o-c1-stream, o-c2-stream, o-c3-stream, o-stream-msg, o-msg-db, o-stream-notif, o-notif-push]
+  elements:
+    - { id: g-fanout, kind: note, label: "group: one copy per member, online or offline", at: [16, 99] }
+    - { id: g-media-svc, kind: box, label: Media upload service, at: [30, 44], size: [13, 3], tone: blue }
+    - { id: g-s3, kind: oval, label: "S3, images and video", at: [66, 38], size: [16, 3], tone: amber }
+    - { id: g-url-note, kind: note, label: upload returns the media URL, at: [66, 42] }
+    - { id: g-search-svc, kind: box, label: Message search service, at: [30, 52], size: [13, 3], tone: blue }
+    - { id: g-elastic, kind: box, label: Elasticsearch, at: [66, 52], size: [13, 3], tone: amber }
+    - { id: g-cdn, kind: oval, label: CDN, at: [4, 38], size: [10, 3], tone: green }
+    - { id: g-local, kind: note, label: history kept on the phone, at: [2, 62] }
+  arrows:
+    - { id: g-c1-group, from: w-chat-1, to: w-group-svc }
+    - { id: g-lb-media, from: w-lb, to: g-media-svc }
+    - { id: g-media-s3, from: g-media-svc, to: g-s3 }
+    - { id: g-lb-search, from: w-lb, to: g-search-svc }
+    - { id: g-search-elastic, from: g-search-svc, to: g-elastic }
+    - { id: g-db-elastic, from: o-chatdb, to: g-elastic, label: CDC }
+    - { id: g-u1-cdn, from: w-user-1, to: g-cdn }
+    - { id: g-cdn-s3, from: g-cdn, to: g-s3, label: on a miss }
+beats:
+  - point: "A group message: the chat server asks the group service for the members and sends each one their own copy, through the registry if online, through the stream if not, so each member has their own receipts."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Groups are easy once one-to-one works. The chat server gets a message for a group id, asks the group service for its members, and loops over them."
+      - "It looks like a broadcast, but WhatsApp shows who received and who read each group message, so every member gets their own copy: online members through the registry to their server, offline ones into the stream for storage and a push."
+    draw: [g-c1-group, g-fanout]
+    check: Why is a group message sent to each member separately?
+    answer: "Each member has their own delivered and read status, and some are online while others are offline."
+  - point: "Media is not pushed through the WebSocket: the app uploads it over HTTP to a media upload service, which stores it in S3 and returns its URL, and the URL is sent as a message with type image or video."
+    kind: mechanism
+    weight: core
+    teach:
+      - "A photo or a video is uploaded the way any website uploads a file: an HTTP call through the API gateway to a media upload service, which stores it in S3, never in a database."
+      - "The service returns the file's URL. The app then sends a normal message over the WebSocket whose content is that URL and whose type is image or video; that URL is what the chat DB stores."
+    draw: [g-media-svc, g-lb-media, g-s3, g-media-s3, g-url-note]
+    check: How does a photo get from one phone to another?
+    answer: "Uploaded over HTTP to the media upload service, stored in S3; its URL goes as a message over the WebSocket."
+    misconceptions:
+      - "Media bytes travel over the chat WebSocket -> they are uploaded over HTTP to S3; only the URL rides the socket."
+  - point: "Search and history go through a message search service backed by Elasticsearch, which keeps its own index of the messages, fed from the chat DB by CDC."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Searching a keyword across billions of messages needs a search engine: a message search service over Elasticsearch."
+      - "Elasticsearch does not query Cassandra; it holds its own index, kept in step with the chat DB by a CDC pipeline. The same service serves the lazy-loaded history pages."
+    draw: [g-search-svc, g-lb-search, g-elastic, g-search-elastic, g-db-elastic]
+    check: Where does Elasticsearch get the messages it searches?
+    answer: "From its own index, fed from the chat database by CDC."
+    misconceptions:
+      - "Elasticsearch queries the chat database on each search -> it searches its own index, which CDC keeps up to date."
+  - point: "A CDN in front of S3 serves images and videos from servers near the user; on a miss it fetches from S3 and keeps a copy."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Pulling every image from S3 is slow from far away. Put a CDN in front: the phone asks the CDN first, which serves the file from a server near the user."
+      - "On a miss, the CDN fetches from S3 once and keeps it for the next viewer."
+    draw: [g-cdn, g-u1-cdn, g-cdn-s3]
+    check: What happens when a photo is not yet on the CDN?
+    answer: "The CDN fetches it from S3, serves it, and keeps a copy for the next request."
+  - point: "Phones keep the history they have shown, so scrolling back rarely needs the server; WhatsApp keeps messages on its servers only until delivered, but undelivered ones still need the chat DB."
+    kind: decision
+    weight: supporting
+    teach:
+      - "WhatsApp says it does not keep your messages. They are end-to-end encrypted and kept on its servers only until delivered, then deleted; your history lives in the app's local storage."
+      - "That shrinks the chat DB a lot, but it cannot go: messages for users who are offline must wait somewhere."
+    draw: [g-local]
+    check: If phones keep history, why keep a chat database at all?
+    answer: "Messages for offline users must be stored until they are delivered."
+asks:
+  - ids: [g-media-svc, g-s3]
+    beats: [2]
+    question: "User 1 sends a video. How would it get stored and reach user 4?"
+    hints:
+      - Would you push a large file through the chat socket, or upload it?
+      - Where do large files live, and what goes in the message instead?
+  - ids: [g-elastic]
+    beats: [3]
+    question: "Users want to search their messages by keyword. What would you add?"
+    hints:
+      - Cassandra is not built for full-text search.
+      - A search engine needs its own copy of the data.
+  - ids: [g-cdn]
+    beats: [4]
+    question: "Everyone opens photos all day, often far from the S3 region. How do you make that fast?"
+    hints:
+      - Keep copies of the files near the users.
+      - Fall back to S3 when a copy is missing.

@@ -31,7 +31,7 @@ describe("lego-ai's own articles", () => {
     expect([...own.problems.keys()].sort()).toEqual([`articles/${first.system}/${first.slug}.yaml`, `articles/${first.system}/broken.yaml`, 'articles/no-such-system/a.yaml'].sort());
   });
 
-  it('reads app/articles/backend apart, so a backend article may share its system and slug with a frontend one or with content/', () => {
+  it('reads app/articles/backend apart, each folder a system of its own (none needed in content/), sharing slugs freely', () => {
     const dir = mkdtempSync(join(tmpdir(), 'articles-'));
     const write = (path: string, text: string) => {
       mkdirSync(join(dir, path, '..'), { recursive: true });
@@ -42,13 +42,15 @@ describe("lego-ai's own articles", () => {
     write('url-shortener/short-links-end-to-end.yaml', text);
     write('backend/url-shortener/short-links-end-to-end.yaml', text);
     write(`backend/url-shortener/${content.slug}.yaml`, text);
-    write('backend/no-such-system/a.yaml', 'title: A\n');
+    write('backend/ticket-booking/end-to-end.yaml', text);
+    write('backend/Bad_Name/a.yaml', 'title: A\n');
     const own = readOwnArticles(dir, catalog.systems, taken);
     expect(own.topics.map((t) => [t.file, t.backend ?? false])).toEqual([
       ['articles/url-shortener/short-links-end-to-end.yaml', false],
       [`articles/backend/url-shortener/${content.slug}.yaml`, true],
       ['articles/backend/url-shortener/short-links-end-to-end.yaml', true],
+      ['articles/backend/ticket-booking/end-to-end.yaml', true],
     ].sort((a, b) => (a[1] === b[1] ? String(a[0]).localeCompare(String(b[0])) : a[1] ? 1 : -1)));
-    expect([...own.problems.keys()]).toEqual(['articles/backend/no-such-system/a.yaml']);
+    expect([...own.problems.keys()]).toEqual(['articles/backend/Bad_Name']);
   });
 });

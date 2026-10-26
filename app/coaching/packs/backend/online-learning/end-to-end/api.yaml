@@ -1,0 +1,75 @@
+# Online learning interview, API: "3. API" beside the entities, the course endpoints with the progress ones under them and the enrollment ones to the right, as the video writes them. The video reads GET /me/entitlements as the instructor's list of students; this pack teaches it as the caller's own access check.
+id: backend/online-learning/end-to-end/api
+title: Course, progress and enrollment endpoints
+source:
+  hash: "fc15793a7ad9"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/online-learning/end-to-end/entities
+  assumes:
+    - "The core entities are the user or instructor, the course, the payment, the review and the progress."
+  carries:
+    - "Courses: GET /courses with query and filters, GET /courses/{courseId}, POST /instructor/courses, POST /instructor/courses/{courseId}/publish."
+    - "Progress: POST /progress/events, batched, and GET /me/courses/{courseId}/progress."
+    - "Enrollments: POST /courses/{courseId}/enroll for free courses, GET /me/entitlements?courseId= for access, GET /me/enrollments."
+  terms:
+    - term: endpoint
+      means: A method and a path the service answers, with what it takes and returns.
+board:
+  keep: [title, prompt-desc, prompt-actors, prompt-scope, fr, fr-account, fr-search, fr-enroll, fr-assess, fr-progress, fr-review, fr-onboard, fr-create, nfr, nfr-scale, nfr-avail, nfr-consistent, nfr-files, nfr-latency, entities, ent-user, ent-course, ent-payment, ent-review, ent-progress]
+  elements:
+    - { id: api, kind: region, label: "3. API", at: [25, 28], size: [54, 13], dashed: true }
+    - { id: api-courses-h, kind: note, label: "Courses API", at: [26, 30], in: api }
+    - { id: api-search, kind: note, label: "GET /courses?query=&category=&price=&rating=&level=&sort=", at: [26, 31], in: api }
+    - { id: api-course, kind: note, label: "GET /courses/{courseId}", at: [26, 32], in: api }
+    - { id: api-create, kind: note, label: "POST /instructor/courses", at: [26, 33], in: api }
+    - { id: api-publish, kind: note, label: "POST /instructor/courses/{courseId}/publish", at: [26, 34], in: api }
+    - { id: api-progress-h, kind: note, label: "Progress API", at: [26, 36], in: api }
+    - { id: api-progress-post, kind: note, label: "POST /progress/events, batched", at: [26, 37], in: api }
+    - { id: api-progress-get, kind: note, label: "GET /me/courses/{courseId}/progress", at: [26, 38], in: api }
+    - { id: api-enroll-h, kind: note, label: "Enrollments API", at: [56, 30], in: api }
+    - { id: api-enroll, kind: note, label: "POST /courses/{courseId}/enroll, free", at: [56, 31], in: api }
+    - { id: api-entitle, kind: note, label: "GET /me/entitlements?courseId=", at: [56, 32], in: api }
+    - { id: api-mine, kind: note, label: "GET /me/enrollments", at: [56, 33], in: api }
+  arrows: []
+beats:
+  - point: "The course endpoints: a GET search with the filters as query parameters, a GET for one course, a POST for an instructor to create a course, and a POST for a moderator to publish it."
+    kind: flow
+    weight: core
+    teach:
+      - "Step three, the API. In the real interview behind this, the interviewer said skip it, because the endpoints are plain; write them only if asked, quickly."
+      - "Courses first. Search is a read, so a GET on courses with the query, category, price, rating, level and sort as parameters. A GET on one course id returns its details, author and chapters."
+      - "An instructor creates a course with a POST, and once a moderator has checked it, a POST to publish makes it visible to everyone."
+    draw: [api, api-courses-h, api-search, api-course, api-create, api-publish]
+    check: Why is the course search a GET with query parameters?
+    answer: It only reads from the catalogue, and the text and filters are parameters of that read.
+  - point: "Progress has two endpoints: a POST of batched progress events from the player, and a GET of a student's progress in a course."
+    kind: flow
+    weight: core
+    teach:
+      - "Progress: the player posts progress events, batched, because it reports every few seconds while a video plays."
+      - "And a GET on my course's progress returns where the student is, to show completion and to resume."
+    draw: [api-progress-h, api-progress-post, api-progress-get]
+    check: Why are progress events sent in batches?
+    answer: The player reports every few seconds; batching sends many small events in one request.
+  - point: "Enrollments: a POST to enroll in a free course, a GET of the caller's entitlement to a course, and a GET of the caller's enrollments; a paid course goes through payment instead."
+    kind: flow
+    weight: core
+    teach:
+      - "Enrollments, on the right. A POST on a course's enroll path joins a free course; a paid course goes through the payment system first."
+      - "GET me slash entitlements with a course id answers whether the caller may open that course, and GET me slash enrollments lists the caller's courses. Me means the caller; an instructor's list of a course's students would be an instructor endpoint of its own."
+    draw: [api-enroll-h, api-enroll, api-entitle, api-mine]
+    check: What does GET /me/entitlements?courseId= answer?
+    answer: Whether the calling student has access to that course.
+    misconceptions:
+      - "The entitlements endpoint lists every student in a course -> /me is the caller; it is the student's own access check."
+asks:
+  - ids: [api-search, api-progress-post, api-enroll]
+    beats: [1, 2, 3]
+    question: "If the interviewer wants them, what endpoints would you write? One for searching courses, one for progress, one for enrolling: give me the method and path."
+    hints:
+      - Searching only reads; what goes in the query string?
+      - Progress arrives from the player many times; how would you send it?

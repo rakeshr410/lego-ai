@@ -1,0 +1,32 @@
+slug: backend-ride-sharing
+title: "The ride-sharing interview"
+summary: "A backend design interview for a ride-hailing app like Uber or Ola, run step by step on one whiteboard: requirements with numbers, entities, rider and driver endpoints, a high-level design, then a deep dive into the fare, driver matching under a lock, live locations, and the trip's data."
+outline: "The ride-sharing lessons follow the order and the drawings of InterviewWithBunny's System Design 11, Design Ride Sharing Application like Uber, Ola, Rapido, Lyft (youtube.com/watch?v=twUz_hWw2T8), section by section; no text is taken from it, and its factual slips are corrected in the article."
+lessons:
+  - slug: ride-sharing
+    title: "The ride-sharing interview: the problem, requirements, entities and API"
+    summary: "The problem at the top of the board, functional and non-functional requirements side by side, the five entities, and the rider's and driver's endpoints."
+    parts:
+      - { title: "The problem, then two lists", minutes: 10, packs: [backend/ride-sharing/end-to-end/problem-statement, backend/ride-sharing/end-to-end/requirements] }
+      - { title: "Entities, then the API", minutes: 8, packs: [backend/ride-sharing/end-to-end/entities, backend/ride-sharing/end-to-end/api] }
+  - slug: ride-sharing-design
+    title: "The ride-sharing interview: high-level design, then the fare"
+    summary: "One gateway and a column of services with their databases; then the deep dive opens the ride service: rates per vehicle and a surge multiplier."
+    parts:
+      - { title: "One gateway, a column of services", minutes: 9, packs: [backend/ride-sharing/end-to-end/high-level-design] }
+      - { title: "The fare, and surge", minutes: 7, packs: [backend/ride-sharing/end-to-end/lld-fare] }
+  - slug: ride-sharing-matching
+    title: "The ride-sharing interview: driver matching and the lock"
+    summary: "Proximity search over the drivers, the race that gives one driver two riders, and a ZooKeeper lock of ephemeral znodes that prevents it."
+    parts:
+      - { title: "Matching, then the ZooKeeper lock", minutes: 14, packs: [backend/ride-sharing/end-to-end/lld-matching] }
+  - slug: ride-sharing-location
+    title: "The ride-sharing interview: live locations"
+    summary: "A WebSocket gateway and a location update service writing active drivers into Redis, and the matching loop over the top five drivers inside one minute."
+    parts:
+      - { title: "WebSockets, Redis, and the top five", minutes: 14, packs: [backend/ride-sharing/end-to-end/lld-location] }
+  - slug: ride-sharing-trip-data
+    title: "The ride-sharing interview: ratings, payment and the trip's records"
+    summary: "Rating and payment with their tables, the estimated fare and ride tables, a Kafka trip stream, a rating aggregator, and the requirements read back."
+    parts:
+      - { title: "The trip's data, and the final design", minutes: 14, packs: [backend/ride-sharing/end-to-end/lld-trip-data] }

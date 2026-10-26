@@ -1,0 +1,47 @@
+# Online learning interview, core entities: "2. Core entities" under the functional list, five lines, as in the video.
+id: backend/online-learning/end-to-end/entities
+title: Five entities
+source:
+  hash: "5474e83f016a"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/online-learning/end-to-end/requirements
+  assumes:
+    - "Functional: accounts, search, enrollment, quizzes and assignments, progress, reviews; instructor onboarding and course creation."
+  carries:
+    - "The core entities are the user or instructor, the course, the payment, the review and the progress."
+  terms:
+    - term: core entity
+      means: A noun the system stores and moves.
+board:
+  keep: [title, prompt-desc, prompt-actors, prompt-scope, fr, fr-account, fr-search, fr-enroll, fr-assess, fr-progress, fr-review, fr-onboard, fr-create, nfr, nfr-scale, nfr-avail, nfr-consistent, nfr-files, nfr-latency]
+  elements:
+    - { id: entities, kind: region, label: "2. Core entities", at: [2, 28], size: [20, 15], dashed: true }
+    - { id: ent-user, kind: note, label: "user or instructor", at: [3, 30], in: entities }
+    - { id: ent-course, kind: note, label: course, at: [3, 32], in: entities }
+    - { id: ent-payment, kind: note, label: payment, at: [3, 34], in: entities }
+    - { id: ent-review, kind: note, label: review, at: [3, 36], in: entities }
+    - { id: ent-progress, kind: note, label: progress, at: [3, 38], in: entities }
+  arrows: []
+  lists:
+    - { id: entity-list, in: entities, at: [3, 30], step: 2, slots: 6, width: 16, items: [ent-user, ent-course, ent-payment, ent-review, ent-progress] }
+beats:
+  - point: "Reading the nouns off the requirements gives five core entities: the user or instructor, the course, the payment, the review and the progress."
+    kind: component
+    weight: core
+    teach:
+      - "Step two, the core entities. With the requirements written well, read the nouns off them: the user, or the instructor; the course."
+      - "The payment for a paid course, the review, and the student's progress. There will be more once we design, but these five are enough to start."
+    draw: [entities, ent-user, ent-course, ent-payment, ent-review, ent-progress]
+    check: Where did these five entities come from?
+    answer: From the nouns in the functional requirements; more can appear later in the design.
+asks:
+  - list: entity-list
+    beats: [1]
+    question: "Reading our requirements, what are the core entities, the things this system keeps?"
+    hints:
+      - Who uses it, and what do they buy and watch?
+      - What gets left on a course, and what tracks how far a student got?

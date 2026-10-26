@@ -1,0 +1,166 @@
+# E-commerce interview, low-level design: the inventory cache, and finishing. As in the video's last minutes: the order side drawn again with the lock, inventory and Kafka from before; a Redis cache in front of the inventory DB, the stale-cache problem, write-through or CDC to fix it, the inventory DB feeding the product DB's qty by CDC, and the order status service reading the order DB. Corrected: the sale is decided by the database and the lock, never by the cache.
+id: backend/e-commerce/end-to-end/lld-inventory-cache
+title: "Low-level design: the inventory cache, and finishing"
+source:
+  hash: "7b1610e3b03c"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/e-commerce/end-to-end/lld-limited-stock
+  assumes:
+    - "Checkout takes a Redis lock per product, checks stock with the inventory service, pays, and publishes one event to Kafka."
+    - "Order, inventory and notification consumers apply the event; the inventory DB is the only source of truth."
+  carries:
+    - "A Redis cache in front of the inventory DB absorbs the stock reads; write-through or CDC keeps it fresh, and the sale is still decided in the DB."
+    - "The product DB's qty, shown to shoppers, is copied from the inventory DB by CDC."
+    - "The order status service reads the order DB by orderId; then the non-functional list is read back against the board."
+  terms:
+    - term: write-through
+      means: The writer updates the database and the cache together, so the cache never lags a write it made.
+    - term: single point of failure
+      means: One component whose failure stops the whole system.
+board:
+  keep: [title, prompt-desc, prompt-scope, nfr, nfr-scale, nfr-available, nfr-consistent, nfr-latency]
+  elements:
+    - { id: lld-final, kind: region, label: "5. Low-level design: inventory cache, final design", at: [2, 24], size: [70, 41] }
+    - { id: f-lock, kind: oval, label: Redis lock, at: [4, 26], size: [13, 3], tone: red, in: lld-final }
+    - { id: f-checkout, kind: box, label: Checkout service, at: [4, 32], size: [13, 3], tone: blue, in: lld-final }
+    - { id: f-inventory, kind: box, label: "Inventory service, cache first", at: [25, 26], size: [13, 10], tone: blue, in: lld-final }
+    - { id: f-inventorydb, kind: oval, label: "Inventory DB, the truth", at: [43, 33], size: [14, 4], tone: amber, in: lld-final }
+    - { id: f-payment, kind: box, label: Payment service, at: [4, 40], size: [13, 3], tone: blue, in: lld-final }
+    - { id: f-paymentdb, kind: oval, label: Payment DB, at: [4, 46], size: [13, 3], tone: amber, in: lld-final }
+    - { id: f-hot, kind: note, label: "every order hits the inventory DB, a single point of failure", at: [4, 56], in: lld-final }
+    - { id: f-kafka, kind: box, label: Kafka, at: [24, 40], size: [12, 14], tone: grey, in: lld-final }
+    - { id: f-inv-cons, kind: box, label: Inventory consumer, at: [43, 40], size: [14, 3], in: lld-final }
+    - { id: f-order-cons, kind: box, label: Order consumer, at: [43, 45], size: [14, 3], in: lld-final }
+    - { id: f-notify, kind: box, label: Notification service, at: [43, 50], size: [14, 3], in: lld-final }
+    - { id: f-orderdb, kind: oval, label: Order DB, at: [62, 45], size: [10, 3], tone: amber, in: lld-final }
+    - { id: f-cache, kind: oval, label: "Redis cache, stock", at: [43, 26], size: [12, 3], tone: green, in: lld-final }
+    - { id: f-stale, kind: note, label: "cache says 1, DB says 0 after a sale", at: [4, 57], in: lld-final }
+    - { id: f-fresh, kind: note, label: "write-through, or CDC, keeps the cache fresh", at: [4, 58], in: lld-final }
+    - { id: f-decide, kind: note, label: "the sale is decided in the DB and the lock, not the cache", at: [4, 59], in: lld-final }
+    - { id: f-productdb, kind: oval, label: Product DB, at: [62, 33], size: [10, 4], tone: amber, in: lld-final }
+    - { id: f-qty, kind: note, label: "product qty copied from inventory by CDC", at: [40, 56], in: lld-final }
+    - { id: f-status, kind: box, label: Order status service, at: [61, 51], size: [11, 3], tone: blue, in: lld-final }
+    - { id: f-status-note, kind: note, label: order status reads the order DB by orderId, at: [40, 57], in: lld-final }
+    - { id: f-back-1, kind: note, label: "latency, Elasticsearch and the CDN, under 200 ms", at: [4, 61], in: lld-final }
+    - { id: f-back-2, kind: note, label: "consistency, one truth for stock, one event per order", at: [4, 62], in: lld-final }
+  arrows:
+    - { id: f-ck-lock, from: f-checkout, to: f-lock }
+    - { id: f-ck-inv, from: f-checkout, to: f-inventory, label: check stock }
+    - { id: f-inv-db, from: f-inventory, to: f-inventorydb }
+    - { id: f-ck-pay, from: f-checkout, to: f-payment, both: true }
+    - { id: f-pay-db, from: f-payment, to: f-paymentdb }
+    - { id: f-ck-kafka, from: f-checkout, to: f-kafka, label: event }
+    - { id: f-k-inv, from: f-kafka, to: f-inv-cons }
+    - { id: f-ic-db, from: f-inv-cons, to: f-inventorydb }
+    - { id: f-k-order, from: f-kafka, to: f-order-cons }
+    - { id: f-oc-db, from: f-order-cons, to: f-orderdb }
+    - { id: f-k-notify, from: f-kafka, to: f-notify }
+    - { id: f-inv-cache, from: f-inventory, to: f-cache }
+    - { id: f-cdc-cache, from: f-inventorydb, to: f-cache, label: CDC }
+    - { id: f-cdc-product, from: f-inventorydb, to: f-productdb, label: CDC }
+    - { id: f-status-db, from: f-status, to: f-orderdb }
+beats:
+  - point: "The order side so far: checkout takes the lock, checks stock, pays and records the payment; every order reads the one inventory DB, a hot spot and a single point of failure."
+    kind: failure
+    weight: core
+    teach:
+      - "Every requirement is met; now make it resilient. Here is the order side: checkout takes the Redis lock, asks the inventory service, pays through the payment service, which records the payment."
+      - "Look at the inventory DB, the backbone of the shop. All 10 orders a second, far more in a sale, read it. Too many hits on one database, and if it goes down nobody can check stock: a single point of failure."
+    draw: [lld-final, f-lock, f-checkout, f-ck-lock, f-inventory, f-ck-inv, f-inventorydb, f-inv-db, f-payment, f-ck-pay, f-paymentdb, f-pay-db, f-hot]
+    check: Why is the inventory DB a single point of failure?
+    answer: Every order's stock check reads it, so if it is overloaded or down no order can go through.
+  - point: "After payment, checkout publishes the event to Kafka, and the inventory consumer, the order consumer and the notification service apply it, as designed before."
+    kind: flow
+    weight: supporting
+    teach:
+      - "And from before: checkout publishes one event to Kafka, the inventory consumer reduces the stock, the order consumer writes the order DB, and the notification service tells the shopper."
+    draw: [f-kafka, f-ck-kafka, f-inv-cons, f-k-inv, f-ic-db, f-order-cons, f-k-order, f-orderdb, f-oc-db, f-notify, f-k-notify]
+    check: Which consumer reduces the stock after a sale?
+    answer: The inventory consumer, through the inventory service, idempotent by order id.
+  - point: "Put a Redis cache in front of the inventory DB: the inventory service reads stock from the cache first and goes to the database only on a miss."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Add a caching layer, a Redis cache in front of the inventory DB. The inventory service checks the cache first for how many are left and goes to the database only on a miss."
+      - "Most stock reads now come from memory, and the database sees far fewer calls. Run the database with replicas too, so losing one machine does not stop the shop."
+    draw: [f-cache, f-inv-cache]
+    check: How does the cache take load off the inventory DB?
+    answer: Stock reads are answered from Redis first; only misses reach the database.
+  - point: "The cache can go stale: one iPhone is cached as 1, it sells, the database says 0 and the cache still says 1. So the cache serves reads; the sale is decided in the database and the lock."
+    kind: failure
+    weight: core
+    teach:
+      - "But now there are two copies. One iPhone, cached as 1. It sells, the inventory consumer sets the database to 0, and the cache still says 1. Not consistent."
+      - "So use the cache to show and pre-check stock, but let the database's conditional update and the lock decide the sale; a stale cache cannot fool those."
+    draw: [f-stale, f-decide]
+    check: The cache says one left, the database says zero. Can the shop sell it?
+    answer: No; the sale is decided by the database's conditional update and the lock, which see zero.
+    misconceptions:
+      - "With the cache in place the checkout can trust it for the sale -> a cache may lag; the decision that must be right is made against the source of truth."
+  - point: "Keep the cache fresh by write-through, the inventory service updating database and cache together, or by CDC from the database's change log."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Two ways to keep it fresh. Write-through: whenever the inventory service changes the stock it updates the database and the cache together."
+      - "Or CDC again: the inventory DB's change log updates the cache in near real time. Either keeps the window of staleness tiny."
+    draw: [f-cdc-cache, f-fresh]
+    check: What does write-through mean here?
+    answer: The inventory service writes every stock change to both the database and the cache.
+  - point: "The qty shown on the product page lives in the product DB and never changes as stock sells, so it is copied from the inventory DB by CDC."
+    kind: mechanism
+    weight: core
+    teach:
+      - "One more stale copy: the qty field in the product DB, which the product page shows. Sales change the inventory DB, not Mongo."
+      - "Feed it by CDC from the inventory DB, or a cron job or a Kafka consumer, so the shopper sees a count seconds behind the truth, sold or returned."
+    draw: [f-productdb, f-cdc-product, f-qty]
+    check: Which store is the truth for stock, and which shows it to shoppers?
+    answer: The inventory DB is the truth; the product DB holds a copy for display, refreshed by CDC.
+  - point: "The order status service looks the order up by orderId in the order DB and returns its status."
+    kind: flow
+    weight: supporting
+    teach:
+      - "Last service, the simplest: order status. It finds the order by its id in the order DB and returns the status."
+    draw: [f-status, f-status-db, f-status-note]
+    check: Where does the order status service read from?
+    answer: The order DB, by order id.
+  - point: "Read the non-functional list back: services scaled on their own for scale, Elasticsearch and the CDN for available, 200 ms search, one source of truth, a lock and one event per order for consistency."
+    kind: rule
+    weight: core
+    teach:
+      - "Close by reading the requirements on the right against the board. Scale: services behind the gateway, each scaled on its own. Availability and latency for search: Elasticsearch and the CDN, inside 200 milliseconds."
+      - "Consistency for money and stock: one source of truth for stock, a lock or atomic reservation per product, and one event per checkout that every consumer applies once."
+    draw: [f-back-1, f-back-2]
+    check: Which parts of the design give consistency for payment and stock?
+    answer: The inventory DB as the one source of truth, the lock or atomic reservation per product, and one Kafka event per checkout applied idempotently.
+asks:
+  - ids: [f-cache]
+    beats: [3]
+    question: "Every order reads the inventory DB. How would you take that load off it?"
+    hints:
+      - Most reads ask the same question, how many are left.
+      - Something in memory, in front of the database.
+  - ids: [f-fresh]
+    beats: [5]
+    question: "The cache now lags the database after a sale. How would you keep it fresh?"
+    hints:
+      - Who changes the stock? They could update both.
+      - Or follow the database's own change log.
+  - ids: [f-productdb]
+    beats: [6]
+    question: "The product page shows a quantity from the product DB. How does it learn that stock sold?"
+    hints:
+      - The truth is in the inventory DB.
+      - We used the same trick for Elasticsearch.
+  - ids: [f-status]
+    beats: [7]
+    question: "Last requirement, order status. What reads it, and from where?"
+    hints:
+      - The order consumer already writes every order.
+      - Look it up by its id.
+task:
+  prompt: "Draw the final order side: checkout with the Redis lock, the inventory service with its Redis cache in front of the inventory DB, payment, Kafka with its order, inventory and notification consumers, the order DB and order status service, and CDC from the inventory DB to the cache and the product DB."
+  expects: [1, 2, 3, 5, 6]

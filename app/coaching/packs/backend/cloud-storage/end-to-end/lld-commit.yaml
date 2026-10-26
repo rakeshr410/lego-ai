@@ -1,0 +1,81 @@
+# Cloud storage interview, deep dive, steps 5 and 6: the commit, every chunk validated against the hashes in Redis, then the file saved through the metadata service and an event published to Kafka; the metadata service, its database and Kafka added to the drawing. The video draws the event from the uploader; here the metadata service publishes it after the save, the arrow the board can draw straight.
+id: backend/cloud-storage/end-to-end/lld-commit
+title: "Steps 5 and 6: commit, then save and publish"
+source:
+  hash: "39b557a101be"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/cloud-storage/end-to-end/lld-chunks
+  assumes:
+    - "Redis holds the expected hash of each chunk and a bitmap of chunks received."
+    - "Chunks go straight to S3 through signed URLs."
+  carries:
+    - "Step 5: the client commits once every chunk is up."
+    - "Every stored chunk's SHA-256 must equal the hash in Redis; a mismatch or a missing chunk is re-uploaded."
+    - "Step 6: the file, a new version and its chunk list are saved through the metadata service, then a file-changed event goes to Kafka."
+  terms:
+    - term: "commit"
+      means: "The call that says every chunk of an upload is in; the file exists only after it."
+    - term: "Kafka"
+      means: "A durable log of events that services consume, here file-changed events."
+board:
+  keep: [title, desc, fr, fr-account, fr-upload, fr-sync, fr-share, fr-folders, fr-quota, fr-out, nfr, nfr-scale, nfr-cap, nfr-large, nfr-latency, nfr-durable, hld, hld-phone, hld-laptop, hld-tablet, hld-clients, hld-gateway, hld-user-svc, hld-uploader, hld-meta-svc, hld-user-db, hld-blob, hld-meta-db, hld-phone-gw, hld-laptop-gw, hld-tablet-gw, hld-gw-user, hld-gw-uploader, hld-gw-meta, hld-user-db-arrow, hld-blob-arrow, hld-meta-db-arrow, lld-head, lc-client, lc-chunker, lc-upload-mgr, lc-index, lk-gateway, lk-user-svc, lk-users-db, lk-users-1, lk-users-2, lk-client-gw, lk-gw-user, lk-user-db, lk-uploader, s1, s1-post, s1-req-1, s1-req-2, s1-req-3, s1-resp-1, s1-resp-2, s1-resp-3, s1-resp-4, s1-quota, s1-resume-1, s1-resume-2, s1-resume-3, s1-resume-4, lk-gw-uploader, lk-quota, s2, s2-chunk, s3-post, s3-body, s3-sign, s3-resp, s4-upload, lk-s3, lk-redis, lk-redis-1, lk-redis-2, lk-sign, lk-state]
+  elements:
+    - { id: "s5", kind: "region", label: "Steps 5 and 6, commit, save, publish", at: [80, 54], size: [32, 9] }
+    - { id: "s5-commit", kind: "note", label: "Step 5, POST /api/v1/files/uploads/upload123/commit", at: [81, 56], in: "s5" }
+    - { id: "s5-validate", kind: "note", label: "validate, SHA-256 of each stored chunk matches Redis", at: [81, 57], in: "s5" }
+    - { id: "s6-save", kind: "note", label: "Step 6, save file, version and chunks for good", at: [81, 59], in: "s5" }
+    - { id: "s6-publish", kind: "note", label: "then publish file changed to Kafka", at: [81, 60], in: "s5" }
+    - { id: "lk-meta-svc", kind: "box", label: "Metadata service", at: [37, 61], size: [13, 3], tone: "blue" }
+    - { id: "lk-meta-db", kind: "oval", label: "Metadata Postgres", at: [54, 61], size: [11, 3], tone: "amber" }
+    - { id: "lk-kafka", kind: "box", label: "Kafka", at: [54, 67], size: [11, 3], tone: "grey" }
+  arrows:
+    - { id: "lk-gw-meta", from: "lk-gateway", to: "lk-meta-svc" }
+    - { id: "lk-up-meta", from: "lk-uploader", to: "lk-meta-svc" }
+    - { id: "lk-meta-db-arrow", from: "lk-meta-svc", to: "lk-meta-db" }
+    - { id: "lk-publish", from: "lk-meta-svc", to: "lk-kafka" }
+beats:
+  - point: "Step 5: once every chunk is up, the client sends the commit; then the server checks each stored chunk's SHA-256 against the hash Redis holds, and has any bad or missing chunk sent again."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Step five, the commit: a POST to the upload's commit, saying every chunk is up. That ends the client's part."
+      - "Then validation. A chunk can be corrupted or cut short on the way. For each chunk in S3 the server hashes the stored bytes and compares with the hash the client sent, which Redis has. Equal means intact. A mismatch, or a chunk missing from the bitmap, goes back to the client to upload again, and the retry count goes up."
+    draw: [s5, s5-commit, s5-validate]
+    check: "How does the server know chunk 3 arrived intact?"
+    answer: "It hashes the stored chunk with SHA-256 and compares it with the hash the client computed and sent, which Redis holds."
+  - point: "Step 6: when every chunk checks out, the uploader has the metadata service save the file, a new version and its chunk list in the metadata DB; only then does the file exist."
+    kind: flow
+    weight: core
+    teach:
+      - "Step six: all good, so the temporary record in Redis becomes permanent. The uploader calls the metadata service, which saves the file row, a new file version, and the version's chunk list with each chunk's location and checksum."
+      - "Until this moment the user does not see the file. Writing it earlier would show a file that cannot be read."
+    draw: [lk-meta-svc, lk-gw-meta, lk-up-meta, lk-meta-db, lk-meta-db-arrow, s6-save]
+    check: "Why is the file written to the metadata DB only after commit and validation?"
+    answer: "Before that it is incomplete or unverified; recording it earlier would show users a file they cannot read."
+  - point: "After the save, a file-changed event goes to Kafka, so the other devices can be told without slowing the upload."
+    kind: decision
+    weight: core
+    teach:
+      - "Last, the other devices must hear of it. Rather than call them now, publish a file-changed event to Kafka once the save is done."
+      - "The video draws this arrow from the uploader; either way the event goes out after the file is saved, so no device hears of a file that is not there."
+    draw: [lk-kafka, lk-publish, s6-publish]
+    check: "Why publish an event to Kafka instead of notifying the devices inside the upload call?"
+    answer: "It decouples the upload from sync: the upload finishes fast, and the event is kept until the sync side consumes it."
+asks:
+  - ids: [s5-validate]
+    frame: [s5, s5-commit]
+    beats: [1]
+    question: "The client says all chunks are up. How can the server be sure each chunk arrived intact?"
+    hints:
+      - "The client computed something for every chunk in step 2."
+      - "Where did the server keep it?"
+  - ids: [lk-kafka]
+    beats: [3]
+    question: "The file is saved. How would you let the user's other devices know, without slowing the upload?"
+    hints:
+      - "Something asynchronous, that keeps the message until it is read."
+      - "An event, not a direct call."

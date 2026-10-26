@@ -1,0 +1,37 @@
+slug: backend-online-learning
+title: "The online learning platform interview"
+summary: "A backend design interview for a course marketplace like Udemy or Coursera, run step by step on one whiteboard: requirements with numbers, entities, the API, a high-level design for students and instructors, then a deep dive into search, uploads and moderation, paid enrollment, playback and progress."
+outline: "The online learning lessons follow the order and the drawings of InterviewWithBunny's System Design 19, Design of Online Learning Platform (youtube.com/watch?v=PUf-Q7lNtv8), section by section; no text is taken from it, and its factual slips are corrected in the article."
+lessons:
+  - slug: online-learning
+    title: "The online learning interview: the problem, requirements, entities and API"
+    summary: "The problem and its three actors at the top of the board, functional and non-functional requirements side by side, five entities, and the course, progress and enrollment endpoints."
+    parts:
+      - { title: "The problem, then two lists", minutes: 10, packs: [backend/online-learning/end-to-end/problem-statement, backend/online-learning/end-to-end/requirements] }
+      - { title: "Entities, then the API", minutes: 6, packs: [backend/online-learning/end-to-end/entities, backend/online-learning/end-to-end/api] }
+  - slug: online-learning-design
+    title: "The online learning interview: high-level design, then search"
+    summary: "Students and instructors each behind a gateway, one service per requirement with its store; then the deep dive opens the user service and puts Elasticsearch, fed by an aggregator pipeline, behind course search."
+    parts:
+      - { title: "A student side and an instructor side", minutes: 12, packs: [backend/online-learning/end-to-end/high-level-design] }
+      - { title: "Users and course search", minutes: 7, packs: [backend/online-learning/end-to-end/lld-search] }
+  - slug: online-learning-instructors
+    title: "The online learning interview: instructors, uploads and moderation"
+    summary: "Instructor sign-up and identity checks, courses and quizzes through the catalog, videos straight to S3 by signed URL, and a moderator who publishes."
+    parts:
+      - { title: "Getting a course online", minutes: 14, packs: [backend/online-learning/end-to-end/lld-instructor] }
+  - slug: online-learning-enrollment
+    title: "The online learning interview: enrollment, payment and the outbox"
+    summary: "Free enrollment, the payment gateway, one atomic write of the payment and an outbox row, and Kafka consumers that send the receipt and grant access."
+    parts:
+      - { title: "A payment becomes access", minutes: 12, packs: [backend/online-learning/end-to-end/lld-enrollment] }
+  - slug: online-learning-playback
+    title: "The online learning interview: playback, the CDN and assignments"
+    summary: "Playback checks access and returns a manifest, a CDN serves chunks near the student, and an assignment service saves answers."
+    parts:
+      - { title: "Opening a video", minutes: 8, packs: [backend/online-learning/end-to-end/lld-playback] }
+  - slug: online-learning-progress
+    title: "The online learning interview: reviews, progress, and the enterprise follow-up"
+    summary: "Reviews into the course DB, progress events through Kafka to a consumer that keeps only the latest position, and the interviewer's enterprise follow-up."
+    parts:
+      - { title: "Progress, then the follow-up", minutes: 12, packs: [backend/online-learning/end-to-end/lld-progress] }

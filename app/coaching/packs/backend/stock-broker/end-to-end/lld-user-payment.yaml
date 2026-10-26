@@ -1,0 +1,91 @@
+# Stock broker interview, deep dive into the user and payment services: under "5. Deep dive", the KYC provider above the user service with the user DB and its columns beside it, and the payment gateway above the payment service with the payment DB and its columns, as the video draws them.
+id: backend/stock-broker/end-to-end/lld-user-payment
+title: "Deep dive: users and payments"
+source:
+  hash: "40cd58711d00"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/stock-broker/end-to-end/high-level-design
+  assumes:
+    - "The user service uses a third-party KYC provider; the payment service uses a payment gateway."
+  carries:
+    - "User table in Postgres: userId, email, phone, name, isKycVerified, metadata; documents stay with the KYC provider, or are stored encrypted."
+    - "Payment table in Postgres: transactionId, userId, amount, currency, timestamp; the gateway answers success or failure."
+  terms:
+    - term: payment gateway
+      means: "A third party that moves money with the banks and reports success or failure."
+board:
+  keep: [title, prompt-desc, prompt-example, fr, fr-kyc, fr-prices, fr-orders, fr-watch, fr-dash, nfr, nfr-scale, nfr-cap, nfr-view, nfr-latency, nfr-region, hld, h-clients, h-gw, h-rr, h-kyc, h-user, h-userdb, h-price, h-exchange, h-watch, h-watchdb, h-order, h-validator, h-orderdb, h-portfolio, h-payment, h-paydb, h-paygw, h-clients-gw, h-gw-user, h-user-kyc, h-user-db, h-gw-price, h-price-exchange, h-gw-watch, h-watch-db, h-gw-order, h-order-validator, h-validator-exchange, h-order-db, h-gw-portfolio, h-portfolio-db, h-gw-payment, h-payment-db, h-payment-gw]
+  elements:
+    - { id: lld-up, kind: region, label: "5. Deep dive: user and payment services", at: [2, 64], size: [70, 19] }
+    - { id: lu-kyc, kind: box, label: Third-party KYC, at: [4, 67], size: [12, 3], tone: grey, in: lld-up }
+    - { id: lu-user, kind: box, label: "User service, onboarding", at: [4, 73], size: [12, 3], in: lld-up }
+    - { id: lu-userdb, kind: oval, label: "User DB, Postgres", at: [20, 73], size: [12, 3], tone: amber, in: lld-up }
+    - { id: lu-schema-1, kind: note, label: "user: userId, email, phone, name,", at: [20, 77], in: lld-up }
+    - { id: lu-schema-2, kind: note, label: "isKycVerified, metadata", at: [22, 78], in: lld-up }
+    - { id: lu-docs, kind: note, label: "documents stay with the provider, or encrypted", at: [4, 80], in: lld-up }
+    - { id: lp-gw, kind: box, label: Payment gateway to banks, at: [40, 67], size: [12, 3], tone: grey, in: lld-up }
+    - { id: lp-svc, kind: box, label: "Payment service, wallet", at: [40, 73], size: [12, 3], in: lld-up }
+    - { id: lp-db, kind: oval, label: "Payment DB, Postgres", at: [56, 73], size: [13, 3], tone: amber, in: lld-up }
+    - { id: lp-schema-1, kind: note, label: "payment: transactionId, userId,", at: [52, 77], in: lld-up }
+    - { id: lp-schema-2, kind: note, label: "amount, currency, timestamp", at: [54, 78], in: lld-up }
+    - { id: lp-ack, kind: note, label: "success or failure comes back, then saved", at: [40, 80], in: lld-up }
+  arrows:
+    - { id: lu-user-kyc, from: lu-user, to: lu-kyc }
+    - { id: lu-user-db, from: lu-user, to: lu-userdb }
+    - { id: lp-svc-gw, from: lp-svc, to: lp-gw, both: true }
+    - { id: lp-svc-db, from: lp-svc, to: lp-db }
+beats:
+  - point: "Step five opens the simple services first: the user service has little logic, since a third party does KYC, so what matters is its table, in Postgres."
+    kind: component
+    weight: core
+    teach:
+      - "Step five, the deep dive. Take the design above and open each service, the simple ones first. The user service onboards users; KYC is done by the third party, so there is little logic."
+      - "What matters is what it stores. User data is plain metadata read by key, so a relational database, Postgres or MySQL."
+    draw: [lld-up, lu-kyc, lu-user, lu-user-kyc, lu-userdb, lu-user-db]
+    check: Why is the user service simple?
+    answer: KYC is done by the third-party provider; the service mostly stores user metadata.
+  - point: "The user table keeps userId, email, phone, name, metadata and an is-KYC-verified flag; the PAN, Aadhaar and signature stay with the provider, or are stored encrypted if they must be kept."
+    kind: decision
+    weight: core
+    teach:
+      - "The columns: user ID, email, phone, name, metadata, and one flag, is KYC verified, which the provider's true or false answer sets."
+      - "The PAN card, the Aadhaar number, the signature: leave them with the provider. If you must keep one, store it encrypted, never as plain text."
+    draw: [lu-schema-1, lu-schema-2, lu-docs]
+    check: What does the broker keep from the KYC check?
+    answer: A verified flag; the documents stay with the provider, or are stored encrypted.
+    misconceptions:
+      - "Store the PAN and Aadhaar in the user table -> they stay with the provider, or are encrypted if they must be kept."
+  - point: "The payment service sends each deposit or withdrawal through the payment gateway, which talks to the banks and answers success or failure, and records the result in a payment DB, Postgres because money must be consistent."
+    kind: flow
+    weight: core
+    teach:
+      - "Payments: the service sends the transaction to the payment gateway, which talks to the banks and answers success or failure."
+      - "Either way the result is written to the payment DB. It is money, so it must be consistent: MySQL or Postgres."
+    draw: [lp-gw, lp-svc, lp-svc-gw, lp-db, lp-svc-db, lp-ack]
+    check: Why a relational database for payments?
+    answer: Money needs consistency and transactions, which Postgres or MySQL give.
+  - point: "The payment table: transactionId, userId, amount, currency, timestamp and metadata."
+    kind: decision
+    weight: supporting
+    teach:
+      - "The columns: transaction ID, user ID, the amount, the currency, the timestamp, and metadata such as the status."
+    draw: [lp-schema-1, lp-schema-2]
+    check: Which column ties a payment to its user?
+    answer: The user ID.
+asks:
+  - ids: [lu-schema-1, lu-schema-2]
+    beats: [2]
+    question: "What would you store for each user? And what would you rather not store?"
+    hints:
+      - Think of the sign-up form.
+      - What does the KYC provider send back?
+  - ids: [lp-schema-1, lp-schema-2]
+    beats: [4]
+    question: "What does a payment row need?"
+    hints:
+      - Who paid, how much, in what?
+      - And something to find the transaction again with the gateway.

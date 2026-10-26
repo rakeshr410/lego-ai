@@ -1,0 +1,89 @@
+# Payment gateway interview, deep dive 5: events and reconciliation. As in the video, a Kafka broker beside the collector callback service with its two topics written under it, the orchestrator consuming it, and a reconciliation service writing a ledger table into the payment processor DB; the whole deep dive is then read back against the non-functional list.
+id: backend/payment-gateway/end-to-end/lld-reconciliation
+title: "Deep dive, 5: events and reconciliation"
+source:
+  hash: "210b42ee95e2"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/payment-gateway/end-to-end/lld-orchestrator
+  assumes:
+    - "Results arrive at the collector callback service; the orchestrator alone writes the transaction status in the payment processor DB."
+    - "The processor's first answer is not final."
+  carries:
+    - "The callback service publishes results to Kafka (payment.processor.callback.status), which the orchestrator consumes: publish and subscribe."
+    - "A day later the processor's final statuses arrive on payment.processor.status; a reconciliation service tallies them and writes a separate ledger table."
+  terms:
+    - term: reconciliation
+      means: "Comparing the processor's final, settled status of each payment with what the gateway recorded, and fixing mismatches."
+    - term: T plus 1
+      means: The day after the transaction.
+board:
+  keep: [title, prompt-desc, nfr, nfr-scale, nfr-cap, nfr-latency, nfr-security, dd-title, dd-merchant, dd-gateway, dd-intent-resp, dd-intent, dd-intent-db, dd-postgres, dd-intent-row-1, dd-intent-row-2, dd-intent-row-3, dd-merchant-gateway, dd-gateway-intent, dd-intent-save, dd-session, dd-redis, dd-ttl, dd-json-1, dd-json-2, dd-buyer, dd-lb, dd-frontend, dd-page-url, dd-page-html, dd-gateway-session, dd-session-redis, dd-buyer-merchant, dd-buyer-lb, dd-lb-frontend, dd-backend, dd-check-1, dd-check-2, dd-check-3, dd-token, pci, dd-tokenize, dd-hsm, dd-vault, dd-step-1, dd-step-2, dd-step-3, dd-step-4, dd-gateway-backend, dd-backend-redis, dd-backend-tokenize, dd-tokenize-hsm, dd-tokenize-vault, dd-orch, dd-prefs, dd-razorpay, dd-payu, dd-fiserv, dd-proc-gw, dd-processors, dd-txn-db, dd-txn-row-1, dd-txn-row-2, dd-txn-row-3, dd-callback, dd-poll, dd-webhook, dd-backend-orch, dd-orch-prefs, dd-orch-razorpay, dd-orch-payu, dd-orch-fiserv, dd-razorpay-gw, dd-payu-gw, dd-fiserv-gw, dd-gw-processors, dd-orch-txn, dd-gw-callback]
+  elements:
+    - { id: dd-kafka, kind: box, label: Kafka, at: [79, 87], size: [11, 3], tone: amber }
+    - { id: dd-topic-1, kind: note, label: payment.processor.callback.status, at: [79, 91] }
+    - { id: dd-topic-2, kind: note, label: "payment.processor.status, a day later", at: [79, 92] }
+    - { id: dd-recon, kind: box, label: Reconciliation service, at: [81, 80], size: [11, 3], tone: grey }
+    - { id: dd-ledger, kind: note, label: "ledger table, who paid, how much, when", at: [94, 81] }
+  arrows:
+    - { id: dd-callback-kafka, from: dd-callback, to: dd-kafka }
+    - { id: dd-kafka-orch, from: dd-kafka, to: dd-orch, label: callback status }
+    - { id: dd-kafka-recon, from: dd-kafka, to: dd-recon }
+    - { id: dd-recon-txn, from: dd-recon, to: dd-txn-db, label: ledger }
+beats:
+  - point: "The callback service publishes every result to a Kafka topic, payment.processor.callback.status, and the orchestrator consumes it and updates the status: publish and subscribe, with Kafka buffering bursts."
+    kind: mechanism
+    weight: core
+    teach:
+      - "I drew the callback handing results straight to the orchestrator. In real life, at thousands a second, make it event driven: the callback service puts each status on a Kafka broker."
+      - "Topic one, payment processor callback status: every immediate result. The orchestrator consumes it and updates the row. Publish and subscribe; Kafka holds what arrives faster than it is applied."
+    draw: [dd-kafka, dd-callback-kafka, dd-kafka-orch, dd-topic-1]
+    check: What does Kafka add between the callback service and the orchestrator?
+    answer: "A buffer: results are kept on a topic and the orchestrator consumes them at its own pace without losing any."
+  - point: "The first answer is not final: a day later the processor sends the settled status of every transaction, on a second topic, payment.processor.status."
+    kind: failure
+    weight: core
+    teach:
+      - "The answer we got is that the order was placed with the bank, not that money moved. It can fail for lack of balance or another reason."
+      - "After about a day the processor sends a final status for each transaction. It goes to a second topic, payment processor status, T plus 1."
+    draw: [dd-topic-2]
+    check: Why is a second, next-day status needed?
+    answer: "Because the first result can still change at settlement; the next-day status is the processor's final word."
+  - point: "A reconciliation service consumes the next-day topic, tallies each final status against the gateway's record, and writes the outcome to a separate ledger table: who paid, how much, when."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Add a reconciliation service. It reads the next-day topic and tallies each final status against the transaction we recorded."
+      - "It does not overwrite the transaction table; it writes a separate ledger table in the payment processor DB: who paid, how much, and when. Mismatches are refunded or corrected, which is the three or four days a shop quotes for a failed payment that was debited."
+    draw: [dd-recon, dd-kafka-recon, dd-recon-txn, dd-ledger]
+    check: A payment showed failed but the bank debited the buyer. What catches it?
+    answer: "Reconciliation: the next-day status disagrees with the record, so the ledger shows it and the money is refunded or the payment corrected."
+    misconceptions:
+      - "Reconciliation just copies the status into the same table -> it tallies against the record and writes a separate ledger, so the history stays."
+  - point: "Close by reading the non-functional list back against the board: scale from replicated services and Kafka, consistency from Postgres, one status writer and reconciliation, latency from Redis sessions, security from the hosted page, the PCI zone and the HSM."
+    kind: rule
+    weight: supporting
+    teach:
+      - "Finish by reading the requirements on the right against the picture. Scale: services behind load balancers, Kafka for bursts. Consistency: Postgres, a single writer, reconciliation."
+      - "Latency: sessions in Redis, one internal hop to tokenize. Security: the card typed into our page, tokenized in the PCI zone with keys in the HSM; nothing outside the zone holds a card number."
+    check: Which parts of the design answer the security requirement?
+    answer: "The hosted page, so the merchant never sees the card; the PCI zone with tokenization; HSM-held keys; mutual TLS; and tokens everywhere outside the zone."
+asks:
+  - ids: [dd-kafka]
+    beats: [1]
+    question: "Thousands of results a second land on the callback service. What would you put between it and the orchestrator?"
+    hints:
+      - Something that holds events until they are consumed.
+      - Think publish and subscribe.
+  - ids: [dd-recon]
+    beats: [3]
+    question: "The processor's final statuses arrive a day later. What would you build to check them against our records?"
+    hints:
+      - Something that tallies two sets of records.
+      - Where would you write the final, agreed result?
+task:
+  prompt: "Draw the final design: the merchant, the API gateway, the intent and session services with their stores, the checkout frontend, the checkout backend with the PCI zone, the orchestrator with its connectors and processor gateway, the callback service, Kafka, and reconciliation writing the ledger."
+  expects: [1, 3]

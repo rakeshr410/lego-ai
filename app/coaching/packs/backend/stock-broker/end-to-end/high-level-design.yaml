@@ -1,0 +1,139 @@
+# Stock broker interview, high-level design: "4. High-level design" under the requirements, as in the video: clients on the left, a tall load balancer and API gateway, a column of six services, their stores and the KYC and payment gateways beside them, and the exchange, a tall box on the right.
+id: backend/stock-broker/end-to-end/high-level-design
+title: One gateway, six services
+source:
+  hash: "29b24b71d5ac"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/stock-broker/end-to-end/api
+  assumes:
+    - "The six groups of endpoints: users, market data, funds, trading, portfolio, watchlists."
+    - "Orders need consistency; prices need to be fast and available."
+  carries:
+    - "Clients reach a load balancer and API gateway (auth, rate limits, routing by URL, round robin) in front of six services."
+    - "User service with a user DB and a third-party KYC provider; price tracker to the exchange; watchlist service with a watch DB."
+    - "Order service with an order DB, then a validator before the exchange; portfolio service reads orders; payment service with a payment DB and a payment gateway."
+    - "Hidden so far: partial and delayed fills, and how prices reach the screen in real time."
+  terms:
+    - term: API gateway
+      means: "The single entry point that authenticates, rate-limits and routes each request to a service."
+board:
+  keep: [title, prompt-desc, prompt-example, fr, fr-kyc, fr-prices, fr-orders, fr-watch, fr-dash, nfr, nfr-scale, nfr-cap, nfr-view, nfr-latency, nfr-region]
+  elements:
+    - { id: hld, kind: region, label: 4. High-level design, at: [2, 21], size: [70, 41] }
+    - { id: h-clients, kind: box, label: "Clients, web, iOS, Android", at: [4, 37], size: [9, 4], in: hld }
+    - { id: h-gw, kind: box, label: "Load balancer, API gateway: auth, rate limits, routing", at: [16, 26], size: [9, 30], in: hld }
+    - { id: h-rr, kind: note, label: round robin, at: [16, 57], in: hld }
+    - { id: h-kyc, kind: box, label: KYC verification, at: [32, 23], size: [13, 2], tone: grey, in: hld }
+    - { id: h-user, kind: box, label: User service, at: [32, 28], size: [13, 3], in: hld }
+    - { id: h-userdb, kind: oval, label: User DB, at: [50, 28], size: [11, 3], tone: amber, in: hld }
+    - { id: h-price, kind: box, label: Price tracker service, at: [32, 33], size: [13, 3], in: hld }
+    - { id: h-exchange, kind: box, label: "Exchange, NSE or BSE", at: [62, 30], size: [9, 18], tone: grey, in: hld }
+    - { id: h-watch, kind: box, label: Watchlist service, at: [32, 38], size: [13, 3], in: hld }
+    - { id: h-watchdb, kind: oval, label: Watch DB, at: [50, 38], size: [11, 3], tone: amber, in: hld }
+    - { id: h-order, kind: box, label: Order service, at: [32, 43], size: [13, 3], in: hld }
+    - { id: h-validator, kind: box, label: Validator, at: [48, 43], size: [10, 3], in: hld }
+    - { id: h-orderdb, kind: oval, label: Order DB, at: [48, 48], size: [10, 3], tone: amber, in: hld }
+    - { id: h-portfolio, kind: box, label: Portfolio service, at: [32, 48], size: [13, 3], in: hld }
+    - { id: h-payment, kind: box, label: Payment service, at: [32, 53], size: [13, 3], in: hld }
+    - { id: h-paydb, kind: oval, label: Payment DB, at: [48, 53], size: [11, 3], tone: amber, in: hld }
+    - { id: h-paygw, kind: box, label: Payment gateway, at: [48, 57], size: [11, 3], tone: grey, in: hld }
+  arrows:
+    - { id: h-clients-gw, from: h-clients, to: h-gw }
+    - { id: h-gw-user, from: h-gw, to: h-user }
+    - { id: h-user-kyc, from: h-user, to: h-kyc }
+    - { id: h-user-db, from: h-user, to: h-userdb }
+    - { id: h-gw-price, from: h-gw, to: h-price }
+    - { id: h-price-exchange, from: h-price, to: h-exchange }
+    - { id: h-gw-watch, from: h-gw, to: h-watch }
+    - { id: h-watch-db, from: h-watch, to: h-watchdb }
+    - { id: h-gw-order, from: h-gw, to: h-order }
+    - { id: h-order-validator, from: h-order, to: h-validator }
+    - { id: h-validator-exchange, from: h-validator, to: h-exchange }
+    - { id: h-order-db, from: h-order, to: h-orderdb }
+    - { id: h-gw-portfolio, from: h-gw, to: h-portfolio }
+    - { id: h-portfolio-db, from: h-portfolio, to: h-orderdb }
+    - { id: h-gw-payment, from: h-gw, to: h-payment }
+    - { id: h-payment-db, from: h-payment, to: h-paydb }
+    - { id: h-payment-gw, from: h-payment, to: h-paygw }
+beats:
+  - point: "Millions of users and many features mean microservices behind one load balancer and API gateway, which authenticates, rate-limits, routes by URL and spreads load round robin."
+    kind: component
+    weight: core
+    teach:
+      - "Step four, the high-level design: just the services each requirement needs, as abstract boxes. On the left the clients: web, iOS, Android."
+      - "Millions of users and high-frequency trades mean microservices, so one front door: a load balancer and API gateway. Four jobs: authentication and authorization, rate limiting, routing by URL, and round robin across instances."
+    draw: [hld, h-clients, h-gw, h-clients-gw, h-rr]
+    check: Name the gateway's jobs.
+    answer: "Authentication and authorization, rate limiting, routing each request by its URL, and spreading load, here round robin."
+  - point: "The user service onboards users into a user DB and hands KYC to a licensed third-party provider instead of integrating with the government's service itself."
+    kind: component
+    weight: core
+    teach:
+      - "Onboarding needs a user service and a database to keep users in."
+      - "KYC is the extra step. You could integrate with the government identity service, but that needs a licence; most brokers use a third-party KYC provider, so draw it as an outside box."
+    draw: [h-user, h-gw-user, h-kyc, h-user-kyc, h-userdb, h-user-db]
+    check: Why use a third-party KYC provider?
+    answer: The government identity service needs a licence to call; licensed providers already do the verification.
+  - point: "A price tracker service fetches prices from the exchange, a black box on the right; how it connects is left for the deep dive."
+    kind: component
+    weight: core
+    teach:
+      - "Live prices need a service that gets them from the exchange: a price tracker. Draw the exchange, NSE or BSE, as a tall black box on the right."
+      - "What kind of connection, and how prices reach the screen, we leave for the deep dive."
+    draw: [h-price, h-gw-price, h-exchange, h-price-exchange]
+    check: Where does the price tracker get its prices?
+    answer: From the exchange, which the design treats as a black box.
+  - point: "The watchlist service stores each user's favourite stocks in its own watch DB."
+    kind: component
+    weight: supporting
+    teach:
+      - "With prices on screen a user either saves a stock or buys it. Saving is the watchlist service, with its own watch DB."
+    draw: [h-watch, h-gw-watch, h-watchdb, h-watch-db]
+    check: What does the watchlist service store?
+    answer: Each user's saved lists of stocks, in the watch DB.
+  - point: "The order service records orders in an order DB and passes them through a validator before the exchange, because exchange calls are costly, limited and slow, so a bad order must stop inside the broker."
+    kind: flow
+    weight: core
+    teach:
+      - "To buy or sell: an order service that records each order in an order DB, then forwards it to the exchange, which does the allocation."
+      - "But validate first: is the user KYC verified, is there enough money. Exchange access is licensed and limited, and it is an external hop, so an order that will fail should fail here. Validator, then exchange."
+    draw: [h-order, h-gw-order, h-validator, h-order-validator, h-validator-exchange, h-orderdb, h-order-db]
+    check: Why put a validator before the exchange?
+    answer: Exchange calls are costly, limited and an external hop, so orders that would fail are rejected inside the broker.
+  - point: "The portfolio service reads the orders to show profit and loss, and the payment service tops up the wallet through a payment gateway and a payment DB."
+    kind: component
+    weight: core
+    teach:
+      - "The portfolio service reads the order DB to show profit and loss."
+      - "And to trade you need money: a payment service with its own payment DB and a third-party payment gateway that talks to the banks."
+    draw: [h-portfolio, h-gw-portfolio, h-portfolio-db, h-payment, h-gw-payment, h-paydb, h-payment-db, h-paygw, h-payment-gw]
+    check: Which outside system does the payment service depend on?
+    answer: A payment gateway that talks to the banks.
+  - point: "This covers every requirement but hides two problems: an order can fill partly or minutes later, and nothing yet says how prices reach the screen in real time."
+    kind: failure
+    weight: core
+    teach:
+      - "Read the requirements back: all five covered. But two assumptions are too easy."
+      - "An order is not simply accepted at once: 20 shares of Reliance may fill 5 now and 15 ten minutes later. And the price tracker's connection to the exchange and to the users is undecided. The deep dive fixes both."
+    check: What does the high-level design assume about orders that is not true?
+    answer: That the exchange answers at once with success or failure; fills can be partial and delayed.
+asks:
+  - ids: [h-gw]
+    beats: [1]
+    question: "Millions of clients, many services. What sits between them, and what does it do?"
+    hints:
+      - One front door for every request.
+      - Think about who may call, how often, and which service gets it.
+  - ids: [h-user, h-price, h-watch, h-order, h-portfolio, h-payment]
+    beats: [2, 3, 4, 5, 6]
+    question: "Go down the requirements. Which services do we need behind the gateway? Name them and I'll draw them."
+    hints:
+      - One service per requirement, roughly.
+      - "Don't forget the money: how does a user fund the account?"
+task:
+  prompt: "Draw the high-level design: clients, the load balancer and API gateway, the six services with their stores, the KYC provider, the validator before the exchange, and the payment gateway."
+  expects: [1, 2, 3, 5, 6]

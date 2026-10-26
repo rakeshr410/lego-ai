@@ -1,0 +1,104 @@
+# Distributed logging interview, deep dive, search: on the same picture, the search service at the bottom of the column with Elasticsearch beside it ("14 days"), Flink writing to it as well as to Cassandra instead of a CDC pipeline, older searches going to the log DB, and the three Cassandra tables written beside the log DB as the video does.
+id: backend/distributed-logging/end-to-end/lld-search
+title: "Deep dive: search"
+source:
+  hash: "995300f92f11"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/distributed-logging/end-to-end/lld-ingestion
+  assumes:
+    - "Ingestion services produce to Kafka; one Flink job processes the logs and writes them to Cassandra."
+  carries:
+    - "Full-text search runs on Elasticsearch, written by the same Flink job, with no CDC pipeline."
+    - "Elasticsearch keeps 14 days; older searches go to Cassandra and are slower, as the product terms say."
+    - "Cassandra has one table per query: logs_by_service, logs_by_level, logs_by_traceId."
+  terms:
+    - term: partition key
+      means: "The columns that decide which Cassandra node holds a row; a query must name them."
+    - term: clustering key
+      means: "The order of rows inside a partition, here newest first."
+board:
+  keep: [title, nfr, nfr-scale, nfr-latency, nfr-cap, nfr-reliable, dd, dd-agents, dd-clients, dd-gw, dd-onboard, dd-clientdb, dd-file, dd-agentsvc, dd-kafka, dd-topic-raw, dd-flink-1, dd-flink-2, dd-flink, dd-logdb, dd-clients-gw, dd-gw-onboard, dd-onboard-db, dd-gw-file, dd-gw-agentsvc, dd-file-kafka, dd-agentsvc-kafka, dd-kafka-flink, dd-flink-logdb]
+  elements:
+    - { id: dd-search, kind: box, label: search service, at: [31, 50], size: [14, 8], in: dd, tone: blue }
+    - { id: dd-es, kind: box, label: Elasticsearch, at: [50, 49], size: [12, 3], in: dd, tone: green }
+    - { id: dd-es-days, kind: note, label: "14 days, recent logs only", at: [50, 53], in: dd }
+    - { id: dd-t1a, kind: note, label: "logs_by_service { service_name, log_date,", at: [77, 62] }
+    - { id: dd-t1b, kind: note, label: "timestamp newest first, log_id, log_level,", at: [79, 63] }
+    - { id: dd-t1c, kind: note, label: "host, env, message, namespace, pod_name, trace_id }", at: [79, 64] }
+    - { id: dd-t2a, kind: note, label: "logs_by_level { log_level, log_date, hour,", at: [77, 66] }
+    - { id: dd-t2b, kind: note, label: "timestamp, log_id, service_name, message }", at: [79, 67] }
+    - { id: dd-t3a, kind: note, label: "logs_by_traceId { trace_id, timestamp,", at: [77, 69] }
+    - { id: dd-t3b, kind: note, label: "log_id, service_name, log_level, message }", at: [79, 70] }
+  arrows:
+    - { id: dd-gw-search, from: dd-gw, to: dd-search }
+    - { id: dd-search-es, from: dd-search, to: dd-es, label: recent }
+    - { id: dd-flink-es, from: dd-flink, to: dd-es }
+    - { id: dd-search-logdb, from: dd-search, to: dd-logdb, label: older than 14 days }
+beats:
+  - point: "The dashboard's search is full text over a huge volume, so it runs on Elasticsearch, and the same Flink job writes each log there too, instead of a separate CDC pipeline."
+    kind: decision
+    weight: core
+    teach:
+      - "Now the search service. Splunk's dashboard is a search bar: an index, keywords, filters. Full-text search over this much data means a search engine, so Elasticsearch."
+      - "How does it get the data? We could add a change-data-capture pipeline from the log DB. Simpler: Flink already has every clean log, so it writes to both, Cassandra and Elasticsearch."
+    draw: [dd-search, dd-gw-search, dd-es, dd-search-es, dd-flink-es]
+    check: How do logs reach Elasticsearch in this design?
+    answer: The same Flink job that writes Cassandra also writes each processed log to Elasticsearch, so no CDC pipeline is needed.
+  - point: "A year of logs is thousands of terabytes, too slow and costly to index, so Elasticsearch keeps only the last 14 days, in daily indices that age out."
+    kind: decision
+    weight: core
+    teach:
+      - "But millions of logs an hour for a year is thousands of terabytes, and a search index that size is slow and expensive."
+      - "So Elasticsearch keeps 14 days. Logs go into daily indices, and lifecycle management deletes an index once it is older. Recent logs, which are most of what people search, come back fast."
+    draw: [dd-es-days]
+    check: Why not keep every log in Elasticsearch?
+    answer: The index would grow to thousands of terabytes, slowing search and costing a lot; most searches are for recent logs anyway.
+    misconceptions:
+      - "Each Elasticsearch document gets a TTL -> Elasticsearch has no per-document TTL; time-based indices are deleted whole by lifecycle management."
+  - point: "Searches older than 14 days go to Cassandra and are slower; say so in the product terms."
+    kind: decision
+    weight: core
+    teach:
+      - "Anything older than 14 days, the search service reads from Cassandra instead. It is slower, and we write that into the product document: older searches take longer."
+    draw: [dd-search-logdb]
+    check: Where does a search for last month's logs go?
+    answer: To Cassandra, because Elasticsearch only holds the last 14 days; it is slower, and the product terms say so.
+  - point: "Cassandra answers only the queries its tables are laid out for, so each log is written to one table per search: by service, by level, by trace ID, partitioned and newest first."
+    kind: mechanism
+    weight: core
+    teach:
+      - "To make Cassandra searches fast, store the data the way it is searched. People search by service, by log level, mostly errors, and by trace ID."
+      - "So three tables. Logs by service, partitioned by service and day, clustered by time, newest first, with the host, environment, message, namespace, pod and trace. Logs by level, and logs by trace ID, each with what that search shows."
+    draw: [dd-t1a, dd-t1b, dd-t1c, dd-t2a, dd-t2b, dd-t3a, dd-t3b]
+    check: Why write the same log into three tables?
+    answer: Cassandra serves a query efficiently only when the table's partition key matches it, so there is one table per way of searching.
+  - point: "A partition of level and day alone puts every error of a day in one partition; an hour bucket in the key spreads it."
+    kind: failure
+    weight: supporting
+    teach:
+      - "One fix to that drawing. There are only a few levels, so a partition of level and day puts all of a day's errors in one huge, hot partition. Add an hour to its key, as written, so no partition grows without bound."
+    check: What goes wrong with partitioning logs_by_level by level and date only?
+    answer: A few levels times one day makes very few, very large partitions; all the errors of a day land on one, so it gets hot and huge.
+asks:
+  - ids: [dd-es]
+    beats: [1]
+    question: "The dashboard needs full-text search over all these logs. What would you add, and how would it get the data?"
+    hints:
+      - Which store is built for text search?
+      - Flink already has every clean log in hand.
+  - ids: [dd-es-days]
+    beats: [2]
+    question: "A year of logs is thousands of terabytes. Would you keep all of it in the search index?"
+    hints:
+      - What do people search for most, old logs or recent ones?
+      - What if the index only kept a couple of weeks?
+  - ids: [dd-t1a, dd-t2a, dd-t3a]
+    beats: [4]
+    question: "For older logs we search Cassandra. How would you lay out its tables so those searches are fast?"
+    hints:
+      - How do developers usually look for logs?
+      - Cassandra wants one table per query.

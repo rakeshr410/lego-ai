@@ -1,0 +1,174 @@
+# Social media interview, low-level design, the feed service: the band between the content pipeline and the follower service, as the video draws it: the feed service reading a feed cache over a feed DB, a push fan-out service off the post topics writing post and follower ids to a second Kafka, a fan-out consumer filling feeds, the fan-out notes on the right, then a backfill service fed by a post materializer's Redis of latest posts, and a followers cache. Corrected: the cache is capped by trimming, not a TTL, and fan-out keeps reading every follower from the follower DB.
+id: backend/social-media-feed/end-to-end/lld-feed-service
+title: "Low-level design: the feed service"
+source:
+  hash: "4a7ce78d6102"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/social-media-feed/end-to-end/lld-engagement-service
+  assumes:
+    - "Filtered posts flow through Kafka topic filtered_post and are stored in the post DB."
+    - "The follower table is indexed both ways: who a user follows, who follows an author."
+    - "Kafka buffers work for consumers that run at their own pace."
+  carries:
+    - "Feeds are precomputed: merging thousands of followees' posts on every open is too slow."
+    - "Push (fan-out on write) for ordinary authors, pull (fan-out on read) for celebrities."
+    - "Fan-out service and consumer write each post into followers' feed DB rows and feed cache; the cache keeps 50 to 100 posts per user."
+    - "Backfill builds more feed from the reader's top followees and each author's latest posts in Redis."
+  terms:
+    - term: fan-out on write
+      means: "Writing a new post into every follower's feed when it is posted (push)."
+    - term: fan-out on read
+      means: "Fetching an author's posts only when a follower's feed is built (pull)."
+    - term: backfill
+      means: "Building more of a user's feed in near real time when the precomputed part runs out."
+board:
+  keep: [title, prompt-desc, nfr, nfr-scale, nfr-cap, nfr-latency, lld-head, gw, user-svc, user-db, content-svc, kafka-posts, topics, moderator, post-consumer, post-db, s3, post-schema-1, post-schema-2, post-schema-3, notification, gw-user, user-userdb, gw-content, content-kafka, kafka-moderator, kafka-consumer, consumer-postdb, consumer-s3, kafka-notification, follower-svc, follower-db, gw-follower, follower-svc-db, follow-schema-1, follow-schema-2, follow-unique, follow-graph, kafka-engage, engage-svc, comment-db, like-db, comment-schema-1, comment-schema-2, like-schema-1, like-schema-2, like-unique, like-job, gw-kafka-engage, kafka-engage-svc, engage-comment, engage-like]
+  elements:
+    - { id: feed-svc, kind: box, label: Feed service, at: [16, 57], size: [12, 3], tone: blue }
+    - { id: fanout-head, kind: note, label: "Feed generation, the fan-out model", at: [98, 50] }
+    - { id: fanout-push, kind: note, label: "push, fan-out on write, small circles", at: [98, 51] }
+    - { id: fanout-pull, kind: note, label: "pull, fan-out on read, celebrities", at: [98, 52] }
+    - { id: fanout-ratio, kind: note, label: "one to 1,000 pushed, one to 1M pulled", at: [98, 53] }
+    - { id: feed-cache, kind: oval, label: Feed cache, at: [60, 54], size: [12, 4], tone: green }
+    - { id: feed-db, kind: oval, label: Feed DB, at: [84, 54], size: [12, 4], tone: amber }
+    - { id: fanout-svc, kind: box, label: "Fan-out service, push", at: [54, 41], size: [13, 4], tone: blue }
+    - { id: kafka-fanout, kind: box, label: "Kafka, fan-out entries", at: [74, 44], size: [12, 3] }
+    - { id: fanout-entry, kind: note, label: "post id, list of follower ids", at: [72, 42] }
+    - { id: fanout-consumer, kind: box, label: Fan-out consumer, at: [92, 44], size: [14, 3], tone: blue }
+    - { id: feed-cap, kind: note, label: "newest 50 to 100 posts per user, trimmed", at: [60, 59] }
+    - { id: backfill, kind: box, label: Backfill service, at: [16, 49], size: [12, 3], tone: blue }
+    - { id: materializer, kind: box, label: Post materializer, at: [16, 41], size: [12, 3], tone: blue }
+    - { id: redis-latest, kind: oval, label: "Redis, latest posts per author", at: [32, 41], size: [16, 4], tone: green }
+    - { id: redis-note, kind: note, label: recent 100 posts per author, at: [32, 46] }
+    - { id: followers-cache, kind: oval, label: "Followers cache, top followees", at: [58, 62], size: [16, 4], tone: green }
+    - { id: followers-note, kind: note, label: "backfill reads each reader's top followees", at: [76, 63] }
+  arrows:
+    - { id: gw-feed, from: gw, to: feed-svc }
+    - { id: feed-cache-read, from: feed-svc, to: feed-cache, label: read }
+    - { id: cache-db, from: feed-cache, to: feed-db, label: on a miss }
+    - { id: kafka-fanout-svc, from: kafka-posts, to: fanout-svc }
+    - { id: fanout-followers, from: fanout-svc, to: follower-db }
+    - { id: fanout-kafka, from: fanout-svc, to: kafka-fanout }
+    - { id: kafka-fanout-consumer, from: kafka-fanout, to: fanout-consumer }
+    - { id: consumer-read-post, from: fanout-consumer, to: post-db, label: read the post }
+    - { id: consumer-feed-db, from: fanout-consumer, to: feed-db, label: write }
+    - { id: consumer-feed-cache, from: fanout-consumer, to: feed-cache, label: write }
+    - { id: feed-backfill, from: feed-svc, to: backfill }
+    - { id: kafka-materializer, from: kafka-posts, to: materializer }
+    - { id: materializer-redis, from: materializer, to: redis-latest }
+    - { id: backfill-redis, from: backfill, to: redis-latest }
+    - { id: backfill-followers, from: backfill, to: follower-db }
+    - { id: backfill-kafka, from: backfill, to: kafka-fanout, label: user id and post ids }
+    - { id: followerdb-cache, from: follower-db, to: followers-cache }
+    - { id: backfill-followers-cache, from: backfill, to: followers-cache }
+beats:
+  - point: "Building the feed on open, followees from the follower DB then their posts from the post DB, is far too slow with thousands of followees, so feeds must be precomputed."
+    kind: failure
+    weight: core
+    teach:
+      - "Now the feed service. The first design built a feed on open: fetch, say, 10,000 followees, then each one's posts, then merge them. Across two services' stores that is not one join, it is thousands of reads while the screen hangs."
+      - "So the feed must be ready before the user opens the app: precomputed."
+    draw: [feed-svc, gw-feed]
+    check: Why not build the feed when the user opens the app?
+    answer: Fetching thousands of followees' posts and merging them per open is far too slow; the work has to happen beforehand.
+    misconceptions:
+      - "One SQL join between follows and posts solves it -> the two tables live in different services' stores, and even one join over 10,000 followees per open is too slow."
+  - point: "Feeds are generated by fan-out: push (fan-out on write) for authors with a small circle, pull (fan-out on read) for celebrities, since one post to a million followers would be a million writes."
+    kind: decision
+    weight: core
+    teach:
+      - "The pattern is the fan-out model, two ways. Push, fan-out on write: when I post with about a thousand followers, the post is written into each of their feeds now, so it is there when they open the app."
+      - "Pull, fan-out on read, for celebrities: one post to a million followers would be a million writes, so nothing is written; followers get it when their feed is built."
+    draw: [fanout-head, fanout-push, fanout-pull, fanout-ratio]
+    check: Why are celebrity posts pulled rather than pushed?
+    answer: Pushing one post to a million followers is a million writes; pulling costs nothing at post time.
+  - point: "The feed service reads precomputed feeds from a feed cache in front of a feed DB."
+    kind: component
+    weight: core
+    teach:
+      - "If feeds are precomputed, they are stored: a feed DB holding each user's feed."
+      - "Reading a database on every open is still slow, so put a feed cache in front. The feed service reads the cache, and only a miss goes to the feed DB."
+    draw: [feed-cache, feed-db, feed-cache-read, cache-db]
+    check: Where does the feed service read a feed from?
+    answer: The feed cache, falling back to the feed DB on a miss.
+  - point: "A fan-out service consumes filtered posts; for an author who is not a celebrity, it reads the author's followers and writes the post id with their ids to a second Kafka topic."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Who fills it? A fan-out service, a second consumer of filtered post. It only acts when the author is not a celebrity: that is the push."
+      - "It reads who follows the author from the follower DB and writes one entry to another Kafka topic: this post, and the list of follower IDs whose feeds should get it."
+    draw: [fanout-svc, kafka-fanout-svc, fanout-followers, kafka-fanout, fanout-kafka, fanout-entry]
+    check: What does the fan-out service write, and for which authors?
+    answer: An entry of the post id and the follower ids, for authors who are not celebrities.
+  - point: "A fan-out consumer reads each entry, fetches the post from the post DB, and writes it into every listed follower's feed DB row and feed cache."
+    kind: flow
+    weight: core
+    teach:
+      - "A fan-out consumer reads those entries. For each it fetches the post's data from the post DB."
+      - "Then it writes the post into the feed DB and the feed cache of every follower listed. When my friend opens the app, the feed is waiting in the cache."
+    draw: [fanout-consumer, kafka-fanout-consumer, consumer-read-post, consumer-feed-db, consumer-feed-cache]
+    check: Walk me from my new post to it being in my friend's cache.
+    answer: "Filtered post, fan-out service reads my followers and writes an entry to Kafka, the fan-out consumer reads the post and writes it into each follower's feed DB and cache."
+  - point: "The cache keeps only the newest 50 to 100 posts per user, capped by trimming each list; when a reader scrolls past them, the feed service calls a backfill service for more."
+    kind: mechanism
+    weight: core
+    teach:
+      - "The cache cannot hold everything, so each user gets the newest 50 to 100 posts. Cap the list by trimming it after each insert; a TTL only lets idle users' feeds expire, it does not bound a busy one."
+      - "When the app sees the reader is nearly through those, the feed service calls a backfill service to build the next part of the feed in near real time, so scrolling never ends."
+    draw: [feed-cap, backfill, feed-backfill]
+    check: How is the cache kept to 100 posts per user, and what happens after the 100th?
+    answer: Each list is trimmed to the newest entries after an insert; past them, the feed service asks the backfill service for more.
+    misconceptions:
+      - "A TTL keeps the feed cache small -> a TTL only expires feeds nobody reads; trimming each list bounds an active user's."
+  - point: "A post materializer keeps each author's 100 latest posts in Redis; backfill reads the reader's followees, takes their latest posts from Redis, and writes user id plus post ids to Kafka for the fan-out consumer. Celebrity posts arrive this way."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Near real time needs precomputed inputs too. A post materializer, a third consumer of filtered post, keeps each author's recent activity, their latest 100 posts, in a Redis cache."
+      - "Backfill reads the reader's followees, fetches their latest posts from Redis instead of scanning the post DB, and writes an entry to the fan-out topic: this user, these post IDs. The fan-out consumer fills the cache. A celebrity's posts are never pushed; backfill pulls them in this way."
+    draw: [materializer, kafka-materializer, redis-latest, materializer-redis, redis-note, backfill-redis, backfill-followers, backfill-kafka]
+    check: Why can backfill build a feed in near real time?
+    answer: It reads each followee's latest posts from Redis, kept by the post materializer, instead of scanning the post DB.
+  - point: "People mostly see posts from the 100 or 200 accounts they interact with most, so a followers cache keeps each reader's top followees, and backfill makes two cache reads; fan-out still reads every follower of the author."
+    kind: decision
+    weight: supporting
+    teach:
+      - "One more optimization. With thousands of followees, people mostly see posts from the 100 or 200 they interact with most. A followers cache keeps each reader's top followees, ranked by interaction, a model can keep it updated."
+      - "Backfill now makes two cache reads, top followees and their latest posts. Fan-out asks the other question, who follows this author, and needs all of them, or at least the active ones, so it keeps reading the follower table."
+    draw: [followers-cache, followerdb-cache, backfill-followers-cache, followers-note]
+    check: What does the followers cache hold, and who reads it?
+    answer: Each reader's top followees, the accounts they interact with most; the backfill service reads it.
+    misconceptions:
+      - "The fan-out can push only to a reader's top followees -> fan-out needs the author's followers, the opposite direction, so it reads the follower table."
+asks:
+  - ids: [feed-cache, feed-db]
+    beats: [3]
+    question: "If feeds are precomputed, where do they live, and how does the feed service read them fast?"
+    hints:
+      - They have to be stored somewhere per user.
+      - And reading a database on every open is slow.
+  - ids: [fanout-svc]
+    beats: [4]
+    question: "When I post, what puts my post into my followers' feeds?"
+    hints:
+      - Something consumes the filtered posts.
+      - It needs to know who follows me.
+  - ids: [backfill]
+    beats: [6]
+    question: "My friend has scrolled through all 100 precomputed posts. What now?"
+    hints:
+      - We need more feed, right now.
+      - Something builds the next part on demand.
+  - ids: [followers-cache]
+    beats: [8]
+    question: "Backfill still reads thousands of followees from the database. How could it read fewer, faster?"
+    hints:
+      - People mostly see posts from a few accounts.
+      - Keep those somewhere in memory.
+task:
+  prompt: "Draw the feed design: the feed service reading a feed cache over a feed DB, the fan-out service and consumer filling feeds from filtered posts, the backfill service with the post materializer's Redis of latest posts, and the followers cache."
+  expects: [3, 4, 5, 6, 7]

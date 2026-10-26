@@ -1,0 +1,98 @@
+# Proximity search, 4. Elasticsearch, and choosing: "4. Elastic Search" under PostGIS, a geo_point field and a geo_distance query built in; then the video's conclusion drawn as a choice beside it (avoid the quadtree; location only, geohash; location and text, PostGIS with a fuzzy text extension or Elasticsearch), with the video's "fuzzystrmatch" added beside heading 3. Corrected: pg_trgm is the indexable fuzzy extension; fuzzystrmatch compares strings.
+id: backend/proximity-search/end-to-end/elasticsearch
+title: "4. Elasticsearch, and choosing"
+source:
+  hash: "edbf6b61baba"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/proximity-search/end-to-end/postgis
+  assumes:
+    - "The quadtree is easy to explain but hard to run, an in-memory tree on every server."
+    - "Geohash is a prefix-searchable column queried with the user's cell and its 8 neighbours."
+    - "PostgreSQL with PostGIS answers ST_DWithin with a GiST index on the location column."
+  carries:
+    - "Elasticsearch has geo_point fields and geo_distance queries built in, no extension."
+    - "Avoid the quadtree; for location-only searches such as drivers near a rider, use geohash."
+    - "For location plus text, use Elasticsearch, or PostgreSQL with PostGIS and a fuzzy text extension; with both, they are about equal."
+  terms:
+    - term: geo_point
+      means: "An Elasticsearch field type holding a latitude and a longitude."
+    - term: fuzzy search
+      means: "Matching text that is close to the query, such as a misspelled restaurant name."
+board:
+  keep: [title, prompt-desc, prompt-example, pg, pg-insert, pg-values, pg-point, pg-lonlat, pg-select, pg-within, pg-user, pg-radius, pg-gist]
+  elements:
+    - { id: es, kind: region, label: 4. Elasticsearch, at: [2, 21], size: [29, 12] }
+    - { id: es-builtin, kind: note, label: "a geo_point field and a geo_distance query, built in", at: [4, 24], in: es }
+    - { id: es-noext, kind: note, label: no extension to install, at: [4, 25], in: es }
+    - { id: es-json-1, kind: note, label: "{ query: { geo_distance: {", at: [4, 27], in: es }
+    - { id: es-json-2, kind: note, label: "distance: 5km,", at: [8, 28], in: es }
+    - { id: es-json-3, kind: note, label: "location: { lat: 12.97, lon: 77.60 } } } }", at: [8, 29], in: es }
+    - { id: ch, kind: region, label: Which one to choose, at: [67, 5], size: [51, 28] }
+    - { id: ch-text, kind: diamond, label: "search by text too?", at: [83, 8], size: [16, 5], in: ch }
+    - { id: ch-geohash, kind: box, label: "geohash, location only", at: [69, 21], size: [14, 3], in: ch, tone: green }
+    - { id: ch-both, kind: box, label: "PostGIS with fuzzy text, or Elasticsearch", at: [97, 21], size: [17, 4], in: ch, tone: blue }
+    - { id: ch-quadtree, kind: note, label: "quadtree: avoid, hard to run", at: [69, 27], in: ch }
+    - { id: pg-fuzzy, kind: note, label: "plus fuzzystrmatch, or pg_trgm, for names", at: [4, 16], in: pg }
+    - { id: ch-equal, kind: note, label: "with both extensions, Postgres and Elasticsearch tie", at: [69, 28], in: ch }
+  arrows:
+    - { id: ch-no, from: ch-text, to: ch-geohash, label: "no, drivers near me" }
+    - { id: ch-yes, from: ch-text, to: ch-both, label: "yes, by name" }
+beats:
+  - point: "Elasticsearch already does every kind of search, and geo search is built in: a geo_point field and a geo_distance query, no extension to install."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Number four, Elasticsearch. It is a search engine, and searching by location comes built in: map the location as a geo_point field. Nothing to install, plug and play."
+    draw: [es, es-builtin, es-noext]
+    check: What do you have to install to get geo search in Elasticsearch?
+    answer: "Nothing; geo_point fields and geo_distance queries are built in."
+  - point: "The query names a distance and a centre: geo_distance with distance 5km and the user's latitude and longitude, and it can be combined with text matching and filters."
+    kind: flow
+    weight: supporting
+    teach:
+      - "The search body: a geo_distance query with a distance of 5km and the user's location, latitude 12.97 and longitude 77.60."
+      - "The same query can also match a name or filter by cuisine, which is where Elasticsearch earns its place."
+    draw: [es-json-1, es-json-2, es-json-3]
+    check: What two things does a geo_distance query need?
+    answer: "A distance, such as 5km, and the centre point, the user's latitude and longitude."
+  - point: "Choosing: avoid the quadtree; if the search is by location only, such as the drivers near a rider in Uber or Rapido, geohash is enough and fast."
+    kind: decision
+    weight: core
+    teach:
+      - "Now choose. The quadtree is out: easy to explain, hard to run."
+      - "Ask one question: does the user search by text too? If not, if it is only what is near, like drivers near a rider in Uber or Rapido, go with geohash."
+    draw: [ch, ch-text, ch-geohash, ch-no, ch-quadtree]
+    check: You need the drivers near a rider. Which approach, and why?
+    answer: Geohash, because the search is by location only and a prefix query on an indexed column is simple and fast.
+  - point: "If users also search by text, such as a restaurant by a half-remembered name, use Elasticsearch, or PostgreSQL with PostGIS plus a fuzzy text extension; with both extensions they are about equal."
+    kind: decision
+    weight: core
+    teach:
+      - "If they also search by name, location alone does not help; we need fuzzy text matching. Elasticsearch does both natively."
+      - "PostgreSQL does both with two extensions: PostGIS for location and a fuzzy one for text. The video names fuzzystrmatch, which compares strings; pg_trgm adds trigram matching an index can serve. With both installed, the two are about equal, so pick what the design already runs."
+    draw: [ch-both, ch-yes, pg-fuzzy, ch-equal]
+    check: Users search for a restaurant by a misspelled name near them. What fits?
+    answer: Elasticsearch, or PostgreSQL with PostGIS plus a fuzzy text extension such as pg_trgm.
+    misconceptions:
+      - "Geohash handles name search too -> it only narrows by location; fuzzy text needs Elasticsearch or a PostgreSQL text extension."
+asks:
+  - ids: [ch-geohash]
+    beats: [3]
+    frame: [ch, ch-text]
+    question: "Say the search is by location only, drivers near a rider. Of the four, which would you pick?"
+    hints:
+      - Which one was hard to run, and which was just a column and a query?
+      - Do you need any text matching here?
+  - ids: [ch-both]
+    beats: [4]
+    question: "Now users also type a restaurant's name, sometimes misspelled. What would you use?"
+    hints:
+      - Which of the four already does text search of every kind?
+      - Could PostgreSQL do it too, with one more extension?
+task:
+  prompt: "Draw the choice: a decision on whether the search is by text too, geohash for location only, and PostgreSQL with PostGIS and a fuzzy extension, or Elasticsearch, for location and text, with the quadtree marked as the one to avoid."
+  expects: [3, 4]

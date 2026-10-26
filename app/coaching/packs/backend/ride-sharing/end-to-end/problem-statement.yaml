@@ -1,0 +1,45 @@
+# Ride-sharing interview, the problem statement: the title and what the platform is, written at the top of the board as the video does, then the five steps said once (said, not drawn).
+id: backend/ride-sharing/end-to-end/problem-statement
+title: The problem, and the five steps
+source:
+  hash: "3df3bbb5f0e7"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: null
+  assumes: []
+  carries:
+    - "A ride-sharing service is an online platform where a rider requests and books rides from nearby drivers."
+    - "Two actors share it, the rider and the driver, and they want different things from it."
+    - "The interview runs in five steps: requirements, core entities, API, high-level design, low-level design."
+  terms:
+    - term: rider
+      means: The user who asks for a fare and books a ride.
+    - term: driver
+      means: Who receives ride offers, accepts or declines them, and drives the trip.
+board:
+  keep: []
+  elements:
+    - { id: title, kind: note, label: Ride-sharing service like Uber or Ola, at: [32, 0] }
+    - { id: prompt-desc, kind: note, label: an online platform where users request and book rides, at: [28, 2] }
+  arrows: []
+beats:
+  - point: "A ride-sharing service like Uber or Ola is an online platform where a rider requests and books a ride, and a nearby driver picks them up."
+    kind: rule
+    weight: core
+    teach:
+      - "Write the title: a ride-sharing service like Uber or Ola. Under it, one line: an online platform where users request and book rides."
+      - "Walk one trip: the rider types a pick-up and a drop, sees a fare for a bike, a car or an SUV, books one, a nearby driver accepts, both watch each other on the map, and at the end the rider pays and both rate."
+    draw: [title, prompt-desc]
+    check: Who are the two kinds of user this system serves?
+    answer: Riders, who request and book rides, and drivers, who accept them and drive.
+  - point: "The interview runs in five steps: gather the requirements, identify the core entities, design the API, draw the high-level design, then the low-level design."
+    kind: rule
+    weight: core
+    teach:
+      - "Say the plan once: requirements, functional and non-functional; then the core entities; then the API; then a high-level design; and last the low-level design, the deep dive."
+      - "The hard parts will be finding nearby drivers among millions, never giving one driver two riders, and keeping live locations fresh. Said, not written; each step gets its number on the board when we reach it."
+    check: Which step comes straight after the core entities?
+    answer: The API design, then the high-level design.

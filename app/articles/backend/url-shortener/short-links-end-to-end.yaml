@@ -8,8 +8,7 @@
 # replaces it, one flaw at a time (hash and truncate, a counter, a split read path with a cache,
 # ZooKeeper ranges), before the leftovers (expiry, custom aliases, 301 or 302, the database).
 # Every latency figure is an illustrative round number for the exercise, not a measurement.
-# The main-site topics short-codes, redirects and analytics design the same system in depth; this
-# one is the interview walkthrough, chronological and time-boxed.
+# A backend system of lego-ai's own (app/articles/backend): it stands alone and links to no main-site topic.
 catalogVersion: 5
 title: Designing a URL shortener, end to end
 shortTitle: URL shortener interview
@@ -19,12 +18,6 @@ order: 3
 xp: 260
 difficulty: intermediate
 tags: [interview, unique-ids, caching, coordination, redirects, scalability]
-related:
-  - short-codes
-  - redirects
-  - analytics
-  - unique-id-generator/snowflake
-  - unique-id-generator/uuids-and-ranges
 eyebrow: Design
 breadcrumb: [Short links, Interview walkthrough]
 lede: "You have about forty-five minutes and one whiteboard to design a service like Bitly that turns a long URL into a short one and sends anyone who opens the short one to the original. This walkthrough runs the interview the way a strong candidate runs it: pin the requirements down with numbers, name the entities and the two endpoints, draw the simplest design that works, then spend the rest of the time on the hard part, making short codes that never collide at a billion links, one improvement at a time."
@@ -88,7 +81,7 @@ tutorBrief: >-
   (1 sign bit, 41 bits of milliseconds = 69.7 years, 10 bits of worker = 1,024 workers, 12 bits of
   sequence = 4,096 per ms) is the other coordination-light ID, with the worker number from ZooKeeper;
   but it is 64 bits, 11 base62 characters, and hashing it down to 7 brings collisions back.
-  Sequential codes can be walked; scrambling them is the short-codes topic. Leftovers: expiry
+  Sequential codes can be walked; a keyed permutation before encoding scrambles them and keeps them unique. Leftovers: expiry
   stored per row, a daily cron deletes expired rows, the cache TTL never outlives the expiry, and the
   redirect service checks expiresAt so a link stops at its time, not at the next cron. Custom
   alias: premium only, inserted only if absent (a unique key), else 409; aliases and generated codes
@@ -606,7 +599,7 @@ content:
       - type: paragraph
         children:
           - type: text
-            text: "One caveat to name: counted codes are consecutive, so anyone can walk them, 4kyLcpo, 4kyLcpp. If that matters, scramble the number with a keyed permutation before encoding, which keeps it unique; the short-codes topic goes deep on this."
+            text: "One caveat to name: counted codes are consecutive, so anyone can walk them, 4kyLcpo, 4kyLcpp. If that matters, scramble the number with a keyed permutation before encoding, which keeps it unique."
   # ────────────────────────────────────────────────────────────────── (ZooKeeper, continued) expiry and alias
   - __component: sd.subsection
     key: expiry-and-alias

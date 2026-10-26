@@ -1,0 +1,153 @@
+# OTT streaming interview, low-level design 5: playback and the CDN, the second half of the video's play service: the play service returning the manifest from the video DB, the player fetching 10-second segments that change quality with the bandwidth (the video's segment strip, laid out the same way), the CDN near the users with S3 behind it, a Redis cluster for manifests, and HLS against DASH. Corrected: 2 Mbps is about 480p and 10 Mbps about 1080p; the player switches at segment boundaries, by its buffer, not at an I-frame; both protocols are adaptive.
+id: backend/ott-streaming/end-to-end/lld-playback
+title: "Low-level design, 5: playback and the CDN"
+source:
+  hash: "ab859f167f58"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/ott-streaming/end-to-end/lld-video-processing
+  assumes:
+    - "Every title is in 2 to 10 second segments, encoded at 480p to 4K, in S3."
+    - "Manifests list the renditions and their segments; they are kept in the video DB."
+  carries:
+    - "Pressing play returns the manifest, not the video."
+    - "The player measures throughput and buffer and fetches segments one by one, switching rendition at segment boundaries."
+    - "Segments come from a CDN near the viewer, filled from S3 on a miss; a Redis cluster holds manifests."
+    - "HLS and DASH are both adaptive; HLS has m3u8 text and is native on Apple, DASH has XML MPD and is an open standard."
+  terms:
+    - term: adaptive bitrate
+      means: "The player choosing each segment's quality from its measured throughput and buffer level."
+    - term: keyframe
+      means: "A frame decodable on its own; each segment starts with one, so playback can switch rendition between segments."
+    - term: CDN
+      means: "Servers in many regions that cache content close to viewers."
+board:
+  keep: [title, prompt-desc, fr, fr-account, fr-search, fr-watch, fr-out, nfr, nfr-scale, nfr-cap, nfr-buffer, nfr-micro, entities, ent-user, ent-user-meta, ent-video, ent-video-meta, api, api-register, api-plans, api-subscribe, api-search, api-details, api-play, hld, hld-users, hld-gateway, hld-gw-roles, hld-lb-rr, hld-user-svc, hld-sub-svc, hld-search-svc, hld-play-svc, hld-user-db, hld-pay-gw, hld-uploader, hld-video-db, hld-blob, hld-blob-note, hld-users-gw, hld-gw-user, hld-gw-sub, hld-gw-search, hld-gw-play, hld-user-userdb, hld-sub-userdb, hld-sub-paygw, hld-up-videodb, hld-up-blob, hld-search-videodb, hld-play-blob]
+  elements:
+    - { id: lld-play, kind: region, label: "5. Low-level design: 5. Play service and CDN", at: [2, 64], size: [70, 34] }
+    - { id: v-player, kind: box, label: Video player, at: [3, 68], size: [12, 4], in: lld-play }
+    - { id: v-play, kind: box, label: "Play service, manifest", at: [22, 68], size: [13, 4], in: lld-play, tone: blue }
+    - { id: v-vdb, kind: oval, label: "Video DB, MongoDB", at: [52, 68], size: [14, 4], in: lld-play, tone: amber }
+    - { id: v-measure, kind: note, label: player measures throughput and buffer, at: [17, 75], in: lld-play }
+    - { id: v-bw-1, kind: note, label: 2 Mbps, at: [3, 88], in: lld-play }
+    - { id: v-seg-1, kind: box, label: "segment 1, 480p", at: [3, 90], size: [13, 3], in: lld-play }
+    - { id: v-bw-2, kind: note, label: still 2 Mbps, at: [19, 88], in: lld-play }
+    - { id: v-seg-2, kind: box, label: "segment 2, 480p", at: [19, 90], size: [13, 3], in: lld-play }
+    - { id: v-bw-3, kind: note, label: now 10 Mbps, at: [35, 88], in: lld-play }
+    - { id: v-seg-3, kind: box, label: "segment 3, 1080p", at: [35, 90], size: [14, 3], in: lld-play, tone: green }
+    - { id: v-seg-len, kind: note, label: "10 seconds each, fetched ahead of the playhead", at: [3, 94], in: lld-play }
+    - { id: v-keyframe, kind: note, label: "switch at boundaries, each starts on a keyframe", at: [3, 95], in: lld-play }
+    - { id: v-cdn, kind: oval, label: "CDN, near the viewer", at: [3, 78], size: [16, 5], in: lld-play, tone: green }
+    - { id: v-cdn-note, kind: note, label: popular segments cached per region, at: [3, 84], in: lld-play }
+    - { id: v-s3, kind: oval, label: "S3, every segment", at: [40, 79], size: [14, 4], in: lld-play, tone: amber }
+    - { id: v-redis, kind: oval, label: Redis cluster, at: [38, 73], size: [12, 4], in: lld-play, tone: green }
+    - { id: v-hls, kind: note, label: "HLS, .m3u8 text, native on Apple", at: [52, 88], in: lld-play }
+    - { id: v-dash, kind: note, label: "DASH, .mpd XML, open standard", at: [52, 89], in: lld-play }
+    - { id: v-both, kind: note, label: "both adaptive, both buffer ahead", at: [52, 91], in: lld-play }
+    - { id: v-seglen, kind: note, label: "segments about 6 s HLS, 2 to 4 s DASH", at: [52, 92], in: lld-play }
+  arrows:
+    - { id: v-player-play, from: v-player, to: v-play, label: play, both: true }
+    - { id: v-play-vdb, from: v-play, to: v-vdb, label: manifest }
+    - { id: v-player-cdn, from: v-player, to: v-cdn, label: segments }
+    - { id: v-cdn-s3, from: v-cdn, to: v-s3, label: on a miss }
+    - { id: v-play-redis, from: v-play, to: v-redis, label: first }
+    - { id: v-redis-vdb, from: v-redis, to: v-vdb }
+beats:
+  - point: "Pressing play returns the manifest, not the video: the play service reads it from the video DB and sends it to the player."
+    kind: flow
+    weight: core
+    teach:
+      - "Now playback. The request reaches the play service, but instead of going to S3 it fetches the title's manifest from the video DB and sends it back."
+      - "From here everything is on the client: the manifest tells the player every rendition and every segment."
+    draw: [lld-play, v-player, v-play, v-player-play, v-vdb, v-play-vdb]
+    check: What does the play endpoint return?
+    answer: The title's manifest, which lists the renditions and their segments; not the video itself.
+  - point: "The player measures its throughput and buffer and fetches segments one at a time at the rendition that fits: at 2 Mbps, 480p segments."
+    kind: mechanism
+    weight: core
+    teach:
+      - "The player first measures the network, and keeps measuring. At 2 megabits a second it asks for the first 10-second segment from the low rendition, about 480p."
+      - "Six seconds in, still 2 megabits: it fetches the second segment, again at 480p, before the first one ends. The video says 2K here; 2 Mbps only carries about 480p."
+    draw: [v-measure, v-bw-1, v-seg-1, v-bw-2, v-seg-2]
+    check: Who decides the quality of the next segment, the server or the player?
+    answer: The player, from its measured throughput and how full its buffer is.
+  - point: "When the bandwidth rises to 10 Mbps, the next segment comes from a higher rendition, about 1080p; quality follows the network, segment by segment."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Later the network rises to 10 megabits. The player asks for segment three from a higher rendition, about 1080p. 4K needs roughly 15 megabits or more."
+      - "If the network falls again, the next segment comes from a lower rendition: the picture softens instead of freezing. That is the zero-buffering requirement met."
+    draw: [v-bw-3, v-seg-3]
+    check: The network drops from 10 to 2 Mbps mid-film. What happens?
+    answer: The player requests the next segment from a lower rendition, so quality drops but playback continues.
+  - point: "Switching happens only between segments, each of which starts with a keyframe; the next request is driven by how full the buffer is, not by an I-frame."
+    kind: rule
+    weight: supporting
+    teach:
+      - "The video ties the next request to an I-frame six seconds in. What really happens: every segment begins with a keyframe, so it can be decoded alone and the rendition can change between segments."
+      - "The player requests ahead whenever its buffer falls below a target, typically several segments ahead."
+    draw: [v-seg-len, v-keyframe]
+    check: Why must every segment start with a keyframe?
+    answer: So it can be decoded on its own, which lets the player switch to another rendition at that segment.
+    misconceptions:
+      - "The player asks for the next segment when it reaches an I-frame -> it asks when its buffer runs low; keyframes at segment starts are what make switching possible."
+  - point: "Fetching every segment through the gateway, the play service and S3 is too long a trip; a CDN near the viewer caches the segments popular in its region and fetches from S3 on a miss."
+    kind: component
+    weight: core
+    teach:
+      - "Every few seconds the player wants a segment. Through the load balancer, the play service and S3 each time is a long hop and adds latency."
+      - "So segments are served from a CDN, servers near the viewer holding the segments people in that region watch. On a miss the CDN fetches from S3 once and keeps it."
+    draw: [v-cdn, v-player-cdn, v-s3, v-cdn-s3, v-cdn-note]
+    check: What happens when a viewer asks the CDN for a segment it does not have?
+    answer: The CDN fetches it from S3, serves it, and keeps it cached for the next viewer in the region.
+  - point: "A Redis cluster in front of the video DB holds the manifests of titles being played, so pressing play starts faster."
+    kind: decision
+    weight: supporting
+    teach:
+      - "One small enhancement: pressing play still reads the video DB for the manifest. Put a Redis cluster in front of it; the play service checks the cache first, and the first load gets faster."
+    draw: [v-redis, v-play-redis, v-redis-vdb]
+    check: What does the Redis cluster speed up?
+    answer: Fetching the manifest when the user presses play, so the start-up time drops.
+  - point: "HLS and DASH are both adaptive and multi-bitrate: HLS uses .m3u8 text and is native on Apple devices, DASH uses an XML .mpd and is an open standard, so services ship both."
+    kind: decision
+    weight: core
+    teach:
+      - "Last, the two protocols. HLS keeps its manifest in m3u8, plain text, and is Apple's, native on Apple devices. DASH keeps it in an MPD, XML, an open ISO standard. HLS segments are often about 6 seconds, DASH often 2 to 4."
+      - "Both switch bitrate per segment and both let the player buffer several segments ahead; the video says HLS cannot, which is wrong. Large services ship both, often from the same fragmented MP4 segments."
+      - "Then read the non-functional list back against the board: scale from services and a CDN, availability first, buffering kept away by segments, a ladder and nearby caches."
+    draw: [v-hls, v-dash, v-both, v-seglen]
+    check: What is a real difference between HLS and DASH?
+    answer: The manifest format, m3u8 text against XML MPD, and device support, HLS native on Apple, DASH an open standard; both are adaptive.
+    misconceptions:
+      - "Only DASH can prefetch segments or carry several bitrates -> both protocols are adaptive, multi-bitrate and buffer ahead."
+asks:
+  - ids: [v-play]
+    beats: [1]
+    question: "The user presses play. If not the whole video, what should the play service send back?"
+    hints:
+      - Something small that describes the whole film.
+      - We wrote it during processing.
+  - ids: [v-seg-3]
+    beats: [3]
+    question: "The network jumps from 2 to 10 megabits. What does the player fetch next?"
+    hints:
+      - The manifest lists other renditions.
+      - The change happens at the next segment.
+  - ids: [v-cdn]
+    beats: [5]
+    question: "Every segment still travels through our gateway and S3. How would you cut that trip?"
+    hints:
+      - Put the segments closer to the viewer.
+      - Popular films are watched by many people in one region.
+  - ids: [v-redis]
+    beats: [6]
+    question: "Pressing play still reads the video DB every time. How would you make the start faster?"
+    hints:
+      - The same manifests are read again and again.
+      - Something in memory, in front of the database.
+task:
+  prompt: "Draw the playback design: the player asking the play service for a manifest, read through a Redis cluster from the video DB, then fetching segments of changing quality from a CDN that falls back to S3."
+  expects: [1, 2, 3, 5, 6]

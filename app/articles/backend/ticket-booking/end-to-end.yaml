@@ -1,0 +1,742 @@
+# yaml-language-server: $schema=../../../../../lego/content-kit/schema/topic.schema.json
+# provenance: ai-drafted by claude-opus-5-5 on 2026-10-27
+#
+# A whole backend system design interview for a ticket booking service like BookMyShow, Paytm or
+# District, run step by step on one whiteboard. The order and the board follow a five-step interview
+# framework: requirements, core entities, API, a high-level design, then a low-level design that
+# opens the picture in four parts: the databases, search, and two ways to stop two people buying
+# one seat (a cron job that frees unpaid holds, then Redis holds that expire by themselves), before
+# the requirements are read back and the follow-up on traffic peaks is answered with a waiting queue.
+# Every latency figure is an illustrative round number for the exercise, not a measurement.
+# A backend system of lego-ai's own (app/articles/backend): it stands alone and links to no main-site topic.
+catalogVersion: 5
+title: Designing a ticket booking system, end to end
+shortTitle: Ticket booking interview
+summary: "A 45-minute backend design interview for a movie and event ticketing service like BookMyShow, step by step on one board: requirements with the CAP choice made per operation, four entities, four endpoints, the high-level design, then the databases, search with Elasticsearch fed by change data capture, and two ways to hold a seat so no two people book it."
+group: design
+order: 4
+xp: 260
+difficulty: intermediate
+tags: [interview, search, consistency, distributed-locks, change-data-capture, scalability]
+eyebrow: Design
+breadcrumb: [Ticket booking, Interview walkthrough]
+lede: "You have about forty-five minutes and one whiteboard to design a service like BookMyShow, where people search for a movie, a show or a concert, look at its seats, and buy tickets. Most of it is a read-heavy catalogue that must stay up; one small part, taking a seat, must never sell the same seat twice. This walkthrough runs the interview the way a strong candidate runs it: pin down the requirements and say which part is available and which consistent, name the entities and endpoints, draw the simplest design, then open it part by part until the seat problem is solved."
+reviewStatus: draft
+author: rakeshr410
+provenance: ai-drafted
+sources:
+  - title: "System Design 2: Design Ticket Booking System like BookMyShow, District (InterviewWithBunny, YouTube)"
+    url: https://www.youtube.com/watch?v=uamf0wRMx5o
+    note: "Order and board kept. Corrected: CAP is a choice under partition; Cassandra reads by key fast, it lacks ad hoc search; Postgres can index many columns; a hold is one atomic SET NX with TTL; Postgres, not Cassandra, is the seat's truth."
+  - title: SET command (Redis documentation)
+    url: https://redis.io/docs/latest/commands/set/
+    note: "SET with NX and EX sets a key only if it is absent, with an expiry, in one atomic step: the seat hold."
+  - title: Debezium documentation
+    url: https://debezium.io/documentation/
+    note: "Change data capture: reads a database's change log and publishes each row change to Kafka."
+  - title: Apache Cassandra documentation
+    url: https://cassandra.apache.org/doc/latest/
+    note: "A partitioned, replicated wide-column store with tunable consistency, built for availability and fast writes."
+  - title: Elasticsearch reference
+    url: https://www.elastic.co/guide/en/elasticsearch/reference/current/index.html
+    note: "An inverted-index search engine: full text, filters, geo distance and ranking in one query."
+tutorBrief: >-
+  Interview walkthrough for a ticket booking service like BookMyShow, Paytm or District: users search
+  for a movie, a show or a concert, open it, and book seats. Five numbered steps on the board, top to
+  bottom: 1 functional requirements (left) and non-functional (right), 2 core entities, 3 API (beside
+  the entities), 4 high-level design, 5 low-level design (the high-level picture copied and grown).
+  Functional: search events by title (free text), location (latitude and longitude) and date; view an
+  event's details (description, metadata, venue and the seat layout with availability); book seats.
+  Non-functional: scale 100M daily active users; CAP chosen per operation: highly available for search
+  and viewing, highly consistent for booking (two users must never get one seat). CAP itself: during a
+  network partition a replicated store answers (available, maybe stale) or refuses (consistent); you
+  choose per operation, not once for the system. Entities: user, event (movie or concert), venue (hall
+  or location), ticket. API: GET /v1/search?q=term&location=place&date=day returns a page of event ids
+  (with a title and thumbnail if wanted), paginated; GET /v1/event/{eventId} returns event details,
+  location and seats; booking is two steps: POST /v1/booking/reserve with { seats } returns a bookingId,
+  then POST /v1/booking/confirm with { bookingId, paymentDetails }. The user comes from the auth token in
+  the Authorization header, checked by the gateway, never from the body; payment details are a token
+  from the payment gateway, not raw card numbers. High-level design: clients, an API gateway
+  (authentication, rate limiting, routing), first one booking service doing everything with one
+  database, then split into a search service, an event service and a booking service so each scales
+  alone. Low-level design: (1) databases: event and movie metadata (huge, read-mostly, must stay up) in
+  Cassandra; bookings and payments (must be consistent) in MySQL or PostgreSQL with transactions. Event
+  rows: id, venue, artistId, name, description, seats; movie rows: id, title, actors, seats. (2) search:
+  Cassandra reads fast by partition key but cannot run ad hoc text, geo and date queries across all
+  events, so search runs on Elasticsearch, fed from Cassandra by change data capture (Debezium reads the
+  change log, publishes to Kafka, a consumer indexes into Elasticsearch). The index lags by seconds:
+  seats left (20 becomes 19 after a booking) is shown near real time, never used to decide a booking.
+  (3) booking, first approach: two users (user 1 and user 2) want Spider-Man seats L12 and L13; seats
+  are available, reserved or booked; reserve marks them reserved for 10 minutes (the video says 5 to
+  10), the payment gateway confirms, the seats become booked; a cron job every minute scans for holds
+  older than 10 minutes and frees them: it scans everything, frees seats up to a minute late, and the
+  check-then-reserve races unless done atomically. (4) booking, second approach: no cron; a Redis
+  cluster holds each seat as a key set only if absent with a 10-minute TTL (SET seat:event:L12 bookingId
+  NX EX 600, one atomic step; one user wins, the other is told the seat is taken). Paid: the booking
+  commits in PostgreSQL (a unique key on event and seat as the final guard, refusing a confirm whose hold
+  expired), the hold key is deleted, the seat count in Cassandra is updated and CDC carries it to search.
+  Unpaid: the key expires and the seats are free again, no job needed. Read-back: search on
+  Elasticsearch, details from Cassandra, booking with Redis holds and PostgreSQL; reads far outnumber
+  bookings, so the search and event services are scaled out more than booking. Follow-up, a traffic
+  peak (an international concert): a virtual waiting queue, for example on Kafka, admits users to the
+  booking service in order and in batches it can handle.
+components:
+  - key: client
+    name: Client apps
+    tone: sand
+    kind: client
+    summary: The website and mobile apps, where users search, open an event, pick seats and pay.
+    owns: [nothing of its own]
+    talksTo: [api-gateway]
+  - key: api-gateway
+    name: API gateway
+    tone: blue
+    kind: gateway
+    summary: One entry point that authenticates and authorizes each request, rate limits it, and routes it to the right service.
+    owns: [routes, rate limits]
+    talksTo: [search-service, event-service, booking-service]
+  - key: search-service
+    name: Search service
+    tone: blue
+    kind: service
+    summary: Answers searches by title, location and date with a page of matching events.
+    owns: [nothing durable]
+    talksTo: [elasticsearch]
+  - key: event-service
+    name: Event service
+    tone: blue
+    kind: service
+    summary: Returns one event's details, venue and seat layout.
+    owns: [nothing durable]
+    talksTo: [events-db]
+  - key: booking-service
+    name: Booking service
+    tone: green
+    kind: service
+    summary: Holds seats, sends the user to pay, and commits the booking when the payment succeeds.
+    owns: [nothing durable]
+    talksTo: [seat-holds, bookings-db, events-db, payment-gateway]
+  - key: database
+    name: Database
+    tone: yellow
+    kind: datastore
+    summary: The single database of the high-level design, split by the low-level design.
+    owns: [events, bookings]
+    talksTo: []
+  - key: events-db
+    name: Cassandra
+    tone: yellow
+    kind: datastore
+    summary: Event and movie metadata, partitioned and replicated for availability.
+    owns: [event, movie]
+    talksTo: [cdc]
+  - key: bookings-db
+    name: PostgreSQL
+    tone: yellow
+    kind: datastore
+    summary: Bookings and payments, in transactions, with a unique key on event and seat.
+    owns: [booking, booking_seat]
+    talksTo: []
+  - key: elasticsearch
+    name: Elasticsearch
+    tone: orange
+    kind: datastore
+    summary: The search index of events, by text, location and date.
+    owns: [event index]
+    talksTo: []
+  - key: cdc
+    name: Change data capture
+    tone: gray
+    kind: worker
+    summary: Debezium reads Cassandra's changes into Kafka, and a consumer writes them into Elasticsearch.
+    owns: [the change stream]
+    talksTo: [elasticsearch]
+  - key: payment-gateway
+    name: Payment gateway
+    tone: purple
+    kind: external
+    summary: A third party that takes the payment and tells the booking service whether it succeeded.
+    owns: [card details]
+    talksTo: [booking-service]
+  - key: hold-sweeper
+    name: Cron job
+    tone: gray
+    kind: worker
+    summary: "The first approach's job: every minute, frees seats reserved more than 10 minutes ago."
+    owns: [nothing]
+    talksTo: [events-db]
+  - key: seat-holds
+    name: Redis cluster
+    tone: orange
+    kind: cache
+    summary: One key per held seat, set only if absent, expiring after 10 minutes.
+    owns: [seat holds]
+    talksTo: []
+  - key: waiting-queue
+    name: Waiting queue
+    tone: gray
+    kind: queue
+    summary: For a traffic peak, lines users up and lets them into booking in batches, for example on Kafka.
+    owns: [the line]
+    talksTo: [booking-service]
+content:
+  # ────────────────────────────────────────────────────────────────── Problem statement
+  - __component: sd.section
+    key: problem-statement
+    title: Understanding the problem.
+    railLabel: Problem
+    intro: "The prompt is one line: design a ticket booking service like BookMyShow, Paytm or District. Say what it does in a sentence and agree it with the interviewer; the rest, what it must do and for how many people, is yours to ask for."
+  - __component: sd.rich-text
+    key: problem-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "A ticket booking service is an online platform where people buy tickets for movies, events and concerts. A user searches for something to see, opens it to read the details and look at the seats, picks seats and pays. Write the title and that one line at the top of the board."
+      - type: paragraph
+        children:
+          - type: text
+            text: "The prompt is open on purpose. Run the interview in five steps and number each on the board as you reach it: the requirements, the core entities, the API, a high-level design, then a low-level design that opens each box. The first three are quick, but the requirements you agree decide which parts of the design must stay up and which must never be wrong."
+  - __component: sd.card-grid
+    key: board-steps
+    title: The board, in the order you fill it
+    columns: 3
+    cards:
+      - title: 1. Requirements
+        text: Functional on the left (what users do), non-functional on the right (scale, and the CAP choice for each part).
+      - title: 2. Entities
+        text: The nouns the system keeps. Here, four.
+      - title: 3. API
+        text: One endpoint per functional requirement; booking takes two, reserve and confirm.
+      - title: 4. High-level design
+        text: Clients, an API gateway, the services and a database, the requests drawn as arrows.
+      - title: 5. Low-level design
+        text: "The picture copied and opened: the databases, search, then holding seats so nobody books one twice."
+  - __component: sd.quiz
+    key: problem-quiz
+    title: Quick check
+    questions:
+      - question: The interviewer says only "design BookMyShow". What do you do first?
+        optionA: Draw Kafka and Redis
+        optionB: Say what the product does in one line, then ask what it must do and at what scale
+        optionC: Pick Cassandra
+        optionD: Write the seat table
+        answer: B
+        explanation: The prompt is vague on purpose; agreeing on the product and the requirements comes before any box.
+  # ────────────────────────────────────────────────────────────────── 1. Requirements
+  - __component: sd.section
+    key: requirements
+    title: Requirements.
+    railLabel: Requirements
+    intro: "Two lists side by side. The functional list is the user's path through the app; the non-functional list carries the scale and, the heart of this problem, which parts must stay up and which must stay exact."
+  - __component: sd.subsection
+    key: functional-sub
+    title: Functional requirements
+    railLabel: Functional
+  - __component: sd.checklist
+    key: functional
+    idPrefix: FR-
+    items:
+      - text: "Search for an event, a movie, a show or a concert, by title (free text), location and date."
+      - text: "View an event's details: what it is, who performs, the venue, and the seat layout with what is still free."
+      - text: Book one or more seats for that event.
+        note: "Three steps of one journey, so three requirements: search, view, book."
+  - __component: sd.subsection
+    key: non-functional-sub
+    title: Non-functional requirements
+    railLabel: Non-functional
+  - __component: sd.requirement-table
+    key: non-functional
+    rows:
+      - area: Scale
+        requirement: Serve a large consumer user base.
+        targets: [100M daily active users]
+        note: Ask for it first; it decides the architecture.
+      - area: Availability
+        requirement: Searching and viewing events always answer, quickly.
+        targets: [highly available for search and view]
+        note: A slightly stale seat count on a search result costs nothing.
+      - area: Consistency
+        requirement: A seat is sold to one person only.
+        targets: [highly consistent for booking]
+        note: Two people holding tickets for one seat is the failure this system exists to prevent.
+  - __component: sd.rich-text
+    key: cap-choice
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "CAP says that when the network between a replicated store's machines splits, the store must either keep answering, perhaps with stale data, or refuse until its copies agree. It is a choice made under a partition, and it can be made differently for different operations. This system needs both answers: search and viewing must stay up, so they lean to availability, and booking must never sell one seat twice, so it leans to consistency. Write it that way on the board, one line each, rather than claiming one letter for the whole system."
+  - __component: sd.quiz
+    key: requirements-quiz
+    title: Quick check
+    questions:
+      - question: How do you state the CAP choice for a ticket booking service?
+        optionA: Consistent everywhere
+        optionB: Available everywhere
+        optionC: "Available for searching and viewing events, consistent for booking a seat"
+        optionD: CAP does not apply
+        answer: C
+        explanation: Different operations can make different choices. A stale count on a search page is harmless; a seat sold twice is not.
+      - question: What does CAP actually force you to choose between?
+        optionA: Speed and cost
+        optionB: During a network partition, answering possibly stale data or refusing until copies agree
+        optionC: SQL and NoSQL
+        optionD: Reads and writes
+        answer: B
+        explanation: Without a partition a system can be both available and consistent; the choice bites when the network splits.
+  # ────────────────────────────────────────────────────────────────── 2. Entities
+  - __component: sd.section
+    key: entities
+    title: Core entities.
+    railLabel: Entities
+    intro: "Name the nouns the system keeps. Four come straight from the requirements; the list may grow while designing."
+  - __component: sd.table
+    key: entities-table
+    columns:
+      - { label: Entity, style: strong }
+      - { label: What it is, style: text }
+    rows:
+      - [User, Who searches and books; bookings belong to a user.]
+      - [Event, "A movie, a show or a concert: what is being sold."]
+      - [Venue, "The hall or location where it happens, with its seats."]
+      - [Ticket, "One booked seat for one event; the thing a user buys."]
+  - __component: sd.quiz
+    key: entities-quiz
+    title: Quick check
+    questions:
+      - question: Why is the venue its own entity rather than a field of the event?
+        optionA: It is not needed
+        optionB: One hall hosts many events and owns the seat layout they share
+        optionC: For the load balancer
+        optionD: Because tickets need a price
+        answer: B
+        explanation: The seats belong to the venue; each event sells them again.
+  # ────────────────────────────────────────────────────────────────── 3. API
+  - __component: sd.section
+    key: api
+    title: API.
+    railLabel: API
+    intro: "One endpoint per functional requirement: search, view, and book. Booking is two steps, reserve the seats then confirm with payment, so it takes two calls."
+  - __component: sd.endpoint
+    key: search-events
+    method: GET
+    path: "/v1/search?q={term}&location={place}&date={day}"
+    summary: "Searches events by free text, location (latitude and longitude) and date. Returns a page of matching event ids, with a title and thumbnail if the results page needs them."
+    responses:
+      - label: OK
+        status: "200"
+        body:
+          events: [e101, e205]
+          next: c2
+  - __component: sd.endpoint
+    key: view-event
+    method: GET
+    path: "/v1/event/{eventId}"
+    summary: "Returns one event's details, its location, and its seats with whether each is free."
+    responses:
+      - label: OK
+        status: "200"
+        body:
+          event: { id: e101, name: Spider-Man, venue: v7 }
+          seats: [{ id: L12, status: available }, { id: L13, status: available }]
+  - __component: sd.endpoint
+    key: reserve
+    method: POST
+    path: /v1/booking/reserve
+    summary: "Holds the listed seats for the user for a few minutes and returns a bookingId to pay against. The user comes from the auth token in the header, never from the body."
+    requestHeaders: ["Authorization: Bearer <token>"]
+    requestBody:
+      eventId: e101
+      seats: [L12, L13]
+    responses:
+      - label: Held
+        status: "201"
+        body:
+          bookingId: b9001
+          holdUntil: "2026-11-01T18:10:00Z"
+      - label: Seat taken
+        status: "409"
+        body:
+          error: seat_unavailable
+  - __component: sd.endpoint
+    key: confirm
+    method: POST
+    path: /v1/booking/confirm
+    summary: "Pays for a held booking and books the seats. paymentDetails is a token from the payment gateway, not card numbers."
+    requestHeaders: ["Authorization: Bearer <token>"]
+    requestBody:
+      bookingId: b9001
+      paymentDetails: tok_4f2a
+    responses:
+      - label: Booked
+        status: "200"
+        body:
+          bookingId: b9001
+          status: booked
+      - label: Hold expired
+        status: "410"
+        body:
+          error: hold_expired
+  - __component: sd.rich-text
+    key: api-notes
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "The search returns a list because many events can match, and paginates it because the list can be long. The reserve takes a list of seats because one user often books several. The confirm sends the bookingId the reserve returned, so the two calls are tied together. The user's identity rides in the Authorization header, verified by the gateway, so nobody can book as someone else by changing a body field."
+  - __component: sd.quiz
+    key: api-quiz
+    title: Quick check
+    questions:
+      - question: Why does booking take two endpoints?
+        optionA: REST requires it
+        optionB: Booking is two steps, hold the seats then pay; the reserve returns a bookingId the confirm pays against
+        optionC: One is for movies, one for concerts
+        optionD: To use two databases
+        answer: B
+        explanation: Payment takes time and can fail, so the seats are held first and booked only when payment succeeds.
+      - question: Where does the user's id come from on a reserve?
+        optionA: A userId field in the body
+        optionB: The auth token in the Authorization header, verified by the gateway
+        optionC: The bookingId
+        optionD: A cookie set by the search service
+        answer: B
+        explanation: A body field can be changed by anyone; a verified token cannot.
+  # ────────────────────────────────────────────────────────────────── 4. High-level design
+  - __component: sd.section
+    key: high-level-design
+    title: High-level design.
+    railLabel: High level
+    intro: "Turn the functional requirements into a picture: clients, an API gateway, a service, a database. Start with one service doing everything, then split it so each part can scale alone."
+  - __component: sd.component-diagram
+    key: hld-diagram
+    title: The first design, after the split
+    direction: LR
+    nodes:
+      - { key: client, details: [web and mobile] }
+      - { key: api-gateway, details: [authentication, rate limiting, routing] }
+      - { key: search-service, details: [search by title, location, date] }
+      - { key: event-service, details: [one event's details and seats] }
+      - { key: booking-service, details: [reserve and confirm] }
+      - { key: database, details: [events and bookings, for now] }
+    edges:
+      - { from: client, to: api-gateway }
+      - { from: api-gateway, to: search-service, label: /search }
+      - { from: api-gateway, to: event-service, label: /event }
+      - { from: api-gateway, to: booking-service, label: /booking }
+      - { from: search-service, to: database }
+      - { from: event-service, to: database }
+      - { from: booking-service, to: database }
+  - __component: sd.rich-text
+    key: hld-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "At 100 million daily users the work must be spread across many machines, so the services run as many copies behind one entry point. That entry point is an API gateway: it authenticates and authorizes each request, rate limits it, and routes it to the right service. The first picture has one booking service behind it that searches, returns details and books, and one database."
+      - type: paragraph
+        children:
+          - type: text
+            text: "One service with every job must be scaled for the sum of them, and a fault in one job takes the others down. Split it by responsibility: a search service, an event service and a booking service, each its own fleet, each scaled to its own traffic. The gateway routes search requests to search, event requests to events, and booking requests to booking. A single codebase could also be run as many copies; the reason to split is that the three parts have very different loads and very different correctness needs."
+  - __component: sd.quiz
+    key: hld-quiz
+    title: Quick check
+    questions:
+      - question: What does the API gateway do here?
+        optionA: Stores the events
+        optionB: Authenticates and authorizes requests, rate limits them, and routes each to the right service
+        optionC: Takes the payment
+        optionD: Searches the events
+        answer: B
+        explanation: One entry point for every client, doing the checks each service would otherwise repeat.
+      - question: Why split the one booking service into search, event and booking services?
+        optionA: Microservices are always better
+        optionB: The three jobs have different loads and needs, so each can be scaled and changed on its own
+        optionC: To use three databases at once
+        optionD: Because a single service cannot run on more than one machine
+        answer: B
+        explanation: Searching is far busier than booking, and booking needs care the other two do not.
+  # ────────────────────────────────────────────────────────────────── 5. Low-level design, 1: databases
+  - __component: sd.section
+    key: lld-databases
+    title: "Low-level design, 1: the databases."
+    railLabel: LLD 1, databases
+    intro: "Copy the high-level picture down the board and open the database. It holds two kinds of data with opposite needs, so it becomes two databases."
+  - __component: sd.rich-text
+    key: db-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Bookings and payments must be consistent: a payment recorded, a seat sold once, an order history that never loses a row. That calls for a relational database with transactions, MySQL or PostgreSQL. Event and movie metadata is the opposite: a huge catalogue, read far more than written, that must always answer. That fits a partitioned, replicated store built for availability, such as Cassandra, which keeps serving when a node or a link fails and writes very fast."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Write the tables beside the stores. The event rows hold an id, the venue, the artist, the name, the description and the seats; the movie rows an id, the title, the actors and the seats. The booking service writes to PostgreSQL; the event service reads Cassandra. Where search reads from is the next part."
+  - __component: sd.db-schema
+    key: db-tables
+    stores:
+      - key: events-store
+        engine: Cassandra
+        component: events-db
+        why: A huge, read-mostly catalogue that must stay available, read by event id.
+        tables:
+          - name: event
+            columns:
+              - { name: id, type: text, role: primary }
+              - { name: venue_id, type: text }
+              - { name: artist_id, type: text }
+              - { name: name, type: text }
+              - { name: description, type: text }
+              - { name: seats, type: "map<text, text>", note: "seat id to status, a display copy" }
+          - name: movie
+            columns:
+              - { name: id, type: text, role: primary }
+              - { name: title, type: text }
+              - { name: actors, type: "list<text>" }
+      - key: bookings-store
+        engine: PostgreSQL
+        component: bookings-db
+        why: Bookings and payments need transactions and a constraint that sells each seat once.
+        tables:
+          - name: booking
+            columns:
+              - { name: id, type: bigint, role: primary }
+              - { name: user_id, type: bigint }
+              - { name: event_id, type: text }
+              - { name: status, type: text, note: "held, booked or cancelled" }
+              - { name: payment_ref, type: text }
+          - name: booking_seat
+            columns:
+              - { name: booking_id, type: bigint }
+              - { name: event_id, type: text }
+              - { name: seat_id, type: text, note: "unique together with event_id" }
+  - __component: sd.quiz
+    key: db-quiz
+    title: Quick check
+    questions:
+      - question: Why do bookings go to PostgreSQL and event metadata to Cassandra?
+        optionA: PostgreSQL is newer
+        optionB: Bookings need transactions and consistency; the catalogue is huge, read-mostly and must stay available
+        optionC: Cassandra cannot store text
+        optionD: To split the cost
+        answer: B
+        explanation: Each store matches the CAP line its data was given in the requirements.
+  # ────────────────────────────────────────────────────────────────── 5. Low-level design, 2: search
+  - __component: sd.section
+    key: lld-search
+    title: "Low-level design, 2: search."
+    railLabel: LLD 2, search
+    intro: "Search must find events by any mix of free text, place and date across millions of rows, quickly. Neither database is built for that, so search gets an index of its own, kept up to date from Cassandra."
+  - __component: sd.rich-text
+    key: search-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Cassandra reads fast when you ask for a row by its partition key, such as an event id. It cannot run an ad hoc query like Spider-Man near this place this weekend across every event: there is no full-text matching and no free combination of filters. A relational database can index several columns, and even do some full-text search, but ranked text matching combined with location and date over a huge catalogue is what a search engine is for. Use Elasticsearch: the search service queries it and gets back a ranked page of event ids."
+      - type: paragraph
+        children:
+          - type: text
+            text: "The data still lives in Cassandra, so it is copied: change data capture. Every change to an event row in Cassandra is captured, in practice by Debezium reading the change log and publishing it to Kafka, and a consumer writes it into Elasticsearch. The copy lags by seconds, which the availability line allows. When a booking is confirmed, the booking service updates the seat count in Cassandra, 20 seats left becomes 19, and the change reaches the search results moments later."
+      - type: paragraph
+        children:
+          - type: text
+            text: "That seat count is for display only. Because the index and Cassandra may lag, neither decides whether a seat can be sold; the booking service does, as the next two parts show."
+  - __component: sd.component-diagram
+    key: search-diagram
+    title: Search, fed by change data capture
+    direction: LR
+    nodes:
+      - { key: search-service }
+      - { key: elasticsearch, details: [text, location, date] }
+      - { key: events-db, details: [the source of event data] }
+      - { key: cdc, details: [Debezium, Kafka, a consumer] }
+    edges:
+      - { from: search-service, to: elasticsearch, label: query }
+      - { from: events-db, to: cdc, label: row changes }
+      - { from: cdc, to: elasticsearch, label: index }
+  - __component: sd.quiz
+    key: search-quiz
+    title: Quick check
+    questions:
+      - question: Why not run search straight on Cassandra?
+        optionA: Cassandra is slow at every read
+        optionB: It reads fast by partition key but cannot run ad hoc text, location and date queries across all events
+        optionC: Cassandra cannot be replicated
+        optionD: It has no tables
+        answer: B
+        explanation: Cassandra is fast at the queries its keys were designed for; search is not one of them.
+      - question: How does a change in Cassandra reach Elasticsearch?
+        optionA: The client writes both
+        optionB: Change data capture reads the change, publishes it to Kafka, and a consumer indexes it
+        optionC: Elasticsearch polls every row each second
+        optionD: It never does
+        answer: B
+        explanation: Debezium, Kafka and a consumer; the index trails the source by seconds.
+  # ────────────────────────────────────────────────────────────────── 5. Low-level design, 3: booking with a cron job
+  - __component: sd.section
+    key: lld-booking-cron
+    title: "Low-level design, 3: holding seats, with a cron job."
+    railLabel: LLD 3, cron holds
+    intro: "Booking is the critical part: two users may want the same seats at the same moment, and exactly one must get them. The first approach marks seats reserved while the user pays and lets a cron job free the ones nobody paid for."
+  - __component: sd.rich-text
+    key: cron-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Take user 1 and user 2, both after seats L12 and L13 for Spider-Man. User 2's request arrives first: the booking service sees the seats are available and marks them reserved for user 2 for 10 minutes, long enough to pay. User 1's request then finds them reserved and is turned away; the app shows them grey."
+      - type: paragraph
+        children:
+          - type: text
+            text: "User 2 is sent to the payment gateway. If the payment succeeds, the gateway tells the booking service, which records the booking and marks the seats booked. If user 2 never pays, the seats would stay reserved forever, so a cron job runs every minute, looks for seats reserved more than 10 minutes ago, and makes them available again."
+      - type: paragraph
+        children:
+          - type: text
+            text: "It works, but poorly. The job scans every seat every minute, a heavy load that grows with the catalogue; it frees seats up to a minute late; and the reserve must be a single atomic check-and-set, or two requests that both read available both reserve. Mark it rejected on the board and say why: not real time, and a full scan each minute."
+  - __component: sd.table
+    key: seat-states
+    title: A seat's states
+    columns:
+      - { label: State, style: mono-strong }
+      - { label: Means, style: text }
+      - { label: Leaves by, style: text }
+    rows:
+      - [available, Anyone may reserve it, A reserve]
+      - [reserved, "Held for one user, 10 minutes", "Payment (to booked) or the cron job (to available)"]
+      - [booked, Sold, A cancellation]
+  - __component: sd.component-diagram
+    key: cron-diagram
+    title: The first approach
+    direction: LR
+    nodes:
+      - { key: booking-service, details: [reserve, then confirm] }
+      - { key: payment-gateway }
+      - { key: events-db, details: [seat states] }
+      - { key: hold-sweeper, details: [every minute] }
+    edges:
+      - { from: booking-service, to: payment-gateway, label: pay }
+      - { from: booking-service, to: events-db, label: "reserve, book" }
+      - { from: hold-sweeper, to: events-db, label: free old holds }
+  - __component: sd.quiz
+    key: cron-quiz
+    title: Quick check
+    questions:
+      - question: What happens to reserved seats when the user never pays, in this approach?
+        optionA: They stay reserved forever
+        optionB: A cron job every minute frees seats reserved more than 10 minutes ago
+        optionC: The payment gateway frees them
+        optionD: Elasticsearch frees them
+        answer: B
+        explanation: Without the job they would be stuck; with it they come back, up to a minute late.
+      - question: What is wrong with the cron approach?
+        optionA: It double books by design
+        optionB: It scans every seat every minute and frees holds late, so it is heavy and not real time
+        optionC: It needs Elasticsearch
+        optionD: Nothing
+        answer: B
+        explanation: The work grows with the catalogue, not with the number of holds, and expiry is only as precise as the schedule.
+  # ────────────────────────────────────────────────────────────────── 5. Low-level design, 4: Redis holds
+  - __component: sd.section
+    key: lld-booking-redis
+    title: "Low-level design, 4: Redis holds that expire, and finishing."
+    railLabel: LLD 4, Redis holds
+    intro: "Drop the cron job. Keep each hold in a Redis cluster as a key that expires by itself after 10 minutes, so an unpaid hold disappears on time with no scan."
+  - __component: sd.rich-text
+    key: redis-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "When user 1 asks for L12 and L13, the booking service sets one Redis key per seat, such as seat, e101, L12, only if it is absent, with a 10-minute time to live, in a single atomic command (SET with NX and EX). If the key was set, nobody else holds the seat and user 1 goes on to pay. If it already existed, someone else is paying for it and user 1 is told so. Checking first and setting afterwards would let two users both see no key; the one atomic command is what guarantees a single winner."
+      - type: paragraph
+        children:
+          - type: text
+            text: "If the payment succeeds, the booking service commits the booking in PostgreSQL, deletes the hold keys, and updates the seat in Cassandra; change data capture carries it to search, so other users see the seat gone. A unique key on event and seat in PostgreSQL is the last guard: if a hold expired during a slow payment and someone else took the seat, the second commit fails and that payment is refunded. If the payment fails or the user leaves, the key simply expires after 10 minutes and the seat is free again. No job runs."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Read the requirements back against the board. Search by title, location and date: Elasticsearch. Viewing details and seats: Cassandra, kept fresh in search by change data capture. Booking: Redis holds and PostgreSQL. Scale: reads far outnumber bookings, so the search and event services run more copies than booking. CAP: Cassandra and Elasticsearch keep search and viewing available; the Redis holds and PostgreSQL keep booking consistent."
+  - __component: sd.subsection
+    key: peak-traffic
+    title: "Follow-up: a traffic peak"
+  - __component: sd.rich-text
+    key: peak-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "If time remains, expect a follow-up: how do you survive an international concert going on sale, when millions arrive in the same minute? Put a waiting queue in front of booking, a virtual waiting room. Users join the line, for example as messages on Kafka, and are let into the booking service in order and in batches it can serve; when a user's turn comes they reserve and pay as usual. The booking service sees a steady flow instead of the spike."
+  - __component: sd.component-diagram
+    key: final-diagram
+    title: The final design
+    direction: LR
+    nodes:
+      - { key: client }
+      - { key: api-gateway, details: [authentication, rate limiting, routing] }
+      - { key: waiting-queue, details: [only for peak sales] }
+      - { key: search-service, details: [scaled out most] }
+      - { key: event-service }
+      - { key: booking-service, details: [hold, pay, commit] }
+      - { key: elasticsearch }
+      - { key: events-db }
+      - { key: cdc }
+      - { key: bookings-db, details: [unique event and seat] }
+      - { key: seat-holds, details: [set if absent, 10 minute TTL] }
+      - { key: payment-gateway }
+    edges:
+      - { from: client, to: api-gateway }
+      - { from: api-gateway, to: search-service }
+      - { from: api-gateway, to: event-service }
+      - { from: api-gateway, to: waiting-queue, label: peak sales }
+      - { from: waiting-queue, to: booking-service, label: in batches }
+      - { from: api-gateway, to: booking-service }
+      - { from: search-service, to: elasticsearch }
+      - { from: event-service, to: events-db }
+      - { from: events-db, to: cdc }
+      - { from: cdc, to: elasticsearch }
+      - { from: booking-service, to: seat-holds, label: hold }
+      - { from: booking-service, to: payment-gateway, label: pay }
+      - { from: booking-service, to: bookings-db, label: commit }
+      - { from: booking-service, to: events-db, label: seat count }
+  - __component: sd.quiz
+    key: redis-quiz
+    title: Quick check
+    questions:
+      - question: How does a Redis hold guarantee that only one of two users gets seat L12?
+        optionA: Each user checks for the key, then sets it
+        optionB: One atomic set-if-absent with a TTL; the second user's set fails because the key exists
+        optionC: Redis is single threaded, so any two commands are safe
+        optionD: The payment gateway decides
+        answer: B
+        explanation: A separate check and set race; SET with NX makes the check and the write one step.
+      - question: User 2 reserved seats but closed the app. What frees the seats?
+        optionA: A cron job
+        optionB: The hold key's 10-minute TTL expires by itself
+        optionC: The user must cancel
+        optionD: Elasticsearch
+        answer: B
+        explanation: Expiry is built into the key, so nothing has to scan for old holds.
+      - question: A payment takes 12 minutes and the hold expired; another user booked the seat meanwhile. What stops a double booking?
+        optionA: Nothing
+        optionB: The unique key on event and seat in PostgreSQL rejects the second commit, and that payment is refunded
+        optionC: Cassandra
+        optionD: The TTL is extended automatically
+        answer: B
+        explanation: The hold makes conflicts rare; the database constraint makes them impossible.
+      - question: Why scale the search service more than the booking service?
+        optionA: Search is more important
+        optionB: Reads far outnumber bookings; most users browse and few buy
+        optionC: Booking cannot be scaled
+        optionD: Elasticsearch requires it
+        answer: B
+        explanation: Each service is scaled to its own traffic, which is the point of having split them.
+      - question: A huge concert goes on sale. What protects the booking service?
+        optionA: A bigger database
+        optionB: A waiting queue that admits users to booking in order and in batches
+        optionC: Turning off search
+        optionD: Longer holds
+        answer: B
+        explanation: The queue turns a spike into a steady flow the booking service can serve.

@@ -1,0 +1,43 @@
+# Ticket booking interview, the problem statement: the title and one line on what the service does, written at the top of the board as the video does, then the five steps said once (said, not drawn).
+id: backend/ticket-booking/end-to-end/problem-statement
+title: The problem, and the five steps
+source:
+  hash: "983f9c95f5e6"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: null
+  assumes: []
+  carries:
+    - "A ticket booking service lets users search for movies, events and concerts, view them with their seats, and buy tickets."
+    - "The interview runs in five steps: requirements, core entities, API, high-level design, low-level design."
+  terms:
+    - term: event
+      means: "Anything a ticket is sold for: a movie show, a comedy show, a concert."
+board:
+  keep: []
+  elements:
+    - { id: title, kind: note, label: "Ticket booking like BookMyShow, Paytm, District", at: [8, 0] }
+    - { id: prompt-desc, kind: note, label: "an online platform to buy tickets for movies and events", at: [8, 2] }
+  arrows: []
+beats:
+  - point: "A ticket booking service like BookMyShow is an online platform where people find a movie, a show or a concert and buy tickets for its seats."
+    kind: rule
+    weight: core
+    teach:
+      - "Write the title: a ticket booking service like BookMyShow, Paytm or District."
+      - "Under it, one line on what it does: an online platform where users buy tickets for movies, events and concerts. A user searches, opens an event, picks seats and pays."
+    draw: [title, prompt-desc]
+    check: In one sentence, what does this service let a user do?
+    answer: Find a movie, show or concert and buy tickets for particular seats.
+  - point: "The interview runs in five steps: gather the requirements, identify the core entities, write the API, draw the high-level design, then the low-level design."
+    kind: rule
+    weight: core
+    teach:
+      - "The prompt is open on purpose: design a ticket booking app, and the rest is yours to ask. Say the plan once."
+      - "First the requirements, functional and non-functional. Then the core entities, then the API, then a high-level design, and last the low-level design, where most of the time goes."
+      - Said, not written; each step gets its number on the board when we reach it.
+    check: Which two steps come straight after the requirements?
+    answer: Identifying the core entities, then writing the API.

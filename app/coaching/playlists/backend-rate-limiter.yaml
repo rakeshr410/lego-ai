@@ -1,0 +1,37 @@
+slug: backend-rate-limiter
+title: "The rate limiter interview"
+summary: Backend design interviews run step by step on one whiteboard, as you would run them on the day. Requirements with numbers, entities, the admin API, where the limiter sits and how its copies share state, then the five rate limiting algorithms one at a time, and the one to choose.
+outline: "The rate limiter lessons follow the five-step order and the drawings of InterviewWithBunny's System Design 21, Design a Distributed Rate Limiter (youtube.com/watch?v=SfV42UuZEBY), section by section; no text is taken from it, and its factual slips are corrected in the article."
+lessons:
+  - slug: rate-limiter
+    title: "The rate limiter interview: the problem, requirements, entities and API"
+    summary: "The prompt at the top of the board, functional and non-functional requirements side by side, the three entities, the admin endpoints and the 429 answer."
+    parts:
+      - { title: "The problem, then two lists", minutes: 10, packs: [backend/rate-limiter/end-to-end/problem-statement, backend/rate-limiter/end-to-end/requirements] }
+      - { title: "Entities, then the API", minutes: 7, packs: [backend/rate-limiter/end-to-end/entities, backend/rate-limiter/end-to-end/api] }
+  - slug: rate-limiter-design
+    title: "The rate limiter interview: high-level design, then the fixed window"
+    summary: "Where the limiter sits, the gateway's copies sharing one Redis, the policy service and its database; then the five algorithms named, and the fixed window counter with its edge burst."
+    parts:
+      - { title: "Where the limiter sits, and its state", minutes: 16, packs: [backend/rate-limiter/end-to-end/high-level-design] }
+      - { title: "Fixed window counter", minutes: 8, packs: [backend/rate-limiter/end-to-end/lld-fixed-window] }
+  - slug: rate-limiter-sliding-log
+    title: "The rate limiter interview: the sliding window log"
+    summary: "A timestamp per request makes the window slide exactly, at a cost in memory."
+    parts:
+      - { title: "Sliding window log", minutes: 6, packs: [backend/rate-limiter/end-to-end/lld-sliding-log] }
+  - slug: rate-limiter-sliding-counter
+    title: "The rate limiter interview: the sliding window counter"
+    summary: "Two counts and a weighted estimate approximate a sliding window, worked through at 12 seconds."
+    parts:
+      - { title: "Sliding window counter", minutes: 7, packs: [backend/rate-limiter/end-to-end/lld-sliding-counter] }
+  - slug: rate-limiter-token-bucket
+    title: "The rate limiter interview: the token bucket"
+    summary: "Capacity, refill rate and cost; bursts within a cap; the state kept in Redis and refilled lazily."
+    parts:
+      - { title: "Token bucket", minutes: 10, packs: [backend/rate-limiter/end-to-end/lld-token-bucket] }
+  - slug: rate-limiter-leaky-bucket
+    title: "The rate limiter interview: the leaky bucket, and the choice"
+    summary: "A queue drained at a fixed rate, why it adds waiting, the choice of the token bucket, and the code's shape with the strategy pattern."
+    parts:
+      - { title: "Leaky bucket, then the choice and the code", minutes: 13, packs: [backend/rate-limiter/end-to-end/lld-leaky-bucket] }

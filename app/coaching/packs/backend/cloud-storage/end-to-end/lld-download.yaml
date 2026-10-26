@@ -1,0 +1,65 @@
+# Cloud storage interview, deep dive, download: the read or download service added behind the gateway, asking the metadata service for permission, then handing out signed URLs, as in the video; the video draws one signed URL, the pack teaches one per chunk.
+id: backend/cloud-storage/end-to-end/lld-download
+title: "Download and sharing"
+source:
+  hash: "2b9a4a8e21ee"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/cloud-storage/end-to-end/lld-versions
+  assumes:
+    - "The permissions table names a resource, a user and a role."
+    - "A file version lists its chunks, each with its S3 key."
+  carries:
+    - "A download service asks the metadata service whether the file exists and the user may read it, by the permissions table."
+    - "Sharing a folder is one permission row."
+    - "If allowed, it returns signed GET URLs for the current version's chunks, and the app fetches them from storage and joins them."
+  terms:
+    - term: "permission"
+      means: "A row naming a file or folder, a user and a role such as reader or writer."
+board:
+  keep: [title, desc, fr, fr-account, fr-upload, fr-sync, fr-share, fr-folders, fr-quota, fr-out, nfr, nfr-scale, nfr-cap, nfr-large, nfr-latency, nfr-durable, hld, hld-phone, hld-laptop, hld-tablet, hld-clients, hld-gateway, hld-user-svc, hld-uploader, hld-meta-svc, hld-user-db, hld-blob, hld-meta-db, hld-phone-gw, hld-laptop-gw, hld-tablet-gw, hld-gw-user, hld-gw-uploader, hld-gw-meta, hld-user-db-arrow, hld-blob-arrow, hld-meta-db-arrow, lld-head, lc-client, lc-chunker, lc-upload-mgr, lc-index, lk-gateway, lk-user-svc, lk-users-db, lk-users-1, lk-users-2, lk-client-gw, lk-gw-user, lk-user-db, lk-uploader, s1, s1-post, s1-req-1, s1-req-2, s1-req-3, s1-resp-1, s1-resp-2, s1-resp-3, s1-resp-4, s1-quota, s1-resume-1, s1-resume-2, s1-resume-3, s1-resume-4, lk-gw-uploader, lk-quota, s2, s2-chunk, s3-post, s3-body, s3-sign, s3-resp, s4-upload, lk-s3, lk-redis, lk-redis-1, lk-redis-2, lk-sign, lk-state, s5, s5-commit, s5-validate, s6-save, s6-publish, lk-meta-svc, lk-meta-db, lk-kafka, lk-gw-meta, lk-up-meta, lk-meta-db-arrow, lk-publish, lc-sync-engine, lk-sync, lk-sync-pull, lk-sync-push, lk-tables-head, lk-t-folders, lk-t-files, lk-t-files-2, lk-t-versions, lk-t-vchunks, lk-t-chunks, lk-t-perms, lk-consume, lk-gw-sync, lk-sync-meta, lc-watcher, lv-changed, lv-version]
+  elements:
+    - { id: "lk-download", kind: "box", label: "Download service", at: [37, 69], size: [13, 3], tone: "blue" }
+    - { id: "lk-dl-perm", kind: "note", label: "checks permission first", at: [37, 73] }
+    - { id: "lk-dl-urls", kind: "note", label: "signed GET URLs per chunk", at: [37, 74] }
+  arrows:
+    - { id: "lk-gw-download", from: "lk-gateway", to: "lk-download" }
+    - { id: "lk-dl-meta", from: "lk-download", to: "lk-meta-svc" }
+beats:
+  - point: "A read or download service takes the request and asks the metadata service whether the file exists and the user may read it."
+    kind: component
+    weight: core
+    teach:
+      - "Last flow, reading. A read or download service behind the gateway."
+      - "It does not trust the request: it asks the file metadata service whether the file exists and whether this user may read it."
+    draw: [lk-download, lk-gw-download, lk-dl-meta]
+    check: "What does the download service ask the metadata service?"
+    answer: "Whether the file exists and whether this user is allowed to read it."
+  - point: "Permission comes from the permissions table: a row for the file, or a folder above it, naming the user and a role; sharing is writing one such row."
+    kind: mechanism
+    weight: core
+    teach:
+      - "The answer is in the permissions table: a row whose resource is the file, or a folder above it, with the user and a role, reader or writer."
+      - "So sharing a folder with family is a metadata write: one permission row."
+    draw: [lk-dl-perm]
+    check: "How is sharing a folder with a family member stored?"
+    answer: "As one row in the permissions table: the folder, the family member, and a role such as reader."
+  - point: "If allowed, the service returns signed GET URLs and the app downloads straight from storage; the file is stored in chunks, so one URL per chunk of the current version."
+    kind: flow
+    weight: core
+    teach:
+      - "If allowed, the same trick as the upload: signed URLs, so the bytes come straight from storage, not through our servers."
+      - "The file is stored as chunks, so the answer lists the current version's chunks, each with a URL, and the app joins them. The video draws one signed URL; with chunked storage it is one per chunk."
+    draw: [lk-dl-urls]
+    check: "Why does a download return several URLs?"
+    answer: "The file is stored as chunks, so each chunk of the current version gets its own signed URL and the app joins them."
+asks:
+  - ids: [lk-download]
+    beats: [1]
+    question: "Someone opens a shared file to download it. What should happen before any bytes move?"
+    hints:
+      - "Does the file exist, and may this person read it?"
+      - "Who knows the permissions?"

@@ -1,0 +1,78 @@
+# Chat app interview, low-level design, the user and group services: the video copies the high-level design into "4. Low Level Designing" and writes the tables beside UserDB and GroupDB ("UserDB (PostGres)", "GroupDB (PostGres)", "GroupMappingDB (PostGres)"); here they go beside the high-level picture, top to bottom.
+id: backend/chat-app/end-to-end/lld-user-group
+title: "Low-level design: users and groups"
+source:
+  hash: "2d5c61441574"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/chat-app/end-to-end/high-level-design
+  assumes:
+    - "A user service with a user DB, a group service with a group DB, behind the API gateway."
+  carries:
+    - "Login returns a JWT or session id; the user row in Postgres holds userId, username, email, phone, status, lastSeen, metadata."
+    - "The group DB in Postgres has a group table and a group mapping table, one row per membership, unique on groupId and userId."
+  terms:
+    - term: JWT
+      means: "A signed token the user service issues at login; later calls carry it to prove who is calling."
+    - term: group mapping table
+      means: "One row per user in a group: id, groupId, userId, joinedDate."
+board:
+  keep: [title, prompt-desc, fr, fr-register, fr-one, fr-group, fr-media, fr-history, fr-receipts, nfr, nfr-scale, nfr-volume, nfr-cap, nfr-latency, nfr-reliable, entities, ent-user, ent-group, ent-message, api, api-register, api-one-head, api-ws, api-chats, api-msgs, api-receipts, api-group-head, api-g-create, api-g-add, api-g-remove, api-g-ws, api-g-msgs, hld, hld-user-1, hld-user-2, hld-user-3, hld-clients-note, hld-lb, hld-lb-note, hld-user-svc, hld-userdb, hld-chat-svc, hld-chatdb, hld-blob, hld-group-svc, hld-groupdb, hld-u1-lb, hld-u2-lb, hld-u3-lb, hld-lb-user, hld-user-db, hld-lb-chat, hld-chat-db, hld-chat-blob, hld-lb-group, hld-group-db]
+  elements:
+    - { id: lld-ug, kind: region, label: "5. Low-level design: users and groups", at: [72, 37], size: [30, 16] }
+    - { id: ug-user-head, kind: note, label: "User service: register, log in, JWT or session id", at: [73, 39], in: lld-ug }
+    - { id: ug-userdb-1, kind: note, label: "UserDB, Postgres: userId, username, email,", at: [73, 40], in: lld-ug }
+    - { id: ug-userdb-2, kind: note, label: "phone, status, lastSeen, metadata", at: [75, 41], in: lld-ug }
+    - { id: ug-group-head, kind: note, label: "Group service: create, edit, list members", at: [73, 43], in: lld-ug }
+    - { id: ug-groupdb-1, kind: note, label: "GroupDB, Postgres: groupId, groupName,", at: [73, 44], in: lld-ug }
+    - { id: ug-groupdb-2, kind: note, label: "description, metadata", at: [75, 45], in: lld-ug }
+    - { id: ug-map-1, kind: note, label: "GroupMapping: id, groupId, userId,", at: [73, 47], in: lld-ug }
+    - { id: ug-map-2, kind: note, label: "joinedDate, metadata", at: [75, 48], in: lld-ug }
+    - { id: ug-map-key, kind: note, label: "unique on groupId and userId, one row per member", at: [73, 50], in: lld-ug }
+  arrows: []
+beats:
+  - point: "The user service registers users and, at login, checks the user DB and returns a JWT or session id; the user row is flat relational data in Postgres."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Step five, the low-level design: we take the high-level picture and open each service, easiest first. The user service registers users, and at login checks the credentials and hands back a JWT or a session id that every later call carries."
+      - "User data is flat and relational, so Postgres; MySQL would do just as well. The row: user id, username, email, phone, status, last seen, metadata. WhatsApp needs no email, Messenger no phone."
+    draw: [lld-ug, ug-user-head, ug-userdb-1, ug-userdb-2]
+    check: What does the user row need for this product, and what can you drop?
+    answer: "User id, username, phone or email, status, last seen and metadata; WhatsApp can drop the email, Messenger the phone."
+    misconceptions:
+      - "Postgres is much easier to scale than MySQL, so it must be Postgres -> both fit flat user rows; neither choice decides the design."
+  - point: "The group service creates and edits groups and returns a group's members; its group table holds groupId, groupName, description and metadata."
+    kind: mechanism
+    weight: core
+    teach:
+      - "The group service: create a group, change its details, and given a group id, return its members."
+      - "Its Postgres database, first table: group id, group name, description, and metadata such as when it was created and its picture."
+    draw: [ug-group-head, ug-groupdb-1, ug-groupdb-2]
+    check: What question will the chat service ask the group service later?
+    answer: "Who are the members of this group id."
+  - point: "A group mapping table records membership, one row per member with its own id; group id and user id together are unique."
+    kind: decision
+    weight: core
+    teach:
+      - "Second table: which user is in which group. Group id, user id, join date. A group id repeats once per member, so it cannot be the key; the row gets its own id."
+      - "And make group id with user id unique, so nobody is added twice, with an index on user id to list a user's groups."
+    draw: [ug-map-1, ug-map-2, ug-map-key]
+    check: Why can the group id not be the mapping table's key?
+    answer: It repeats once per member; each row needs its own id, and the pair of group id and user id is what must be unique.
+asks:
+  - ids: [ug-userdb-1]
+    beats: [1]
+    question: "What would you keep about each user, and in what kind of database?"
+    hints:
+      - Think of what the login and the profile screen need.
+      - Is this data flat and relational, or something else?
+  - ids: [ug-map-1]
+    beats: [3]
+    question: "How would you record which users are in which group?"
+    hints:
+      - A group has many members, and a user is in many groups.
+      - What would one row of that table hold?

@@ -1,0 +1,159 @@
+# E-commerce interview, low-level design: the checkout. Under the cart, as in the video: the inventory service and its Postgres inventory DB beside checkout ("check the stock before checkout"), payment and the payment gateway under checkout, then the payment service's three writes numbered 1, 2, 3. The video then erases two of them and adds Kafka; packs cannot erase, so the Kafka version is drawn under the first in the same region, with its consumers (order, inventory, notification) and the order DB's fields. Added to the video: at-least-once delivery, idempotent consumers, an outbox.
+id: backend/e-commerce/end-to-end/lld-checkout
+title: "Low-level design: the checkout"
+source:
+  hash: "0c9bd9a49939"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/e-commerce/end-to-end/lld-cart
+  assumes:
+    - "Checkout calls a payment service, which calls a third-party payment gateway and records each payment."
+    - "Non-functional: payment, orders and inventory strongly consistent."
+  carries:
+    - "An inventory service owns a Postgres inventory DB indexed on productId, the only source of truth for stock; checkout checks stock before payment."
+    - "Three separate writes after payment can half-fail; instead checkout publishes one event to Kafka, and order, inventory and notification consumers apply it."
+    - "Kafka delivers at least once, so consumers are idempotent by orderId, and an outbox keeps the event from being lost."
+  terms:
+    - term: source of truth
+      means: The one store whose value wins when copies disagree.
+    - term: idempotent
+      means: Applying the same event twice has the same effect as applying it once.
+    - term: outbox
+      means: "A table written in the same transaction as the change, from which the event is relayed to Kafka."
+board:
+  keep: [title, prompt-desc, prompt-scope, nfr, nfr-scale, nfr-available, nfr-consistent, nfr-latency, lld-cart, c-productdb, c-cart, c-cartdb, c-schema-1, c-schema-2, c-fresh, c-cart-db, c-cart-price]
+  elements:
+    - { id: lld-checkout, kind: region, label: "5. Low-level design: checkout", at: [2, 39], size: [70, 53] }
+    - { id: k-checkout, kind: box, label: Checkout service, at: [4, 43], size: [13, 3], tone: blue, in: lld-checkout }
+    - { id: k-inventory, kind: box, label: Inventory service, at: [30, 43], size: [14, 3], tone: blue, in: lld-checkout }
+    - { id: k-inventorydb, kind: oval, label: "Inventory DB, Postgres", at: [52, 41], size: [16, 5], tone: amber, in: lld-checkout }
+    - { id: k-truth, kind: note, label: "indexed on productId, the only source of truth", at: [44, 47], in: lld-checkout }
+    - { id: k-payment, kind: box, label: Payment service, at: [4, 50], size: [13, 5], tone: blue, in: lld-checkout }
+    - { id: k-pg, kind: box, label: Payment gateway, at: [4, 58], size: [13, 3], tone: grey, dashed: true, in: lld-checkout }
+    - { id: k-paymentdb, kind: oval, label: Payment DB, at: [30, 48], size: [12, 4], tone: amber, in: lld-checkout }
+    - { id: k-orderdb, kind: oval, label: Order DB, at: [30, 53], size: [12, 4], tone: amber, in: lld-checkout }
+    - { id: k-flaw-1, kind: note, label: "three separate writes, one can fail after payment", at: [4, 62], in: lld-checkout }
+    - { id: k-flaw-2, kind: note, label: "money taken with no order, or stock not reduced", at: [4, 63], in: lld-checkout }
+    - { id: e-head, kind: note, label: one event in place of three writes, at: [4, 66], in: lld-checkout }
+    - { id: e-checkout, kind: box, label: "Checkout service, emits an event", at: [4, 69], size: [14, 3], tone: blue, in: lld-checkout }
+    - { id: e-kafka, kind: box, label: "Kafka, checkout events", at: [24, 68], size: [11, 16], tone: grey, in: lld-checkout }
+    - { id: e-payment, kind: box, label: "Payment service, records it", at: [4, 76], size: [14, 3], tone: blue, in: lld-checkout }
+    - { id: e-paymentdb, kind: oval, label: "Payment DB, every attempt", at: [4, 82], size: [14, 3], tone: amber, in: lld-checkout }
+    - { id: e-order, kind: box, label: Order consumer, at: [40, 68], size: [14, 3], in: lld-checkout }
+    - { id: e-inventory, kind: box, label: Inventory consumer, at: [40, 74], size: [14, 3], in: lld-checkout }
+    - { id: e-notify, kind: box, label: Notification service, at: [40, 80], size: [14, 3], in: lld-checkout }
+    - { id: e-orderdb, kind: oval, label: "Order DB, MySQL", at: [58, 67], size: [14, 4], tone: amber, in: lld-checkout }
+    - { id: e-inventorydb, kind: oval, label: "Inventory DB, stock reduced", at: [58, 73], size: [14, 4], tone: amber, in: lld-checkout }
+    - { id: e-schema-1, kind: note, label: "order: orderId, userId, items, total, paymentId, status", at: [40, 85], in: lld-checkout }
+    - { id: e-schema-2, kind: note, label: "items: productId, qty, price then, currency", at: [42, 86], in: lld-checkout }
+    - { id: e-once, kind: note, label: "at least once, so consumers are idempotent by orderId", at: [4, 88], in: lld-checkout }
+    - { id: e-outbox, kind: note, label: an outbox makes sure the event is never lost, at: [4, 89], in: lld-checkout }
+  arrows:
+    - { id: k-check, from: k-checkout, to: k-inventory, label: check stock }
+    - { id: k-inv-db, from: k-inventory, to: k-inventorydb }
+    - { id: k-pay, from: k-checkout, to: k-payment }
+    - { id: k-pay-pg, from: k-payment, to: k-pg }
+    - { id: k-step-1, from: k-payment, to: k-paymentdb, label: step 1 }
+    - { id: k-step-2, from: k-payment, to: k-inventory, label: step 2 }
+    - { id: k-step-3, from: k-payment, to: k-orderdb, label: step 3 }
+    - { id: e-publish, from: e-checkout, to: e-kafka, label: event }
+    - { id: e-pay, from: e-checkout, to: e-payment, both: true }
+    - { id: e-pay-db, from: e-payment, to: e-paymentdb }
+    - { id: e-k-order, from: e-kafka, to: e-order }
+    - { id: e-k-inventory, from: e-kafka, to: e-inventory }
+    - { id: e-k-notify, from: e-kafka, to: e-notify }
+    - { id: e-order-db, from: e-order, to: e-orderdb }
+    - { id: e-inventory-db, from: e-inventory, to: e-inventorydb }
+beats:
+  - point: "Before payment, checkout asks an inventory service whether every item is in stock; its inventory DB is Postgres, indexed on productId, the only source of truth for stock, written only by the inventory service."
+    kind: component
+    weight: core
+    teach:
+      - "Now the most critical service, checkout. Before taking money, check the stock: three iPhones added to the cart yesterday may not all be there today."
+      - "Add an inventory service and an inventory DB: each product and how many are left. It must be strongly consistent and the only source of truth, so Postgres, indexed on product id, and only the inventory service writes to it."
+      - "Checkout asks it about every item; if something is short, the shopper is told before paying."
+    draw: [lld-checkout, k-checkout, k-inventory, k-check, k-inventorydb, k-inv-db, k-truth]
+    check: Why must only the inventory service write to the inventory DB?
+    answer: So there is one source of truth for stock and one place that enforces its rules; other services ask it.
+  - point: "With stock confirmed, checkout calls the payment service, which takes the payment details and calls the third-party payment gateway."
+    kind: flow
+    weight: supporting
+    teach:
+      - "Green light from inventory, so make the payment: checkout calls the payment service, the shopper enters the card details, and the payment service calls the payment gateway to confirm."
+    draw: [k-payment, k-pay, k-pg, k-pay-pg, k-paymentdb]
+    check: What does checkout do if an item is out of stock?
+    answer: It stops before payment and tells the shopper the quantity is not available.
+  - point: "After payment three writes are needed, payment record, stock reduction, order: done as three separate calls they can half-fail, taking money with no order or leaving stock unreduced."
+    kind: failure
+    weight: core
+    teach:
+      - "After payment, three things: first save the payment, paid or failed, in the payment DB; second reduce the stock; third write the order and its status. I'm drawing them from the payment service to show the flow; really they belong to checkout."
+      - "Three calls, three databases, no shared transaction. The payment succeeds and the stock update fails, or the order write fails: money taken, no order. Not consistent, and not safe to retry."
+    draw: [k-orderdb, k-step-1, k-step-2, k-step-3, k-flaw-1, k-flaw-2]
+    check: What goes wrong if the order write fails after the payment succeeded?
+    answer: The shopper has paid but has no order; three separate writes cannot be rolled back together.
+  - point: "Replace the three calls with one event: the payment service records the payment and answers checkout, which publishes the cart and payment status to Kafka."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Fix it with one event. The payment service still records the payment in its DB and answers the checkout service."
+      - "Checkout then publishes a single event to Kafka: the cart and the payment status, success or failure. Nothing else is called directly."
+    draw: [e-head, e-checkout, e-kafka, e-publish, e-payment, e-pay, e-paymentdb, e-pay-db]
+    check: What does checkout do after the payment answers, in this version?
+    answer: It publishes one event with the cart and the payment status to Kafka.
+  - point: "Consumers each do one job from the event: an order consumer writes the order DB, an inventory consumer reduces the stock, a notification service tells the shopper."
+    kind: flow
+    weight: core
+    teach:
+      - "Now consumers read the topic. An order consumer writes the order and its status to the order DB. An inventory consumer reduces the stock, through the inventory service."
+      - "And one more: a notification service tells the shopper whether the order went through. Kafka keeps the event until each has processed it, so one being down only delays it."
+    draw: [e-order, e-k-order, e-inventory, e-k-inventory, e-notify, e-k-notify, e-orderdb, e-order-db, e-inventorydb, e-inventory-db]
+    check: The inventory consumer is down for a minute. What happens to the stock update?
+    answer: The event waits in Kafka and the consumer applies it when it comes back.
+  - point: "The order DB is MySQL: orderId, userId, items with the product, quantity, price at purchase and currency, the total, the paymentId and the status."
+    kind: decision
+    weight: supporting
+    teach:
+      - "The order DB must be consistent, so MySQL. An order has its id, the user, the items, each a product id, quantity, the price at the time of purchase and currency, then the total, the payment id and the status."
+    draw: [e-schema-1, e-schema-2]
+    check: Why store the price inside the order but not inside the cart?
+    answer: The order records what was actually paid at purchase; the cart must show the current price.
+  - point: "Kafka delivers at least once, so each consumer is idempotent by orderId; and an outbox written with the payment makes sure the event itself is never lost."
+    kind: rule
+    weight: core
+    teach:
+      - "Two details make it really reliable. Kafka may deliver an event twice, so each consumer is idempotent: keyed by order id, a repeat changes nothing."
+      - "And the event must not be lost between saving and publishing: write it to an outbox table in the same transaction, and relay it to Kafka. The three stores then agree within seconds, eventually consistent, instead of never."
+    draw: [e-once, e-outbox]
+    check: Kafka delivers the same event twice. Why is the stock not reduced twice?
+    answer: The consumer is idempotent, keyed by order id, so applying the event again changes nothing.
+    misconceptions:
+      - "Kafka is highly available, so every event is processed exactly once -> it delivers at least once; idempotent consumers make the effect happen once."
+asks:
+  - ids: [k-inventory]
+    beats: [1]
+    question: "Before taking the money, what should checkout make sure of, and who would it ask?"
+    hints:
+      - The cart may be days old.
+      - Something should own how many of each product are left.
+  - ids: [k-flaw-1]
+    beats: [3]
+    question: "After payment, the payment service saves the payment, reduces the stock and writes the order, three calls. What could go wrong?"
+    hints:
+      - What if the second or third call fails?
+      - Can three databases roll back together?
+  - ids: [e-kafka]
+    beats: [4]
+    question: "How could we replace those three calls so none of them is lost?"
+    hints:
+      - Publish once, and let others react.
+      - Something durable that holds the event until everyone has it.
+  - ids: [e-order, e-inventory, e-notify]
+    beats: [5]
+    question: "Who should read that event, and what does each one do?"
+    hints:
+      - Think of the three writes we just removed.
+      - And who tells the shopper?

@@ -1,0 +1,109 @@
+# Chat app interview, high-level design: under the API, the video's picture: client boxes on the left, a tall "LB + Gateway" box (authentication and authorization, routing, rate limiting), then User Svc to UserDB, Chat Svc to Chat DB and Blob, Group Svc to Group DB, every arrow level.
+id: backend/chat-app/end-to-end/high-level-design
+title: Gateway, three services, their stores
+source:
+  hash: "deaaa6946750"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/chat-app/end-to-end/api
+  assumes:
+    - "Functional: register, one-to-one and group messaging, text and media, history, receipts."
+    - "1 billion users; REST calls for accounts, groups and history, a WebSocket for messages."
+  carries:
+    - "Clients reach a load balancer and API gateway: authentication and authorization, routing, rate limiting, round robin."
+    - "User service with a user DB; chat service with a chat DB for text and blob storage for media; group service with a group DB."
+    - "Group messages travel through the chat service; the group service only manages groups."
+  terms:
+    - term: API gateway
+      means: "The front door for REST calls: checks who is calling, limits the rate, routes to a service."
+    - term: blob storage
+      means: "Object storage for large files such as images and videos, an S3 bucket."
+board:
+  keep: [title, prompt-desc, fr, fr-register, fr-one, fr-group, fr-media, fr-history, fr-receipts, nfr, nfr-scale, nfr-volume, nfr-cap, nfr-latency, nfr-reliable, entities, ent-user, ent-group, ent-message, api, api-register, api-one-head, api-ws, api-chats, api-msgs, api-receipts, api-group-head, api-g-create, api-g-add, api-g-remove, api-g-ws, api-g-msgs]
+  elements:
+    - { id: hld, kind: region, label: 4. High-level design, at: [6, 37], size: [64, 21] }
+    - { id: hld-user-1, kind: box, label: user 1, at: [9, 41], size: [7, 3], in: hld }
+    - { id: hld-user-2, kind: box, label: user 2, at: [9, 46], size: [7, 3], in: hld }
+    - { id: hld-user-3, kind: box, label: user 3, at: [9, 51], size: [7, 3], in: hld }
+    - { id: hld-clients-note, kind: note, label: "users, the phone apps", at: [8, 55], in: hld }
+    - { id: hld-lb, kind: box, label: Load balancer and API gateway, at: [22, 40], size: [11, 14], in: hld }
+    - { id: hld-lb-note, kind: note, label: "auth, routing, rate limiting", at: [22, 55], in: hld }
+    - { id: hld-user-svc, kind: box, label: User service, at: [40, 40], size: [11, 3], tone: blue, in: hld }
+    - { id: hld-userdb, kind: oval, label: User DB, at: [56, 40], size: [10, 3], tone: amber, in: hld }
+    - { id: hld-chat-svc, kind: box, label: Chat service, at: [40, 46], size: [11, 3], tone: blue, in: hld }
+    - { id: hld-chatdb, kind: oval, label: Chat DB, at: [56, 44], size: [10, 3], tone: amber, in: hld }
+    - { id: hld-blob, kind: oval, label: Blob storage, at: [56, 48], size: [10, 3], tone: amber, in: hld }
+    - { id: hld-group-svc, kind: box, label: Group service, at: [40, 52], size: [11, 3], tone: blue, in: hld }
+    - { id: hld-groupdb, kind: oval, label: Group DB, at: [56, 52], size: [10, 3], tone: amber, in: hld }
+  arrows:
+    - { id: hld-u1-lb, from: hld-user-1, to: hld-lb }
+    - { id: hld-u2-lb, from: hld-user-2, to: hld-lb }
+    - { id: hld-u3-lb, from: hld-user-3, to: hld-lb }
+    - { id: hld-lb-user, from: hld-lb, to: hld-user-svc }
+    - { id: hld-user-db, from: hld-user-svc, to: hld-userdb }
+    - { id: hld-lb-chat, from: hld-lb, to: hld-chat-svc }
+    - { id: hld-chat-db, from: hld-chat-svc, to: hld-chatdb, label: text }
+    - { id: hld-chat-blob, from: hld-chat-svc, to: hld-blob, label: media }
+    - { id: hld-lb-group, from: hld-lb, to: hld-group-svc }
+    - { id: hld-group-db, from: hld-group-svc, to: hld-groupdb }
+beats:
+  - point: "The users are the phone apps, and at a billion users they come in through a load balancer and API gateway that authenticates, routes, rate limits and spreads traffic round robin."
+    kind: component
+    weight: core
+    teach:
+      - "Step four, the high-level design: just enough to meet the functional list. On the left, the users, which are the apps on their phones."
+      - "A billion users need a load balancer and API gateway in front: authentication and authorization, routing, rate limiting, and round robin across the servers behind it."
+    draw: [hld, hld-user-1, hld-user-2, hld-user-3, hld-clients-note, hld-lb, hld-u1-lb, hld-u2-lb, hld-u3-lb, hld-lb-note]
+    check: What does the gateway do for every call?
+    answer: "Authenticates and authorizes it, rate limits it, and routes it, round robin across the servers."
+  - point: "Register and log in need a user service that keeps users in a user database."
+    kind: component
+    weight: core
+    teach:
+      - "The first requirement, register and log in: a user service, and since it must keep the users, a user database."
+    draw: [hld-user-svc, hld-lb-user, hld-userdb, hld-user-db]
+    check: Which box handles sign-up, and where does it keep users?
+    answer: The user service, in the user database.
+  - point: "Messages need a chat service, the heart of the system: text goes to a chat database, images and videos to blob storage such as S3."
+    kind: component
+    weight: core
+    teach:
+      - "Sending messages needs a chat service, the core of the system, and whatever it receives must be saved: a chat database."
+      - "Media files do not belong in a database. Images and videos go to blob storage, an S3 bucket; the text goes to the chat database."
+    draw: [hld-chat-svc, hld-lb-chat, hld-chatdb, hld-chat-db, hld-blob, hld-chat-blob]
+    check: Why does the chat service need two stores?
+    answer: "Text goes in the chat database; images and videos are large files that belong in blob storage."
+  - point: "Group messages ride the same chat service, so groups only need a group service to manage them and a group database."
+    kind: component
+    weight: core
+    teach:
+      - "Group messaging follows the same path, through the chat service. What is new is managing the groups: a group service with its own group database."
+      - "That meets every functional requirement on paper. How the chat service really gets a message to a friend is the low-level design, and it is far from simple."
+    draw: [hld-group-svc, hld-lb-group, hld-groupdb, hld-group-db]
+    check: Why is there no separate service for sending group messages?
+    answer: They go through the chat service like any message; the group service only manages groups and their members.
+asks:
+  - ids: [hld-user-svc, hld-userdb]
+    beats: [2]
+    question: "Behind the gateway, what do we need for register and log in? Name the pieces and I'll draw them."
+    hints:
+      - Something has to handle the call.
+      - And the users have to be kept somewhere.
+  - ids: [hld-chatdb, hld-blob]
+    beats: [3]
+    question: "The chat service receives text and photos. Where would you keep each?"
+    hints:
+      - Text is small and structured.
+      - Would you put a video file in a database row?
+  - ids: [hld-group-svc, hld-groupdb]
+    beats: [4]
+    question: "And for groups, what is missing from the picture?"
+    hints:
+      - Group messages can travel the same way as any message.
+      - But who creates groups and remembers their members?
+task:
+  prompt: "Draw the high-level design: users, the load balancer and API gateway, the user, chat and group services, and their stores, with the chat service writing text to the chat DB and media to blob storage."
+  expects: [1, 2, 3, 4]

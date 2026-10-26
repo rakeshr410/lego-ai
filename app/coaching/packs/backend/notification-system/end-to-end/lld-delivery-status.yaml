@@ -1,0 +1,111 @@
+# Notification system interview, deep dive 4: status, and reporting. Above the queue, as in the video: a notification consumer writing the notifications DB (its table to the right), a delivery_status Kafka topic that every provider publishes to and a delivery consumer that applies it, then the reporting service reading the notifications DB and the BigQuery events table above it.
+id: backend/notification-system/end-to-end/lld-delivery-status
+title: "Deep dive: status and reporting"
+source:
+  hash: "6bd57970f1a7"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/notification-system/end-to-end/lld-notification-queue
+  assumes:
+    - "The notification service publishes to a Kafka queue with a topic per priority and channel."
+    - "SMS, email and in-app providers consume their topics and call external senders."
+  carries:
+    - "A notification consumer writes each notification to the notifications DB (Postgres, partitioned by client) as PENDING."
+    - "Providers publish status events to a delivery_status topic; one delivery consumer updates the DB instead of many writers."
+    - "A reporting service reads current status from the notifications DB and every change from a BigQuery events table."
+  terms:
+    - term: status
+      means: "Where a notification is: PENDING, SCHEDULED, SENT, DELIVERED, FAILED or CANCELLED."
+    - term: BigQuery
+      means: "Google's analytics warehouse, suited to appending and scanning large volumes of events."
+board:
+  keep: [title, fr, fr-channels, fr-templates, fr-prefs, fr-schedule, fr-status, nfr, nfr-scale, nfr-cap, nfr-latency, hld, hld-clients, hld-gw, hld-tpl-svc, hld-tpl-db, hld-pref-svc, hld-pref-db, hld-notif-svc, hld-provider, hld-provider-note, hld-clients-gw, hld-gw-tpl, hld-tpl-db-arrow, hld-gw-pref, hld-pref-db-arrow, hld-gw-notif, hld-notif-provider, hld-notif-pref, lld, lld-clients, lld-gw, gw-jobs-1, gw-jobs-2, tpl-svc, tpl-db, tpl-table-1, tpl-table-2, tpl-table-3, lld-clients-gw, gw-tpl, tpl-svc-db, pref-svc, pref-scale, pref-kafka, pref-consumer, pref-db, pref-table-1, pref-table-2, pref-table-3, gw-pref, pref-svc-kafka, pref-kafka-consumer, pref-consumer-db, notif-svc, sms-prov, email-prov, inapp-prov, twilio, sendgrid, fcm, fcm-note, queue, topic-critical, topic-standard, topic-promo, topic-bulk, topic-retry, gw-notif, sms-twilio, email-sendgrid, inapp-fcm, notif-queue, queue-sms, queue-email, queue-inapp]
+  elements:
+    - { id: notif-consumer, kind: box, label: Notification consumer, at: [33, 66], size: [10, 3], tone: grey }
+    - { id: notif-db, kind: oval, label: Notifications DB, at: [33, 62], size: [13, 3], tone: amber }
+    - { id: notif-table-1, kind: note, label: "notifications: id, client, user, template,", at: [48, 53], in: lld }
+    - { id: notif-table-2, kind: note, label: "channel, payload, status, priority,", at: [50, 54], in: lld }
+    - { id: notif-table-3, kind: note, label: "scheduled at, partitioned by client", at: [50, 55], in: lld }
+    - { id: status-note, kind: note, label: "status: pending, then sent", at: [21, 56], in: lld }
+    - { id: writers-note, kind: note, label: "every provider writing one table, too many writers", at: [21, 57], in: lld }
+    - { id: delivery-kafka, kind: box, label: "Kafka, delivery status", at: [60, 58], size: [10, 3], tone: amber }
+    - { id: delivery-consumer, kind: box, label: Delivery consumer, at: [33, 58], size: [10, 3], tone: grey }
+    - { id: reporting, kind: box, label: Reporting service, at: [21, 62], size: [9, 3] }
+    - { id: event-db, kind: oval, label: "Event DB, BigQuery", at: [33, 53], size: [13, 3], tone: amber }
+  arrows:
+    - { id: queue-notif-consumer, from: queue, to: notif-consumer }
+    - { id: notif-consumer-db, from: notif-consumer, to: notif-db }
+    - { id: sms-delivery, from: sms-prov, to: delivery-kafka }
+    - { id: email-delivery, from: email-prov, to: delivery-kafka }
+    - { id: inapp-delivery, from: inapp-prov, to: delivery-kafka }
+    - { id: delivery-kafka-consumer, from: delivery-kafka, to: delivery-consumer, label: status events }
+    - { id: delivery-consumer-db, from: delivery-consumer, to: notif-db }
+    - { id: gw-reporting, from: lld-gw, to: reporting }
+    - { id: reporting-db, from: reporting, to: notif-db }
+    - { id: delivery-consumer-events, from: delivery-consumer, to: event-db }
+    - { id: reporting-events, from: reporting, to: event-db }
+beats:
+  - point: "Nothing is stored yet, so status cannot be reported; a notification consumer reads the queue and writes each notification to a notifications DB with status pending."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Something critical is missing: nothing in this flow is saved. A client asking about a message gets no answer."
+      - "Add a notifications DB, and a notification consumer that reads the queue and writes each notification with status pending: it's here, not yet sent."
+      - "Postgres, partitioned by client id. Columns: notification id, client, external user, template, channel, payload, status, priority, scheduled at, last updated."
+    draw: [notif-consumer, queue-notif-consumer, notif-db, notif-consumer-db, notif-table-1, notif-table-2, notif-table-3]
+    check: What does pending mean in this table?
+    answer: The notification has reached the system but no provider has sent it yet.
+  - point: "Providers should move the status to sent, but every provider writing one table is a poor design; they publish status events to a delivery_status topic and one delivery consumer applies them."
+    kind: decision
+    weight: core
+    teach:
+      - "When a provider hands a message to its sender, the status becomes sent. If each provider updates the table itself, many services write one table: they contend and are tied to its schema."
+      - "Instead every provider publishes a status event to another Kafka topic, delivery status, and one delivery consumer updates the database. One writer, with a buffer in front."
+    draw: [status-note, writers-note, delivery-kafka, sms-delivery, email-delivery, inapp-delivery, delivery-consumer, delivery-kafka-consumer, delivery-consumer-db]
+    check: Why not let each provider update the notifications DB itself?
+    answer: "Many services writing one table contend for rows and all depend on its schema; one delivery consumer behind a topic is the single writer."
+  - point: "A reporting service behind the gateway answers clients' status and dashboard requests by reading the notifications DB."
+    kind: component
+    weight: core
+    teach:
+      - "The status is stored, but clients still can't see it. Add a reporting service: the request comes through the gateway, and it reads the status field from the notifications DB."
+    draw: [reporting, gw-reporting, reporting-db]
+    check: Where does the reporting service get a notification's status?
+    answer: From the status column of the notifications DB, a read.
+  - point: "The notifications table keeps only the latest status, so the delivery consumer also appends every change to a BigQuery events table, and reporting reads both."
+    kind: mechanism
+    weight: core
+    teach:
+      - "One more gap: the table keeps only the final status. A client who wants when it was scheduled, sent and delivered needs every change."
+      - "So the delivery consumer also writes each event into a notification events table in BigQuery. You can split that into an analytics ingester. Reporting reads the history from BigQuery and the current status from Postgres."
+    draw: [event-db, delivery-consumer-events, reporting-events]
+    check: Why not just read the timeline from the notifications table?
+    answer: "It holds only the latest status; the timeline needs every change, which the events table appends."
+asks:
+  - ids: [notif-db]
+    beats: [1]
+    question: "A client asks whether their message went out. Right now we can't answer. What's missing?"
+    hints:
+      - Is anything in this flow saved?
+      - Somewhere to keep each notification and its status.
+  - ids: [delivery-kafka, delivery-consumer]
+    beats: [2]
+    question: "Three providers all need to update the status. How would you do that without all of them writing the table?"
+    hints:
+      - We already have a tool for handing work from one service to another.
+      - And then just one writer for the table.
+  - ids: [reporting]
+    beats: [3]
+    question: "How does a client actually see its statuses and dashboard?"
+    hints:
+      - The requirement is a dashboard for the client.
+      - A service behind the gateway that reads what we stored.
+  - ids: [event-db]
+    beats: [4]
+    question: "The client wants to see when each message was scheduled, sent and delivered. What do we need?"
+    hints:
+      - The table keeps only the latest status.
+      - Somewhere every change is appended, good for analytics.

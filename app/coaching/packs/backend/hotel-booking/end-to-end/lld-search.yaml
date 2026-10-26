@@ -1,0 +1,135 @@
+# Hotel booking interview, low-level design, the search service: as in the video, Elasticsearch goes in front of the search service, fed from HotelDB (the "cdc" arrow), then "Proximity Search" with its four numbered options and the quadtree sketch beside the design, then the two-phase search with a Redis cache above and S3 to the right. The video's "inner join" in Redis is taught as a merge in the service's code.
+id: backend/hotel-booking/end-to-end/lld-search
+title: "Low-level design: the search service"
+source:
+  hash: "666c77a1f56c"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/hotel-booking/end-to-end/lld-hotel-db
+  assumes:
+    - "HotelDB is Postgres with hotel, rooms, price and availability tables; images are in S3."
+    - "Search must stay highly available and fast over 1M hotels."
+  carries:
+    - "Search queries Elasticsearch, not five or six joined Postgres tables."
+    - "Proximity search options: Elasticsearch geo queries, quadtree, Postgres with PostGIS, geohash; Elasticsearch wins because one query needs text and location."
+    - "Two-phase search: Elasticsearch holds only the hotel table and returns matching hotel ids; rooms, prices and availability for those ids come from a Redis cache keyed by hotel and are merged in code."
+  terms:
+    - term: proximity search
+      means: "Finding the items within a distance of a point, such as hotels within 5 km."
+    - term: CDC
+      means: "Change data capture: streaming each committed change of a database to other systems."
+    - term: quadtree
+      means: "A tree that splits the map into four quadrants, then each into four, down to small cells."
+board:
+  keep: [title, nfr, nfr-scale, nfr-available, nfr-consistent]
+  elements:
+    - { id: lld-search, kind: region, label: "5. Low-level design: search service", at: [4, 21], size: [70, 27] }
+    - { id: sv-joins, kind: note, label: "five or six joins per search, too slow", at: [50, 24], in: lld-search }
+    - { id: sv-search, kind: box, label: Search service, at: [6, 25], size: [12, 15], tone: blue, in: lld-search }
+    - { id: sv-es, kind: box, label: Elasticsearch, at: [30, 31], size: [14, 3], tone: green, in: lld-search }
+    - { id: sv-db, kind: oval, label: "HotelDB, Postgres", at: [56, 30], size: [14, 5], tone: amber, in: lld-search }
+    - { id: sv-option-1, kind: note, label: "option 1, a consumer joins every table, a bloated index", at: [6, 42], in: lld-search }
+    - { id: sv-option-2, kind: note, label: "option 2, only the hotel table in Elasticsearch", at: [6, 43], in: lld-search }
+    - { id: sv-cache, kind: oval, label: "Redis cache, rooms, prices, availability", at: [30, 24], size: [18, 4], tone: green, in: lld-search }
+    - { id: sv-merge, kind: note, label: "read by hotel id and merged in code, Redis has no joins", at: [6, 45], in: lld-search }
+    - { id: sv-s3, kind: oval, label: "S3, images", at: [30, 37], size: [12, 3], tone: amber, in: lld-search }
+    - { id: prox, kind: region, label: Proximity search, at: [78, 21], size: [36, 19], dashed: true }
+    - { id: prox-es, kind: note, label: "Elasticsearch, geo distance queries", at: [79, 23], in: prox }
+    - { id: prox-quadtree, kind: note, label: quadtree, at: [79, 25], in: prox }
+    - { id: prox-postgis, kind: note, label: Postgres with the PostGIS extension, at: [79, 27], in: prox }
+    - { id: prox-geohash, kind: note, label: geohash, at: [79, 29], in: prox }
+    - { id: prox-qt-1, kind: note, label: "quadtree, quadrants split down to 500 m", at: [79, 33], in: prox }
+    - { id: prox-qt-2, kind: note, label: search the cell and its eight neighbours, at: [79, 34], in: prox }
+    - { id: prox-static, kind: note, label: "hotels never move, the data is static", at: [79, 36], in: prox }
+    - { id: prox-choice, kind: note, label: "text and location together, so Elasticsearch", at: [79, 37], in: prox }
+  arrows:
+    - { id: sv-search-es, from: sv-search, to: sv-es, label: "phase 1, hotel ids" }
+    - { id: sv-db-es, from: sv-db, to: sv-es, label: CDC }
+    - { id: sv-search-cache, from: sv-search, to: sv-cache, label: "phase 2, by hotel id" }
+    - { id: sv-db-cache, from: sv-db, to: sv-cache, label: copies }
+    - { id: sv-search-s3, from: sv-search, to: sv-s3, label: image URLs }
+  lists:
+    - { id: prox-list, in: prox, at: [79, 23], step: 2, slots: 5, width: 30, items: [prox-es, prox-quadtree, prox-postgis, prox-geohash] }
+beats:
+  - point: "Searching name, location and date over normalized Postgres means joining five or six tables per query, which is slow, so the search service queries Elasticsearch, fed from HotelDB by CDC."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Searching straight on Postgres means joining hotel, rooms, price and availability on every query: five or six tables, a slow search."
+      - "So the search service queries Elasticsearch instead, a search engine built for text and location. HotelDB feeds it through change data capture: each committed change flows into the index."
+    draw: [lld-search, sv-joins, sv-search, sv-es, sv-search-es, sv-db, sv-db-es]
+    check: Why not run searches straight on the Postgres tables?
+    answer: Every search would join five or six normalized tables, which is slow at this scale.
+  - point: "There are four common ways to do proximity search: Elasticsearch geo queries, a quadtree, Postgres with PostGIS, and geohash."
+    kind: component
+    weight: core
+    teach:
+      - "Searching by name is plain text search. Searching by location is a proximity search: hotels within, say, 5 km. Four well-known ways."
+      - "Elasticsearch's geo distance queries. A quadtree. Postgres with the PostGIS extension, a spatial index. And geohash, which encodes a position as a string where a shared prefix means nearby."
+    draw: [prox, prox-es, prox-quadtree, prox-postgis, prox-geohash]
+    check: Name the four ways to do a proximity search.
+    answer: Elasticsearch geo queries, a quadtree, Postgres with PostGIS, and geohash.
+  - point: "A quadtree splits the map into four quadrants recursively down to cells of 200 to 500 m, and a search reads the guest's cell and its eight neighbours."
+    kind: mechanism
+    weight: supporting
+    teach:
+      - "The quadtree in one breath: the world map split into four quadrants, each split into four again, down to cells of about 200 to 500 metres, each holding its hotels."
+      - "To find hotels near a guest, read their cell and the eight around it. It lives in each server's memory, and a million hotels take only tens of megabytes, so memory is not its problem."
+    draw: [prox-qt-1, prox-qt-2]
+    check: When you search near a point with a quadtree, which cells do you read?
+    answer: The cell the point falls in and its eight neighbours.
+    misconceptions:
+      - "A quadtree of a million hotels is too big for memory -> a million points take tens of megabytes; its real gap here is text search."
+  - point: "Hotels never move, so any option indexes the data once; Elasticsearch wins because one query needs text and location together, which it does best."
+    kind: decision
+    weight: core
+    teach:
+      - "Choose. Hotels do not move, so the location data is static and any of the four would index it once."
+      - "The deciding need: one query combines a name and a place. Postgres has full-text search, but weaker relevance and fuzzy matching; a quadtree and geohash have none. Elasticsearch does both, so take it, and don't reach for a quadtree because it sounds clever."
+    draw: [prox-static, prox-choice]
+    check: Why Elasticsearch over a quadtree here?
+    answer: The search combines text and location in one query; Elasticsearch does both, a quadtree does no text search.
+    misconceptions:
+      - "Postgres cannot search text -> it has full-text search; Elasticsearch is chosen for stronger relevance and fuzzy matching together with geo."
+  - point: "Feeding Elasticsearch a denormalized join of every table works, but bloats the index with rooms, prices and availability that change on every booking; better to index only the hotel table."
+    kind: failure
+    weight: core
+    teach:
+      - "Elasticsearch wants flat documents, and HotelDB is normalized. Option one: a consumer on the CDC stream joins every table and writes one flat document per hotel."
+      - "It works, but the index fills with room, price and availability data a name search never needs, and that data changes with every booking. Option two: index only the hotel table, name and geolocation."
+    draw: [sv-option-1, sv-option-2]
+    check: What is wrong with denormalizing every table into Elasticsearch?
+    answer: The index carries lots of data most searches don't need, and it churns with every booking.
+  - point: "Two-phase search: Elasticsearch returns the hundred or so matching hotel ids, then the service reads those hotels' rooms, prices and availability from a Redis cache by key, merges them in code, and adds image URLs from S3."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Phase one: Elasticsearch finds the hotels matching the name or within the radius, say a hundred out of a million in Bangalore."
+      - "Phase two: for those hundred ids, read rooms, prices and availability from a Redis cache keyed by hotel, and merge them in the service. Redis has no joins; it looks values up by key. Then add the image URLs pointing at S3."
+    draw: [sv-cache, sv-search-cache, sv-db-cache, sv-merge, sv-s3, sv-search-s3]
+    check: How does the search service combine the cached room data with the hotels Elasticsearch returned?
+    answer: It reads each returned hotel's entries from Redis by hotel id and merges them in its own code.
+    misconceptions:
+      - "Redis runs an inner join on the cached tables -> Redis is key-value; the service reads by key and merges."
+asks:
+  - ids: [sv-es]
+    beats: [1]
+    question: "Joining five or six tables per search is slow. What would you put in front of the search service instead?"
+    hints:
+      - Something built for text search.
+      - It could be fed from the database as rows change.
+  - list: prox-list
+    beats: [2]
+    question: "Searching hotels near a place is a proximity search. What ways do you know to do one?"
+    hints:
+      - One is a tree that splits the map into quarters.
+      - Databases and search engines have spatial indexes too.
+  - ids: [sv-cache]
+    beats: [6]
+    question: "Elasticsearch gives us a hundred matching hotels. Where would you get their rooms, prices and availability quickly?"
+    hints:
+      - Something in memory, keyed by hotel.
+      - Fed from the hotel database.

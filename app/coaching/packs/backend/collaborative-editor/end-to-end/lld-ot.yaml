@@ -1,0 +1,85 @@
+# Collaborative editor interview, low-level design approach 4, "Approach 4: Operations Transformation (OT)", as the video draws it: the definition, the same BC example with user B's insert D at 2 transformed to insert D at 3 so both copies read ABCD, and the two limits beneath (users named user A and user B here).
+id: backend/collaborative-editor/end-to-end/lld-ot
+title: "Approach 4: operational transformation"
+source:
+  hash: "d7e71031f526"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/collaborative-editor/end-to-end/lld-events
+  assumes:
+    - "Edit events go over a websocket; applying the other side's raw index diverges (ABDC against ABCD)."
+  carries:
+    - "OT transforms an incoming operation against the concurrent operations already applied: insert D at 2 becomes insert D at 3."
+    - "Client-server OT needs every operation of a document to go through one server; OT is hard to implement."
+    - Google Docs uses OT.
+  terms:
+    - term: operational transformation
+      means: "OT: adjusting an operation for the concurrent operations already applied, so that every copy converges."
+    - term: transformation function
+      means: "The rule that shifts one operation's effect to account for another, such as moving an insert's position past an earlier insert."
+board:
+  keep: [title, prompt-desc, nfr, nfr-scale, nfr-cap, nfr-latency, api, api-post, api-get, api-ws]
+  elements:
+    - { id: lld-ot, kind: region, label: "Approach 4: operational transformation", at: [6, 32], size: [38, 36] }
+    - { id: ot-def, kind: note, label: transform each operation for the concurrent ones, at: [8, 35], in: lld-ot }
+    - { id: ot-bc, kind: box, label: "before, B C", at: [20, 38], size: [8, 3], in: lld-ot }
+    - { id: ot-a, kind: box, label: "user A, A B C", at: [8, 47], size: [10, 3], in: lld-ot }
+    - { id: ot-b, kind: box, label: "user B, B C D", at: [30, 47], size: [10, 3], in: lld-ot }
+    - { id: ot-a-final, kind: box, label: "user A, A B C D", at: [8, 58], size: [10, 3], tone: green, in: lld-ot }
+    - { id: ot-b-final, kind: box, label: "user B, A B C D", at: [30, 58], size: [10, 3], tone: green, in: lld-ot }
+    - { id: ot-limit-1, kind: note, label: "limit, one server orders each document", at: [8, 62], in: lld-ot }
+    - { id: ot-limit-2, kind: note, label: "limit, hard to implement", at: [8, 63], in: lld-ot }
+    - { id: ot-google, kind: note, label: Google Docs uses OT, at: [8, 65], in: lld-ot }
+  arrows:
+    - { id: ot-bc-a, from: ot-bc, to: ot-a, label: insert A at 0 }
+    - { id: ot-bc-b, from: ot-bc, to: ot-b, label: insert D at 2 }
+    - { id: ot-a-down, from: ot-a, to: ot-a-final, label: now D at 3 }
+    - { id: ot-b-down, from: ot-b, to: ot-b-final, label: A at 0 as is }
+beats:
+  - point: "Operational transformation adjusts each incoming operation for the concurrent operations already applied, so that every copy converges."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Approach four, operational transformation, OT. It transforms concurrent operations when they are merged: a transformation function shifts an operation's effect to account for the changes another operation already made."
+      - "In plain words: before applying someone else's edit, adjust it for what you have done since."
+    draw: [lld-ot, ot-def]
+    check: In one sentence, what does OT do to an incoming operation?
+    answer: It adjusts it for the concurrent operations already applied before applying it, so every copy ends up the same.
+  - point: "Same example as before: the document is BC, user A inserts A at 0 and has ABC, user B inserts D at 2 and has BCD."
+    kind: flow
+    weight: supporting
+    teach:
+      - "Take the same example. B C. User A inserts A at 0 and has A B C; user B inserts D at 2 and has B C D. Both events cross on the way."
+    draw: [ot-bc, ot-a, ot-bc-a, ot-b, ot-bc-b]
+    check: What did each user have before receiving the other's edit?
+    answer: User A had ABC and user B had BCD.
+  - point: "OT transforms user B's insert D at 2 into insert D at 3 for user A, because an A was inserted before position 2; user A's insert at 0 passes unchanged. Both read ABCD."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Now user B's insert D at 2 reaches user A. OT sees that user A already inserted a letter before position 2, so it shifts the operation by one: insert D at 3. User A gets A B C D."
+      - "User A's insert A at 0 reaches user B; nothing was inserted before position 0, so it applies as is, and user B gets A B C D too. The copies converge."
+    draw: [ot-a-final, ot-a-down, ot-b-final, ot-b-down]
+    check: Why does insert D at 2 become insert D at 3 on user A's side?
+    answer: User A had already inserted one character before position 2, so every later position shifts by one.
+    misconceptions:
+      - "OT just picks one user's edit and drops the other -> both edits survive; their positions are adjusted."
+  - point: "OT's limits: in the client-server form Google Docs uses, every operation of a document goes through one server that orders and transforms it, and OT is hard to implement. Google Docs uses OT."
+    kind: failure
+    weight: core
+    teach:
+      - "Two limits, written underneath. Every operation on a document must go through a single server, which puts them in one order and transforms them, so all editors of one document must reach the same server."
+      - "And it is complex: every pair of operation types needs a transformation and the edge cases are subtle. Still, Google Docs uses OT."
+    draw: [ot-limit-1, ot-limit-2, ot-google]
+    check: What does OT, in the form Google Docs uses, require of the servers?
+    answer: That every operation on one document goes through the same server, which orders and transforms them.
+asks:
+  - ids: [ot-a-final, ot-b-final]
+    beats: [3]
+    question: "User B's insert D at 2 reaches user A, who already put an A at the front. How should that operation be changed so both end up with the same text?"
+    hints:
+      - Where is the end of the text now on user A's side?
+      - One letter was inserted before position 2. What does that do to the position?

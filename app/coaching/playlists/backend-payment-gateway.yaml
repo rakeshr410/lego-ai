@@ -1,0 +1,37 @@
+slug: backend-payment-gateway
+title: "The payment gateway interview"
+summary: "A payment gateway like Stripe or Razorpay, designed step by step on one whiteboard: gateway versus processor, requirements with numbers, entities, the API, a high-level design, then a deep dive that follows one payment from the intent to reconciliation."
+outline: "The payment gateway lessons follow the five-step order and the drawings of InterviewWithBunny's System Design 17, Design Payment Gateway (youtube.com/watch?v=7EnqCwQOddY), section by section; no text is taken from it, and its factual slips are corrected in the article."
+lessons:
+  - slug: payment-gateway
+    title: "The payment gateway interview: the problem, requirements, entities and API"
+    summary: "Gateway or processor, the functional and non-functional requirements side by side, six entities, and the three calls of a payment as four endpoints."
+    parts:
+      - { title: "Gateway or processor, then two lists", minutes: 10, packs: [backend/payment-gateway/end-to-end/problem-statement, backend/payment-gateway/end-to-end/requirements] }
+      - { title: "Entities, then the API", minutes: 8, packs: [backend/payment-gateway/end-to-end/entities, backend/payment-gateway/end-to-end/api] }
+  - slug: payment-gateway-design
+    title: "The payment gateway interview: high-level design, then the intent"
+    summary: "Users, the merchant, an API gateway and three services; then the deep dive redraws it and opens the payment intent service and its database."
+    parts:
+      - { title: "One service per call", minutes: 8, packs: [backend/payment-gateway/end-to-end/high-level-design] }
+      - { title: "The payment intent", minutes: 6, packs: [backend/payment-gateway/end-to-end/lld-payment-intent] }
+  - slug: payment-gateway-session
+    title: "The payment gateway interview: the checkout session"
+    summary: "Sessions in Redis with a TTL, the redirect URL, and the checkout frontend behind its own load balancer."
+    parts:
+      - { title: "Session, redirect, hosted page", minutes: 10, packs: [backend/payment-gateway/end-to-end/lld-checkout-session] }
+  - slug: payment-gateway-tokenize
+    title: "The payment gateway interview: the pay call and the PCI zone"
+    summary: "The checkout backend's checks, then tokenization in a PCI zone: validate, fingerprint, encrypt with an HSM key, return a token."
+    parts:
+      - { title: "Checks, then tokenization", minutes: 14, packs: [backend/payment-gateway/end-to-end/lld-checkout-backend] }
+  - slug: payment-gateway-routing
+    title: "The payment gateway interview: routing and the status"
+    summary: "The orchestrator, merchant preferences and processor connectors, the transaction record, the callback service and status polling."
+    parts:
+      - { title: "Orchestrator, connectors, status", minutes: 14, packs: [backend/payment-gateway/end-to-end/lld-orchestrator] }
+  - slug: payment-gateway-reconcile
+    title: "The payment gateway interview: events and reconciliation"
+    summary: "Kafka between the callback service and the orchestrator, the next-day status, reconciliation into a ledger, and the requirements read back."
+    parts:
+      - { title: "Kafka, then reconciliation", minutes: 10, packs: [backend/payment-gateway/end-to-end/lld-reconciliation] }

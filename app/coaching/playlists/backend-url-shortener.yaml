@@ -1,5 +1,5 @@
-slug: backend-interviews
-title: Backend system design interviews
+slug: backend-url-shortener
+title: "The URL shortener interview"
 summary: Backend design interviews run step by step on one whiteboard, as you would run them on the day. Requirements with numbers, entities, the API, a high-level design, then a low-level design that improves one flaw at a time.
 outline: "The URL shortener lessons follow the five-step order and the drawings of InterviewWithBunny's System Design 1, Design Tiny URL (youtube.com/watch?v=Y-BO_4XNw8c), section by section; no text is taken from it, and its factual slips are corrected in the article."
 lessons:

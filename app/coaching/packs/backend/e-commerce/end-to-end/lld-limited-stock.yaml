@@ -1,0 +1,117 @@
+# E-commerce interview, low-level design: limited stock. The video explains the race by voice over ten checkout replicas and draws a Redis lock beside checkout; here the race is drawn (three of ten checkouts, one inventory service saying one left), then the fix under it: two checkouts and the Redis lock, with its key, set-if-absent and TTL written beside it. Corrected: the lock is keyed by the product alone, not product, user and quantity; several units are reserved by an atomic conditional decrement.
+id: backend/e-commerce/end-to-end/lld-limited-stock
+title: "Low-level design: limited stock"
+source:
+  hash: "c1679ee4a3ec"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/e-commerce/end-to-end/lld-checkout
+  assumes:
+    - "Checkout asks the inventory service for stock before payment; the inventory DB is the only source of truth."
+    - "Every service runs as several replicas."
+  carries:
+    - "Ten checkout replicas checking one last iPhone at once all see one left and all sell it: a race between check and purchase."
+    - "A Redis lock keyed by the product, set only if absent with a TTL of 30 s to 1 min, lets one checkout at a time take the last units."
+    - "For several units, an atomic conditional decrement (qty minus n where qty is at least n) reserves stock without a lock."
+  terms:
+    - term: race condition
+      means: A result that depends on the timing of concurrent requests, here many passing one stock check before any buys.
+    - term: TTL
+      means: "Time to live: the key deletes itself after it, so an abandoned lock frees itself."
+board:
+  keep: [title, prompt-desc, prompt-scope, nfr, nfr-scale, nfr-available, nfr-consistent, nfr-latency]
+  elements:
+    - { id: lld-stock, kind: region, label: "5. Low-level design: limited stock", at: [2, 24], size: [66, 39] }
+    - { id: s-sale, kind: note, label: "one iPhone left, ten shoppers at once", at: [4, 26], in: lld-stock }
+    - { id: s-ck1, kind: box, label: Checkout 1, at: [4, 28], size: [13, 3], tone: blue, in: lld-stock }
+    - { id: s-ck2, kind: box, label: Checkout 2, at: [4, 33], size: [13, 3], tone: blue, in: lld-stock }
+    - { id: s-ck10, kind: box, label: Checkout 10, at: [4, 38], size: [13, 3], tone: blue, in: lld-stock }
+    - { id: s-inventory, kind: box, label: "Inventory service, one left", at: [24, 28], size: [13, 13], tone: blue, in: lld-stock }
+    - { id: s-inventorydb, kind: oval, label: "Inventory DB, iPhone qty 1", at: [44, 31], size: [16, 5], tone: amber, in: lld-stock }
+    - { id: s-race-1, kind: note, label: "all ten read one left, all ten pay", at: [4, 43], in: lld-stock }
+    - { id: s-race-2, kind: note, label: "check and buy are two steps, a race", at: [4, 44], in: lld-stock }
+    - { id: s-u1, kind: box, label: "Checkout, user 1", at: [4, 49], size: [14, 3], tone: blue, in: lld-stock }
+    - { id: s-u2, kind: box, label: "Checkout, user 2", at: [4, 55], size: [14, 3], tone: blue, in: lld-stock }
+    - { id: s-lock, kind: oval, label: "Redis lock, one key per product", at: [28, 49], size: [16, 9], tone: red, in: lld-stock }
+    - { id: s-key, kind: note, label: "key productId, value user and qty", at: [48, 50], in: lld-stock }
+    - { id: s-nx, kind: note, label: "set only if absent, SET NX", at: [48, 52], in: lld-stock }
+    - { id: s-ttl, kind: note, label: TTL 30 seconds to 1 minute, at: [48, 54], in: lld-stock }
+    - { id: s-retry, kind: note, label: "user 2 told sold out, or retries", at: [48, 56], in: lld-stock }
+    - { id: s-reserve, kind: note, label: "several units: qty minus n only if qty at least n", at: [4, 60], in: lld-stock }
+  arrows:
+    - { id: s-ck1-inv, from: s-ck1, to: s-inventory }
+    - { id: s-ck2-inv, from: s-ck2, to: s-inventory }
+    - { id: s-ck10-inv, from: s-ck10, to: s-inventory }
+    - { id: s-inv-db, from: s-inventory, to: s-inventorydb }
+    - { id: s-u1-lock, from: s-u1, to: s-lock, label: lock taken }
+    - { id: s-u2-lock, from: s-u2, to: s-lock, label: refused }
+beats:
+  - point: "Services run as replicas: with ten checkout instances for 10 orders a second and one iPhone left, ten shoppers at once land on ten instances, and each asks the inventory service."
+    kind: mechanism
+    weight: core
+    teach:
+      - "One requirement is still open: items in limited stock. Every service runs as replicas; say the checkout service has ten, for 10 orders a second."
+      - "A flash sale, one iPhone left, and ten shoppers check out at the same moment, each on a different instance. All ten ask the inventory service."
+    draw: [lld-stock, s-sale, s-ck1, s-ck2, s-ck10, s-inventory, s-ck1-inv, s-ck2-inv, s-ck10-inv, s-inventorydb, s-inv-db]
+    check: Ten checkouts ask the inventory service at the same moment. What does each one hear?
+    answer: One left, because none of them has bought it yet.
+  - point: "All ten hear one left, all ten go on to pay, and nine pay for a phone that does not exist: the stock check and the purchase are separate steps, a race condition."
+    kind: failure
+    weight: core
+    teach:
+      - "Each sees the quantity it wants is there, so each goes on to payment. Ten payments, one phone."
+      - "The check and the purchase are two steps, and nothing stops others passing the check in between. That is the race to handle."
+    draw: [s-race-1, s-race-2]
+    check: Why doesn't the stock check before payment stop the oversell?
+    answer: All the checks happen before any purchase reduces the stock, so each sees the same last unit.
+  - point: "Fix it with a Redis lock keyed by the product, set only if absent, holding the buyer and quantity: the first checkout takes it, the next is refused."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Take a lock in a Redis cluster when a checkout starts. Its key is the product, its value the user and the quantity, and it is set only if absent, SET with NX, one atomic step."
+      - "User 1's checkout takes the lock. User 2's finds it held and fails. The key must be the product alone: a key with the user in it gives every user their own lock, and the race stays."
+    draw: [s-u1, s-u2, s-lock, s-u1-lock, s-u2-lock, s-key, s-nx]
+    check: Why must the lock's key be the product, not the product and user together?
+    answer: Different keys never conflict; with the user in the key every buyer gets a lock and they all pass.
+    misconceptions:
+      - "Lock on product, user and quantity -> two users then hold two different keys; the key is the product, the user and quantity are the value."
+  - point: "The lock has a TTL of 30 seconds to a minute, the longest a checkout takes, so a shopper who never pays frees it; the refused shopper is told it is sold out or retries."
+    kind: rule
+    weight: core
+    teach:
+      - "What if user 1 walks away? Give the lock a TTL, 30 seconds to a minute, the longest a checkout takes. Unpaid, it expires by itself."
+      - "User 2 is told there are not enough items, or retries when the lock is gone."
+    draw: [s-ttl, s-retry]
+    check: Why does the lock need a TTL?
+    answer: So an abandoned checkout cannot hold the item for ever; the lock expires after 30 seconds to a minute.
+  - point: "With several units, one lock per product makes buyers wait in line; reserve instead with an atomic conditional decrement, quantity minus n only where the quantity is at least n."
+    kind: decision
+    weight: supporting
+    teach:
+      - "One lock per product lets one buyer in at a time. With five phones left, reserve instead: one atomic update, quantity minus n only where at least n are left, in the inventory DB or a Redis counter."
+      - "Five buyers succeed, the sixth's update matches nothing and fails, and nobody waits on a lock."
+    draw: [s-reserve]
+    check: Five phones left, six buyers. How does the conditional decrement decide?
+    answer: Each decrement runs only if enough are left, so five succeed and the sixth finds too few and fails.
+asks:
+  - ids: [s-race-1]
+    beats: [2]
+    question: "Ten checkouts all hear one iPhone left. What happens next?"
+    hints:
+      - Each one thinks the phone is there.
+      - Who reduces the stock, and when?
+  - ids: [s-lock]
+    beats: [3]
+    question: "How would you make sure only one of them gets the last phone?"
+    hints:
+      - Something all the checkout instances can see.
+      - Only one should be able to claim the product at a time.
+  - ids: [s-ttl]
+    beats: [4]
+    question: "User 1 took the lock and then closed the app. What stops the phone being stuck for ever?"
+    hints:
+      - The lock shouldn't live for ever.
+      - How long does a checkout take at most?

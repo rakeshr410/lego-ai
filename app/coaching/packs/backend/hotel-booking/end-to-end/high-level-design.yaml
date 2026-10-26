@@ -1,0 +1,102 @@
+# Hotel booking interview, high-level design: "4. High-level designing" under the API, as in the video: a column of clients, a tall load balancer and API gateway with its duties, a column of services (user, search, booking with the payment gateway under it, booking info, review) and their databases on the right.
+id: backend/hotel-booking/end-to-end/high-level-design
+title: Microservices behind a gateway
+source:
+  hash: "fe97efe9950c"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/hotel-booking/end-to-end/api
+  assumes:
+    - "Five endpoints: register, search, hotel details by date, book, past bookings."
+    - "Non-functional: 50M users and 1M hotels; search available, booking consistent."
+  carries:
+    - "50M users call for microservices behind a load balancer and API gateway that authenticates, routes, rate-limits and balances round robin."
+    - "Services: user to UserDB, search to HotelDB, booking to BookingDB with a payment gateway, booking info reading BookingDB, review to ReviewDB."
+    - "The high-level design meets the functional requirements; storage, search speed and double booking are left for the low-level design."
+  terms:
+    - term: API gateway
+      means: "The single entry point that authenticates, authorizes, routes each endpoint to its service and rate-limits."
+    - term: microservice
+      means: A small service owning one job and its own database, scaled on its own.
+board:
+  keep: [title, prompt-desc, fr, fr-account, fr-search, fr-book, fr-pay, fr-past, nfr, nfr-scale, nfr-available, nfr-consistent, entities, ent-user, ent-hotel, ent-room, ent-booking, api, api-register, api-search, api-hotel, api-book, api-past]
+  elements:
+    - { id: hld, kind: region, label: 4. High-level design, at: [2, 36], size: [70, 33] }
+    - { id: hld-client-1, kind: box, label: client 1, at: [4, 44], size: [7, 3], in: hld }
+    - { id: hld-client-2, kind: box, label: client 2, at: [4, 50], size: [7, 3], in: hld }
+    - { id: hld-client-3, kind: box, label: client 3, at: [4, 56], size: [7, 3], in: hld }
+    - { id: hld-gateway, kind: box, label: Load balancer and API gateway, at: [15, 39], size: [11, 27], in: hld }
+    - { id: hld-gateway-does, kind: note, label: "auth, routing, rate limiting, round robin", at: [4, 67], in: hld }
+    - { id: hld-user, kind: box, label: User service, at: [34, 38], size: [14, 3], tone: blue, in: hld }
+    - { id: hld-search, kind: box, label: Search service, at: [34, 43], size: [14, 3], tone: blue, in: hld }
+    - { id: hld-booking, kind: box, label: Booking service, at: [34, 48], size: [14, 3], tone: blue, in: hld }
+    - { id: hld-payment, kind: box, label: Payment gateway, at: [34, 54], size: [14, 3], tone: grey, in: hld }
+    - { id: hld-info, kind: box, label: Booking info service, at: [34, 59], size: [14, 3], tone: blue, in: hld }
+    - { id: hld-review, kind: box, label: Review service, at: [34, 64], size: [14, 3], tone: blue, in: hld }
+    - { id: hld-user-db, kind: oval, label: UserDB, at: [56, 38], size: [10, 3], tone: amber, in: hld }
+    - { id: hld-hotel-db, kind: oval, label: HotelDB, at: [56, 43], size: [10, 3], tone: amber, in: hld }
+    - { id: hld-booking-db, kind: oval, label: BookingDB, at: [56, 48], size: [10, 3], tone: amber, in: hld }
+    - { id: hld-review-db, kind: oval, label: ReviewDB, at: [56, 64], size: [10, 3], tone: amber, in: hld }
+  arrows:
+    - { id: hld-c1-gw, from: hld-client-1, to: hld-gateway }
+    - { id: hld-c2-gw, from: hld-client-2, to: hld-gateway }
+    - { id: hld-c3-gw, from: hld-client-3, to: hld-gateway }
+    - { id: hld-gw-user, from: hld-gateway, to: hld-user }
+    - { id: hld-gw-search, from: hld-gateway, to: hld-search }
+    - { id: hld-gw-booking, from: hld-gateway, to: hld-booking }
+    - { id: hld-gw-info, from: hld-gateway, to: hld-info }
+    - { id: hld-gw-review, from: hld-gateway, to: hld-review }
+    - { id: hld-user-save, from: hld-user, to: hld-user-db }
+    - { id: hld-search-scan, from: hld-search, to: hld-hotel-db }
+    - { id: hld-booking-pay, from: hld-booking, to: hld-payment }
+    - { id: hld-booking-save, from: hld-booking, to: hld-booking-db }
+    - { id: hld-info-read, from: hld-info, to: hld-booking-db }
+    - { id: hld-review-save, from: hld-review, to: hld-review-db }
+beats:
+  - point: "At 50 million users the design is microservices, and every request first reaches a load balancer and API gateway that authenticates and authorizes, routes by endpoint, rate-limits and balances round robin."
+    kind: component
+    weight: core
+    teach:
+      - "Step four, the high-level design. Many clients, and 50 million users: a monolith will not carry that, so microservices."
+      - "In front of them, a load balancer and API gateway. Its jobs: authentication and authorization, routing each endpoint to its service, rate limiting, and spreading traffic round robin."
+    draw: [hld, hld-client-1, hld-client-2, hld-client-3, hld-gateway, hld-c1-gw, hld-c2-gw, hld-c3-gw, hld-gateway-does]
+    check: Name two things the API gateway does besides routing.
+    answer: "Any two of: authentication and authorization, rate limiting, balancing load round robin."
+  - point: "One service per requirement, each with its own database: the user service onboards users into UserDB, and the search service finds matching hotels in HotelDB."
+    kind: component
+    weight: core
+    teach:
+      - "Now the services, read off the requirements. A user service onboards users and saves their details in a user database."
+      - "A search service takes the name, location and date and finds matching hotels in a hotel database, which holds each hotel's details and rooms. Which databases these are is for later."
+    draw: [hld-user, hld-gw-user, hld-user-db, hld-user-save, hld-search, hld-gw-search, hld-hotel-db, hld-search-scan]
+    check: Which service reads the hotel database in this design, and for what?
+    answer: The search service, to find the hotels matching the name, location and date.
+  - point: "The booking service books and calls a payment gateway, saving confirmed bookings in BookingDB; a booking info service reads past bookings from it, and a review service keeps reviews in ReviewDB."
+    kind: flow
+    weight: core
+    teach:
+      - "Booking is two steps: the booking service sends the guest to a payment gateway, and only on success saves the booking in a booking database."
+      - "A booking info service reads that database for a user's past bookings. And a review service, with reviews in their own database, cleaner than mixing them into the hotel database."
+    draw: [hld-booking, hld-gw-booking, hld-payment, hld-booking-pay, hld-booking-db, hld-booking-save, hld-info, hld-gw-info, hld-info-read, hld-review, hld-gw-review, hld-review-db, hld-review-save]
+    check: Walk me through a booking in this design.
+    answer: The request goes through the gateway to the booking service, which takes payment through the payment gateway and, on success, saves the booking in the booking database.
+  - point: "This meets every functional requirement but none of the hard ones yet: how availability is stored, how search stays fast, and how double booking is stopped are the low-level design's job."
+    kind: decision
+    weight: supporting
+    teach:
+      - "Step back: every requirement on the left has a box. But nothing here says how a room's availability is stored, how search stays fast over a million hotels, or how two guests are stopped from booking one room. That is step five."
+    check: What does this high-level design not yet guarantee?
+    answer: That no two users book the same room on the same date, and that search is fast; those are designed in the low-level design.
+asks:
+  - ids: [hld-user, hld-search, hld-booking, hld-info, hld-review]
+    beats: [2, 3]
+    question: "Behind the gateway, which services do we need? Go down the requirements and name one for each."
+    hints:
+      - Accounts, search, booking, past bookings.
+      - And where do guests leave their opinion of a hotel?
+task:
+  prompt: "Draw the high-level design: clients, the load balancer and API gateway, the user, search, booking, booking info and review services with the payment gateway under booking, and each service's database."
+  expects: [1, 2, 3]

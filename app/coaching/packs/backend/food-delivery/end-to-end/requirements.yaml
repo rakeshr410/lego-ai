@@ -1,0 +1,96 @@
+# Food delivery interview, requirements: "1. Functional requirements" on the left, eight lines, and "Non-functional requirements" on the right (scale, then CAP split by part), as the video lays them out.
+id: backend/food-delivery/end-to-end/requirements
+title: Eight features, and CAP per part
+source:
+  hash: "a601d8497b03"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/food-delivery/end-to-end/problem-statement
+  assumes:
+    - "Three actors: the user, the restaurant and the delivery partner."
+  carries:
+    - "Functional: log in; nearby restaurants; search; menu; cart and pay; restaurant accepts, partner assigned; live location after pickup; notifications and past orders."
+    - "Non-functional: 50M users and 1M restaurants; highly available for search and browsing; strongly consistent for payment and orders."
+  terms:
+    - term: functional requirement
+      means: What the system does.
+    - term: non-functional requirement
+      means: "A quality of the system, such as scale, availability or consistency, with a number where there is one."
+    - term: CAP
+      means: "When the network between copies splits, a part of the system either answers anyway (available) or refuses until the copies agree (consistent)."
+board:
+  keep: [title, prompt-desc]
+  elements:
+    - { id: fr, kind: region, label: 1. Functional requirements, at: [2, 5], size: [56, 22], dashed: true }
+    - { id: fr-register, kind: note, label: users register and log in, at: [3, 7], in: fr }
+    - { id: fr-nearby, kind: note, label: "list nearby open restaurants, by the user's location", at: [3, 9], in: fr }
+    - { id: fr-search, kind: note, label: search restaurants by title and menu item, at: [3, 11], in: fr }
+    - { id: fr-menu, kind: note, label: "show a restaurant's menu", at: [3, 13], in: fr }
+    - { id: fr-cart, kind: note, label: add items to the cart and pay to place the order, at: [3, 15], in: fr }
+    - { id: fr-assign, kind: note, label: "restaurant accepts, a nearby delivery partner is assigned", at: [3, 17], in: fr }
+    - { id: fr-live, kind: note, label: "after pickup, the partner's location in near real time", at: [3, 19], in: fr }
+    - { id: fr-notify, kind: note, label: "notifications at every stage, past orders in the profile", at: [3, 21], in: fr }
+    - { id: nfr, kind: region, label: Non-functional requirements, at: [62, 5], size: [56, 12], dashed: true }
+    - { id: nfr-scale, kind: note, label: "scale, 50M users and 1M restaurants", at: [63, 7], in: nfr }
+    - { id: nfr-available, kind: note, label: highly available for search and browsing, at: [63, 9], in: nfr }
+    - { id: nfr-consistent, kind: note, label: strongly consistent for payment and orders, at: [63, 11], in: nfr }
+  arrows: []
+  lists:
+    - { id: fr-list, in: fr, at: [3, 7], step: 2, slots: 10, width: 54, items: [fr-register, fr-nearby, fr-search, fr-menu, fr-cart, fr-assign, fr-live, fr-notify] }
+    - { id: nfr-list, in: nfr, at: [63, 7], step: 2, slots: 4, width: 54, items: [nfr-scale, nfr-available, nfr-consistent] }
+beats:
+  - point: "The user's browsing features: register and log in, see nearby open restaurants by location, search by title and menu item, and open a restaurant's menu."
+    kind: requirement
+    weight: core
+    teach:
+      - "Step one, on the left: functional requirements. When the user opens the app they can sign up and log in."
+      - "Then the home page: the nearby restaurants that are open, from the user's location. A search bar, by restaurant title or by dish. And opening a restaurant shows its menu."
+    draw: [fr, fr-register, fr-nearby, fr-search, fr-menu]
+    check: What does the user see first after logging in?
+    answer: The list of nearby open restaurants, found from the user's location.
+  - point: "Then ordering and delivery: add items to a cart and pay; the restaurant accepts and a nearby partner is assigned; after pickup the user sees the partner live; notifications at every stage, and past orders."
+    kind: requirement
+    weight: core
+    teach:
+      - "Ordering: pick one or more items, add them to the cart, and place the order by paying."
+      - "Then the other actors. The restaurant accepts and starts cooking, and a nearby delivery partner is assigned, chosen by location to keep delivery time short. After pickup, the user sees where the partner is, nearly live. And the user is notified at every stage, with past orders in the profile."
+    draw: [fr-cart, fr-assign, fr-live, fr-notify]
+    check: When is a delivery partner assigned?
+    answer: Once the restaurant accepts the order, a nearby partner is found from the partners' locations.
+  - point: "Non-functional starts with scale: 50 million users and a million restaurants."
+    kind: metric
+    weight: core
+    teach:
+      - "On the right, the non-functional requirements: how big and how well. Ask for the scale; say 50 million users across the globe and a million restaurants listed."
+      - "That number is why this becomes a set of services rather than one server."
+    draw: [nfr, nfr-scale]
+    check: Why ask for the scale at all?
+    answer: Because many design decisions, services, search, databases, depend on how many users and restaurants there are.
+  - point: "CAP is chosen per part: highly available for searching and browsing, strongly consistent for payment and orders."
+    kind: requirement
+    weight: core
+    teach:
+      - "At this scale it is a distributed system, so CAP: when the network splits, each part must choose between answering and staying exact."
+      - "The home page and search must always answer, a slightly stale list is fine: available. Payment and placing the order must be exact, never lost or charged twice: consistent."
+    draw: [nfr-available, nfr-consistent]
+    check: Why choose consistency for payments but availability for search?
+    answer: A stale restaurant list costs nothing, but a lost or doubled payment or order is a real failure.
+    misconceptions:
+      - "The whole app picks one side of CAP -> the choice is made per part: search available, payment and orders consistent."
+      - "CAP means you can never have both -> it is about what each part does during a network partition; without one, both hold."
+asks:
+  - list: fr-list
+    beats: [1, 2]
+    question: "So what should this app let people do? Walk me through it from opening the app to getting the food, and I'll write each one down."
+    hints:
+      - What does the user do before choosing a restaurant?
+      - And after paying, what do the restaurant and the delivery partner do?
+  - list: nfr-list
+    beats: [3, 4]
+    question: "Now the qualities. How big is it, and where must it stay up versus stay exact?"
+    hints:
+      - Think of users and restaurants as numbers.
+      - Is a stale restaurant list as bad as a doubled payment?

@@ -1,0 +1,72 @@
+# Email delivery interview, deep dive into compose: the compose service saving the draft to the draft DB as the user types, and attachments going to S3 by a signed URL from the client (the video's dashed "signed-url" line), as the video draws it beside the service.
+id: backend/email-delivery/end-to-end/lld-compose
+title: "Deep dive: compose and drafts"
+source:
+  hash: "de310d0cb8c9"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/email-delivery/end-to-end/lld-user-service
+  assumes:
+    - "A compose service saves drafts in a draft DB; attachments are uploaded before the send, which carries only their IDs."
+  carries:
+    - "The draft (body, to, cc, bcc, attachment links) is saved as the user types, so by send time the email already exists on the server."
+    - "Attachments go to an S3 bucket, uploaded by the client directly with a signed URL, in parts; the draft keeps the link."
+  terms:
+    - term: blob storage
+      means: "Storage for large files, such as an S3 bucket, instead of a database."
+    - term: multipart upload
+      means: A large file sent to blob storage in chunks, each retried on its own.
+board:
+  keep: [title, nfr, nfr-scale, nfr-available, nfr-signup, nfr-durable]
+  elements:
+    - { id: lld-compose, kind: region, label: "5. Deep dive: compose service", at: [6, 22], size: [70, 18] }
+    - { id: c-client, kind: box, label: client, at: [8, 29], size: [8, 3] }
+    - { id: c-compose, kind: box, label: Compose service, at: [20, 24], size: [11, 3], tone: blue }
+    - { id: c-draft, kind: oval, label: Draft DB, at: [40, 24], size: [12, 3], tone: amber }
+    - { id: c-draft-holds, kind: note, label: "draft: body, to, cc, bcc, attachment links", at: [54, 24], in: lld-compose }
+    - { id: c-draft-when, kind: note, label: "saved as you type, nothing lost on close", at: [54, 26], in: lld-compose }
+    - { id: c-s3, kind: oval, label: S3 attachments, at: [24, 35], size: [14, 3], tone: amber }
+    - { id: c-s3-why, kind: note, label: "files in blob storage, never in the DB", at: [54, 35], in: lld-compose }
+    - { id: c-s3-how, kind: note, label: "client uploads directly, in parts", at: [54, 36], in: lld-compose }
+  arrows:
+    - { id: c-client-compose, from: c-client, to: c-compose }
+    - { id: c-compose-draft, from: c-compose, to: c-draft, label: saves draft }
+    - { id: c-compose-s3, from: c-compose, to: c-s3 }
+    - { id: c-client-s3, from: c-client, to: c-s3, label: signed URL, dashed: true }
+beats:
+  - point: "Everything the user types in the compose window is saved as a draft (body, to, cc, bcc, attachment links) in the draft DB, so by the time send is pressed the email already exists on the server."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Next, the compose service. Click compose and a window opens; as you type, the service saves what you write as a draft in the draft DB: the body, to, cc, bcc and links to attachments."
+      - "Close the window and nothing is lost. And when send is finally pressed, the email is already on the server; sending only has to deliver it."
+    draw: [lld-compose, c-client, c-compose, c-client-compose, c-draft, c-compose-draft, c-draft-holds, c-draft-when]
+    check: What does pressing send still have to do, if the draft is already saved?
+    answer: Only deliver it to the recipients; the content is already stored in the draft DB.
+  - point: "Attachments never go into a database: the compose service signs an upload URL and the client uploads the file straight to an S3 bucket, in parts; the draft keeps only the link."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Attachments are heavy files: videos, PDFs. They go to blob storage, an S3 bucket, never into the draft DB."
+      - "The compose service hands the client a signed URL, and the client uploads straight to the bucket, a big file in parts, so our servers never carry the bytes. The draft keeps the link."
+    draw: [c-s3, c-compose-s3, c-client-s3, c-s3-why, c-s3-how]
+    check: Why does the client upload the file to S3 itself instead of through our service?
+    answer: With a signed URL the bytes go straight to the bucket, so the service never carries large files; it only keeps the link.
+    misconceptions:
+      - "Store the attachment in the draft row -> large files belong in blob storage; the row keeps a link."
+asks:
+  - ids: [c-draft]
+    beats: [1]
+    question: "A user closes the compose window halfway through an email. Where should what they typed be, so nothing is lost?"
+    hints:
+      - Think of the drafts folder.
+      - Saved as they type, on the server.
+  - ids: [c-s3]
+    beats: [2]
+    question: "And a 20 megabyte PDF they attach: where does that go, and how does it get there?"
+    hints:
+      - Large files do not belong in a database row.
+      - Could the client send it somewhere directly?

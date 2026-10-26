@@ -1,0 +1,47 @@
+# Ride-sharing interview, core entities: "2. Core entity" under the functional list, five lines, as in the video.
+id: backend/ride-sharing/end-to-end/entities
+title: Five entities
+source:
+  hash: "7cb39c73842f"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/ride-sharing/end-to-end/requirements
+  assumes:
+    - "Functional: fare estimate, request, categories, accept or decline, matching, tracking, ratings, payment."
+  carries:
+    - "The core entities are the rider, the driver, the location, the fare and the ride (the trip)."
+  terms:
+    - term: core entity
+      means: A noun the system stores and moves.
+board:
+  keep: [title, prompt-desc, fr, fr-fare, fr-request, fr-category, fr-accept, fr-match, fr-track, fr-rate, fr-pay, nfr, nfr-scale, nfr-rider, nfr-match, nfr-latency]
+  elements:
+    - { id: entities, kind: region, label: 2. Core entities, at: [6, 26], size: [18, 14], dashed: true }
+    - { id: ent-rider, kind: note, label: rider, at: [7, 28], in: entities }
+    - { id: ent-driver, kind: note, label: driver, at: [7, 30], in: entities }
+    - { id: ent-location, kind: note, label: location, at: [7, 32], in: entities }
+    - { id: ent-fare, kind: note, label: fare, at: [7, 34], in: entities }
+    - { id: ent-ride, kind: note, label: "ride, the trip", at: [7, 36], in: entities }
+  arrows: []
+  lists:
+    - { id: entity-list, in: entities, at: [7, 28], step: 2, slots: 6, width: 16, items: [ent-rider, ent-driver, ent-location, ent-fare, ent-ride] }
+beats:
+  - point: "Five core entities come straight out of the requirements: the rider, the driver, the location, the fare, and the ride or trip."
+    kind: component
+    weight: core
+    teach:
+      - "Step two: read the functional list and pick out the nouns. The rider and the driver, the two actors."
+      - "The location, a latitude and a longitude, for pick-up, drop and every driver's live position. The fare we estimate. And the ride, the actual trip once a driver accepts. More may turn up during the design; that is fine."
+    draw: [entities, ent-rider, ent-driver, ent-location, ent-fare, ent-ride]
+    check: Why is location an entity of its own, and not just two fields on the ride?
+    answer: Drivers' positions change every few seconds and are what matching searches, apart from any ride.
+asks:
+  - list: entity-list
+    beats: [1]
+    question: "What are the core entities, the things this system keeps track of?"
+    hints:
+      - Look for the nouns in the functional list.
+      - Who are the actors, and what does a trip need to know about where?

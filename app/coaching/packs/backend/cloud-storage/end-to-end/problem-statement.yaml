@@ -1,0 +1,50 @@
+# Cloud storage interview, the problem statement: the title and the one-line description written at the top of the board, as the video does; the five steps said once (said, not drawn).
+id: backend/cloud-storage/end-to-end/problem-statement
+title: "The problem, and the five steps"
+source:
+  hash: "4230d14ea7d1"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: null
+  assumes: []
+  carries:
+    - "A cloud storage platform like Google Drive or Dropbox lets people upload, organise, download and share files, and keeps every device in sync."
+    - "The interview runs in five steps: requirements, core entities, API design, high-level design, deep dive."
+  terms:
+    - term: "sync"
+      means: "Every device on an account showing the same files and versions, soon after any change."
+board:
+  keep: []
+  elements:
+    - { id: "title", kind: "note", label: "Cloud storage like Google Drive or Dropbox", at: [50, 0] }
+    - { id: "desc", kind: "note", label: "file storage with reliable upload, versioning, device sync", at: [47, 2] }
+  arrows: []
+beats:
+  - point: "A cloud storage platform lets people upload files of any kind, download them anywhere, share them with permissions, and keeps all their devices in sync."
+    kind: rule
+    weight: core
+    teach:
+      - "Write the title: cloud storage like Google Drive or Dropbox. You upload photos, videos and documents, download them from anywhere, and share folders with family, choosing who may see what."
+      - "Under it, one line: a globally distributed storage system with reliable upload and download, versioning, and sync across devices, at scale."
+    draw: [title, desc]
+    check: "In your own words, what does this product do?"
+    answer: "Stores people's files in the cloud: upload, download from anywhere, share with permissions, and keep every device in sync."
+  - point: "The interview runs in five steps: requirements, core entities, API design, high-level design, then a deep dive."
+    kind: rule
+    weight: core
+    teach:
+      - "Say the plan once: requirements, functional and non-functional; the core entities; the API; a high-level design; then the deep dive, where most of the time goes."
+      - "Each step gets its number on the board when we reach it."
+    check: "Which step comes straight after the requirements?"
+    answer: "Identifying the core entities, then the API."
+  - point: "Here the client is ours too: the Drive or Dropbox app splits, uploads and syncs files, so the design covers the app as well as the servers."
+    kind: rule
+    weight: supporting
+    teach:
+      - "Two things set this one apart. Files are gigabytes, so the bytes and the facts about them travel separately."
+      - "And the app on each device is part of the design: it does the chunking, uploading and syncing. Said, not written."
+    check: "Why does this interview have to talk about the app, not just the servers?"
+    answer: "Because the app does real work, splitting large files, uploading the pieces and keeping itself in sync, and both sides are ours."

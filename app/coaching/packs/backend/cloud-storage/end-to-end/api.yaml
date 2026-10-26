@@ -1,0 +1,83 @@
+# Cloud storage interview, API: "3. API Designing" beside the entities, folder operations on the left with the folder written as JSON, file operations on the right, as in the video.
+id: backend/cloud-storage/end-to-end/api
+title: "Folder operations, then file operations"
+source:
+  hash: "bdc323ffa987"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/cloud-storage/end-to-end/entities
+  assumes:
+    - "The core entities are the user, the file metadata, and files and folders."
+  carries:
+    - "A folder is one metadata record of type folder; create, rename and move change metadata, never bytes."
+    - "Folder API: POST /api/v1/folders, GET /api/v1/folders/{folderId}, GET .../contents."
+    - "File API: upload init, a signed URL per chunk, commit, download, and PUT or DELETE for metadata changes."
+  terms:
+    - term: "endpoint"
+      means: "A method and a path the service answers."
+board:
+  keep: [title, desc, fr, fr-account, fr-upload, fr-sync, fr-share, fr-folders, fr-quota, fr-out, nfr, nfr-scale, nfr-cap, nfr-large, nfr-latency, nfr-durable, entities, ent-user, ent-meta, ent-files]
+  elements:
+    - { id: "api", kind: "region", label: "3. API design", at: [24, 23], size: [50, 13], dashed: true }
+    - { id: "api-folder-head", kind: "note", label: "Folder operations", at: [25, 25], in: "api" }
+    - { id: "api-folder-post", kind: "note", label: "POST /api/v1/folders", at: [25, 26], in: "api" }
+    - { id: "api-folder-get", kind: "note", label: "GET /api/v1/folders/{folderId}", at: [25, 27], in: "api" }
+    - { id: "api-folder-contents", kind: "note", label: "GET /api/v1/folders/{folderId}/contents", at: [25, 28], in: "api" }
+    - { id: "api-json-1", kind: "note", label: "{ name: Holidays, date, type: folder,", at: [25, 30], in: "api" }
+    - { id: "api-json-2", kind: "note", label: "children: [ { name: Beach, type: folder },", at: [27, 31], in: "api" }
+    - { id: "api-json-3", kind: "note", label: "{ name: video.mp4, type: file } ] }", at: [29, 32], in: "api" }
+    - { id: "api-file-head", kind: "note", label: "File operations", at: [47, 25], in: "api" }
+    - { id: "api-file-init", kind: "note", label: "POST /api/v1/files/upload/init", at: [47, 26], in: "api" }
+    - { id: "api-file-url", kind: "note", label: "POST /api/v1/files/uploads/{uploadId}/chunk-url", at: [47, 27], in: "api" }
+    - { id: "api-file-commit", kind: "note", label: "POST /api/v1/files/uploads/{uploadId}/commit", at: [47, 28], in: "api" }
+    - { id: "api-file-download", kind: "note", label: "GET /api/v1/files/{fileId}/download", at: [47, 29], in: "api" }
+    - { id: "api-file-edit", kind: "note", label: "PUT, DELETE /api/v1/files/{fileId}", at: [47, 30], in: "api" }
+  arrows: []
+beats:
+  - point: "A folder is not a directory in the backend: it is one metadata record, a name, a date and a type of folder, and its children are records that point at it."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Step three, the API, and here it is worth the time. First see what a folder is: creating one inserts a metadata record, name, date, type folder. The app draws a folder icon because of the type."
+      - "A file is the same record with type file. A folder's children list its files and subfolders. Renaming changes a name, moving changes a parent; no bytes move."
+    draw: [api, api-json-1, api-json-2, api-json-3]
+    check: "A user drags a file into another folder. What changes in the backend?"
+    answer: "Only the file's metadata: its parent folder. No bytes move."
+    misconceptions:
+      - "Creating or moving a folder moves files on disk -> folders are metadata records; only the records change."
+  - point: "Folder operations: POST /api/v1/folders creates one, GET on its id returns its metadata, and GET on its contents lists its children."
+    kind: flow
+    weight: core
+    teach:
+      - "Folder operations: a POST to v1 folders, whose body is that metadata, name and type folder."
+      - "A GET on the folder id for its metadata, owner and permissions. And a GET on its contents for the children, which the app lists. Rename and delete are the other CRUD calls."
+    draw: [api-folder-head, api-folder-post, api-folder-get, api-folder-contents]
+    check: "Which call does the app make to show what is inside a folder?"
+    answer: "GET on the folder's contents, which returns its children, files and subfolders."
+  - point: "File operations: start an upload, ask for a signed URL per chunk, commit, download, and PUT or DELETE for renames, moves and deletes."
+    kind: flow
+    weight: core
+    teach:
+      - "File operations take more than one POST. Init starts an upload. Then, per chunk, a call for a URL to upload that chunk. Then a commit that says it is all there."
+      - "A GET to download, and PUT or DELETE on the file id for metadata changes. Why each upload call exists is the deep dive's job."
+    draw: [api-file-head, api-file-init, api-file-url, api-file-commit, api-file-download, api-file-edit]
+    check: "Why is uploading a file several calls instead of one POST with the bytes?"
+    answer: "A large file goes up in chunks that must survive a dropped connection: start, get a URL per chunk, upload, then commit."
+asks:
+  - ids: [api-folder-post, api-folder-get, api-folder-contents]
+    frame: [api-folder-head]
+    beats: [2]
+    question: "Folders are just metadata. What endpoints do we need to create one and see what's inside? Method and path."
+    hints:
+      - "One call writes a folder, others read it."
+      - "How would the app list a folder's children?"
+  - ids: [api-file-init, api-file-url, api-file-commit, api-file-download, api-file-edit]
+    frame: [api-file-head]
+    beats: [3]
+    question: "Now files. A file can be 10 GB. What calls would an upload need, and what else for files?"
+    hints:
+      - "Could you send a 10 GB file in one request, and what if it drops?"
+      - "Think start, pieces, finish, then reading it back."

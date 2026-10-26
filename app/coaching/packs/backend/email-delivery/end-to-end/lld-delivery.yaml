@@ -1,0 +1,81 @@
+# Email delivery interview, deep dive into delivery inside our domain and notifications, as the video draws it: the delivery consumer under Kafka's inbound topic with its long arrow to the mailbox DB (outbox email to mailbox items), the relay's 250 marking external mail sent, and the notification service fed by the checks and by delivery.
+id: backend/email-delivery/end-to-end/lld-delivery
+title: "Deep dive: delivery and notifications"
+source:
+  hash: "4e6c637b9da1"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/email-delivery/end-to-end/lld-smtp-relay
+  assumes:
+    - "Checked mail for our own domain goes to the inbound send request topic; mail for other domains goes out through the SMTP relay workers."
+    - "The email sits in the outbox_email table of the mailbox DB until it is delivered."
+  carries:
+    - "A delivery consumer reads the inbound topic and copies the email from the outbox table into mailbox items: the sender's sent, the recipient's inbox."
+    - "For external mail, the relay's 250 OK marks the email sent in the mailbox DB."
+    - "A notification service tells the sender when a check blocks an email and alerts the recipient of new mail."
+  terms:
+    - term: mailbox items
+      means: "The table of every user's mail, by folder: inbox, sent and the rest."
+board:
+  keep: [title, nfr, nfr-scale, nfr-available, nfr-signup, nfr-durable]
+  elements:
+    - { id: lld-delivery, kind: region, label: "5. Deep dive: delivery and notifications", at: [6, 22], size: [66, 30] }
+    - { id: d-kafka, kind: box, label: "Kafka, inbound topic", at: [8, 27], size: [12, 3], tone: grey }
+    - { id: d-consumer, kind: box, label: Delivery consumer, at: [30, 27], size: [12, 3], tone: blue }
+    - { id: d-mailbox, kind: oval, label: Mailbox DB, at: [56, 27], size: [14, 4], tone: amber }
+    - { id: d-copies, kind: note, label: "sender's copy to sent, recipient's to inbox", at: [46, 33], in: lld-delivery }
+    - { id: d-relay, kind: box, label: SMTP relay workers, at: [56, 38], size: [14, 3], tone: blue }
+    - { id: d-filter, kind: box, label: "Spam filter, policy check", at: [8, 44], size: [14, 4] }
+    - { id: d-notify, kind: box, label: Notification service, at: [30, 44], size: [14, 3], tone: blue }
+    - { id: d-device, kind: box, label: "Recipient's phone or browser", at: [54, 44], size: [14, 3] }
+    - { id: d-why, kind: note, label: the sender hears why it was blocked, at: [8, 49], in: lld-delivery }
+  arrows:
+    - { id: d-kafka-consumer, from: d-kafka, to: d-consumer, label: inbound }
+    - { id: d-consumer-mailbox, from: d-consumer, to: d-mailbox, label: outbox to mailbox items }
+    - { id: d-relay-mailbox, from: d-relay, to: d-mailbox, label: on 250 OK }
+    - { id: d-filter-notify, from: d-filter, to: d-notify, label: blocked }
+    - { id: d-consumer-notify, from: d-consumer, to: d-notify, label: new mail }
+    - { id: d-notify-device, from: d-notify, to: d-device, label: push }
+beats:
+  - point: "Mail inside our domain needs no protocol: a delivery consumer reads the inbound topic and copies the email from the outbox table into mailbox items, the sender's sent and the recipient's inbox."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Gmail to Gmail: none of the SMTP steps. A delivery consumer listens to the inbound send request topic, nothing else."
+      - "It makes one write: copy the email from the outbox table into the mailbox items table. The sender's copy lands in sent, the recipient's in their inbox. The email has left the outbox."
+    draw: [lld-delivery, d-kafka, d-consumer, d-kafka-consumer, d-mailbox, d-consumer-mailbox, d-copies]
+    check: What does delivering a Gmail-to-Gmail email actually involve?
+    answer: A delivery consumer copies it from the outbox table into mailbox items, sent for the sender and inbox for the recipient.
+  - point: "For external mail, the relay worker marks the email sent in the mailbox DB once the receiving server answers 250 OK."
+    kind: flow
+    weight: core
+    teach:
+      - "Outbound mail ends the same way. When Outlook's server answers the final 250, the relay worker records that and the email moves from the outbox to sent."
+    draw: [d-relay, d-relay-mailbox]
+    check: When does an email to Outlook move from the outbox to sent?
+    answer: When Outlook's server answers the final 250 OK and the relay worker marks it sent.
+  - point: "A notification service tells the sender when the spam filter or the policy check blocks an email, and pushes a new-mail alert to the recipient's devices after delivery."
+    kind: component
+    weight: core
+    teach:
+      - "If the malware check or the policy check blocks an email, the sender must hear why: a notification service sends them that message."
+      - "And when the delivery consumer puts an email in an inbox, the same service pushes a new-mail alert to the recipient's phone or browser."
+    draw: [d-filter, d-notify, d-filter-notify, d-consumer-notify, d-device, d-notify-device, d-why]
+    check: Name the two kinds of notification in this design.
+    answer: A message to the sender when a check blocks their email, and a new-mail alert to the recipient after delivery.
+asks:
+  - ids: [d-consumer]
+    beats: [1]
+    question: "A checked Gmail-to-Gmail email is on the inbound topic. What takes it from there into the recipient's inbox?"
+    hints:
+      - No SMTP is needed inside our own domain.
+      - Something consumes the topic and writes to the mailbox DB.
+  - ids: [d-notify]
+    beats: [3]
+    question: "The spam filter blocks an email, or a new one lands in someone's inbox. How do the people involved find out?"
+    hints:
+      - Both need a message sent to a person, not a service.
+      - One service could send both.

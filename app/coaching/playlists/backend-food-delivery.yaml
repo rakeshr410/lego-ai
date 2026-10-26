@@ -1,0 +1,38 @@
+slug: backend-food-delivery
+title: "The food delivery interview"
+summary: "A food delivery app like Zomato, Swiggy or Uber Eats, designed step by step on one whiteboard: requirements, entities and API, a high-level design for users, restaurants and delivery partners, then a deep dive into each service."
+outline: "The food delivery lessons follow the order and drawings of InterviewWithBunny's System Design 6, Design Food Delivery Application (youtube.com/watch?v=rZyAgZuuZiA), section by section; no text is taken from it, and its factual slips are corrected in the article."
+lessons:
+  - slug: food-delivery
+    title: "The food delivery interview: the problem, requirements, entities and API"
+    summary: "The problem and three actors, eight functional requirements beside scale and CAP chosen per part, five entities, and nine endpoints."
+    parts:
+      - { title: "The problem, then two lists", minutes: 9, packs: [backend/food-delivery/end-to-end/problem-statement, backend/food-delivery/end-to-end/requirements] }
+      - { title: "Entities, then the API", minutes: 9, packs: [backend/food-delivery/end-to-end/entities, backend/food-delivery/end-to-end/api] }
+  - slug: food-delivery-design
+    title: "The food delivery interview: high-level design, then users"
+    summary: "Users, restaurants and partners each through a gateway to their services and databases; then the deep dive opens the user service."
+    parts:
+      - { title: "Three actors, one service per job", minutes: 14, packs: [backend/food-delivery/end-to-end/high-level-design] }
+      - { title: "The user service", minutes: 4, packs: [backend/food-delivery/end-to-end/lld-user] }
+  - slug: food-delivery-search
+    title: "The food delivery interview: search and the cart"
+    summary: "Elasticsearch fed from Postgres by CDC, photos in S3, then the cart and its one-restaurant rule."
+    parts:
+      - { title: "Search, fed by CDC", minutes: 10, packs: [backend/food-delivery/end-to-end/lld-search] }
+      - { title: "The cart", minutes: 4, packs: [backend/food-delivery/end-to-end/lld-cart] }
+  - slug: food-delivery-orders
+    title: "The food delivery interview: the order flow"
+    summary: "Payment through a gateway, then the order as an event on Kafka read by three consumers, and the restaurant's accept coming back."
+    parts:
+      - { title: "Pay, then publish the order", minutes: 14, packs: [backend/food-delivery/end-to-end/lld-order] }
+  - slug: food-delivery-matching
+    title: "The food delivery interview: matching a partner"
+    summary: "A geohash search over live partner locations streamed through Kafka into Redis with a TTL."
+    parts:
+      - { title: "Live locations and matching", minutes: 14, packs: [backend/food-delivery/end-to-end/lld-matching] }
+  - slug: food-delivery-tracking
+    title: "The food delivery interview: acceptance, tracking and pickup"
+    summary: "Offering the order to nearby partners, the live map over WebSockets, and the food-ready notice to the partner."
+    parts:
+      - { title: "The last hops", minutes: 10, packs: [backend/food-delivery/end-to-end/lld-tracking] }

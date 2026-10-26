@@ -1,0 +1,725 @@
+# yaml-language-server: $schema=../../../../../lego/content-kit/schema/topic.schema.json
+# provenance: ai-drafted by claude-opus-5-5 on 2026-10-27
+#
+# A whole backend system design interview for a top K leaderboard, the same service behind a game's
+# global leaderboard, trending songs and trending videos, run step by step on one whiteboard. The
+# order and the board follow the five-step interview framework: requirements, core entities, API,
+# high-level design, then a deep dive that first buffers a million writes a second through Kafka and
+# then offers three ways to answer top K, each fixing the last one's flaw: a Redis sorted set,
+# precomputed rankings in an aggregated database, and a hybrid of the two, before real-time updates
+# and the probabilistic variant. Every latency figure beyond the agreed targets is illustrative.
+# A backend system of lego-ai's own (app/articles/backend): it stands alone and links to no main-site topic.
+catalogVersion: 5
+title: Designing a top K leaderboard, end to end
+shortTitle: Top K leaderboard
+summary: "A 45-minute backend design interview for a leaderboard and trending list, step by step on one board: requirements with numbers, entities, three endpoints, the high-level design, then Kafka for a million writes a second and three ways to serve the top K, a Redis sorted set, precomputed rankings, and a hybrid of both."
+group: design
+order: 1
+xp: 260
+difficulty: intermediate
+tags: [interview, top-k, redis, streaming, ranking, scalability]
+eyebrow: Design
+breadcrumb: [Leaderboards, Interview walkthrough]
+lede: "You have about forty-five minutes and one whiteboard to design the service that answers one question very fast: who, or what, is in the top K right now? It is a game's global leaderboard, the trending songs on a music app and the trending videos in a country, all at once. This walkthrough runs the interview the way a strong candidate runs it: pin the requirements down with numbers, name the entities and the endpoints, draw the simplest design, then spend the rest of the time on the hard part, ingesting a million score events a second and still answering top K in 100 milliseconds, one approach at a time."
+reviewStatus: draft
+author: rakeshr410
+provenance: ai-drafted
+sources:
+  - title: "System Design 14: Design Top K Leaderboard (InterviewWithBunny, YouTube)"
+    url: https://www.youtube.com/watch?v=KOvDWEGVXec
+    note: "Five-step order, drawings, three approaches. Corrected: a ZSET is a skip list, not a heap; a TTL drops a whole key, so windows use bucket keys; CAP is a choice under partition; down is 503, not 404; Flink or Spark, not Splunk."
+  - title: Sorted sets (Redis documentation)
+    url: https://redis.io/docs/latest/develop/data-types/sorted-sets/
+    note: "Members ordered by score; range and rank queries in logarithmic time plus the size of the answer."
+  - title: EXPIRE (Redis documentation)
+    url: https://redis.io/docs/latest/commands/expire/
+    note: "A timeout on a whole key; when it passes, the key and everything in it is deleted."
+  - title: "Top K Frequent Elements (LeetCode 347)"
+    url: https://leetcode.com/problems/top-k-frequent-elements/
+    note: "The algorithm-round version: count, then keep the k most frequent with a heap."
+  - title: Apache Flink
+    url: https://flink.apache.org/
+    note: "A stream and batch processing engine with windowed aggregation, the precompute step of the second approach."
+  - title: Count-min sketch (Wikipedia)
+    url: https://en.wikipedia.org/wiki/Count%E2%80%93min_sketch
+    note: "A fixed-size table of counters that over-estimates frequencies by a bounded amount, the basis of approximate top K."
+tutorBrief: >-
+  Interview walkthrough for a top K service: a gaming leaderboard (top 50 or 100 players of a global
+  competition), trending songs on a music app, trending videos on a video site. 45 minutes: requirements
+  10 to 15, entities 1, API 3 to 4, high-level design 4, deep dive about 25. Board, top to bottom: the title
+  and one line (a real-time dashboard of top players, ranks and scores across games, regions and time
+  windows), 1 functional requirements left and non-functional right, 2 core entities, 3 API beside them,
+  4 high-level design, 5 deep dive with three numbered approaches, each picture drawn under the last with its
+  notes (pro, con, mitigation, where it fits) to its right. Functional: insert, update or delete a score,
+  view or like; query the top K by region or group; time windows of an hour, a day, a month and all time;
+  real-time updates, for live leaderboards only (trending lists do not need them). Non-functional: 1M
+  write requests a second (score events, not top K reads); billions of songs, videos or players;
+  availability over consistency, eventual is fine (a rank change can show a moment late); top K read in
+  100 ms, an update reflected within 500 ms (soft real time); exact results, not probabilistic, and say so
+  early because it changes the design. Entities: the score (view, like), the item (player, video, song),
+  the time frame. API: POST /api/v1/scores; GET or WebSocket
+  /leaderboards/{leaderboardId}/top?window=daily&region=IN&limit=K, K bounded 1 to 10,000 and paginated;
+  GET /leaderboards/{leaderboardId}/rank/{userId}?window=month&k=5 returns the user's rank and the players
+  around them (two above, two below for k=5), the usual follow-up. High-level design: clients, an API gateway
+  and load balancer (authentication, authorization, routing, rate limiting, round robin), a score service
+  writing to a score DB, a ranking service reading it. Deep dive: LeetCode 347 (count, then a heap, n log k)
+  is the algorithm-round version. Ingestion: the score service puts each event on Kafka, a buffer; a DB
+  consumer writes the score DB. Approach 1: a Redis consumer also writes a Redis sorted set (ZSET), members
+  ordered by score (a skip list plus a hash table, not a heap): ZINCRBY to add, ZREVRANGE 0 K-1 for the top K
+  in O(log N + K), ZREVRANK for a rank. One key per board, region and window
+  (leaderboard:music:IN:alltime, :90days, :30days). Flaws: one Redis is a single point of failure and must
+  hold billions of members; one all-time key cannot answer a window; a key per window per country multiplies
+  memory. Mitigate: a Redis cluster partitioned by region, replicas, periodic snapshots to a database. Fits a
+  small system, 1K to 10K items in one country. Approach 2: precompute. Scores in a write-optimized store
+  (Cassandra; Spanner works; BigQuery is an analytics warehouse for batch scans, not the store for single
+  writes); Flink or a Spark job scheduled by Airflow or cron computes top K per region and window every few
+  minutes or hours into an aggregated DB (a time-series DB such as InfluxDB, or partitioned and indexed
+  PostgreSQL); a cache in front. Pro: durable, scales out. Con: minutes stale, every dimension computed.
+  Fits when the queries are known ahead. Approach 3: hybrid. Kafka feeds both; Redis keeps only recent
+  windows, each a time-bucket key (one per hour or day) with a TTL, a window being the union of its buckets
+  (ZUNIONSTORE); the ranking service reads Redis first and falls back to the aggregated DB for past windows
+  (last January); if Redis is lost it is rebuilt from the aggregated DB. Real time: a WebSocket server pushes
+  changes from Redis to live leaderboards. Probabilistic: a count-min sketch with a small heap, or RedisBloom
+  Top-K, in fixed memory with bounded error.
+components:
+  - key: client
+    name: Clients
+    tone: sand
+    kind: client
+    summary: Game servers, apps and players' browsers that send score events and ask for the top K.
+    owns: [nothing of its own]
+    talksTo: [api-gateway]
+  - key: api-gateway
+    name: API gateway and load balancer
+    tone: blue
+    kind: gateway
+    summary: Authenticates and authorizes, rate limits, routes each endpoint to its service and spreads requests round robin.
+    owns: [routes, rate limits]
+    talksTo: [score-service, ranking-service]
+  - key: score-service
+    name: Score service
+    tone: green
+    kind: service
+    summary: Accepts score, view and like events and puts each on Kafka; scaled out over many pods.
+    owns: [nothing durable]
+    talksTo: [kafka]
+  - key: kafka
+    name: Kafka
+    tone: orange
+    kind: queue
+    summary: A durable log that buffers a million events a second until the consumers catch up.
+    owns: [the score events topic]
+    talksTo: []
+  - key: db-consumer
+    name: DB consumer
+    tone: gray
+    kind: worker
+    summary: Reads score events from Kafka and writes them to the score database.
+    owns: [its consumer offset]
+    talksTo: [kafka, score-db]
+  - key: redis-consumer
+    name: Redis consumer
+    tone: gray
+    kind: worker
+    summary: Reads score events from Kafka and adds them to the Redis sorted sets with ZINCRBY.
+    owns: [its consumer offset]
+    talksTo: [kafka, redis-zset]
+  - key: redis-zset
+    name: Redis sorted set
+    tone: green
+    kind: cache
+    summary: One sorted set per board, region and time bucket, members ordered by score; answers top K and rank in milliseconds.
+    owns: [recent rankings]
+    talksTo: []
+  - key: score-db
+    name: Score database
+    tone: yellow
+    kind: datastore
+    summary: Cassandra, write-optimized; every score event, the source of truth.
+    owns: [scores]
+    talksTo: []
+  - key: flink
+    name: Flink job
+    tone: purple
+    kind: worker
+    summary: Computes the top K for every region and window on a schedule and writes the results to the aggregated database.
+    owns: [nothing durable]
+    talksTo: [score-db, aggregated-db]
+  - key: aggregated-db
+    name: Aggregated database
+    tone: yellow
+    kind: datastore
+    summary: A time-series database such as InfluxDB holding precomputed rankings by board, region and window.
+    owns: [precomputed top K]
+    talksTo: []
+  - key: rank-cache
+    name: Ranking cache
+    tone: orange
+    kind: cache
+    summary: Holds the precomputed lists the ranking service reads most, in front of the aggregated database.
+    owns: [hot precomputed lists]
+    talksTo: []
+  - key: ranking-service
+    name: Ranking service
+    tone: green
+    kind: service
+    summary: Answers top K and rank queries, from Redis for recent windows and the aggregated database for past ones.
+    owns: [nothing durable]
+    talksTo: [redis-zset, aggregated-db, rank-cache]
+  - key: websocket-server
+    name: WebSocket server
+    tone: blue
+    kind: service
+    summary: Keeps live leaderboard connections open and pushes rank changes read from Redis.
+    owns: [open connections]
+    talksTo: [redis-zset]
+content:
+  # ────────────────────────────────────────────────────────────────── Problem statement
+  - __component: sd.section
+    key: problem-statement
+    title: Understanding the problem.
+    railLabel: Problem
+    intro: "Designing a leaderboard means answering one query, the top K, from billions of records, fast. Say what the product is in your own words, with an example, before any design."
+  - __component: sd.rich-text
+    key: problem-what
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "A gaming platform runs a global competition, and at any moment it wants the top 50 or the top 100 players by score. A music app wants the trending songs in India this week; a video site wants the most viewed videos in the US in the last 90 days. They are one problem: keep a score per item, and return the K items with the highest scores for a board, a region and a time window. Write the title on the board as a leaderboard, a top K and a trending list, and one line under it: a real-time dashboard of top players, ranks and scores across games, regions and time windows."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Run the interview in five steps and say them once: the requirements, the core entities, the API, the high-level design, then the deep dive. Number each on the board as you reach it. This problem is easy in an algorithm round and hard in a design round, because every approach you offer draws a follow-up about its cost at scale, so the deep dive presents three approaches, each with its pros and cons written beside it."
+  - __component: sd.card-grid
+    key: board-steps
+    title: The board, in the order you fill it
+    columns: 3
+    cards:
+      - title: 1. Requirements
+        text: Functional on the left, non-functional on the right, each with a number. The scale line decides the whole design.
+      - title: 2. Entities
+        text: "The score, the item it belongs to, and the time frame it counts in."
+      - title: 3. API
+        text: "Insert a score, read the top K, and the follow-up: my rank and the players around me."
+      - title: 4. High-level design
+        text: "Clients, a gateway, a score service writing a score database, a ranking service reading it."
+      - title: 5. Deep dive
+        text: "Kafka to absorb the writes, then three ways to answer top K: a Redis sorted set, precomputed rankings, and a hybrid of the two."
+  - __component: sd.quiz
+    key: problem-quiz
+    title: Quick check
+    questions:
+      - question: "What do a game leaderboard and a list of trending songs have in common?"
+        optionA: Nothing; they need different systems
+        optionB: "Both return the K items with the highest score for a board, a region and a time window"
+        optionC: Both need a WebSocket
+        optionD: Both are probabilistic
+        answer: B
+        explanation: "Score is points for a player and plays or views for a song or video; the query is the same top K."
+  # ────────────────────────────────────────────────────────────────── 1. Requirements
+  - __component: sd.section
+    key: requirements
+    title: Requirements.
+    railLabel: Requirements
+    intro: "Two lists, side by side. Here the non-functional list matters more than usual: the scale decides which of the three designs you end up with."
+  - __component: sd.subsection
+    key: functional-sub
+    title: Functional requirements
+    railLabel: Functional
+  - __component: sd.checklist
+    key: functional
+    idPrefix: FR-
+    items:
+      - text: "Insert, update or delete the data: a player's score, a video's view, a song's play or like."
+        note: Without data coming in there is nothing to rank, so ingestion is a requirement of its own.
+      - text: Query the top K items, for a leaderboard, a region or a group.
+      - text: "Choose a time window: the last hour, day or month, or all time."
+        note: "Ask which windows; a fixed set (hour, day, month, all time) is far cheaper than any range from x to now."
+      - text: "Live leaderboards get real-time updates."
+        note: "Only a live event needs this; a trending list of songs or videos can be a little behind."
+  - __component: sd.subsection
+    key: non-functional-sub
+    title: Non-functional requirements
+    railLabel: Non-functional
+  - __component: sd.requirement-table
+    key: non-functional
+    rows:
+      - area: Scale
+        requirement: Absorb every like, view and score update.
+        targets: [1M write requests a second, "billions of songs, videos or players"]
+        note: "The million a second are score events coming in, not top K queries. Name the item for the product: videos for a video site, songs for a music app."
+      - area: Availability
+        requirement: Always return some top K list.
+        targets: [availability over consistency]
+        note: "Eventual consistency is fine: a video moving from second to first may show a moment late."
+      - area: Latency
+        requirement: Reads near real time, writes soft real time.
+        targets: [top K in 100 ms, an update reflected within 500 ms]
+        note: "The two numbers differ on purpose: a rank may lag its score by up to half a second."
+      - area: Accuracy
+        requirement: Exact rankings, not estimates.
+        targets: [exact top K]
+        note: "Agree this early: an approximate top K is a different design (the last section sketches it)."
+  - __component: sd.rich-text
+    key: cap-choice
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "At this scale the data is spread over many machines, and when the network between them splits, each part must either keep answering with what it has or refuse until it agrees with the rest. That is the CAP choice, and it is a choice made under a partition, not a rule that a system can never be both available and consistent. A leaderboard keeps answering: a client asking for the top K should always get a list, never a 503 Service Unavailable, and showing a rank change a moment late costs nothing."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Then accuracy. Ask whether the interviewer wants the exact top K or a probabilistic one, where an item may be slightly misplaced in exchange for far less memory. This design gives exact results and closes with how to make it probabilistic. Keep all of this inside ten to fifteen minutes."
+  - __component: sd.quiz
+    key: requirements-quiz
+    title: Quick check
+    questions:
+      - question: "The scale line says 1M requests a second. Requests for what?"
+        optionA: Top K queries
+        optionB: "Score events coming in: likes, views and score updates"
+        optionC: WebSocket connections
+        optionD: Page loads
+        answer: B
+        explanation: "Writes dominate. That is why the deep dive starts by buffering the writes before touching the reads."
+      - question: Why is eventual consistency acceptable for a leaderboard?
+        optionA: Leaderboards never change
+        optionB: "Showing a rank change a moment late costs nothing, while an error instead of a list fails every viewer"
+        optionC: CAP says a system can never be consistent
+        optionD: Because the scores are probabilistic
+        answer: B
+        explanation: Availability wins when a short delay is invisible to the user.
+  # ────────────────────────────────────────────────────────────────── 2. Entities
+  - __component: sd.section
+    key: entities
+    title: Core entities.
+    railLabel: Entities
+    intro: "Only a few nouns: what is counted, what it is counted for, and over which time."
+  - __component: sd.table
+    key: entities-table
+    columns:
+      - { label: Entity, style: strong }
+      - { label: What it is, style: text }
+    rows:
+      - ["Score, view or like", The attribute items are ranked by.]
+      - ["Player, video or song", The item that owns the score and appears on the list.]
+      - ["Time frame", "The window a ranking covers: an hour, a day, a month, or all time."]
+  - __component: sd.quiz
+    key: entities-quiz
+    title: Quick check
+    questions:
+      - question: Why is the time frame an entity rather than just a parameter?
+        optionA: It is stored per user
+        optionB: "Every ranking is kept per window, so the window shapes what is stored, not only what is asked"
+        optionC: It is not; it can be ignored
+        optionD: For the load balancer
+        answer: B
+        explanation: "A top K for the last hour and one for all time are different lists; the design keeps or computes each."
+  # ────────────────────────────────────────────────────────────────── 3. API
+  - __component: sd.section
+    key: api
+    title: API.
+    railLabel: API
+    intro: "One endpoint to put scores in, one to read the top K, and the endpoint the interviewer will ask for next: my rank and the players around me."
+  - __component: sd.endpoint
+    key: insert-score
+    method: POST
+    path: /api/v1/scores
+    summary: "Records a score, view or like. Name it for the product: scores for a game, views for videos, likes for songs."
+    requestHeaders: ["Authorization: Bearer <token>"]
+    requestBody:
+      leaderboardId: global-cup
+      itemId: player-1
+      score: 120
+    responses:
+      - label: Accepted
+        status: "202"
+        body:
+          status: queued
+  - __component: sd.endpoint
+    key: top-k
+    method: GET
+    path: "/leaderboards/{leaderboardId}/top?window=daily&region=IN&limit=100"
+    summary: "The top K for a board, a window and a region. The limit is bounded, 1 to 10,000, and large answers are paginated. A live leaderboard opens the same request as a WebSocket and receives updates."
+    responses:
+      - label: OK
+        status: "200"
+        body:
+          window: daily
+          region: IN
+          items: "[{ rank: 1, itemId: song-1, score: 98120 }, ...]"
+          nextCursor: c2
+  - __component: sd.endpoint
+    key: rank-around
+    method: GET
+    path: "/leaderboards/{leaderboardId}/rank/{userId}?window=month&k=5"
+    summary: "A player's rank for a window and the k players around them: with k = 5, two above, the player, and two below."
+    responses:
+      - label: OK
+        status: "200"
+        body:
+          rank: 3
+          around: "[rank 1, rank 2, rank 3 (you), rank 4, rank 5]"
+  - __component: sd.table
+    key: requirement-to-endpoint
+    title: Requirements to endpoints
+    columns:
+      - { label: Requirement, style: text }
+      - { label: Endpoint, style: mono-strong }
+    rows:
+      - ["Insert, update or delete data", "POST /api/v1/scores"]
+      - ["Top K by region and time window, live for leaderboards", "GET or WebSocket /leaderboards/{id}/top"]
+      - ["Follow-up: my rank and the players around me", "GET /leaderboards/{id}/rank/{userId}"]
+  - __component: sd.quiz
+    key: api-quiz
+    title: Quick check
+    questions:
+      - question: Why bound K to at most 10,000?
+        optionA: Redis cannot store more
+        optionB: "An unbounded K lets one request ask for everything; a bound keeps every query cheap and is paginated"
+        optionC: HTTP forbids larger responses
+        optionD: Because of CAP
+        answer: B
+        explanation: "The bound is part of the contract, and the design leans on it: top K reads cost log N plus K."
+      - question: When is the top K endpoint a WebSocket rather than a plain GET?
+        optionA: Always
+        optionB: "For a live leaderboard that needs real-time updates; a trending list is a plain GET"
+        optionC: When K is large
+        optionD: Never
+        answer: B
+        explanation: Only live events need pushed updates.
+  # ────────────────────────────────────────────────────────────────── 4. High-level design
+  - __component: sd.section
+    key: high-level-design
+    title: High-level design.
+    railLabel: High level
+    intro: "Two functional requirements carry the picture, putting data in and getting the top K out, so it needs few boxes: a gateway in front, a service for each, and one database between them."
+  - __component: sd.component-diagram
+    key: hld-diagram
+    title: The first design
+    direction: LR
+    nodes:
+      - { key: client, details: [send scores, ask for top K] }
+      - { key: api-gateway, details: [authentication and authorization, routing, rate limiting, round robin] }
+      - { key: score-service, details: [stores each score] }
+      - { key: ranking-service, details: [reads the top K] }
+      - { key: score-db, details: [every score] }
+    edges:
+      - { from: client, to: api-gateway }
+      - { from: api-gateway, to: score-service, label: POST scores }
+      - { from: api-gateway, to: ranking-service, label: GET top }
+      - { from: score-service, to: score-db, label: write }
+      - { from: ranking-service, to: score-db, label: read top K }
+  - __component: sd.rich-text
+    key: hld-flows
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "At this scale the services are separate microservices, so an API gateway and a load balancer sit in front: the gateway authenticates and authorizes, rate limits and routes each endpoint to its service, and the load balancer spreads requests round robin. Write: a new view or score reaches the score service, which saves it in the score database. Read: the ranking service looks into the score database for the highest scores of a board and returns them."
+      - type: paragraph
+        children:
+          - type: text
+            text: "This meets the functional requirements and none of the non-functional ones. No single service or database writes a million events a second, and sorting billions of scores on every query cannot answer in 100 ms. Say so; it is the brief for the deep dive."
+  - __component: sd.quiz
+    key: hld-quiz
+    title: Quick check
+    questions:
+      - question: What breaks first if this design goes live as drawn?
+        optionA: The gateway's authentication
+        optionB: "The writes, a million a second into one service and database, and the reads, ranking billions of rows per query"
+        optionC: The client
+        optionD: Nothing
+        answer: B
+        explanation: "The picture is functionally complete; the deep dive fixes the write rate first, then the top K reads."
+  # ────────────────────────────────────────────────────────────────── 5. Deep dive, 1: Redis sorted set
+  - __component: sd.section
+    key: lld-redis-sorted-set
+    title: "Deep dive, 1: a Redis sorted set."
+    railLabel: LLD 1, sorted set
+    intro: "Copy the high-level design down the board and open the two services: first make the score service take a million events a second, then make the ranking service answer from memory."
+  - __component: sd.rich-text
+    key: zset-algorithm
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "In an algorithm round this is LeetCode 347, top K frequent elements: count each value in a hash map, then keep the K largest with a heap (a min-heap of size K costs n log K) and pop them out. In a design round you want that behaviour from a component rather than from code you write, and the component is a Redis sorted set."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Writes first. No single server ingests a million events a second straight into a database, so the score service, scaled over many pods, puts each event on Kafka, a durable buffer, and returns. A DB consumer service reads the topic and writes the score database at the pace it can sustain. Nothing is lost while the database catches up, because the events wait in Kafka."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Reads next. A second consumer, the Redis consumer, reads the same topic and adds each event to a Redis sorted set with ZINCRBY. A sorted set keeps members ordered by score, so nothing has to be sorted at query time: the ranking service asks for the top K with ZREVRANGE 0 K-1, and for a player's rank with ZREVRANK. It is not a heap but a skip list beside a hash table, so updating one score and reading the top K both cost log N plus K. The ranking service no longer touches the score database."
+  - __component: sd.component-diagram
+    key: zset-diagram
+    title: Kafka for the writes, a sorted set for the reads
+    direction: LR
+    nodes:
+      - { key: client }
+      - { key: api-gateway }
+      - { key: score-service, details: [many pods, puts events on Kafka] }
+      - { key: kafka, details: [buffers 1M events a second] }
+      - { key: db-consumer }
+      - { key: redis-consumer, details: [ZINCRBY] }
+      - { key: score-db }
+      - { key: redis-zset, details: ["leaderboard:music:IN:alltime"] }
+      - { key: ranking-service, details: [ZREVRANGE for top K, ZREVRANK for a rank] }
+    edges:
+      - { from: client, to: api-gateway }
+      - { from: api-gateway, to: score-service }
+      - { from: api-gateway, to: ranking-service }
+      - { from: score-service, to: kafka }
+      - { from: kafka, to: db-consumer }
+      - { from: kafka, to: redis-consumer }
+      - { from: db-consumer, to: score-db }
+      - { from: redis-consumer, to: redis-zset }
+      - { from: ranking-service, to: redis-zset, label: top K }
+  - __component: sd.table
+    key: zset-keys
+    title: One key per board, region and window
+    columns:
+      - { label: Key, style: mono }
+      - { label: Holds, style: text }
+    rows:
+      - ["leaderboard:music:IN:alltime", Every play of every song in India since the start]
+      - ["leaderboard:music:IN:90days", The last 90 days]
+      - ["leaderboard:music:IN:30days", The last 30 days]
+  - __component: sd.rich-text
+    key: zset-flaws
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "The flaws. One Redis instance is a single point of failure, and it must hold billions of members in memory. A single all-time key cannot answer the last 30 or 90 days. One key per window fixes that, but a set of keys for every country multiplies the memory again."
+      - type: paragraph
+        children:
+          - type: text
+            text: "The mitigations: a Redis cluster partitioned by region, so India's keys live on one node and the US's on another; replicas, and periodic snapshots to a database, so a lost node is restored instead of recomputed from scratch. Write the verdict beside the drawing: very fast and simple, but hard to scale and to deploy globally; a good fit for a small system, 1,000 to 10,000 items in one country."
+  - __component: sd.quiz
+    key: zset-quiz
+    title: Quick check
+    questions:
+      - question: Why put Kafka between the score service and the database?
+        optionA: To sort the scores
+        optionB: "It buffers a million events a second so the consumers write the stores at a pace they can sustain, losing nothing"
+        optionC: To replace the database
+        optionD: To cache top K
+        answer: B
+        explanation: "The score service only appends to the log; the slow work happens behind it."
+      - question: How does a Redis sorted set return the top K?
+        optionA: It sorts all members on every query
+        optionB: "Members are kept ordered by score, so ZREVRANGE 0 K-1 reads the K highest in log N plus K"
+        optionC: It scans the database
+        optionD: It keeps a heap and pops it, destroying the set
+        answer: B
+        explanation: "The order is maintained on every write, so a read only walks the first K members."
+      - question: What is the first approach's main flaw at global scale?
+        optionA: Redis is slow
+        optionB: "One in-memory node holds everything and is a single point of failure, and a key per window per country multiplies memory"
+        optionC: Kafka loses events
+        optionD: Sorted sets cannot hold scores
+        answer: B
+        explanation: "Partition by region, add replicas and snapshots; it still suits a small system best."
+  # ────────────────────────────────────────────────────────────────── 5. Deep dive, 2: precomputed
+  - __component: sd.section
+    key: lld-precomputed
+    title: "Deep dive, 2: precompute the rankings."
+    railLabel: LLD 2, precomputed
+    intro: "Drop Redis. Keep every score in a database built for writes, and compute the rankings ahead of time on a schedule, so a query only reads an answer that is already there."
+  - __component: sd.rich-text
+    key: precompute-flow
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Ingestion stays as it was: score service, Kafka, DB consumer, score database. The score database takes a million writes a second, so choose one built for writes: Cassandra, whose writes are appends, is the usual choice, and Spanner works too. BigQuery is an analytics warehouse, good for scanning the data in a batch but not the store for a million single-score writes."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Then a processing job, Apache Flink, or a Spark job scheduled by Airflow or cron, reads the scores and computes the top K for every board, region and time window, and writes the results to an aggregated database. The ranking service reads only the aggregated database. A time-series database such as InfluxDB fits the aggregated data, because every query is by time window and region; PostgreSQL works too, with partitioning and indexes on region and window. Put a cache in front, so the most requested lists are not read from the database every time."
+  - __component: sd.component-diagram
+    key: precompute-diagram
+    title: Precomputed rankings
+    direction: LR
+    nodes:
+      - { key: client }
+      - { key: api-gateway }
+      - { key: score-service }
+      - { key: kafka }
+      - { key: db-consumer }
+      - { key: score-db, details: [Cassandra] }
+      - { key: flink, details: [top K per region and window, every few minutes] }
+      - { key: aggregated-db, details: [time series, such as InfluxDB] }
+      - { key: rank-cache }
+      - { key: ranking-service }
+    edges:
+      - { from: client, to: api-gateway }
+      - { from: api-gateway, to: score-service }
+      - { from: api-gateway, to: ranking-service }
+      - { from: score-service, to: kafka }
+      - { from: kafka, to: db-consumer }
+      - { from: db-consumer, to: score-db }
+      - { from: score-db, to: flink, label: read }
+      - { from: flink, to: aggregated-db, label: write }
+      - { from: ranking-service, to: rank-cache }
+      - { from: ranking-service, to: aggregated-db, label: on a miss }
+  - __component: sd.db-schema
+    key: precompute-tables
+    stores:
+      - key: scores-store
+        engine: Cassandra
+        component: score-db
+        why: Append-heavy writes at a million a second.
+        tables:
+          - name: scores
+            columns:
+              - { name: leaderboard_id, type: text, role: primary }
+              - { name: item_id, type: text, role: primary }
+              - { name: score, type: bigint }
+              - { name: region, type: text }
+              - { name: updated_at, type: timestamp }
+      - key: rankings-store
+        engine: A time-series database such as InfluxDB
+        component: aggregated-db
+        why: Every read is one board, region and window.
+        tables:
+          - name: top_k
+            columns:
+              - { name: leaderboard_id, type: text, role: primary }
+              - { name: region, type: text, role: primary }
+              - { name: window, type: text, role: primary }
+              - { name: computed_at, type: timestamp }
+              - { name: ranked_items, type: json, note: "the top K, rank, item and score" }
+  - __component: sd.table
+    key: precompute-verdict
+    title: The verdict, as written beside the drawing
+    columns:
+      - { label: "", style: strong }
+      - { label: Precomputed rankings, style: text }
+    rows:
+      - [Pro, "Stored in a database: durable, with backups, and scales out horizontally."]
+      - [Con, "The job runs every few minutes or hours, so rankings are that stale; it needs Airflow, Spark or cron; and every dimension must be computed whether asked or not."]
+      - [Mitigate, "Shorter batches, a cache, and Flink for faster processing."]
+      - [Fits, "When the queries are known ahead: which windows and regions users will look at."]
+  - __component: sd.quiz
+    key: precompute-quiz
+    title: Quick check
+    questions:
+      - question: What does precomputing fix, and what does it cost?
+        optionA: "It fixes staleness and costs durability"
+        optionB: "It fixes durability and scale, and costs freshness: rankings are as old as the last job run"
+        optionC: "It fixes nothing"
+        optionD: "It removes the need for a database"
+        answer: B
+        explanation: "The answer is read, not computed, at query time, so it is cheap and safe but not real time."
+      - question: Why Cassandra for the score database?
+        optionA: It sorts scores
+        optionB: "It is write-optimized, built for heavy append traffic like a million score events a second"
+        optionC: It is a time-series database
+        optionD: It is in memory
+        answer: B
+        explanation: "Spanner works too; an analytics warehouse such as BigQuery suits the batch scan, not the writes."
+  # ────────────────────────────────────────────────────────────────── 5. Deep dive, 3: hybrid
+  - __component: sd.section
+    key: lld-hybrid
+    title: "Deep dive, 3: the hybrid, and finishing."
+    railLabel: LLD 3, hybrid
+    intro: "The sorted set was fresh but fragile; precomputing was durable but stale. Merge the two pictures: Redis answers the recent windows in real time, the aggregated database answers the past and backs Redis up."
+  - __component: sd.rich-text
+    key: hybrid-flow
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Every write goes through Kafka as before, and both consumers run: the DB consumer fills the score database, from which Flink precomputes into the aggregated database, and the Redis consumer updates the sorted sets in real time. Redis now keeps only what is needed. A TTL in Redis expires a whole key, not old members inside it, so a rolling window is built from time buckets: one sorted set per hour or per day, each with a TTL a little longer than the longest window it serves, and the last 30 days is the union of 30 daily keys (ZUNIONSTORE), which can itself be cached."
+      - type: paragraph
+        children:
+          - type: text
+            text: "The ranking service asks Redis first. A miss means the request is for the past, last January say, and that answer is already precomputed in the aggregated database. And if a Redis node is lost, its keys are rebuilt from the aggregated database instead of from scratch. Redis gives the near real-time answers, the aggregated database gives the durability."
+  - __component: sd.component-diagram
+    key: final-diagram
+    title: The final design
+    direction: LR
+    nodes:
+      - { key: client }
+      - { key: api-gateway }
+      - { key: score-service }
+      - { key: kafka }
+      - { key: db-consumer }
+      - { key: redis-consumer }
+      - { key: score-db }
+      - { key: flink }
+      - { key: redis-zset, details: [recent windows, time-bucket keys with a TTL] }
+      - { key: aggregated-db, details: [past windows, backup for Redis] }
+      - { key: ranking-service, details: [Redis first, then the aggregated database] }
+      - { key: websocket-server, details: [pushes live changes] }
+    edges:
+      - { from: client, to: api-gateway }
+      - { from: api-gateway, to: score-service }
+      - { from: api-gateway, to: ranking-service }
+      - { from: score-service, to: kafka }
+      - { from: kafka, to: db-consumer, label: read }
+      - { from: kafka, to: redis-consumer, label: read }
+      - { from: db-consumer, to: score-db, label: write }
+      - { from: score-db, to: flink, label: read }
+      - { from: flink, to: aggregated-db, label: write }
+      - { from: redis-consumer, to: redis-zset }
+      - { from: ranking-service, to: redis-zset, label: read }
+      - { from: ranking-service, to: aggregated-db, label: past windows }
+      - { from: aggregated-db, to: redis-zset, label: rebuild }
+      - { from: websocket-server, to: redis-zset, label: watch }
+  - __component: sd.table
+    key: hybrid-reads
+    title: Where each query is answered
+    columns:
+      - { label: Query, style: text }
+      - { label: Answered by, style: text }
+    rows:
+      - ["Top K, last hour, day or 30 days", "Redis sorted sets, in milliseconds"]
+      - ["Top K for a past window, such as last January", The aggregated database]
+      - ["My rank and the players around me", "ZREVRANK, then ZREVRANGE around it"]
+      - ["Live leaderboard", "WebSocket, pushed from Redis"]
+  - __component: sd.rich-text
+    key: hybrid-finish
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Real-time updates, the last functional requirement: a live leaderboard opens a WebSocket to a WebSocket server, which watches the board's sorted set and pushes the new top K when it changes. Trending lists stay plain GETs."
+      - type: paragraph
+        children:
+          - type: text
+            text: "If the interviewer asks for probabilistic top K instead: replace the exact counts with approximate structures in fixed memory, a count-min sketch with a small heap of the current top K, or RedisBloom's Top-K, which tolerate a small, bounded error in exchange for not storing every item."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Close by reading the non-functional list back against the board. Scale: Kafka absorbs a million writes a second. Availability: Redis is clustered and backed by the aggregated database. Latency: recent top K from memory well inside 100 ms, updates through Kafka within about 500 ms. Accuracy: exact counts in both stores."
+  - __component: sd.quiz
+    key: hybrid-quiz
+    title: Quick check
+    questions:
+      - question: "You set a 90-day TTL on the key leaderboard:music:IN:90days. What happens?"
+        optionA: Scores older than 90 days drop out one by one
+        optionB: "After 90 days the whole key and every score in it is deleted; a rolling window needs time-bucket keys"
+        optionC: Nothing; TTL applies to strings only
+        optionD: Redis keeps the newest 90 members
+        answer: B
+        explanation: "A TTL belongs to a key. Daily keys that each expire, unioned for the window, give a window that rolls."
+      - question: A user asks for last January's top 10. Where does the answer come from?
+        optionA: The Redis sorted set
+        optionB: "The aggregated database, where past windows are precomputed"
+        optionC: Kafka
+        optionD: The WebSocket server
+        answer: B
+        explanation: "Redis keeps only recent windows; a miss there means the past, which is precomputed."
+      - question: How does a live leaderboard get its updates?
+        optionA: The client polls the score service
+        optionB: "A WebSocket server pushes changes it reads from the Redis sorted set"
+        optionC: Flink sends them
+        optionD: Through the aggregated database
+        answer: B
+        explanation: "Only live events need this; trending lists remain plain GET requests."

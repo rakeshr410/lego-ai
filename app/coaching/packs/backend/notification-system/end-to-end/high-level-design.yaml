@@ -1,0 +1,82 @@
+# Notification system interview, high-level design: "4. High-level design" as in the video: the clients on the left, a tall API gateway and load balancer, then three services in a column (template, user preference, notification), with the template DB, the user preference DB and the notification provider (a black box) to their right.
+id: backend/notification-system/end-to-end/high-level-design
+title: Gateway, three services, a black box
+source:
+  hash: "c3f90b2b8022"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/notification-system/end-to-end/api
+  assumes:
+    - "Endpoints: send and status, templates, preferences."
+    - "The client is the calling company; the user is the person."
+  carries:
+    - "HLD: clients, an API gateway and load balancer, a template service with its DB, a user preference service with its DB, and a notification service handing messages to a notification provider."
+    - "The notification provider is a black box until the deep dive."
+  terms:
+    - term: high-level design
+      means: The fewest boxes that meet the functional requirements, with how each works left for later.
+    - term: notification provider
+      means: "The third party that actually delivers, such as an SMTP server for email."
+board:
+  keep: [title, fr, fr-channels, fr-templates, fr-prefs, fr-schedule, fr-status, nfr, nfr-scale, nfr-cap, nfr-latency]
+  elements:
+    - { id: hld, kind: region, label: 4. High-level design, at: [2, 25], size: [57, 19] }
+    - { id: hld-clients, kind: box, label: "clients, Amazon or Uber", at: [3, 32], size: [7, 5] }
+    - { id: hld-gw, kind: box, label: Gateway and load balancer, at: [13, 27], size: [8, 15] }
+    - { id: hld-tpl-svc, kind: box, label: Template service, at: [25, 27], size: [11, 3] }
+    - { id: hld-tpl-db, kind: oval, label: Template DB, at: [41, 27], size: [10, 3], tone: amber }
+    - { id: hld-pref-svc, kind: box, label: User preference service, at: [25, 33], size: [11, 3] }
+    - { id: hld-pref-db, kind: oval, label: User preference DB, at: [41, 33], size: [14, 3], tone: amber }
+    - { id: hld-notif-svc, kind: box, label: Core notification service, at: [25, 39], size: [11, 3] }
+    - { id: hld-provider, kind: box, label: Notification provider, at: [41, 39], size: [12, 3], dashed: true }
+    - { id: hld-provider-note, kind: note, label: "email, in-app or SMS, a black box", at: [41, 42], in: hld }
+  arrows:
+    - { id: hld-clients-gw, from: hld-clients, to: hld-gw }
+    - { id: hld-gw-tpl, from: hld-gw, to: hld-tpl-svc }
+    - { id: hld-tpl-db-arrow, from: hld-tpl-svc, to: hld-tpl-db }
+    - { id: hld-gw-pref, from: hld-gw, to: hld-pref-svc }
+    - { id: hld-pref-db-arrow, from: hld-pref-svc, to: hld-pref-db }
+    - { id: hld-gw-notif, from: hld-gw, to: hld-notif-svc }
+    - { id: hld-notif-provider, from: hld-notif-svc, to: hld-provider }
+    - { id: hld-notif-pref, from: hld-notif-svc, to: hld-pref-db, label: checks }
+beats:
+  - point: "The clients are companies, and because this is a set of microservices at large scale, an API gateway and load balancer stands in front of everything."
+    kind: component
+    weight: core
+    teach:
+      - "Step four, the high-level design. First the clients, and remember they are companies, Amazon or Uber, not people."
+      - "At this scale it is microservices, not a monolith, so an API gateway and load balancer sits right after the clients."
+    draw: [hld, hld-clients, hld-gw, hld-clients-gw]
+    check: Why put a gateway in front at all?
+    answer: "Many microservices at a large scale need one entry point that authenticates, routes and balances the load."
+  - point: "A template service saves templates in a template DB, and a user preference service saves preferences in its own DB; both requests come through the client."
+    kind: component
+    weight: core
+    teach:
+      - "Before any send, the client sets up a template: the gateway routes it to a template service, which persists it in a template DB."
+      - "Preferences get their own service and database. A person can't call us directly, so the change comes through the client's app."
+    draw: [hld-tpl-svc, hld-gw-tpl, hld-tpl-db, hld-tpl-db-arrow, hld-pref-svc, hld-gw-pref, hld-pref-db, hld-pref-db-arrow]
+    check: Where does a preference change come from?
+    answer: "From the person, through the client's app and our gateway, to the user preference service."
+  - point: "Sending goes to a notification service that checks the user's preferences and hands the message to a notification provider, kept as a black box for now."
+    kind: flow
+    weight: core
+    teach:
+      - "The core: a notification service. It checks the user's preference and hands the message to a notification provider, a third party, an SMTP server for email, say."
+      - "Keep it a black box, email, in-app or SMS. How the hand-off works at a million a minute is the deep dive."
+    draw: [hld-notif-svc, hld-gw-notif, hld-provider, hld-notif-provider, hld-notif-pref, hld-provider-note]
+    check: What is left black-boxed in this design?
+    answer: "The notification provider: how messages are handed over and delivered on each channel."
+asks:
+  - ids: [hld-tpl-svc, hld-pref-svc, hld-notif-svc]
+    beats: [2, 3]
+    question: "Behind the gateway, which services do we need to cover the requirements? Name them and I'll draw them."
+    hints:
+      - Look at the endpoints we wrote; each group has an owner.
+      - Templates, preferences, and something that does the sending.
+task:
+  prompt: "Draw the high-level design: clients, an API gateway and load balancer, a template service with its DB, a user preference service with its DB, and a notification service that checks preferences and hands messages to a notification provider."
+  expects: [1, 2, 3]

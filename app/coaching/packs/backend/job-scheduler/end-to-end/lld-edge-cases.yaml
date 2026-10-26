@@ -1,0 +1,107 @@
+# Job scheduler interview, low-level design, the edge cases: as in the video, a Redis cache beside the executors for cancel requests with a TTL, the run-now path from the job service straight to the run queue (also taken by jobs due within a minute, closing the polling race), a Redis holding the watcher's last polled time beside the watcher, and the indexes written by the tables. The video draws the cancel arrow from the job service to Redis; here it is a note, as a straight arrow would cross the picture.
+id: backend/job-scheduler/end-to-end/lld-edge-cases
+title: "Low-level design: cancel, run now, the race, indexes"
+source:
+  hash: "6eed5e282c2d"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/job-scheduler/end-to-end/lld-failures
+  assumes:
+    - "Writes go through Kafka to the consumer service; the watcher queues due jobs; the job consumer hands them to executors."
+    - "The watcher polls every 20 s for the next 5 minutes, and re-queues runs silent for 15 s."
+  carries:
+    - "Cancel: future runs through Kafka; a running job through a Redis entry with a TTL of about 30 s that executors check every 10 s."
+    - "Run now, and any job due within about a minute, go straight to the run topic, closing the race between two polls."
+    - "The watcher keeps its last polled time in Redis, so a restarted watcher carries on."
+    - "Indexes: jobs partitioned by next run time and keyed by id; job runs indexed by jobId and by status then modifiedTime."
+  terms:
+    - term: TTL
+      means: "Time to live: the entry deletes itself after it, here about 30 seconds."
+    - term: polling race
+      means: A job created after one poll and due before the next poll's window starts is never picked up.
+board:
+  keep: [title, prompt-desc, prompt-use, fr, fr-create, fr-monitor, fr-cancel, fr-scope, nfr, nfr-scale, nfr-cap, nfr-once, nfr-latency, entities, ent-job, ent-schedule, ent-executor, api, api-post, api-body-1, api-body-2, api-get, api-status, api-put, api-cancel, api-run, hld, hld-clients, hld-gateway, hld-gw-note, hld-svc, hld-db, hld-exec, hld-pull, hld-update, hld-clients-gateway, hld-gateway-svc, hld-svc-db, hld-exec-db, l-heading, l-users, l-gateway, l-job-svc, l-search, l-kafka, l-consumer, l-db, s-jobs-1, s-jobs-2, s-jobs-3, s-runs-1, s-runs-2, s-runs-3, l-users-gateway, l-gateway-svc, l-gateway-search, l-search-db, l-svc-kafka, l-kafka-consumer, l-consumer-db, x-watcher, x-watcher-note, x-run-kafka, x-topic-run, x-job-consumer, x-jc-note, x-exec-1, x-exec-2, x-exec-3, x-watcher-db, x-watcher-kafka, x-jc-kafka, x-jc-exec-1, x-jc-exec-2, x-jc-exec-3, x-exec-status, f-topics, f-attempt, f-dead, f-stale, f-idem, f-retry]
+  elements:
+    - { id: e-redis-cancel, kind: oval, label: "Redis, cancel", at: [65, 93], size: [9, 4], tone: grey }
+    - { id: e-cancel-write, kind: note, label: "job service sets cancel, jobId, TTL 30 s", at: [40, 93] }
+    - { id: e-cancel-check, kind: note, label: executors check it every 10 s, at: [40, 94] }
+    - { id: e-redis-last, kind: oval, label: "Redis, last polled time", at: [5, 80], size: [14, 4], tone: grey }
+    - { id: e-idx-jobs, kind: note, label: "jobs, partitioned by next run time, key id", at: [5, 78] }
+    - { id: e-idx-runs, kind: note, label: "job runs, index on status, then modified time", at: [5, 79] }
+  arrows:
+    - { id: e-exec-redis, from: x-exec-3, to: e-redis-cancel }
+    - { id: e-run-now, from: l-job-svc, to: x-run-kafka, label: "run now, or due within a minute" }
+    - { id: e-watcher-redis, from: x-watcher, to: e-redis-last }
+beats:
+  - point: "To stop a running job, the job service writes a cancel entry to a Redis cache with a TTL of about 30 seconds, and each executor checks Redis every 10 seconds on a side thread and stops its job."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Back to the requirements: cancel a job that is already running. A future run is easy: the job service publishes the cancel and the consumer service marks the job cancelled. A running job lives on an executor; we need to reach it."
+      - "So the job service also writes to a Redis cache: cancel, job 1232. Each executor runs a side thread that checks Redis every 10 seconds for its own job, and stops it if the entry is there."
+      - "Most cancels are for jobs that are not running, so each entry gets a TTL of about 30 seconds and disappears on its own."
+    draw: [e-redis-cancel, e-exec-redis, e-cancel-write, e-cancel-check]
+    check: Why does each cancel entry in Redis get a TTL?
+    answer: "Most cancels target jobs that are not running; without a TTL those entries would pile up, and future runs are already cancelled in the database."
+  - point: "Run now skips the database path: the job service publishes the job straight to the run topic, and the job consumer starts it at once."
+    kind: flow
+    weight: core
+    teach:
+      - "Another gap: run now. So far every job goes database, watcher, queue, which can take 20 seconds and more."
+      - "So for run now, the job service publishes straight to the run topic. A status update still records the run; but the job starts at once."
+    draw: [e-run-now]
+    check: Which path does a run-now job take?
+    answer: "From the job service straight to the run topic, then the job consumer and an executor, skipping the database and the watcher."
+  - point: "The polling race: a job created just after one poll and due before the next poll's window starts is never picked up, so any job due within about a minute also goes straight to the run topic."
+    kind: failure
+    weight: core
+    teach:
+      - "A race. The watcher polls at 5:00:00 and next at 5:00:20. A job created at 5:00:05 to run at 5:00:10: the first poll ran before it existed, the second one's window starts at 5:00:20. Nobody picks it up; a one-off never runs, a cron job waits for its next time."
+      - "Fix: when a job is created due within about a minute, the job service sends it straight to the run topic too, the run-now path."
+    check: A job is created at 5:00:05 to run at 5:00:10, and the watcher polls at 5:00:00 and 5:00:20. What goes wrong, and what is the fix?
+    answer: "No poll ever picks it up; jobs due within about a minute go straight to the run topic."
+  - point: "The watcher keeps its last polled time in Redis, so if it dies a restarted watcher knows how far it read and carries on, and the watcher itself stays stateless."
+    kind: mechanism
+    weight: core
+    teach:
+      - "What if the watcher dies? At 5:00 it read the next five minutes, then crashed. The new one does not know how far the old one got: it misses jobs or reads them all again."
+      - "So the watcher writes its last polled time to another Redis, and a restarted watcher starts from there. The watcher holds no state of its own."
+    draw: [e-redis-last, e-watcher-redis]
+    check: Why keep the last polled time outside the watcher?
+    answer: "So a restarted or replacement watcher knows how far the database was read and carries on without missing or rereading jobs."
+  - point: "Index for the queries the design runs: jobs keyed by id and partitioned by the next run time for the watcher's window; job runs indexed by jobId and by status then modified time for the stale-run query."
+    kind: decision
+    weight: core
+    teach:
+      - "The watcher reads by time, so partition the jobs table by schedule time, the next run time, and its window reads one or two partitions. Every API call names a job by id, so id is the key."
+      - "Job runs: an index on jobId for the status endpoint, and a composite index for the watcher's stale query, status running and modified time older than 15 seconds. Put status first: equality first, then the range."
+    draw: [e-idx-jobs, e-idx-runs]
+    check: Which composite index serves the stale-run query, and in which column order?
+    answer: "Status, then modified time: the query matches status exactly and modified time by range."
+    misconceptions:
+      - "Put modified time first in the composite index -> equality columns go first; a range column only helps as the last one used."
+asks:
+  - ids: [e-redis-cancel]
+    beats: [1]
+    question: "A job is running on an executor right now and the user hits cancel. How would the executor find out?"
+    hints:
+      - The executor could check somewhere, every few seconds, for a cancel.
+      - Somewhere fast and shared, where entries can expire on their own.
+  - ids: [e-redis-last]
+    beats: [4]
+    question: "The watcher crashes right after a poll. How does its replacement know where to start?"
+    hints:
+      - The watcher should not keep that in its own memory.
+      - A small shared store could hold one value.
+  - ids: [e-idx-jobs, e-idx-runs]
+    beats: [5]
+    question: "Which indexes would the two tables need, given the queries we run?"
+    hints:
+      - The watcher reads jobs by time, and the API by id.
+      - The stale-run query filters on status and modified time.
+task:
+  prompt: "Draw the final design: users and the gateway, a job service for writes and a search service for reads, Kafka and the consumer service writing the job database, the watcher with its Redis, the run queue, the job consumer and executors with status, retry and cancel, and the run-now path."
+  expects: [1, 2, 4]

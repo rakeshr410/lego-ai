@@ -1,0 +1,128 @@
+# Food delivery interview, deep dive 4, the order flow: as the video draws it, the order service over a payment service and the payment gateway with the payment DB and its schema; Kafka beside the order service with the orderPlaced topic and three consumers (restaurant acceptance, notification, order consumer to the order DB); on the right the restaurants' order service and a second Kafka (the same broker, drawn twice for room) carrying the restaurant's accept back. Corrected: the CVV is never stored; event-driven is not a commit protocol (outbox, idempotent consumers).
+id: backend/food-delivery/end-to-end/lld-order
+title: "Deep dive: the order flow"
+source:
+  hash: "845bd5ad1cdc"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/food-delivery/end-to-end/lld-cart
+  assumes:
+    - "The order service pays through the payment gateway before the order counts; payments and orders are strongly consistent."
+    - "An order service on the restaurants' side asks the restaurant to accept."
+  carries:
+    - "A payment service hands card details to the payment gateway (tokenised, CVV never stored) and records each attempt in a MySQL payment DB."
+    - "Once paid, the order service publishes orderPlaced to Kafka; an order consumer writes the order DB, the notification service tells the user, the restaurant acceptance service asks the restaurant."
+    - "The restaurant's accept comes back as an orderStatus confirmed event on the same Kafka."
+    - "Write the order and its event together (outbox); consumers are idempotent because delivery is at least once."
+  terms:
+    - term: Kafka topic
+      means: "A named log of events; every consumer group reads all of it, independently."
+    - term: consumer
+      means: "A service that reads events from a topic and acts on each one."
+    - term: idempotent
+      means: "Safe to apply twice: a repeated event changes nothing the second time."
+board:
+  keep: [title, prompt-desc, nfr, nfr-scale, nfr-available, nfr-consistent]
+  elements:
+    - { id: lld-order, kind: region, label: "5. Deep dive, the order flow", at: [2, 20], size: [70, 28] }
+    - { id: o-order, kind: box, label: Order service, at: [4, 24], size: [10, 3], in: lld-order, tone: blue }
+    - { id: o-pay, kind: box, label: Payment service, at: [4, 31], size: [10, 3], in: lld-order, tone: blue }
+    - { id: o-gw, kind: box, label: Payment gateway, at: [4, 38], size: [10, 3], in: lld-order, tone: grey }
+    - { id: o-paydb, kind: oval, label: "Payment DB, MySQL", at: [18, 38], size: [12, 3], in: lld-order, tone: amber }
+    - { id: o-pay-schema, kind: note, label: "payment: paymentId, userId, orderId, amount, currency, time", at: [4, 43], in: lld-order }
+    - { id: o-cvv, kind: note, label: card details go to the gateway; CVV never stored, at: [4, 44], in: lld-order }
+    - { id: o-kafka, kind: box, label: Kafka, at: [22, 23], size: [10, 12], in: lld-order, tone: grey }
+    - { id: o-topics, kind: note, label: "topic, orderPlaced", at: [22, 36], in: lld-order }
+    - { id: o-outbox, kind: note, label: order and event in one transaction; consumers idempotent, at: [4, 45], in: lld-order }
+    - { id: o-accept-svc, kind: box, label: Restaurant acceptance service, at: [42, 22], size: [16, 3], in: lld-order, tone: blue }
+    - { id: o-notify, kind: box, label: Notification service, at: [42, 27], size: [16, 3], in: lld-order, tone: blue }
+    - { id: o-consumer, kind: box, label: Order consumer, at: [42, 32], size: [16, 3], in: lld-order, tone: blue }
+    - { id: o-order-db, kind: oval, label: "Order DB, Postgres", at: [42, 39], size: [14, 3], in: lld-order, tone: amber }
+    - { id: o-order-schema, kind: note, label: "orders: orderId, userId, restId, items, status, driverId", at: [42, 43], in: lld-order }
+    - { id: o-rest-orders, kind: box, label: Order service for restaurants, at: [76, 22], size: [14, 3], tone: blue }
+    - { id: o-restaurants, kind: box, label: restaurants, at: [100, 22], size: [12, 3] }
+    - { id: o-kafka-2, kind: box, label: "Kafka, same broker", at: [76, 31], size: [14, 3], tone: grey }
+    - { id: o-topic-2, kind: note, label: "topic, orderStatus confirmed", at: [76, 35] }
+  arrows:
+    - { id: o-to-pay, from: o-order, to: o-pay }
+    - { id: o-to-gw, from: o-pay, to: o-gw }
+    - { id: o-to-paydb, from: o-pay, to: o-paydb }
+    - { id: o-publish, from: o-order, to: o-kafka, label: orderPlaced }
+    - { id: o-k-accept, from: o-kafka, to: o-accept-svc }
+    - { id: o-k-notify, from: o-kafka, to: o-notify }
+    - { id: o-k-consumer, from: o-kafka, to: o-consumer }
+    - { id: o-write, from: o-consumer, to: o-order-db }
+    - { id: o-ask, from: o-accept-svc, to: o-rest-orders, label: new order }
+    - { id: o-poll, from: o-rest-orders, to: o-restaurants, label: long polling, both: true }
+    - { id: o-accepted, from: o-rest-orders, to: o-kafka-2, label: accepted }
+    - { id: o-confirmed, from: o-kafka-2, to: o-consumer, label: confirmed }
+beats:
+  - point: "Payment is its own service: it hands the card details to the third-party payment gateway, which charges with the bank and returns a token and a result, and records each attempt in a MySQL payment DB. The CVV is never stored."
+    kind: mechanism
+    weight: core
+    teach:
+      - "The order service is where the story starts; checkout begins with payment. Split it out: the order service calls a payment service, which passes the card details to the payment gateway, where the bank charges the card."
+      - "The gateway answers success or failure and hands back a token; we never keep the CVV. The payment service records the attempt in a payment DB: payment id, user, order, amount, currency, time. Money needs transactions, so MySQL."
+    draw: [lld-order, o-order, o-pay, o-to-pay, o-gw, o-to-gw, o-paydb, o-to-paydb, o-pay-schema, o-cvv]
+    check: Why a relational database with transactions for payments?
+    answer: Payments must be strongly consistent, exactly one row per attempt, never lost or doubled.
+    misconceptions:
+      - "The payment service stores card number, CVV and expiry -> card data goes to the gateway, which returns a token; the CVV is stored by no one."
+  - point: "Once paid, three things must happen, so the order service publishes one orderPlaced event to Kafka instead of calling three services in turn; the order and its event are written together and every consumer is idempotent."
+    kind: decision
+    weight: core
+    teach:
+      - "After payment we must record the order, tell the user, and tell the restaurant. Calling them one by one makes checkout as slow and fragile as the slowest."
+      - "So the order service puts one event, orderPlaced, on a Kafka topic, and lets the readers act. It is not a commit protocol: write the order and the event in one transaction, an outbox, and make each consumer safe to run twice, because Kafka delivers at least once."
+    draw: [o-kafka, o-publish, o-topics, o-outbox]
+    check: Why publish an event instead of calling the order DB, the notifier and the restaurant in turn?
+    answer: Each reader works on its own, so checkout does not wait on or fail with the slowest step, and the event is kept until each has handled it.
+  - point: "Three consumers read orderPlaced: the order consumer writes the order to the Postgres order DB, the notification service tells the user, and the restaurant acceptance service asks the restaurant."
+    kind: component
+    weight: core
+    teach:
+      - "Three readers. First, an order consumer that writes the order DB: order id, user, restaurant, items, price, status, and later the driver id. Postgres."
+      - "Second, the notification service tells the user the order is placed. Third, a restaurant acceptance service, to ask the restaurant to accept or decline."
+    draw: [o-consumer, o-k-consumer, o-order-db, o-write, o-order-schema, o-notify, o-k-notify, o-accept-svc, o-k-accept]
+    check: Name the three consumers of orderPlaced and what each does.
+    answer: The order consumer writes the order DB, the notification service tells the user, and the restaurant acceptance service asks the restaurant to accept.
+  - point: "The restaurant acceptance service hands the order to the restaurants' order service, which holds the restaurants' connections by HTTP long polling and shows them the order."
+    kind: flow
+    weight: core
+    teach:
+      - "The acceptance service does not reach the restaurant's tablet itself. It hands the order to the order service on the restaurants' side, on the right."
+      - "That service holds the restaurants' connections, HTTP long polling or a push, and pops the order up for them to accept."
+    draw: [o-rest-orders, o-ask, o-restaurants, o-poll]
+    check: How does a new order reach the restaurant's tablet?
+    answer: The acceptance service passes it to the restaurants' order service, which pushes it over the restaurant's open long-polling connection.
+  - point: "The restaurant's accept goes back on the same Kafka as orderStatus confirmed: the order consumer marks the order confirmed, the user is notified, and the order waits for a delivery partner."
+    kind: flow
+    weight: core
+    teach:
+      - "When the restaurant accepts, its order service puts an event on Kafka. The same broker; I draw it again only for room. Topic orderStatus, confirmed."
+      - "Two things follow: the order consumer updates the order to confirmed, and the user is told; and the order now needs a delivery partner, which is the next part."
+    draw: [o-kafka-2, o-accepted, o-topic-2, o-confirmed]
+    check: What does the order consumer do when the confirmed event arrives?
+    answer: It updates that order's status to confirmed in the order DB, idempotently.
+asks:
+  - ids: [o-kafka]
+    beats: [2]
+    question: "After payment, three things must happen for each order: save it, tell the user, tell the restaurant. How would you wire that so none of them slows checkout or gets lost?"
+    hints:
+      - What if the order service just announced that the order was placed?
+      - Something durable that several services can read on their own.
+  - ids: [o-consumer, o-notify, o-accept-svc]
+    beats: [3]
+    question: "Who reads that orderPlaced event? Name the services and what each one does."
+    hints:
+      - One per thing that has to happen.
+      - Saving, telling the user, telling the restaurant.
+  - ids: [o-kafka-2]
+    beats: [5]
+    question: "The restaurant taps accept. How does that get back to the order and the user?"
+    hints:
+      - The same way the order got out.
+      - An event the order consumer can read.

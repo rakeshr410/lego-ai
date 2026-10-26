@@ -1,0 +1,71 @@
+# Job scheduler interview, API: "3. API" beside the entities, six endpoints one under another as the video lists them, the create body written as code.
+id: backend/job-scheduler/end-to-end/api
+title: Six endpoints
+source:
+  hash: "b80f81ce4cca"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/job-scheduler/end-to-end/entities
+  assumes:
+    - "Functional: create and schedule a job, monitor it, cancel or update it."
+    - "The core entities are the job, the schedule and the executor."
+  carries:
+    - "POST /v1/jobs takes the job and its schedule and returns a jobId."
+    - "GET /v1/jobs/{jobId} and GET /v1/jobs/{jobId}/status read details and status."
+    - "PUT /v1/jobs/{jobId} updates; POST /v1/jobs/{jobId}/cancel and /run-now act on a job."
+  terms:
+    - term: endpoint
+      means: A method and a path the service answers, with what it takes and what it returns.
+board:
+  keep: [title, prompt-desc, prompt-use, fr, fr-create, fr-monitor, fr-cancel, fr-scope, nfr, nfr-scale, nfr-cap, nfr-once, nfr-latency, entities, ent-job, ent-schedule, ent-executor]
+  elements:
+    - { id: api, kind: region, label: 3. API, at: [43, 21], size: [31, 12], dashed: true }
+    - { id: api-post, kind: note, label: "POST /v1/jobs, create or schedule a job", at: [44, 23], in: api }
+    - { id: api-body-1, kind: note, label: "{ name, scheduleType, scheduleTime?,", at: [46, 24], in: api }
+    - { id: api-body-2, kind: note, label: "cronExpression?, payload, maxRetries }", at: [48, 25], in: api }
+    - { id: api-get, kind: note, label: "GET /v1/jobs/{jobId}, the job's details", at: [44, 26], in: api }
+    - { id: api-status, kind: note, label: "GET /v1/jobs/{jobId}/status, its current status", at: [44, 27], in: api }
+    - { id: api-put, kind: note, label: "PUT /v1/jobs/{jobId}, update the job or its schedule", at: [44, 28], in: api }
+    - { id: api-cancel, kind: note, label: "POST /v1/jobs/{jobId}/cancel, even while running", at: [44, 29], in: api }
+    - { id: api-run, kind: note, label: "POST /v1/jobs/{jobId}/run-now, run it immediately", at: [44, 30], in: api }
+  arrows: []
+beats:
+  - point: "Creating a job is a POST to /v1/jobs with the job and its schedule, a time for a one-off job or a cron expression for a repeating one, and it returns the jobId."
+    kind: flow
+    weight: core
+    teach:
+      - "Step three, the API: almost one to one with the requirements. Creating submits data, so a POST to v1 slash jobs."
+      - "The body: a name, the schedule type, a schedule time or a cron expression, marked optional because a job has one or the other, the payload the job needs, and its max retries. It answers with a jobId."
+    draw: [api, api-post, api-body-1, api-body-2]
+    check: Why are scheduleTime and cronExpression both optional?
+    answer: "A one-off job has a time, a repeating job has a cron expression, and an immediate job needs neither."
+  - point: "Two reads: GET /v1/jobs/{jobId} for the job's details, and GET /v1/jobs/{jobId}/status for its current status, the jobId coming from the create."
+    kind: flow
+    weight: core
+    teach:
+      - "Reading needs a GET. The create gave us a jobId, so GET v1 jobs, then the jobId, returns who created it, when, and its schedule."
+      - "Monitoring gets its own: GET on the job's status returns running, succeeded or failed, for the dashboard."
+    draw: [api-get, api-status]
+    check: Where does the jobId in these paths come from?
+    answer: The create call returns it.
+  - point: "Then PUT /v1/jobs/{jobId} to update a job or its schedule, POST /v1/jobs/{jobId}/cancel to cancel it even while running, and POST /v1/jobs/{jobId}/run-now to run it at once."
+    kind: flow
+    weight: core
+    teach:
+      - "Update is a PUT on the job: new metadata or a new schedule."
+      - "Cancel is an action, a POST to cancel, for a job due tomorrow or one running right now. And run now, a POST that starts a run immediately, which covers the immediate case of the first requirement."
+    draw: [api-put, api-cancel, api-run]
+    check: Why is cancel a POST action rather than a DELETE of the job?
+    answer: Cancelling changes what happens next and may stop a run, while the job and its history of runs stay.
+    misconceptions:
+      - "Cancel deletes the job -> the job and its runs stay for the dashboard; cancel stops future runs and the current one."
+asks:
+  - ids: [api-post, api-get, api-status, api-put, api-cancel, api-run]
+    beats: [1, 2, 3]
+    question: "Looking at the requirements, what endpoints do we need? Give me the method and the path for each, and I'll write them."
+    hints:
+      - Start with creating a job; what would its body hold?
+      - Then reading it, its status, changing it, cancelling it, and running it now.

@@ -1,0 +1,95 @@
+# Cloud storage interview, high-level design: "4. High Level Design" under the requirements, a column of client devices, a tall load balancer and API gateway, the user onboarding, file uploader and file metadata services, and their user DB, blob storage and metadata DB, as in the video.
+id: backend/cloud-storage/end-to-end/high-level-design
+title: "Clients, gateway, three services, three stores"
+source:
+  hash: "ca609fd2c7ef"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/cloud-storage/end-to-end/api
+  assumes:
+    - "Functional: account, upload and download, sync, share, folders, quota."
+    - "Folders and renames are metadata; files go up in chunks."
+  carries:
+    - "Clients reach a load balancer and API gateway, which routes to the user onboarding service, the file uploader service and the file metadata service."
+    - "The user service keeps users in a user DB; the uploader puts bytes in blob storage such as S3; the metadata service keeps metadata in a metadata DB."
+  terms:
+    - term: "blob storage"
+      means: "Object storage such as an S3 bucket, built for large files."
+    - term: "API gateway"
+      means: "The single entry that authenticates and routes each API call to its service."
+board:
+  keep: [title, desc, fr, fr-account, fr-upload, fr-sync, fr-share, fr-folders, fr-quota, fr-out, nfr, nfr-scale, nfr-cap, nfr-large, nfr-latency, nfr-durable]
+  elements:
+    - { id: "hld", kind: "region", label: "4. High-level design", at: [2, 23], size: [63, 18] }
+    - { id: "hld-phone", kind: "box", label: "phone", at: [4, 27], size: [7, 2], in: "hld" }
+    - { id: "hld-laptop", kind: "box", label: "laptop", at: [4, 31], size: [7, 2], in: "hld" }
+    - { id: "hld-tablet", kind: "box", label: "tablet", at: [4, 35], size: [7, 2], in: "hld" }
+    - { id: "hld-clients", kind: "note", label: "clients", at: [5, 38], in: "hld" }
+    - { id: "hld-gateway", kind: "box", label: "LB and API gateway", at: [15, 26], size: [8, 13], in: "hld" }
+    - { id: "hld-user-svc", kind: "box", label: "User onboarding service", at: [28, 26], size: [15, 3], in: "hld" }
+    - { id: "hld-uploader", kind: "box", label: "File uploader service", at: [28, 31], size: [15, 3], in: "hld" }
+    - { id: "hld-meta-svc", kind: "box", label: "File metadata service", at: [28, 36], size: [15, 3], in: "hld" }
+    - { id: "hld-user-db", kind: "oval", label: "User DB", at: [49, 26], size: [11, 3], in: "hld", tone: "amber" }
+    - { id: "hld-blob", kind: "oval", label: "Blob storage", at: [49, 31], size: [11, 3], in: "hld", tone: "amber" }
+    - { id: "hld-meta-db", kind: "oval", label: "Metadata DB", at: [49, 36], size: [11, 3], in: "hld", tone: "amber" }
+  arrows:
+    - { id: "hld-phone-gw", from: "hld-phone", to: "hld-gateway" }
+    - { id: "hld-laptop-gw", from: "hld-laptop", to: "hld-gateway" }
+    - { id: "hld-tablet-gw", from: "hld-tablet", to: "hld-gateway" }
+    - { id: "hld-gw-user", from: "hld-gateway", to: "hld-user-svc" }
+    - { id: "hld-gw-uploader", from: "hld-gateway", to: "hld-uploader" }
+    - { id: "hld-gw-meta", from: "hld-gateway", to: "hld-meta-svc" }
+    - { id: "hld-user-db-arrow", from: "hld-user-svc", to: "hld-user-db" }
+    - { id: "hld-blob-arrow", from: "hld-uploader", to: "hld-blob" }
+    - { id: "hld-meta-db-arrow", from: "hld-meta-svc", to: "hld-meta-db" }
+beats:
+  - point: "The clients are the Drive apps on phones, laptops and tablets, and every API call goes through a load balancer and API gateway."
+    kind: component
+    weight: core
+    teach:
+      - "Step four, the high-level design. On the left the clients: the iOS, Android and desktop apps. In this system they matter more than usual."
+      - "With several services behind it, every request enters through a load balancer and an API gateway that spreads the traffic and routes each call."
+    draw: [hld, hld-phone, hld-laptop, hld-tablet, hld-clients, hld-gateway, hld-phone-gw, hld-laptop-gw, hld-tablet-gw]
+    check: "What does the gateway do for the apps?"
+    answer: "It is the one entry point: it balances the load and routes each API call to the right service."
+  - point: "Three services, one per job: user onboarding for sign-up and sign-in, a file uploader for the bytes, and a file metadata service for folders, renames and permissions."
+    kind: component
+    weight: core
+    teach:
+      - "First job, onboarding: a user onboarding service for sign-up and sign-in."
+      - "Second, a file uploader service that takes files from the apps into the backend. Third, a file metadata service for every change that is only metadata: create a folder, rename, share."
+    draw: [hld-user-svc, hld-gw-user, hld-uploader, hld-gw-uploader, hld-meta-svc, hld-gw-meta]
+    check: "A user creates a folder. Which service handles it, and why that one?"
+    answer: "The file metadata service, because a folder is only a metadata record."
+  - point: "Each service has its own store: a user DB, blob storage such as S3 for file bytes, which are too big for a database, and a metadata DB for the records."
+    kind: decision
+    weight: core
+    teach:
+      - "The user service saves users in a user DB."
+      - "File bytes can be gigabytes, so they do not go in a relational or NoSQL database: they go to blob storage, an S3 bucket. The metadata is small relational text, so a metadata DB."
+    draw: [hld-user-db, hld-user-db-arrow, hld-blob, hld-blob-arrow, hld-meta-db, hld-meta-db-arrow]
+    check: "Why do file bytes go to blob storage and not the metadata DB?"
+    answer: "Files are gigabytes; object storage is built for large blobs, while the database keeps small records that are queried."
+    misconceptions:
+      - "Store the files in the database as blobs to keep everything in one place -> gigabyte files belong in object storage; the database keeps the small records about them."
+  - point: "This meets every functional line on paper, but not how a 10 GB file is uploaded, how sharing works, or how other devices learn of a change; that is the deep dive."
+    kind: rule
+    weight: supporting
+    teach:
+      - "Say what the picture leaves open: a 10 or 15 GB file cannot go up in one request through this path; permissions and links are not designed yet; nothing tells the other devices."
+      - "That is what the deep dive is for."
+    check: "Name one thing this high-level design does not yet answer."
+    answer: "How a 10 GB file gets uploaded, how sharing and permissions work, or how the other devices learn about a change."
+asks:
+  - ids: [hld-user-svc, hld-uploader, hld-meta-svc]
+    beats: [2]
+    question: "Behind the gateway, which services would you put? One per job. Name them and I'll draw them."
+    hints:
+      - "Who signs the user up?"
+      - "The bytes and the facts about the files: same service, or two?"
+task:
+  prompt: "Draw the high-level design: the client devices, a load balancer and API gateway, the user onboarding, file uploader and file metadata services, and the user DB, blob storage and metadata DB beside them."
+  expects: [1, 2, 3]

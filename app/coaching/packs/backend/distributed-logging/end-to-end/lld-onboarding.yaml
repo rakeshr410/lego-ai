@@ -1,0 +1,101 @@
+# Distributed logging interview, deep dive, agents and onboarding: under "5. Deep dive design", the left of the video's copied diagram: the real-time agent and the offline uploader written beside the clients, the gateway with its duties, the onboarding service with "response: client ID and token" over it, and the Postgres client DB with its columns.
+id: backend/distributed-logging/end-to-end/lld-onboarding
+title: "Deep dive: agents, the gateway and onboarding"
+source:
+  hash: "97fdac53716e"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/distributed-logging/end-to-end/high-level-design
+  assumes:
+    - "High-level design: clients, a load balancer and API gateway, onboarding, ingestion and search services, a client DB and a log DB."
+  carries:
+    - "Clients run a real-time agent (Fluent Bit, OpenTelemetry or our own) or a file uploader for offline batches."
+    - "The gateway authenticates, rate-limits and routes; the load balancer is round robin."
+    - "An organisation onboards once and gets a client ID and token; the client DB is PostgreSQL with clientId, clientName, token, tokenTTL, env, metadata."
+  terms:
+    - term: client ID and token
+      means: "The credentials an organisation receives at onboarding, sent by every one of its services and checked at the gateway."
+    - term: token TTL
+      means: How long a token stays valid before it must be renewed.
+board:
+  keep: [title, prompt-desc, prompt-example, fr, fr-ingest, fr-modes, fr-normalize, fr-dashboard, nfr, nfr-scale, nfr-latency, nfr-cap, nfr-reliable, entities, ent-event, ent-job, ent-agent, api, api-app, api-stream, api-raw, api-agent, api-platform, api-agent-head, api-agent-1, api-agent-2, api-agent-3, api-agent-4, api-agent-5, api-direct-head, api-direct-1, api-direct-2, api-direct-3, api-file-head, api-file-1, api-file-2, api-search-head, api-search-1, api-search-2, api-search-3, api-search-4, api-search-5, api-app-stream, api-stream-raw, api-agent-raw, api-agent-platform, hld, hld-clients, hld-gw, hld-onboard, hld-clientdb, hld-ingest, hld-logdb, hld-search, hld-clients-gw, hld-gw-onboard, hld-onboard-db, hld-gw-ingest, hld-ingest-db, hld-gw-search, hld-search-db]
+  elements:
+    - { id: lld-ob, kind: region, label: 5. Deep dive design, at: [4, 68], size: [70, 20] }
+    - { id: ob-agent, kind: note, label: "real time, an agent like Fluent Bit or OTel", at: [6, 71], in: lld-ob }
+    - { id: ob-file, kind: note, label: "offline, a file uploader for batches", at: [6, 72], in: lld-ob }
+    - { id: ob-clients, kind: box, label: client machines with agents, at: [6, 75], size: [10, 4], in: lld-ob }
+    - { id: ob-gw, kind: box, label: API gateway and load balancer, at: [24, 74], size: [11, 12], in: lld-ob }
+    - { id: ob-gw-1, kind: note, label: "gateway: authenticate, rate limit, route", at: [5, 81], in: lld-ob }
+    - { id: ob-gw-2, kind: note, label: "load balancer, round robin", at: [5, 82], in: lld-ob }
+    - { id: ob-response, kind: note, label: "response: client ID and token", at: [41, 73], in: lld-ob }
+    - { id: ob-svc, kind: box, label: "onboarding service, once per organisation", at: [41, 76], size: [14, 3], in: lld-ob, tone: blue }
+    - { id: ob-db, kind: oval, label: "Client DB, Postgres", at: [60, 75], size: [12, 4], in: lld-ob, tone: amber }
+    - { id: ob-schema-1, kind: note, label: "client { clientId, clientName,", at: [56, 81], in: lld-ob }
+    - { id: ob-schema-2, kind: note, label: "token, tokenTtl, env, metadata }", at: [57, 82], in: lld-ob }
+    - { id: ob-ttl, kind: note, label: "a token expires, then renews", at: [41, 84], in: lld-ob }
+    - { id: ob-env, kind: note, label: "one token per environment, dev to prod", at: [41, 85], in: lld-ob }
+  arrows:
+    - { id: ob-clients-gw, from: ob-clients, to: ob-gw }
+    - { id: ob-gw-svc, from: ob-gw, to: ob-svc, label: register }
+    - { id: ob-svc-db, from: ob-svc, to: ob-db, label: save }
+beats:
+  - point: "On the client side, two pieces send logs: an agent for real-time upload, such as Fluent Bit, OpenTelemetry or our own, and a file uploader for offline batches."
+    kind: component
+    weight: core
+    teach:
+      - "Step five, the deep dive. Copy the high-level design down and start on the left, with the client. Two pieces run there: an agent for real-time upload, Fluent Bit, an OpenTelemetry collector, or an agent of our own."
+      - "And a file uploader for the offline, batch path. How the agent is built is out of scope; just tell the interviewer it is needed."
+    draw: [lld-ob, ob-agent, ob-file, ob-clients]
+    check: What are the two ways logs leave a client machine?
+    answer: An agent streaming them in near real time, and a file uploader sending offline batches.
+  - point: "The API gateway authenticates and authorizes, rate-limits and routes; the load balancer spreads requests round robin."
+    kind: component
+    weight: core
+    teach:
+      - "Requests reach the load balancer and API gateway. The gateway's duties: authentication and authorization, rate limiting, and routing by path."
+      - "The load balancer uses round robin. Write the duties beside it."
+    draw: [ob-gw, ob-clients-gw, ob-gw-1, ob-gw-2]
+    check: Name the gateway's three jobs here.
+    answer: Authentication and authorization, rate limiting, and routing.
+  - point: "An organisation onboards once, not each service: it registers and gets a client ID and a token that all its services use, checked at the gateway."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Onboarding is done by the organisation, once. Say a large retailer signs up: it registers, and we return a client ID and a token."
+      - "Every one of its hundreds of services sends logs with those two, and the gateway checks them at the very edge. Nobody registers service by service."
+    draw: [ob-svc, ob-gw-svc, ob-response]
+    check: An organisation with 300 microservices joins. How many times does it onboard?
+    answer: Once, as an organisation; all its services send the same client ID and token.
+    misconceptions:
+      - "Each microservice registers itself -> the organisation onboards once and its services share the credentials."
+  - point: "The client DB is PostgreSQL, since the data is small and flat: client ID, name, token, token TTL, environment and metadata; tokens expire and renew, one per environment."
+    kind: decision
+    weight: core
+    teach:
+      - "What we keep is small, flat and relational, so PostgreSQL. Columns: client ID, client name, token, token TTL, environment, metadata."
+      - "The TTL because a token that never expires is dangerous if stolen; when it expires a renew flow issues a new one. And one token per environment, dev, QA, staging and production, so a test service never writes into production's logs."
+    draw: [ob-db, ob-svc-db, ob-schema-1, ob-schema-2, ob-ttl, ob-env]
+    check: Why does each token carry a TTL?
+    answer: So a stolen token stops working; expiry plus a renew flow limits how long a leak is useful.
+asks:
+  - ids: [ob-gw-1]
+    beats: [2]
+    question: "Every request now passes the API gateway. What would you have it do?"
+    hints:
+      - Who is calling, and are they allowed?
+      - And how fast may they call, and where does the request go?
+  - ids: [ob-svc, ob-response]
+    beats: [3]
+    question: "How would a client get onboarded, so its agents may send us logs? Who registers, and what do they get back?"
+    hints:
+      - Think of an organisation with hundreds of services.
+      - What could every one of those services send to prove who it is?
+  - ids: [ob-db]
+    beats: [4]
+    question: "Where would you keep the clients and their tokens, and what columns would you need?"
+    hints:
+      - The data is small and flat. What kind of database fits?
+      - What would you need besides the token itself?

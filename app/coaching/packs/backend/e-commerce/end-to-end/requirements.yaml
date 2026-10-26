@@ -1,0 +1,95 @@
+# E-commerce interview, requirements: "1. Functional requirements" on the left, six lines, and "Non-functional requirements" on the right, scale, the CAP choice per module and latency, as the video lays them out.
+id: backend/e-commerce/end-to-end/requirements
+title: Six features, and how well
+source:
+  hash: "ebfbcccfabfc"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/e-commerce/end-to-end/problem-statement
+  assumes:
+    - "We design the shopper's flow of an online shop like Amazon."
+  carries:
+    - "Functional: search by title or name; view details; add a quantity to the cart; pay and check out; order status; handle items in limited stock."
+    - "Non-functional: 10M monthly users and 10 orders a second; search and viewing highly available; payment, orders and inventory consistent; search about 200 ms."
+  terms:
+    - term: functional requirement
+      means: What the system does for its user.
+    - term: non-functional requirement
+      means: "A quality of the system (scale, availability, consistency, latency), stated with a number or a choice."
+    - term: CAP theorem
+      means: "During a network partition a replicated system either answers, perhaps stale, or refuses until its copies agree."
+board:
+  keep: [title, prompt-desc, prompt-scope]
+  elements:
+    - { id: fr, kind: region, label: 1. Functional requirements, at: [2, 5], size: [54, 17], dashed: true }
+    - { id: fr-search, kind: note, label: search for products by title or name, at: [3, 7], in: fr }
+    - { id: fr-details, kind: note, label: "view details, description, images, stock, reviews", at: [3, 9], in: fr }
+    - { id: fr-cart, kind: note, label: pick a quantity and add the item to the cart, at: [3, 11], in: fr }
+    - { id: fr-pay, kind: note, label: pay and check out, at: [3, 13], in: fr }
+    - { id: fr-status, kind: note, label: check the status of an order, at: [3, 15], in: fr }
+    - { id: fr-limited, kind: note, label: handle purchases of items in limited stock, at: [3, 17], in: fr }
+    - { id: nfr, kind: region, label: Non-functional requirements, at: [60, 5], size: [56, 17], dashed: true }
+    - { id: nfr-scale, kind: note, label: "scale, 10M monthly users and 10 orders a second", at: [61, 7], in: nfr }
+    - { id: nfr-available, kind: note, label: search and viewing highly available, at: [61, 9], in: nfr }
+    - { id: nfr-consistent, kind: note, label: "payment, orders and inventory strongly consistent", at: [61, 11], in: nfr }
+    - { id: nfr-latency, kind: note, label: "search latency, about 200 ms", at: [61, 13], in: nfr }
+  arrows: []
+  lists:
+    - { id: fr-list, in: fr, at: [3, 7], step: 2, slots: 8, width: 52, items: [fr-search, fr-details, fr-cart, fr-pay, fr-status, fr-limited] }
+    - { id: nfr-list, in: nfr, at: [61, 7], step: 2, slots: 8, width: 52, items: [nfr-scale, nfr-available, nfr-consistent, nfr-latency] }
+beats:
+  - point: "The four core steps of the shopper's flow: search by title or name, view a product's details, pick a quantity and add it to the cart, then pay and check out."
+    kind: requirement
+    weight: core
+    teach:
+      - "Step one, on the left: functional requirements. Follow a shopper. They search for a product by its title or name, then open one and see its details: description, images, how many are available, reviews."
+      - "They pick a quantity and add it to the cart, and finally pay and check out. Those four are the heart of it."
+    draw: [fr, fr-search, fr-details, fr-cart, fr-pay]
+    check: Walk me through the four core things a shopper does.
+    answer: Search for a product, view its details, add a quantity to the cart, pay and check out.
+  - point: "Two more: check the status of an order, and handle purchases of items in limited stock, such as thousands of buyers for five iPhones in a flash sale."
+    kind: requirement
+    weight: core
+    teach:
+      - "After buying, the shopper wants to track the order's status."
+      - "And the hard one: items in limited stock. A flash sale on iPhones, thousands of buyers, five or six phones. The design must handle that race."
+    draw: [fr-status, fr-limited]
+    check: Why is limited stock a requirement of its own?
+    answer: Because many buyers at once for a few units is a race; without care the same unit is sold more than once.
+  - point: "Scale first: 10 million monthly active users and 10 orders a second, too much for one server, so the design will be microservices."
+    kind: metric
+    weight: core
+    teach:
+      - "On the right, the non-functional requirements. Ask for the scale first: say 10 million monthly active users and 10 orders a second."
+      - "No single server carries that, so we will split the system into services: a distributed system, which brings us to CAP."
+    draw: [nfr, nfr-scale]
+    check: Why ask for the scale at all?
+    answer: It decides the architecture; at this scale no one server is enough, so we go to microservices.
+  - point: "CAP is chosen per module: search and viewing highly available, payment, orders and inventory strongly consistent; and search answers in about 200 ms."
+    kind: requirement
+    weight: core
+    teach:
+      - "CAP says what a distributed system does when the network between its machines splits: keep answering, maybe stale, or refuse until the copies agree. The shop needs both, in different places."
+      - "Search and product pages must stay up, a slightly stale result is fine. Payment, orders and the inventory must be right: no money without an order, no unit sold twice."
+      - "Then latency, with a number: a search in about 200 milliseconds."
+    draw: [nfr-available, nfr-consistent, nfr-latency]
+    check: Which modules favour consistency, and why?
+    answer: Payment and orders, and the inventory, because money and stock must never be wrong; search can be a little stale and stay up.
+    misconceptions:
+      - "CAP means a distributed system can never be both available and consistent -> both hold until a partition; CAP is the choice made during one, and it can differ per module."
+asks:
+  - list: fr-list
+    beats: [1, 2]
+    question: "So what should a shopper be able to do here? Tell me one feature at a time, and I'll write it down."
+    hints:
+      - Follow one shopper from looking for a phone to it arriving.
+      - And what happens when a thousand people want the last five phones?
+  - list: nfr-list
+    beats: [3, 4]
+    question: "Now the qualities. How big, how fast, and where must it stay up versus stay exact?"
+    hints:
+      - Think of users and orders per second, and how long a search may take.
+      - Is a stale search result as bad as a wrong payment?

@@ -1,0 +1,161 @@
+# Top K leaderboard interview, deep dive 1: under "5. Deep dive, low-level design", the high-level design copied and grown as in the video: clients, a tall gateway, the score service feeding Kafka, a DB consumer over the scores DB on the right, a Redis consumer under Kafka filling a Redis sorted set that the ranking service reads, the window keys written under it; and to the right, the "1. Redis sorted set" notes with the flaws, the fix and where it fits. The video calls a sorted set a heap; this pack teaches it as an ordered set (a skip list).
+id: backend/top-k-leaderboard/end-to-end/lld-redis-sorted-set
+title: "Deep dive, 1: Kafka and a Redis sorted set"
+source:
+  hash: "83c33f1919c5"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/top-k-leaderboard/end-to-end/high-level-design
+  assumes:
+    - "The high-level design: clients, a gateway, a score service writing a score DB, a ranking service reading it."
+    - "Non-functional: 1M writes a second, top K in 100 ms, availability over consistency."
+  carries:
+    - "The score service puts every event on Kafka; a DB consumer writes the score DB at its own pace."
+    - "A Redis consumer keeps a Redis sorted set per board, region and window; the ranking service reads the top K from it."
+    - "One Redis is a single point of failure and holds everything; mitigate with a cluster partitioned by region, replicas and snapshots."
+    - "The sorted set approach fits a small system, 1K to 10K items in one country."
+  terms:
+    - term: Kafka
+      means: "A durable, partitioned log; producers append events and consumers read them at their own pace."
+    - term: sorted set
+      means: "A Redis type, a ZSET, whose members are kept ordered by score; top K and rank cost log N plus K."
+    - term: consumer
+      means: A service that reads events from a Kafka topic and acts on them.
+board:
+  keep: [title, prompt-desc, prompt-example, fr, fr-insert, fr-query, fr-window, fr-realtime, nfr, nfr-scale, nfr-cap, nfr-latency, nfr-exact, entities, ent-score, ent-item, ent-time, api, api-post, api-top, api-top-query, api-top-limit, api-rank, api-rank-query, hld, hld-clients, hld-gateway, hld-duties, hld-score, hld-ranking, hld-db, hld-clients-gateway, hld-gateway-score, hld-gateway-ranking, hld-score-db, hld-ranking-db]
+  elements:
+    - { id: l1, kind: region, label: "5. Deep dive, low-level design", at: [6, 55], size: [64, 26] }
+    - { id: l1-leetcode, kind: note, label: "top K frequent, LeetCode 347, count then a heap", at: [8, 58], in: l1 }
+    - { id: l1-clients, kind: box, label: clients, at: [8, 64], size: [6, 3], in: l1 }
+    - { id: l1-gateway, kind: box, label: API gateway, at: [17, 60], size: [7, 15], in: l1 }
+    - { id: l1-score, kind: box, label: "Score service, many pods", at: [28, 60], size: [10, 3], in: l1, tone: blue }
+    - { id: l1-kafka, kind: box, label: Kafka, at: [42, 60], size: [7, 3], in: l1, tone: amber }
+    - { id: l1-dbc, kind: box, label: DB consumer, at: [55, 60], size: [11, 3], in: l1, tone: grey }
+    - { id: l1-db, kind: oval, label: Scores DB, at: [55, 66], size: [11, 5], in: l1, tone: amber }
+    - { id: l1-rc, kind: box, label: Redis consumer, at: [41, 66], size: [11, 3], in: l1, tone: grey }
+    - { id: l1-zset, kind: oval, label: Redis sorted set, at: [40, 72], size: [13, 4], in: l1, tone: green }
+    - { id: l1-ranking, kind: box, label: "Ranking service, top K", at: [27, 72], size: [10, 3], in: l1, tone: blue }
+    - { id: l1-key-all, kind: note, label: "leaderboard:music:IN:alltime", at: [40, 77], in: l1 }
+    - { id: l1-key-90, kind: note, label: "leaderboard:music:IN:90days", at: [40, 78], in: l1 }
+    - { id: l1-key-30, kind: note, label: "leaderboard:music:IN:30days", at: [40, 79], in: l1 }
+    - { id: l1n, kind: region, label: 1. Redis sorted set, at: [74, 55], size: [27, 16], dashed: true }
+    - { id: l1n-what, kind: note, label: "items kept in score order, not a heap", at: [75, 58], in: l1n }
+    - { id: l1n-read, kind: note, label: "top K by ZREVRANGE, a rank by ZREVRANK", at: [75, 59], in: l1n }
+    - { id: l1n-spof, kind: note, label: "con, one Redis, a single point of failure", at: [75, 61], in: l1n }
+    - { id: l1n-alltime, kind: note, label: "con, one all-time key has no windows", at: [75, 62], in: l1n }
+    - { id: l1n-cluster, kind: note, label: "fix, a Redis cluster split by region", at: [75, 64], in: l1n }
+    - { id: l1n-snapshot, kind: note, label: "plus replicas and snapshots to a DB", at: [75, 65], in: l1n }
+    - { id: l1n-pro, kind: note, label: "pro, very fast and simple", at: [75, 67], in: l1n }
+    - { id: l1n-fits, kind: note, label: "fits 1K to 10K items in one country", at: [75, 68], in: l1n }
+  arrows:
+    - { id: l1-clients-gateway, from: l1-clients, to: l1-gateway }
+    - { id: l1-gateway-score, from: l1-gateway, to: l1-score }
+    - { id: l1-gateway-ranking, from: l1-gateway, to: l1-ranking }
+    - { id: l1-score-kafka, from: l1-score, to: l1-kafka }
+    - { id: l1-kafka-dbc, from: l1-kafka, to: l1-dbc }
+    - { id: l1-dbc-db, from: l1-dbc, to: l1-db }
+    - { id: l1-kafka-rc, from: l1-kafka, to: l1-rc }
+    - { id: l1-rc-zset, from: l1-rc, to: l1-zset }
+    - { id: l1-ranking-zset, from: l1-ranking, to: l1-zset }
+beats:
+  - point: "In an algorithm round this is LeetCode 347: count each item, then keep the K largest with a heap. A design round wants that behaviour from a component."
+    kind: mechanism
+    weight: supporting
+    teach:
+      - "Step five, the deep dive. In a coding round this is LeetCode 347, top K frequent elements: count each number in a map, then a priority queue, a heap, gives the K most frequent."
+      - "In a design round we want the same behaviour from a component, at a billion items and a million updates a second. First, though, the writes."
+    draw: [l1, l1-leetcode]
+    check: How does the algorithm-round answer find the top K?
+    answer: "Count each item in a hash map, then keep the K largest with a heap and pop them out."
+  - point: "Copy the high-level design down the board and grow it: the same clients, gateway, score service and ranking service."
+    kind: component
+    weight: supporting
+    teach:
+      - "Copy the high-level picture into the deep dive: clients, the gateway, the score service, the ranking service. We change it one part at a time."
+    draw: [l1-clients, l1-gateway, l1-clients-gateway, l1-score, l1-gateway-score, l1-ranking, l1-gateway-ranking]
+    check: Which two boxes does the deep dive open?
+    answer: "The score service, for the write rate, and the ranking service, for the top K reads."
+  - point: "No server writes a million events a second straight into a database, so the score service, scaled out, puts each event on Kafka, and a DB consumer writes the scores DB at its own pace."
+    kind: mechanism
+    weight: core
+    teach:
+      - "A million events a second will not go straight into a database. We need a buffer: Kafka. The score service, running on many pods, appends each like, view or score to a Kafka topic and is done."
+      - "Behind it a DB consumer service reads the topic and writes the scores database at a pace it can sustain. If the database falls behind, the events wait in Kafka; nothing is lost."
+    draw: [l1-kafka, l1-score-kafka, l1-dbc, l1-kafka-dbc, l1-db, l1-dbc-db]
+    check: What happens to incoming scores when the database falls behind?
+    answer: "They wait in Kafka, a durable log, until the DB consumer catches up; nothing is lost."
+  - point: "A second consumer fills a Redis sorted set, which keeps items ordered by score, so the ranking service reads the top K from memory and never touches the scores DB."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Now the reads. A second consumer on the same topic, the Redis consumer, adds each event to a Redis sorted set, with ZINCRBY. The data flows two ways: into the database, and into Redis."
+      - "A sorted set keeps its members ordered by score at every write. It is not a heap; it is a skip list beside a hash table, so the ranking service asks ZREVRANGE for the top K, or ZREVRANK for a rank, in log N plus K."
+    draw: [l1-rc, l1-kafka-rc, l1-zset, l1-rc-zset, l1-ranking-zset, l1n, l1n-what, l1n-read]
+    check: Why is no sorting needed when a user asks for the top K?
+    answer: "The sorted set keeps members in score order on every write, so a read only walks the first K."
+    misconceptions:
+      - "A Redis sorted set is a heap you pop the top K from -> it is an ordered set (a skip list); reading the top K does not remove anything."
+  - point: "The flaws: one Redis is a single point of failure that must hold billions of items in memory, and a single all-time key cannot answer the last 30 or 90 days."
+    kind: failure
+    weight: core
+    teach:
+      - "Look at the Redis box. If it goes down, there is no ranking at all, and it has to hold every song or video there is, in memory, on one node."
+      - "And everything goes in with no time frame: one all-time key. Asked for the last 30 days, it cannot answer."
+    draw: [l1n-spof, l1n-alltime]
+    check: Name the two problems with one all-time sorted set in one Redis.
+    answer: "One node is a single point of failure holding everything in memory, and an all-time key cannot answer a time window."
+  - point: "Keep one key per board, region and window, leaderboard:music:IN:alltime, :90days, :30days, so every window answers fast; but a set per country multiplies the memory."
+    kind: mechanism
+    weight: core
+    teach:
+      - "For windows, use many keys: the music board for India, all time; the same for 90 days; for 30 days. Each window is its own sorted set and answers at once."
+      - "But a set of keys for every country piles up on that one Redis. Fine for one country; not for the world."
+    draw: [l1-key-all, l1-key-90, l1-key-30]
+    check: What does a key per window cost when the service runs in every country?
+    answer: "The keys multiply by country, so one Redis has to hold far more data."
+  - point: "Mitigate with a Redis cluster partitioned by region, India's keys on one node and the US's on another, plus replicas and snapshots to a database so a lost node is restored, not recomputed."
+    kind: decision
+    weight: core
+    teach:
+      - "Scale it out: a Redis cluster, partitioned by country, so all of India's keys live on one node and the US's on another."
+      - "And durability: replicas, and periodic snapshots into a database, so a node that dies is restored from its snapshot rather than recomputed from scratch."
+    draw: [l1n-cluster, l1n-snapshot]
+    check: How would you partition the Redis cluster here, and why that key?
+    answer: "By region or country, because every query names one region, so it is answered by one node."
+  - point: "Verdict: very fast and simple, hard to scale globally; it fits a small system, 1,000 to 10,000 items in one country."
+    kind: decision
+    weight: supporting
+    teach:
+      - "Write the verdict beside it: very fast and easy to run, everything comes from memory. Hard to scale and to deploy globally."
+      - "Where it fits: a small system, a thousand to ten thousand videos, in one country."
+    draw: [l1n-pro, l1n-fits]
+    check: When would you choose this design as it stands?
+    answer: "For a small system, about 1K to 10K items deployed in one country."
+asks:
+  - ids: [l1-kafka]
+    beats: [3]
+    question: "A million score events a second won't go straight into a database. What would you put between the score service and the database?"
+    hints:
+      - Something that holds the events until the database catches up.
+      - A durable log that consumers read at their own pace.
+  - ids: [l1-zset]
+    beats: [4]
+    question: "Which component could give us the heap's behaviour, items kept in score order, so the ranking service reads the top K straight away?"
+    hints:
+      - It lives in memory.
+      - Redis has a data type ordered by a score.
+  - ids: [l1-key-all, l1-key-90, l1-key-30]
+    beats: [6]
+    question: "One all-time set can't answer the last 30 days. How would you lay out the Redis keys so every window answers fast?"
+    hints:
+      - What if each window had its own set?
+      - Put the board, the region and the window in the key.
+  - ids: [l1n-cluster]
+    beats: [7]
+    question: "One Redis can't hold every country's keys, and it is a single point of failure. How would you scale it?"
+    hints:
+      - More than one node, but how do you split the keys?
+      - Every query names a region.

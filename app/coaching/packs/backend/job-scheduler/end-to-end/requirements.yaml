@@ -1,0 +1,103 @@
+# Job scheduler interview, requirements: "1. Functional requirements" on the left with the out-of-scope line under it, "Non-functional requirements" on the right, as the video lays them out; every non-functional line with its number.
+id: backend/job-scheduler/end-to-end/requirements
+title: Two lists, functional and non-functional
+source:
+  hash: "bb7c8a0d4028"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/job-scheduler/end-to-end/problem-statement
+  assumes:
+    - "A job scheduler runs jobs automatically at set times or intervals."
+  carries:
+    - "Functional: create and schedule a job (now, later, cron); monitor its status in real time; cancel or update it, even while it runs."
+    - "Out of scope: jobs that depend on each other (a DAG)."
+    - "Non-functional: 10k jobs a second at peak; availability over consistency; every job runs at least once; a job starts within 2 s of its time."
+  terms:
+    - term: cron schedule
+      means: "A repeating schedule written as a cron expression, such as nine o'clock every Friday."
+    - term: at least once
+      means: "Every job runs, possibly more than once after a failure; so jobs should be idempotent."
+    - term: idempotent
+      means: Running it twice leaves the same result as running it once.
+board:
+  keep: [title, prompt-desc, prompt-use]
+  elements:
+    - { id: fr, kind: region, label: 1. Functional requirements, at: [4, 5], size: [34, 15], dashed: true }
+    - { id: fr-create, kind: note, label: "create and schedule a job, now, later or cron", at: [5, 7], in: fr }
+    - { id: fr-monitor, kind: note, label: "monitor a job's status in real time", at: [5, 9], in: fr }
+    - { id: fr-cancel, kind: note, label: "cancel or update a job, even while it runs", at: [5, 11], in: fr }
+    - { id: fr-scope, kind: note, label: "out of scope, jobs that depend on each other", at: [5, 17], in: fr }
+    - { id: nfr, kind: region, label: Non-functional requirements, at: [42, 5], size: [32, 15], dashed: true }
+    - { id: nfr-scale, kind: note, label: "scale, 10k jobs a second at peak", at: [43, 7], in: nfr }
+    - { id: nfr-cap, kind: note, label: "availability over consistency, eventual", at: [43, 9], in: nfr }
+    - { id: nfr-once, kind: note, label: every job runs at least once, at: [43, 11], in: nfr }
+    - { id: nfr-latency, kind: note, label: a job starts within 2 s of its time, at: [43, 13], in: nfr }
+  arrows: []
+  lists:
+    - { id: fr-list, in: fr, at: [5, 7], step: 2, slots: 5, width: 30, items: [fr-create, fr-monitor, fr-cancel] }
+    - { id: nfr-list, in: nfr, at: [43, 7], step: 2, slots: 5, width: 28, items: [nfr-scale, nfr-cap, nfr-once, nfr-latency] }
+beats:
+  - point: "The first functional requirement: a user can create and schedule a job to run immediately, at a future time, or on a cron schedule."
+    kind: requirement
+    weight: core
+    teach:
+      - "Step one, on the left: functional requirements, what the system does. First, a user creates and schedules a job."
+      - "Three kinds of when: right now, once at a future time, or repeating on a cron schedule, every day or every Friday at nine."
+    draw: [fr, fr-create]
+    check: What are the three ways a job can be scheduled?
+    answer: "Immediately, once at a future time, or repeating on a cron schedule."
+  - point: "A user can monitor a job's status in real time, and cancel or update a job at any time, even while it is running."
+    kind: requirement
+    weight: core
+    teach:
+      - "Second, monitoring: a dashboard showing whether a job is running, succeeded or failed, and why it failed, in near real time."
+      - "Third, cancel or update a job. Cancelling a job due tomorrow is easy; cancelling one that is running right now is the hard case, so say it."
+    draw: [fr-monitor, fr-cancel]
+    check: Which cancel is the hard one, and why?
+    answer: Cancelling a job that is already running, because the request has to reach the machine running it.
+  - point: "Jobs that depend on each other, a DAG where one starts when another finishes, are out of scope."
+    kind: rule
+    weight: supporting
+    teach:
+      - "Say what you leave out: dependencies between jobs, a DAG. Airflow is known for them; naming them shows you know what you are skipping."
+    draw: [fr-scope]
+    check: What are we deliberately not designing?
+    answer: Jobs that depend on each other, the DAG of jobs.
+  - point: "Non-functional: a peak of 10,000 jobs a second, and availability over consistency, since a job showing on the dashboard a second late costs nothing."
+    kind: metric
+    weight: core
+    teach:
+      - "On the right, the qualities, with numbers. Ask for the scale: say 10,000 jobs a second at the peak, and assume they may all start at once."
+      - "Then CAP. When the network between machines splits we choose: answer anyway, or wait until every copy agrees. A Friday job that shows on the dashboard a second late hurts no one; a scheduler that is down misses jobs. Availability, with eventual consistency."
+    draw: [nfr, nfr-scale, nfr-cap]
+    check: Why is eventual consistency fine for a job scheduler?
+    answer: A new job showing on the dashboard a moment late costs nothing, while downtime means jobs are missed.
+    misconceptions:
+      - "CAP means a system can never be both consistent and available -> the choice is forced only while the network is split."
+  - point: "Every job runs at least once, and starts within 2 seconds of its scheduled time."
+    kind: requirement
+    weight: core
+    teach:
+      - "A scheduled job must never be lost: it runs at least once. At least once, not exactly once, so a job may sometimes run twice and should be safe to repeat."
+      - "And on time: a job due at 5:30:00 starts by 5:30:02. That 2-second target will shape the low-level design."
+    draw: [nfr-once, nfr-latency]
+    check: Why promise at least once rather than exactly once?
+    answer: "After a crash the system cannot always tell whether the job finished, so it retries; a rare duplicate is the price of never losing a job, which is why jobs should be idempotent."
+    misconceptions:
+      - "At least once means a job runs exactly once -> it may run more than once, so jobs should be idempotent."
+asks:
+  - list: fr-list
+    beats: [1, 2]
+    question: "So what should this scheduler let a user do? Tell me the features one at a time, and I'll write them down."
+    hints:
+      - Think about when a job might need to run.
+      - And once it is scheduled, what would the user want to see or change?
+  - list: nfr-list
+    beats: [4, 5]
+    question: "Now the qualities. How big, how reliable, how punctual should it be? A number if you have one."
+    hints:
+      - How many jobs a second at the busiest moment, and what matters when machines fail?
+      - Can a job ever be lost, and how late may it start?

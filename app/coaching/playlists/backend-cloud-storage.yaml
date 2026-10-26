@@ -1,0 +1,52 @@
+slug: backend-cloud-storage
+title: "The cloud storage interview"
+summary: "A backend design interview for a file storage and sync platform like Google Drive or Dropbox, run step by step on one whiteboard: requirements, entities, folder and file endpoints, the high-level design, then a deep dive into chunked, resumable uploads, device sync, edits, downloads and deduplication."
+outline: "The cloud storage lessons follow the five-step order and the drawings of InterviewWithBunny's System Design 18, Design Cloud Storage Platform (youtube.com/watch?v=Dnp_-xZjNRo), section by section; no text is taken from it, and its factual slips are corrected in the article."
+lessons:
+  - slug: cloud-storage
+    title: "The cloud storage interview: the problem, requirements, entities and API"
+    summary: "The problem at the top of the board, functional and non-functional requirements side by side, three entities, and the folder and file endpoints."
+    parts:
+      - { title: "The problem, then two lists", minutes: 10, packs: [backend/cloud-storage/end-to-end/problem-statement, backend/cloud-storage/end-to-end/requirements] }
+      - { title: "Entities, then the API", minutes: 9, packs: [backend/cloud-storage/end-to-end/entities, backend/cloud-storage/end-to-end/api] }
+  - slug: cloud-storage-design
+    title: "The cloud storage interview: high-level design, then the client"
+    summary: "Clients, a gateway, three services and three stores; then the deep dive opens the client: chunker, upload manager, local metadata index, and the user service."
+    parts:
+      - { title: "Gateway, services, stores", minutes: 7, packs: [backend/cloud-storage/end-to-end/high-level-design] }
+      - { title: "The client opened", minutes: 7, packs: [backend/cloud-storage/end-to-end/lld-client] }
+  - slug: cloud-storage-initiate
+    title: "The cloud storage interview: step 1, initiate the upload"
+    summary: "The init call with its quota check, the upload id and fixed chunk size it returns, and resuming after a dropped connection."
+    parts:
+      - { title: "Initiate, then resume", minutes: 8, packs: [backend/cloud-storage/end-to-end/lld-initiate] }
+  - slug: cloud-storage-chunks
+    title: "The cloud storage interview: steps 2 to 4, chunk, sign, upload"
+    summary: "Chunks hashed with SHA-256, a signed URL per chunk, the upload state in Redis, and chunks sent straight to S3 three at a time."
+    parts:
+      - { title: "Chunk, sign, upload", minutes: 10, packs: [backend/cloud-storage/end-to-end/lld-chunks] }
+  - slug: cloud-storage-commit
+    title: "The cloud storage interview: steps 5 and 6, commit, save, publish"
+    summary: "The commit, every chunk checked against its hash, the file saved through the metadata service, and an event to Kafka."
+    parts:
+      - { title: "Commit, then save and publish", minutes: 8, packs: [backend/cloud-storage/end-to-end/lld-commit] }
+  - slug: cloud-storage-sync
+    title: "The cloud storage interview: sync across devices"
+    summary: "The sync service pushes changes from Kafka and answers a device's pull; the sync engine in the app; the metadata tables."
+    parts:
+      - { title: "Push, pull, and the tables", minutes: 10, packs: [backend/cloud-storage/end-to-end/lld-sync] }
+  - slug: cloud-storage-versions
+    title: "The cloud storage interview: edits and versions"
+    summary: "A watcher in the app, only the changed chunks uploaded, and a new version that reuses the rest."
+    parts:
+      - { title: "Upload only what changed", minutes: 6, packs: [backend/cloud-storage/end-to-end/lld-versions] }
+  - slug: cloud-storage-download
+    title: "The cloud storage interview: download and sharing"
+    summary: "A download service checks permission through the metadata service and hands out signed URLs for the chunks."
+    parts:
+      - { title: "Permission, then signed URLs", minutes: 6, packs: [backend/cloud-storage/end-to-end/lld-download] }
+  - slug: cloud-storage-follow-ups
+    title: "The cloud storage interview: follow-ups"
+    summary: "Validation once after commit, deduplication by chunk hash, the limit of fixed chunks, and the requirements read back."
+    parts:
+      - { title: "Validate, deduplicate, finish", minutes: 9, packs: [backend/cloud-storage/end-to-end/lld-optimizations] }

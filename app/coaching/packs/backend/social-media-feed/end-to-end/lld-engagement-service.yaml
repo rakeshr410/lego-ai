@@ -1,0 +1,108 @@
+# Social media interview, low-level design, the engagement service: at the bottom, as in the video, a Kafka broker in front of the engagement service, which writes to a comment DB (Cassandra) and a like DB (Postgres) with their schemas beside them, and a job that sums likes. The video says Kafka guarantees delivery; it is at least once, so likes are unique per user and target.
+id: backend/social-media-feed/end-to-end/lld-engagement-service
+title: "Low-level design: the engagement service"
+source:
+  hash: "a70f6bf2523b"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/social-media-feed/end-to-end/lld-follower-service
+  assumes:
+    - "One engagement service records likes and comments in a like DB and a comment DB."
+    - "Kafka is a durable buffer that consumers read at their own pace."
+  carries:
+    - "Likes and comments go through Kafka first; the engagement service consumes them and writes the stores."
+    - "Comments in Cassandra, likes in Postgres with a reaction type; a job sums likes into like_count."
+    - "Delivery is at least once, so a like is unique per user and target and a replay changes nothing."
+  terms:
+    - term: at-least-once delivery
+      means: "Every event is processed, but a retry after a crash can deliver one twice."
+    - term: idempotent write
+      means: A write that has the same effect however many times it is applied.
+board:
+  keep: [title, prompt-desc, nfr, nfr-scale, nfr-cap, nfr-latency, lld-head, gw, user-svc, user-db, content-svc, kafka-posts, topics, moderator, post-consumer, post-db, s3, post-schema-1, post-schema-2, post-schema-3, notification, gw-user, user-userdb, gw-content, content-kafka, kafka-moderator, kafka-consumer, consumer-postdb, consumer-s3, kafka-notification, follower-svc, follower-db, gw-follower, follower-svc-db, follow-schema-1, follow-schema-2, follow-unique, follow-graph]
+  elements:
+    - { id: kafka-engage, kind: box, label: "Kafka, likes and comments", at: [16, 80], size: [12, 3] }
+    - { id: engage-svc, kind: box, label: Engagement service, at: [34, 84], size: [14, 3], tone: blue }
+    - { id: comment-db, kind: oval, label: "Comment DB, Cassandra", at: [56, 79], size: [16, 4], tone: amber }
+    - { id: like-db, kind: oval, label: "Like DB, Postgres", at: [56, 88], size: [16, 4], tone: amber }
+    - { id: comment-schema-1, kind: note, label: "comment: comment_id, post_id, user_id,", at: [74, 79] }
+    - { id: comment-schema-2, kind: note, label: "text, like_count", at: [76, 80] }
+    - { id: like-schema-1, kind: note, label: "like: like_id, target_id, user_id,", at: [74, 88] }
+    - { id: like-schema-2, kind: note, label: "reaction_type, a like or a heart", at: [76, 89] }
+    - { id: like-unique, kind: note, label: "one like per user and target, replays harmless", at: [74, 91] }
+    - { id: like-job, kind: note, label: a job sums likes into like_count, at: [30, 90] }
+  arrows:
+    - { id: gw-kafka-engage, from: gw, to: kafka-engage }
+    - { id: kafka-engage-svc, from: kafka-engage, to: engage-svc }
+    - { id: engage-comment, from: engage-svc, to: comment-db }
+    - { id: engage-like, from: engage-svc, to: like-db }
+beats:
+  - point: "Likes and comments arrive at millions a second, more than any server writes directly, so they go to a Kafka topic first."
+    kind: mechanism
+    weight: core
+    teach:
+      - "The engagement service. At any moment there are millions of likes and comments, and no server, however replicated, can write them straight in."
+      - "When the volume is huge, use publish and subscribe: put a Kafka broker in front, holding every like and comment in a buffer."
+    draw: [kafka-engage, gw-kafka-engage]
+    check: Why put Kafka in front of the engagement service?
+    answer: Millions of events a second would overwhelm direct writes; Kafka buffers them durably so none are lost.
+  - point: "The engagement service consumes the likes and comments at its own pace and writes them to the comment DB and the like DB."
+    kind: flow
+    weight: core
+    teach:
+      - "The engagement service consumes from Kafka and registers each event in its store: comments in the comment DB, likes in the like DB."
+      - "Here one service does both; it could as easily be two, one for comments and one for likes and shares."
+    draw: [engage-svc, kafka-engage-svc, comment-db, engage-comment, like-db, engage-like]
+    check: Where does a like go after Kafka?
+    answer: The engagement service consumes it and writes it to the like DB.
+  - point: "Comments live in Cassandra (comment ID, post ID, user, text, like count), being write heavy; likes in Postgres, one row per reaction on a post or a comment."
+    kind: decision
+    weight: core
+    teach:
+      - "The comment table: comment ID, post ID, the user, the text and a like count. Comments are write heavy, so Cassandra again."
+      - "The like table in Postgres: a like ID, the target, which is a post or a comment, the user, and the reaction type, a like or a heart."
+    draw: [comment-schema-1, comment-schema-2, like-schema-1, like-schema-2]
+    check: What can a like point at?
+    answer: Either a post or a comment, recorded as its target, with the reaction type.
+  - point: "Kafka delivers at least once, so an event can arrive twice after a crash; a like is unique per user and target, and a replay changes nothing."
+    kind: failure
+    weight: core
+    teach:
+      - "Kafka does not lose a like if the consumer commits only after writing. That is at-least-once delivery: after a crash the same like can be delivered again."
+      - "So make the write idempotent: one like per user and target, enforced by a unique key, and a replayed like changes nothing."
+    draw: [like-unique]
+    check: A consumer crashes and Kafka redelivers a like. How does the count stay right?
+    answer: The like is unique per user and target, so the second insert changes nothing.
+    misconceptions:
+      - "Kafka guarantees each event is processed exactly once -> by default it is at least once; the writes must tolerate duplicates."
+  - point: "Counting like rows on every read is slow, so a separate job sums likes into the like_count kept on the comment and the post."
+    kind: mechanism
+    weight: supporting
+    teach:
+      - "A popular comment can have thousands of likes. Counting rows on every read is slow, so the comment carries an aggregated like count."
+      - "A separate job reads the like table and keeps those counts up to date."
+    draw: [like-job]
+    check: Where does like_count come from?
+    answer: A separate job aggregates the like rows into it.
+asks:
+  - ids: [kafka-engage]
+    beats: [1]
+    question: "Millions of likes and comments a second. How do you stop them overwhelming the stores?"
+    hints:
+      - We used the same trick for uploads.
+      - Something durable to buffer them in.
+  - ids: [comment-db, like-db]
+    beats: [2]
+    question: "Where would the engagement service store comments and likes?"
+    hints:
+      - Two kinds of data, two stores.
+      - Which of them is written the most?
+  - ids: [like-unique]
+    beats: [4]
+    question: "Kafka may deliver the same like twice after a crash. How do you keep the count right?"
+    hints:
+      - What makes a like unique?
+      - A write that has the same effect when repeated.

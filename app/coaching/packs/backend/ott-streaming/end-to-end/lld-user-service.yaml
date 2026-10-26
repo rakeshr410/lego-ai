@@ -1,0 +1,68 @@
+# OTT streaming interview, low-level design 1: the user service. Under "5. Low Level Design", the first service opened, as in the video: the user service saving to a MySQL user DB with the user schema written beside it, and the login that issues a JWT.
+id: backend/ott-streaming/end-to-end/lld-user-service
+title: "Low-level design, 1: the user service"
+source:
+  hash: "7f3155039586"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/ott-streaming/end-to-end/high-level-design
+  assumes:
+    - "A user service onboards users into a user DB; the gateway authenticates every call."
+  carries:
+    - "The user DB is MySQL: userId, name, email, password hash, subscription status, expiry date."
+    - "Login checks the password hash and issues a JWT that the gateway verifies on every later call."
+  terms:
+    - term: JWT
+      means: "A signed token naming the user, sent with every call and checked without asking the user service."
+    - term: password hash
+      means: "A one-way salted hash such as bcrypt; the password itself is never stored."
+board:
+  keep: [title, prompt-desc, fr, fr-account, fr-search, fr-watch, fr-out, nfr, nfr-scale, nfr-cap, nfr-buffer, nfr-micro, entities, ent-user, ent-user-meta, ent-video, ent-video-meta, api, api-register, api-plans, api-subscribe, api-search, api-details, api-play, hld, hld-users, hld-gateway, hld-gw-roles, hld-lb-rr, hld-user-svc, hld-sub-svc, hld-search-svc, hld-play-svc, hld-user-db, hld-pay-gw, hld-uploader, hld-video-db, hld-blob, hld-blob-note, hld-users-gw, hld-gw-user, hld-gw-sub, hld-gw-search, hld-gw-play, hld-user-userdb, hld-sub-userdb, hld-sub-paygw, hld-up-videodb, hld-up-blob, hld-search-videodb, hld-play-blob]
+  elements:
+    - { id: lld-user, kind: region, label: "5. Low-level design: 1. User service", at: [2, 64], size: [58, 13] }
+    - { id: u-svc, kind: box, label: "User service, sign-up and login", at: [4, 68], size: [14, 4], in: lld-user, tone: blue }
+    - { id: u-db, kind: oval, label: "User DB, MySQL", at: [26, 68], size: [12, 4], in: lld-user, tone: amber }
+    - { id: u-schema-1, kind: note, label: "user: userId, name, email,", at: [41, 67], in: lld-user }
+    - { id: u-schema-2, kind: note, label: "passwordHash,", at: [42, 68], in: lld-user }
+    - { id: u-schema-3, kind: note, label: "subscriptionStatus, expiryDate", at: [42, 69], in: lld-user }
+    - { id: u-jwt, kind: note, label: "login checks the hash, then issues a JWT", at: [4, 74], in: lld-user }
+    - { id: u-jwt-use, kind: note, label: "JWT sent with every call, the gateway verifies it", at: [4, 75], in: lld-user }
+  arrows:
+    - { id: u-svc-db, from: u-svc, to: u-db, label: "save, check" }
+beats:
+  - point: "The user service keeps users in MySQL: simple relational rows that must stay consistent, with userId, name, email, a password hash, the subscription status and its expiry date."
+    kind: decision
+    weight: core
+    teach:
+      - "Step five, the low-level design: copy the high-level picture and open the services one at a time, easiest first. The user service registers users and persists them."
+      - "The data is simple and relational, one row per user, and must be consistent, so MySQL. Write the schema beside it: userId, name, email, the password, stored as a salted hash, never as itself, the subscription status and the expiry date."
+    draw: [lld-user, u-svc, u-db, u-svc-db, u-schema-1, u-schema-2, u-schema-3]
+    check: What does the user table store for the password, and why?
+    answer: A salted one-way hash such as bcrypt, so a leaked table does not reveal passwords.
+    misconceptions:
+      - "Store the password so login can compare it -> store a salted hash and compare hashes; the password itself is never kept."
+  - point: "On login the service checks the hash and issues a JWT; the client sends it with every call, and the gateway verifies it without asking the user service."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Second login: the service checks the credentials against the row. If they match, it issues a JWT, a signed token that says who the user is."
+      - "The client sends that token with every call, and the gateway verifies the signature itself, so the other services trust the caller without a round trip to the user service."
+    draw: [u-jwt, u-jwt-use]
+    check: How does the play service know who is calling without asking the user service?
+    answer: The call carries the signed JWT from login, which the gateway verifies.
+asks:
+  - ids: [u-db]
+    beats: [1]
+    question: "The user service has to persist each user. What kind of database would you pick, and why?"
+    hints:
+      - The data is a few fixed columns per user.
+      - Should a user's plan ever be read wrong?
+  - ids: [u-jwt]
+    beats: [2]
+    question: "A user logs in. How do the other services know it's them on every later call?"
+    hints:
+      - Something the client carries.
+      - Signed, so it can be checked without a database call.

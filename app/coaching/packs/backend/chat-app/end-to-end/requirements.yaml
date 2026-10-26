@@ -1,0 +1,104 @@
+# Chat app interview, requirements: "1. Functional Requirements" on the left (six lines) and "Non-Functional Requirements" on the right (scale with its arithmetic, CAP, latency, reliability), under the prompt, as the video lays them out.
+id: backend/chat-app/end-to-end/requirements
+title: Six features, four qualities
+source:
+  hash: "92308fc17e51"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/chat-app/end-to-end/problem-statement
+  assumes:
+    - "Users send and receive messages, one-to-one or in groups, in near real time."
+  carries:
+    - "Functional: register and log in; one-to-one messaging; group messaging; text and media; message history; sent, delivered and read receipts."
+    - "Non-functional: 1 billion users, 100 messages a day each, 100 billion messages and about 100 TB a day; availability over consistency; under 300 ms; zero message loss."
+  terms:
+    - term: functional requirement
+      means: What the system does.
+    - term: non-functional requirement
+      means: "A quality of the system, stated with a number and where it applies."
+    - term: eventual consistency
+      means: "Copies may disagree for a moment, but they converge."
+board:
+  keep: [title, prompt-desc]
+  elements:
+    - { id: fr, kind: region, label: 1. Functional requirements, at: [6, 5], size: [34, 16], dashed: true }
+    - { id: fr-register, kind: note, label: register and log in, at: [7, 7], in: fr }
+    - { id: fr-one, kind: note, label: one-to-one messaging, at: [7, 9], in: fr }
+    - { id: fr-group, kind: note, label: group messaging, at: [7, 11], in: fr }
+    - { id: fr-media, kind: note, label: "send text and media, images and video", at: [7, 13], in: fr }
+    - { id: fr-history, kind: note, label: the message history of a chat, at: [7, 15], in: fr }
+    - { id: fr-receipts, kind: note, label: "sent, delivered and read receipts", at: [7, 17], in: fr }
+    - { id: nfr, kind: region, label: Non-functional requirements, at: [52, 5], size: [34, 16], dashed: true }
+    - { id: nfr-scale, kind: note, label: "scale, 1 billion users, 100 messages a day each", at: [53, 7], in: nfr }
+    - { id: nfr-volume, kind: note, label: "100 billion messages a day, about 100 TB a day", at: [53, 9], in: nfr }
+    - { id: nfr-cap, kind: note, label: "availability over consistency, eventual", at: [53, 11], in: nfr }
+    - { id: nfr-latency, kind: note, label: "low latency, under 300 ms sender to receiver", at: [53, 13], in: nfr }
+    - { id: nfr-reliable, kind: note, label: "highly reliable, no message lost", at: [53, 15], in: nfr }
+  arrows: []
+  lists:
+    - { id: fr-list, in: fr, at: [7, 7], step: 2, slots: 7, width: 30, items: [fr-register, fr-one, fr-group, fr-media, fr-history, fr-receipts] }
+    - { id: nfr-list, in: nfr, at: [53, 7], step: 2, slots: 7, width: 30, items: [nfr-scale, nfr-volume, nfr-cap, nfr-latency, nfr-reliable] }
+beats:
+  - point: "The core functional requirements: users register and log in, and they message one-to-one and in groups."
+    kind: requirement
+    weight: core
+    teach:
+      - "Step one, on the left: what the system does. First, users must register and log in; on WhatsApp that is with a phone number."
+      - "Then one-to-one messaging, and on top of it group messaging."
+    draw: [fr, fr-register, fr-one, fr-group]
+    check: What are the three things a user must be able to do before anything else?
+    answer: "Register and log in, message one friend, and message a group."
+  - point: "Three more: send media as well as text, see a chat's message history, and get sent, delivered and read receipts."
+    kind: requirement
+    weight: core
+    teach:
+      - "Not only text: images and videos too. And the history of every chat, to scroll back through."
+      - "Last, the ticks: whether the message reached our server, whether it was delivered to the friend, and whether they read it."
+    draw: [fr-media, fr-history, fr-receipts]
+    check: Which three states do the receipts show?
+    answer: "Sent to the server, delivered to the receiver, and read."
+  - point: "Scale first: a billion users sending 100 messages a day is 100 billion messages, and at about 1 KB each, about 100 TB a day."
+    kind: metric
+    weight: core
+    teach:
+      - "On the right, the non-functional requirements, and the first to ask for is scale. Say a billion users, each sending a hundred messages a day: a hundred billion messages a day."
+      - "Do the arithmetic out loud: at about a kilobyte a message, a kilobyte times a hundred billion is a hundred terabytes a day. One kilobyte is an average for text; photos and videos are far bigger and will live in blob storage."
+    draw: [nfr, nfr-scale, nfr-volume]
+    check: "A billion users, 100 messages a day each, 1 KB a message. How much data a day?"
+    answer: "100 billion messages, about 100 TB a day."
+    misconceptions:
+      - "1 KB times 100 billion is 1 TB -> it is 100 TB; 100 billion kilobytes is 10^14 bytes."
+  - point: "Availability over consistency: the app must be up at any moment, and eventual consistency is fine because this is not a bank."
+    kind: requirement
+    weight: core
+    teach:
+      - "Then CAP. In a distributed system, when the network splits we choose availability or consistency. A chat app must always be usable, zero or negligible downtime."
+      - "So availability wins, and eventual consistency is enough; we are not moving money."
+    draw: [nfr-cap]
+    check: Why is eventual consistency acceptable here?
+    answer: "It is not a bank; a message that appears a moment late on another device harms no one, while downtime stops everyone."
+  - point: "Quantify latency, under 300 ms from sender to receiver, and reliability, zero messages lost."
+    kind: metric
+    weight: core
+    teach:
+      - "Low latency, with a number: a message should get from the sender to the receiver in under 300 milliseconds."
+      - "And highly reliable: once sent, a message is never lost, even if the friend is offline for days."
+    draw: [nfr-latency, nfr-reliable]
+    check: How would you state the latency requirement?
+    answer: "Under 300 ms from sender to receiver, as a number and where it applies."
+asks:
+  - list: fr-list
+    beats: [1, 2]
+    question: "So what should this chat app let users do? Tell me the features one at a time, and I'll write them down."
+    hints:
+      - Start with getting into the app, then who you can message.
+      - And beyond plain text, and beyond sending, what does a user see?
+  - list: nfr-list
+    beats: [3, 4, 5]
+    question: "Now the qualities. How many users, how fast, how reliable? Numbers if you have them."
+    hints:
+      - Start with the number of users and how many messages each sends.
+      - Then how fast a message must arrive, and whether one may ever be lost.

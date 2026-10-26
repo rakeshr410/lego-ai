@@ -1,0 +1,108 @@
+# Online learning interview, deep dive 4: playback, the CDN and assignments. Under "5. Deep dive", the video's playback part: the CDN above the students with its line to S3, the video playback service checking the course enrollment DB and pointing at S3, and the assignment service writing the quiz DB; the manifest and CDN notes below.
+id: backend/online-learning/end-to-end/lld-playback
+title: "Deep dive, 4: playback, the CDN and assignments"
+source:
+  hash: "de30793f2410"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/online-learning/end-to-end/lld-enrollment
+  assumes:
+    - "The course enrollment DB holds the access rows written by enrollment and permission sync."
+    - "Videos sit in S3 as chunks transcoded into several resolutions."
+    - "A video must start within 2 seconds."
+  carries:
+    - "The video playback service checks the access row first, then returns a manifest listing the chunks at each resolution."
+    - "A CDN serves the chunks from an edge near the student and fills from S3 on a miss; signed chunk URLs keep the access check meaningful."
+    - "An assignment service saves students' answers to the quiz DB."
+  terms:
+    - term: manifest
+      means: The file that lists a video's chunks at each resolution, which the player reads to fetch and to switch quality.
+    - term: CDN
+      means: Edge servers near users that cache content and fetch from the origin on a miss.
+board:
+  keep: [title, nfr, nfr-scale, nfr-avail, nfr-consistent, nfr-files, nfr-latency]
+  elements:
+    - { id: pb, kind: region, label: "5. Deep dive: playback, the CDN and assignments", at: [2, 26], size: [58, 27] }
+    - { id: pb-students, kind: box, label: students, at: [3, 37], size: [8, 3], in: pb }
+    - { id: pb-lb, kind: box, label: "LB and API gateway", at: [15, 32], size: [4, 15], in: pb }
+    - { id: pb-playback, kind: box, label: Video playback service, at: [22, 34], size: [12, 3], in: pb, tone: blue }
+    - { id: pb-enrolldb, kind: oval, label: Course enrollment DB, at: [42, 34], size: [14, 3], in: pb, tone: amber }
+    - { id: pb-s3, kind: oval, label: S3, at: [42, 28], size: [10, 3], in: pb, tone: amber }
+    - { id: pb-manifest, kind: note, label: "with access, it returns a manifest of chunk URLs", at: [22, 44], in: pb }
+    - { id: pb-abr, kind: note, label: "each resolution listed; the player switches with bandwidth", at: [22, 45], in: pb }
+    - { id: pb-cdn, kind: box, label: CDN, at: [3, 28], size: [9, 3], in: pb, tone: green }
+    - { id: pb-edge, kind: note, label: "the nearest edge serves chunks; a miss fills from S3", at: [22, 47], in: pb }
+    - { id: pb-signed, kind: note, label: "short-lived signed chunk URLs, so links cannot be shared", at: [22, 48], in: pb }
+    - { id: pb-assign, kind: box, label: Assignment service, at: [22, 40], size: [12, 3], in: pb, tone: blue }
+    - { id: pb-quizdb, kind: oval, label: Quiz DB, at: [42, 40], size: [10, 3], in: pb, tone: amber }
+    - { id: pb-answers, kind: note, label: "answers saved beside the quiz questions", at: [22, 50], in: pb }
+  arrows:
+    - { id: pb-students-lb, from: pb-students, to: pb-lb }
+    - { id: pb-lb-playback, from: pb-lb, to: pb-playback }
+    - { id: pb-playback-enrolldb, from: pb-playback, to: pb-enrolldb, label: access check }
+    - { id: pb-playback-s3, from: pb-playback, to: pb-s3 }
+    - { id: pb-students-cdn, from: pb-students, to: pb-cdn }
+    - { id: pb-cdn-s3, from: pb-cdn, to: pb-s3, label: on a miss }
+    - { id: pb-lb-assign, from: pb-lb, to: pb-assign }
+    - { id: pb-assign-quizdb, from: pb-assign, to: pb-quizdb, label: answers }
+beats:
+  - point: "Before fetching any video, the video playback service checks the course enrollment DB for the student's access; no active access, no video."
+    kind: mechanism
+    weight: core
+    teach:
+      - "The student has access and opens the course; the request reaches the video playback service."
+      - "Its first job is not fetching: it checks the course enrollment DB for an active access row for this user and course. If there is none, nothing is served."
+    draw: [pb, pb-students, pb-lb, pb-students-lb, pb-playback, pb-lb-playback, pb-enrolldb, pb-playback-enrolldb]
+    check: What does the playback service check before serving a video?
+    answer: That the student has an active access row for the course in the course enrollment DB.
+  - point: "With access, it returns a manifest: the list of the video's chunk URLs at each resolution, which the player reads to fetch chunks and switch quality with the bandwidth."
+    kind: mechanism
+    weight: core
+    teach:
+      - "With access, the playback service returns a manifest file, the list of the video's chunks in S3 at each resolution."
+      - "The player reads it and fetches chunk by chunk, 4K on a good line, dropping to 720p or 480p when the network dips."
+    draw: [pb-s3, pb-playback-s3, pb-manifest, pb-abr]
+    check: What is in the manifest the playback service returns?
+    answer: The URLs of the video's chunks at each resolution, so the player can fetch them and switch quality.
+  - point: "A CDN serves the chunks from an edge near the student and fetches from S3 only on a miss, which is what meets the 2-second start; signed chunk URLs stop a shared link from bypassing the access check."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Fetching every chunk from one S3 region is a long trip for a student in India watching a video stored in the US. So a CDN: the player asks the nearest edge for each chunk."
+      - "If the edge has it, it answers straight away; on a miss it fetches from S3 and keeps it. Popular courses come from nearby: that is the two-second start."
+      - "Give the chunk URLs a short-lived signature, so the access check cannot be dodged by passing a link around."
+    draw: [pb-cdn, pb-students-cdn, pb-cdn-s3, pb-edge, pb-signed]
+    check: How does the CDN help meet the 2-second start?
+    answer: Chunks come from an edge near the student; only a miss goes back to S3.
+    misconceptions:
+      - "Every chunk request goes through the playback service -> the service only checks access and hands out the manifest; chunks come from the CDN."
+  - point: "After a lesson a quiz or assignment opens, and an assignment service saves the student's answers to the quiz DB beside the questions."
+    kind: component
+    weight: supporting
+    teach:
+      - "After a video, a set of questions or an assignment opens. An assignment service takes the student's answers and saves them in the quiz DB, which now holds both the quizzes and each student's responses."
+    draw: [pb-assign, pb-lb-assign, pb-quizdb, pb-assign-quizdb, pb-answers]
+    check: Where do a student's quiz answers go?
+    answer: Through the assignment service into the quiz DB, beside the quiz's questions.
+asks:
+  - ids: [pb-enrolldb]
+    beats: [1]
+    question: "A request to play a video arrives. What must the playback service check first, and where?"
+    hints:
+      - Not every student may open every course.
+      - Which store records who may open what?
+  - ids: [pb-cdn]
+    beats: [3]
+    question: "A student in India opens a video stored in a US bucket. How would you make it start within two seconds?"
+    hints:
+      - Distance is latency.
+      - Something near the student could keep copies of the chunks.
+  - ids: [pb-assign]
+    beats: [4]
+    question: "The student finishes a quiz. What takes their answers?"
+    hints:
+      - A service of its own, behind the gateway.
+      - The answers belong next to the quiz's questions.

@@ -1,0 +1,144 @@
+# Online learning interview, deep dive 3: enrollment, payment and the outbox. Under "5. Deep dive", the payment part of the video's picture: students and their gateway, the enrollment service to the course enrollment DB, the payment service with the payment gateway under it and the payment DB beside it, Kafka to the right with the notification service under it and the permission sync service above it, writing back to the enrollment DB; the tables below. The video's "outlook" table is the transactional outbox, and its reason (Kafka down) is replaced by the dual write.
+id: backend/online-learning/end-to-end/lld-enrollment
+title: "Deep dive, 3: enrollment, payment and the outbox"
+source:
+  hash: "09d9500671bd"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/online-learning/end-to-end/lld-instructor
+  assumes:
+    - "A paid enrollment writes the payment DB and grants access in the course enrollment DB: two writes for one purchase."
+    - "Payment and enrollment must be strongly consistent."
+  carries:
+    - "Free courses: the enrollment service writes an access row. Paid: the payment service charges through a payment gateway."
+    - "On success the payment row and an outbox row are written in one atomic transaction; CDC publishes outbox rows to Kafka."
+    - "A notification service sends the receipt; a permission sync service writes the access row, idempotently, keyed by the order."
+    - "Access lands within seconds of the payment and is never lost."
+  terms:
+    - term: dual write
+      means: Writing two systems one after the other with no shared transaction, so one can succeed and the other fail.
+    - term: transactional outbox
+      means: "A table in the service's own database, written in the same transaction as the business row, whose rows a relay publishes as events."
+    - term: idempotent
+      means: Safe to apply twice; a repeated event changes nothing.
+board:
+  keep: [title, nfr, nfr-scale, nfr-avail, nfr-consistent, nfr-files, nfr-latency]
+  elements:
+    - { id: enr, kind: region, label: "5. Deep dive: enrollment, payment and the outbox", at: [2, 26], size: [70, 32] }
+    - { id: enr-students, kind: box, label: students, at: [3, 35], size: [8, 3], in: enr }
+    - { id: enr-lb, kind: box, label: "LB and API gateway", at: [14, 29], size: [4, 18], in: enr }
+    - { id: enr-enroll, kind: box, label: Enrollment service, at: [21, 30], size: [12, 3], in: enr, tone: blue }
+    - { id: enr-enrolldb, kind: oval, label: Course enrollment DB, at: [37, 30], size: [14, 3], in: enr, tone: amber }
+    - { id: enr-payment, kind: box, label: Payment service, at: [21, 38], size: [12, 3], in: enr, tone: blue }
+    - { id: enr-gateway, kind: box, label: Payment gateway, at: [21, 45], size: [12, 3], in: enr, tone: grey }
+    - { id: enr-paymentdb, kind: oval, label: Payment DB, at: [37, 38], size: [12, 3], in: enr, tone: amber }
+    - { id: enr-atomic, kind: note, label: "payment and payment_outbox, one atomic transaction", at: [3, 50], in: enr }
+    - { id: enr-orders, kind: note, label: "orders: orderId, userId, currency, amountTotal, status", at: [3, 51], in: enr }
+    - { id: enr-kafka, kind: box, label: Kafka, at: [55, 38], size: [9, 3], in: enr, tone: grey }
+    - { id: enr-notify, kind: box, label: Notification service, at: [55, 45], size: [12, 3], in: enr }
+    - { id: enr-perm, kind: box, label: Permission sync service, at: [55, 30], size: [12, 3], in: enr, tone: blue }
+    - { id: enr-access-1, kind: note, label: "access: accessId, userId, courseId, scopeType,", at: [36, 50], in: enr }
+    - { id: enr-access-2, kind: note, label: "status, purchaseDate", at: [38, 51], in: enr }
+    - { id: enr-scope, kind: note, label: "scope lifetime or subscription; active, revoked, expired", at: [36, 52], in: enr }
+    - { id: enr-dual, kind: note, label: "a direct publish next to the commit can be lost", at: [3, 53], in: enr }
+    - { id: enr-idem, kind: note, label: "delivered at least once, so permission sync is idempotent", at: [3, 54], in: enr }
+    - { id: enr-seconds, kind: note, label: "access lands within seconds, and is never lost", at: [3, 55], in: enr }
+  arrows:
+    - { id: enr-students-lb, from: enr-students, to: enr-lb }
+    - { id: enr-lb-enroll, from: enr-lb, to: enr-enroll }
+    - { id: enr-enroll-enrolldb, from: enr-enroll, to: enr-enrolldb }
+    - { id: enr-lb-payment, from: enr-lb, to: enr-payment }
+    - { id: enr-payment-gateway, from: enr-payment, to: enr-gateway }
+    - { id: enr-payment-paymentdb, from: enr-payment, to: enr-paymentdb }
+    - { id: enr-paymentdb-kafka, from: enr-paymentdb, to: enr-kafka, label: CDC }
+    - { id: enr-kafka-notify, from: enr-kafka, to: enr-notify }
+    - { id: enr-kafka-perm, from: enr-kafka, to: enr-perm }
+    - { id: enr-perm-enrolldb, from: enr-perm, to: enr-enrolldb }
+beats:
+  - point: "Enrollment is a permission: a student opens only courses they joined or bought. A free course is enrolled directly, the enrollment service writing an access row in the course enrollment DB."
+    kind: flow
+    weight: core
+    teach:
+      - "A student can open only the courses they joined or paid for, so enrollment is really a permission: which user may open which course. That is the course enrollment DB."
+      - "A free course: the student presses enroll, the enrollment service writes the row, done."
+    draw: [enr, enr-students, enr-lb, enr-students-lb, enr-enroll, enr-lb-enroll, enr-enrolldb, enr-enroll-enrolldb]
+    check: Why is the course enrollment DB really a permissions table?
+    answer: It records which user may open which course, and playback checks it before serving anything.
+  - point: "A paid course goes through the payment service, which calls a payment gateway that does the transaction with the bank and reports success or failure."
+    kind: flow
+    weight: core
+    teach:
+      - "A paid course: the front end asks the student to pay, and the request goes to the payment service, which calls a payment gateway to do the transaction with the bank."
+      - "How the gateway works is its own design; here, the result comes back to the payment service, success or failure."
+    draw: [enr-payment, enr-lb-payment, enr-gateway, enr-payment-gateway]
+    check: Who talks to the bank?
+    answer: The payment gateway, called by the payment service, which gets back success or failure.
+  - point: "Writing the payment DB and then the enrollment DB is a dual write that can half-fail, leaving a paid student without access; instead the payment service writes the payment row and an outbox row in one atomic transaction."
+    kind: failure
+    weight: core
+    teach:
+      - "On success, the obvious move is two calls: save the payment, then grant access. But if the second fails, the student has paid and has no course. That is a dual write, and it can half-fail."
+      - "So the payment service makes one atomic transaction in its own payment DB: the payment row, and a row in a payment_outbox table saying this user bought this course. The video calls it an outlook table; the pattern is the transactional outbox. The orders table sits beside it."
+    draw: [enr-paymentdb, enr-payment-paymentdb, enr-atomic, enr-orders]
+    check: What goes wrong if the payment service writes the payment DB and then the enrollment DB?
+    answer: The second write can fail after the first succeeded, so the student is charged but gets no access.
+    misconceptions:
+      - "Wrap both databases in one call and it is safe -> two databases share no transaction; only one local transaction cannot half-fail."
+  - point: "Change data capture reads each new outbox row and publishes it to Kafka, and a notification service consumes it to send the receipt."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Now the event leaves. Change data capture watches the outbox table and publishes each new row as an event to Kafka."
+      - "Consumers react. A notification service sends the student an email or text that the payment went through."
+    draw: [enr-kafka, enr-paymentdb-kafka, enr-notify, enr-kafka-notify]
+    check: How does the purchase event get from the payment DB to Kafka?
+    answer: Change data capture reads the new outbox row and publishes it to Kafka.
+  - point: "A permission sync service consumes the purchase event and writes the access row, user, course, scope and status, into the course enrollment DB."
+    kind: mechanism
+    weight: core
+    teach:
+      - "And a permission sync service reads the same event, the purchase, the course and the student, and writes the access row into the course enrollment DB."
+      - "The access table: access id, user, course, scope type, lifetime or subscription, status, active, revoked or expired, and the purchase date."
+    draw: [enr-perm, enr-kafka-perm, enr-perm-enrolldb, enr-access-1, enr-access-2, enr-scope]
+    check: Which service grants access after a payment, and from what?
+    answer: The permission sync service, from the purchase event it consumes from Kafka.
+  - point: "Publishing to Kafka straight from the payment service is the same dual write; with the outbox, delivery is at least once, so permission sync is idempotent, and access lands within seconds and is never lost."
+    kind: decision
+    weight: core
+    teach:
+      - "Why not publish to Kafka straight from the payment service? Because the service can crash after committing the payment and before publishing, and the event is gone. The video blames Kafka being down; Kafka is replicated, the real gap is between the two writes."
+      - "With the outbox, the event exists the moment the payment does, and the relay keeps its place, so unsent rows go out after any failure. That means an event can arrive twice: permission sync must be idempotent, keyed by the order."
+      - "And be honest about timing: the payment is consistent at once, the access follows within seconds and is never lost. The page can poll the entitlement until it shows."
+    draw: [enr-dual, enr-idem, enr-seconds]
+    check: Why must the permission sync service be idempotent?
+    answer: The outbox delivers at least once, so the same purchase event can arrive again; keyed by the order, a repeat changes nothing.
+    misconceptions:
+      - "The outbox gives the student access in the same instant -> it guarantees the access is never lost; it lands seconds later."
+asks:
+  - ids: [enr-atomic]
+    beats: [3]
+    question: "The payment succeeded. If you save it and then grant access as two separate writes, what can go wrong, and how would you make it safe?"
+    hints:
+      - What if the second write fails?
+      - Could both facts go into one database, in one transaction?
+  - ids: [enr-kafka]
+    beats: [4]
+    question: "The purchase is recorded with an outbox row. How does the rest of the system hear about it?"
+    hints:
+      - Something could read new rows from the database.
+      - Several services want the same event.
+  - ids: [enr-perm]
+    beats: [5]
+    question: "Who should write the student's access row now?"
+    hints:
+      - A consumer of the purchase event.
+      - Its only job is to keep permissions in step with payments.
+  - ids: [enr-idem]
+    beats: [6]
+    question: "The relay may send the same purchase event twice. What must the access writer do about that?"
+    hints:
+      - What happens if it inserts a second access row?
+      - Is there a key that makes the second write a no-op?

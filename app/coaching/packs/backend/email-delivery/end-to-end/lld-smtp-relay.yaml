@@ -1,0 +1,141 @@
+# Email delivery interview, deep dive into sending to other domains, as the video draws it: the orchestrator's three jobs, Kafka with its outbound and inbound send request topics, SMTP relay workers with the MX cache and MX resolver above them and the receiver SMTP to the right, then the numbered "Steps to connect SMTP server" (DNS MX lookup, TCP on port 25, 220, EHLO, MAIL FROM, RCPT TO, DATA, 354, 250).
+id: backend/email-delivery/end-to-end/lld-smtp-relay
+title: "Deep dive: sending to other domains over SMTP"
+source:
+  hash: "9367e10acee9"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/email-delivery/end-to-end/lld-validation
+  assumes:
+    - "An orchestrator consumes each email from Kafka and runs the checks, recording them in a validation DB."
+    - "Mail to another domain must be handed to that provider's server over SMTP."
+  carries:
+    - "After the checks the orchestrator routes by the recipient's domain: other domains to the outbound send request topic, our own to the inbound send request topic."
+    - "SMTP relay workers consume outbound, find the domain's mail server by an MX lookup (cached for its TTL) and hand the email over by SMTP on port 25."
+    - "The receiving server checks the recipient at RCPT TO; an unknown address is refused and becomes a bounce to the sender."
+  terms:
+    - term: MX record
+      means: "A DNS record naming a domain's mail servers, each with a preference number; the lowest is tried first."
+    - term: SMTP
+      means: "Simple Mail Transfer Protocol, a protocol, not a server: the conversation two mail servers have to hand over an email."
+    - term: bounce
+      means: A message back to the sender saying the email could not be delivered.
+board:
+  keep: [title, nfr, nfr-scale, nfr-available, nfr-signup, nfr-durable]
+  elements:
+    - { id: lld-relay, kind: region, label: "5. Deep dive: SMTP to other domains", at: [6, 22], size: [70, 35] }
+    - { id: r-orch, kind: box, label: Outbox delivery orchestrator, at: [8, 30], size: [14, 4], tone: blue }
+    - { id: r-orch-jobs, kind: note, label: "consume, validate, check the domain", at: [8, 35], in: lld-relay }
+    - { id: r-kafka, kind: box, label: Kafka, at: [29, 30], size: [12, 3], tone: grey }
+    - { id: r-topic-out, kind: note, label: "outbound send request: other domains", at: [29, 34], in: lld-relay }
+    - { id: r-topic-in, kind: note, label: "inbound send request: our own domain", at: [29, 35], in: lld-relay }
+    - { id: r-relay, kind: box, label: SMTP relay workers, at: [48, 30], size: [12, 3], tone: blue }
+    - { id: r-receiver, kind: box, label: Receiver SMTP, at: [67, 30], size: [9, 3], tone: grey, in: lld-relay }
+    - { id: r-mx-cache, kind: oval, label: MX cache, at: [42, 24], size: [10, 3], tone: green }
+    - { id: r-mx-resolver, kind: oval, label: MX resolver, at: [56, 24], size: [12, 3], tone: grey }
+    - { id: r-steps-head, kind: note, label: Steps to connect to the receiving server, at: [8, 38], in: lld-relay }
+    - { id: r-step-dns, kind: note, label: "dig MX outlook.com, ask DNS for its mail servers", at: [8, 40], in: lld-relay }
+    - { id: r-step-mx, kind: note, label: "answer: one host at priority 10, a backup at 20", at: [8, 41], in: lld-relay }
+    - { id: r-step-tcp, kind: note, label: "open a TCP connection to that host, port 25", at: [8, 42], in: lld-relay }
+    - { id: r-step-220, kind: note, label: "Outlook: 220 outlook.com ESMTP ready", at: [8, 43], in: lld-relay }
+    - { id: r-step-ehlo, kind: note, label: "Gmail: EHLO gmail.com", at: [8, 44], in: lld-relay }
+    - { id: r-step-250a, kind: note, label: "Outlook: 250 OK and its extensions", at: [8, 45], in: lld-relay }
+    - { id: r-step-from, kind: note, label: "Gmail: MAIL FROM alice at gmail.com", at: [8, 46], in: lld-relay }
+    - { id: r-step-250b, kind: note, label: "Outlook: 250 OK", at: [8, 47], in: lld-relay }
+    - { id: r-step-rcpt, kind: note, label: "Gmail: RCPT TO bob at outlook.com", at: [8, 48], in: lld-relay }
+    - { id: r-step-check, kind: note, label: "Outlook: 250 recipient OK, or 550 no such user", at: [8, 49], in: lld-relay }
+    - { id: r-step-data, kind: note, label: "Gmail: DATA", at: [8, 50], in: lld-relay }
+    - { id: r-step-354, kind: note, label: "Outlook: 354 start mail input", at: [8, 51], in: lld-relay }
+    - { id: r-step-body, kind: note, label: "Gmail: headers, body, attachments, MIME encoded", at: [8, 52], in: lld-relay }
+    - { id: r-step-done, kind: note, label: "Outlook: 250 OK, accepted", at: [8, 53], in: lld-relay }
+    - { id: r-mx-ttl, kind: note, label: "MX records change rarely, cache them for their TTL", at: [44, 40], in: lld-relay }
+    - { id: r-mx-order, kind: note, label: "lowest number first, the next one on a timeout", at: [44, 41], in: lld-relay }
+    - { id: r-bounce, kind: note, label: "a 550 becomes a bounce to the sender", at: [44, 49], in: lld-relay }
+    - { id: r-protocol, kind: note, label: "SMTP is a protocol, not a server", at: [44, 53], in: lld-relay }
+  arrows:
+    - { id: r-orch-kafka, from: r-orch, to: r-kafka, label: by domain }
+    - { id: r-kafka-relay, from: r-kafka, to: r-relay, label: outbound }
+    - { id: r-relay-receiver, from: r-relay, to: r-receiver, label: port 25 }
+    - { id: r-relay-cache, from: r-relay, to: r-mx-cache }
+    - { id: r-relay-resolver, from: r-relay, to: r-mx-resolver }
+  lists:
+    - { id: smtp-steps, in: lld-relay, at: [8, 40], step: 1, slots: 15, width: 34, items: [r-step-dns, r-step-mx, r-step-tcp, r-step-220, r-step-ehlo, r-step-250a, r-step-from, r-step-250b, r-step-rcpt, r-step-check, r-step-data, r-step-354, r-step-body, r-step-done] }
+beats:
+  - point: "Once the checks pass, the orchestrator checks the recipient's domain: other domains go to the outbound send request topic, our own domain to the inbound send request topic."
+    kind: flow
+    weight: core
+    teach:
+      - "The orchestrator has three jobs: consume, validate, and now the domain check. A checked email goes back onto Kafka, ready to deliver."
+      - "Recipient at another domain, Outlook or Yahoo: the outbound send request topic. Recipient on Gmail itself: the inbound send request topic. No SMTP needed for those."
+    draw: [lld-relay, r-orch, r-orch-jobs, r-kafka, r-orch-kafka, r-topic-out, r-topic-in]
+    check: Which topic does a Gmail-to-Gmail email go to after the checks?
+    answer: The inbound send request topic, because the recipient is in our own domain.
+  - point: "SMTP relay workers consume the outbound topic and hand each email to the recipient domain's mail server, the receiver SMTP."
+    kind: component
+    weight: core
+    teach:
+      - "SMTP relay workers consume the outbound topic. Their job: deliver each email to the other provider's mail server."
+      - "That server, Outlook's say, is the receiver SMTP, reached on port 25."
+    draw: [r-relay, r-kafka-relay, r-receiver, r-relay-receiver]
+    check: What do the relay workers consume, and where do they send it?
+    answer: The outbound send request topic, and they hand each email to the recipient domain's mail server.
+  - point: "To find that server the worker does a DNS MX lookup, dig MX outlook.com, which lists hosts with preference numbers; the lowest is tried first, and the answer is cached for its TTL because MX records change rarely."
+    kind: mechanism
+    weight: core
+    teach:
+      - "We do not know where Outlook's mail server is. Ask DNS: dig MX outlook.com. The MX resolver answers with hosts and a number each, 10 and 20. Lower number, higher priority; if it does not answer in time, try the next."
+      - "Those records change rarely, so keep the answer in an MX cache for its time to live and skip the lookup next time."
+    draw: [r-mx-cache, r-relay-cache, r-mx-resolver, r-relay-resolver, r-steps-head, r-step-dns, r-step-mx, r-mx-ttl, r-mx-order]
+    check: The MX answer lists one host at 10 and one at 20. Which do we try first?
+    answer: The one at 10; a lower preference number means higher priority, and we fall back to 20 if it does not answer.
+    misconceptions:
+      - "MX records change daily, so look them up every time -> they change rarely; cache them for their DNS TTL."
+  - point: "The conversation opens with a TCP connection on port 25, the receiver's 220 ready, our EHLO, its 250 with extensions, then MAIL FROM with the sender."
+    kind: flow
+    weight: core
+    teach:
+      - "Open a TCP connection to that host on port 25. Outlook greets: 220, ready. We say EHLO gmail.com; it answers 250 and the extensions it supports."
+      - "Then MAIL FROM, alice at gmail.com, and Outlook says 250 OK."
+    draw: [r-step-tcp, r-step-220, r-step-ehlo, r-step-250a, r-step-from, r-step-250b]
+    check: What is the first thing the receiving server says after the TCP connection opens?
+    answer: 220, that it is ready, before we send EHLO.
+  - point: "At RCPT TO the receiving server checks its own directory: 250 if the recipient exists, 550 if not, which our side turns into a bounce to the sender."
+    kind: failure
+    weight: core
+    teach:
+      - "Now RCPT TO, bob at outlook.com. Until here we had no idea whether Bob exists; only Outlook knows its users."
+      - "It looks him up: 250 recipient OK, or 550 no such user. A 550 is why you get a bounce a few seconds after mailing a wrong address."
+    draw: [r-step-rcpt, r-step-check, r-bounce]
+    check: Why can't Gmail check whether bob at outlook.com exists before sending?
+    answer: Only Outlook knows its own users; it answers at RCPT TO, and a 550 becomes a bounce to the sender.
+  - point: "Then DATA, the receiver's 354, the headers, body and attachments MIME encoded, and a final 250 when Outlook accepts the email. SMTP is the protocol for all of it, not a server."
+    kind: flow
+    weight: supporting
+    teach:
+      - "We send DATA; Outlook answers 354, start mail input. We stream the headers, body and attachments, MIME encoded, and Outlook answers 250 once it has accepted it."
+      - "That whole exchange is SMTP: a protocol, a set of rules, not a server."
+    draw: [r-step-data, r-step-354, r-step-body, r-step-done, r-protocol]
+    check: What does the final 250 tell our relay worker?
+    answer: That Outlook has accepted the email and taken responsibility for delivering it.
+asks:
+  - ids: [r-topic-out, r-topic-in]
+    beats: [1]
+    question: "The email passed its checks. Some recipients are on Gmail, some on Outlook. How would you split them?"
+    hints:
+      - Look at the part of the address after the at sign.
+      - One stream for each kind of delivery.
+  - ids: [r-relay]
+    beats: [2]
+    question: "Something must take the outbound emails and deliver them to Outlook or Yahoo. What would you put there?"
+    hints:
+      - Workers that consume the outbound topic.
+      - They speak the mail servers' protocol.
+  - list: smtp-steps
+    beats: [3, 4, 5, 6]
+    question: "Walk me through how our worker finds Outlook's mail server and hands it the email, step by step."
+    hints:
+      - First, where does outlook.com take its mail? Ask DNS.
+      - Then a greeting, the sender, the recipient, and the content.

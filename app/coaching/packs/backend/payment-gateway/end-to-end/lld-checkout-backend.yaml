@@ -1,0 +1,126 @@
+# Payment gateway interview, deep dive 3: the pay call. As in the video, the processor service is renamed the checkout backend service, its checks listed under it and validated against Redis; under it, the PCI zone: a tokenization service talking to an HSM and a card vault DB, the steps written below, reached over TLS, with the token returned.
+id: backend/payment-gateway/end-to-end/lld-checkout-backend
+title: "Deep dive, 3: the pay call and the PCI zone"
+source:
+  hash: "0c390936469e"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/payment-gateway/end-to-end/lld-checkout-session
+  assumes:
+    - "Sessions live in Redis with a 10-minute TTL; the hosted page's URL carries the session id."
+    - "Non-functional: end-to-end encryption, PCI DSS level 1."
+  carries:
+    - "The checkout backend service takes the pay call; the card never passes through the merchant."
+    - "It checks against Redis: the session exists, has not expired, the intent is valid, the merchant matches, the state is active."
+    - "A tokenization service in a PCI zone, over mutual TLS, validates the card, fingerprints it with a keyed hash, encrypts it with an HSM key into the card vault and returns a token."
+  terms:
+    - term: PCI zone
+      means: "The small, isolated, audited part of the system where card numbers may exist."
+    - term: token
+      means: A stand-in value for a card that is useless outside the gateway.
+    - term: HSM
+      means: "Hardware security module: tamper-resistant hardware that holds keys and encrypts with them, never letting a key out."
+    - term: PAN
+      means: "Primary account number, the card number; its first 6 to 8 digits are the BIN, which names the issuing bank."
+board:
+  keep: [title, prompt-desc, nfr, nfr-scale, nfr-cap, nfr-latency, nfr-security, dd-title, dd-merchant, dd-gateway, dd-intent-resp, dd-intent, dd-intent-db, dd-postgres, dd-intent-row-1, dd-intent-row-2, dd-intent-row-3, dd-merchant-gateway, dd-gateway-intent, dd-intent-save, dd-session, dd-redis, dd-ttl, dd-json-1, dd-json-2, dd-buyer, dd-lb, dd-frontend, dd-page-url, dd-page-html, dd-gateway-session, dd-session-redis, dd-buyer-merchant, dd-buyer-lb, dd-lb-frontend]
+  elements:
+    - { id: dd-backend, kind: box, label: Checkout backend service, at: [26, 71], size: [13, 3], tone: blue }
+    - { id: dd-check-1, kind: note, label: "session exists, not expired", at: [41, 66] }
+    - { id: dd-check-2, kind: note, label: "intent valid, merchant matches", at: [41, 67] }
+    - { id: dd-check-3, kind: note, label: session state is active, at: [41, 68] }
+    - { id: dd-token, kind: note, label: returns a card token, at: [41, 76] }
+    - { id: pci, kind: region, label: PCI zone, at: [24, 78], size: [33, 17] }
+    - { id: dd-tokenize, kind: box, label: Tokenization service, at: [26, 81], size: [12, 3], in: pci }
+    - { id: dd-hsm, kind: oval, label: HSM, at: [43, 80], size: [10, 3], tone: grey, in: pci }
+    - { id: dd-vault, kind: oval, label: Card vault DB, at: [43, 85], size: [12, 4], tone: amber, in: pci }
+    - { id: dd-step-1, kind: note, label: validate the card number and expiry, at: [26, 90], in: pci }
+    - { id: dd-step-2, kind: note, label: "fingerprint, a keyed hash of the card number", at: [26, 91], in: pci }
+    - { id: dd-step-3, kind: note, label: encrypt the card number with an HSM key, at: [26, 92], in: pci }
+    - { id: dd-step-4, kind: note, label: "the vault keeps the cipher, never the CVV", at: [26, 93], in: pci }
+  arrows:
+    - { id: dd-gateway-backend, from: dd-gateway, to: dd-backend, label: pay }
+    - { id: dd-backend-redis, from: dd-backend, to: dd-redis, label: validate }
+    - { id: dd-backend-tokenize, from: dd-backend, to: dd-tokenize, label: mutual TLS }
+    - { id: dd-tokenize-hsm, from: dd-tokenize, to: dd-hsm }
+    - { id: dd-tokenize-vault, from: dd-tokenize, to: dd-vault }
+beats:
+  - point: "The pay call goes to the checkout backend service, the old processor service renamed; the card was typed into the gateway's page and posted to the gateway, so the merchant never sees it."
+    kind: component
+    weight: core
+    teach:
+      - "Step three of the payment: the buyer clicks pay. Rename the payment processor service to the checkout backend service, because it handles what our checkout page sends."
+      - "Notice what we bought: the card was typed into our page and posted to our back end. At no point can the merchant see it."
+    draw: [dd-backend, dd-gateway-backend]
+    check: At what point does the merchant handle the card number?
+    answer: "Never; it is typed into the gateway's page and posted straight to the checkout backend."
+  - point: "The backend first checks the request against the session in Redis: the session exists, has not expired, the intent is valid, the merchant matches, and the session is still active."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Before anything, is this request genuine? Someone may be trying to cheat. Check against Redis: does the session exist? Has it expired, its TTL run out?"
+      - "Is the payment intent valid, does the merchant match, is the session still active? Only if all match is the pay request real."
+    draw: [dd-check-1, dd-check-2, dd-check-3, dd-backend-redis]
+    check: What does the backend check before it touches the card?
+    answer: "That the session exists and has not expired, the intent is valid, the merchant matches and the session is active, all against Redis."
+  - point: "A valid card still cannot be stored or sent raw; PCI DSS requires it protected, so the backend calls a tokenization service inside a PCI zone, an isolated part of the system, over mutual TLS."
+    kind: component
+    weight: core
+    teach:
+      - "Now the card. We cannot store it as it is, and we cannot send it raw to an outside processor. PCI DSS says encrypt or tokenize it."
+      - "So the backend makes an internal call into a PCI zone, a small isolated part of the system where card data may exist, to a tokenization service. The call is over mutual TLS: HTTPS is already TLS, and mutual means both sides prove who they are."
+    draw: [pci, dd-tokenize, dd-backend-tokenize]
+    check: Why keep tokenization in a separate PCI zone?
+    answer: "So card numbers exist only in a small, isolated, audited part of the system; everything outside handles tokens."
+    misconceptions:
+      - "TLS is more secure than HTTPS -> HTTPS is HTTP over TLS; the gain inside is mutual TLS, where both services prove their identity."
+  - point: "The tokenization service validates the card number, then makes a fingerprint, a keyed hash of the whole card number, so the same card is recognised later without keeping it readable."
+    kind: mechanism
+    weight: core
+    teach:
+      - "First, validate: the card number's length and its Luhn check digit, the expiry."
+      - "Then a fingerprint, to recognise the same card next time. Make it a keyed hash of the whole card number. A hash of the BIN, the last four and the expiry would not do: many cards share those, and the BIN, the first 6 to 8 digits, only names the bank."
+    draw: [dd-step-1, dd-step-2]
+    check: Why make the fingerprint from the whole card number with a secret key?
+    answer: "Many cards share a BIN and last four, so those are not unique; and without a key, hashes of card numbers can be brute-forced."
+    misconceptions:
+      - "A fingerprint of BIN, last four and expiry identifies a card -> many cards share those; use a keyed hash of the full number."
+  - point: "The card number is then encrypted with a key held inside a hardware security module, which never lets the key out, and the ciphertext goes to a card vault; the CVV is never stored."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Then encrypt the card number, the PAN. A key in a file or a cloud store can be copied, so the key lives in an HSM, a hardware security module, which encrypts with it and never lets it out."
+      - "The encrypted number goes into a card vault database inside the zone. The CVV is used for this payment and never stored."
+    draw: [dd-hsm, dd-tokenize-hsm, dd-vault, dd-tokenize-vault, dd-step-3, dd-step-4]
+    check: Why use an HSM instead of a key stored on a server?
+    answer: "A stored key can be stolen and used; an HSM keeps the key inside tamper-resistant hardware and does the encryption itself."
+  - point: "The tokenization service answers with a token that stands for the card; only the PCI zone can turn it back into a card number."
+    kind: flow
+    weight: core
+    teach:
+      - "The answer to the backend is a token. From here on, only the token travels; when a processor needs the card, the PCI zone is what turns it back."
+    draw: [dd-token]
+    check: What leaves the PCI zone?
+    answer: "A token standing for the card, never the card number itself."
+asks:
+  - ids: [dd-check-1, dd-check-2, dd-check-3]
+    beats: [2]
+    question: "The pay request lands on the backend. What would you check before trusting it?"
+    hints:
+      - Think of what we stored in Redis for the session.
+      - "Could it be too late, or the wrong merchant?"
+  - ids: [dd-tokenize]
+    beats: [3]
+    question: "We can't store the card or send it out raw. What would you put in the PCI zone to deal with it?"
+    hints:
+      - Something that swaps the card for a stand-in value.
+      - A service whose only job is that.
+  - ids: [dd-hsm]
+    beats: [5]
+    question: "We encrypt the card number. Where should the encryption key live?"
+    hints:
+      - A key on a disk can be copied.
+      - Is there hardware built to hold keys and never give them out?

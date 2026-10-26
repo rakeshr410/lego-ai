@@ -1,0 +1,801 @@
+# yaml-language-server: $schema=../../../../../lego/content-kit/schema/topic.schema.json
+# provenance: ai-drafted by claude-opus-5-5 on 2026-10-27
+#
+# A whole backend system design interview for a real-time collaborative text editor like Google Docs,
+# run step by step on one whiteboard. The order and the board follow InterviewWithBunny's System
+# Design 10: requirements, core entities, API, a high-level design of two services, then a low-level
+# design that opens the metadata service (a queue and a consumer in front of Cassandra), walks five
+# numbered approaches to concurrent editing (file replacement, locking, edit events over a websocket,
+# operational transformation, CRDTs), and finishes with the editor service's final design and its
+# versioning (snapshots, a version table, a replay job, cursors, two version endpoints).
+# Every latency figure other than the 100 ms target is illustrative.
+# A backend system of lego-ai's own (app/articles/backend): it stands alone and links to no main-site topic.
+catalogVersion: 5
+title: Designing a collaborative text editor, end to end
+shortTitle: Collaborative editor
+summary: "A 45-minute backend design interview for a real-time collaborative editor like Google Docs, step by step on one board: requirements, entities, the API, two services, then five ways to let many people edit one document, from replacing the file to operational transformation and CRDTs, and the final design with its versions."
+group: design
+order: 10
+xp: 280
+difficulty: advanced
+tags: [interview, real-time, websockets, conflict-resolution, versioning, scalability]
+eyebrow: Design
+breadcrumb: [Collaborative editor, Interview walkthrough]
+lede: "You have about forty-five minutes to design an online word processor like Google Docs, where several people type into the same document and each sees the others' changes within a tenth of a second. This walkthrough runs the interview in five steps: requirements with numbers, the entities, the API, a high-level design of two services, then the hard part, keeping every copy of a document the same while everyone edits at once, one approach at a time until operational transformation makes it work."
+reviewStatus: draft
+author: rakeshr410
+provenance: ai-drafted
+sources:
+  - title: "System Design 10: Design Real-time Collaborative Text Editor like Google Docs (InterviewWithBunny, YouTube)"
+    url: https://www.youtube.com/watch?v=-eMtcFqj8vI
+    note: "Order, board, five approaches. Corrected: live editing converges, not strong consistency; SSE; lock types; metadata writes are light; Redis is not durable; CRDT tie-breaks; route by document; cursors transform; version CDN URLs."
+  - title: Operational transformation (Wikipedia)
+    url: https://en.wikipedia.org/wiki/Operational_transformation
+    note: "Transforming concurrent operations against each other so every replica converges; the client-server form used by Google Docs."
+  - title: Conflict-free replicated data type (Wikipedia)
+    url: https://en.wikipedia.org/wiki/Conflict-free_replicated_data_type
+    note: "Replicated data types whose merges commute, so replicas converge without a central server (strong eventual consistency)."
+  - title: "RFC 6455, The WebSocket Protocol"
+    url: https://www.rfc-editor.org/rfc/rfc6455
+    note: "A full-duplex connection that starts as an HTTP request and is upgraded."
+  - title: Using server-sent events (MDN)
+    url: https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events/Using_server-sent_events
+    note: "One-way server-to-browser pushes over HTTP, the push channel of the first approach."
+  - title: Apache Kafka documentation
+    url: https://kafka.apache.org/documentation/
+    note: "A durable, partitioned log that producers append to and consumers read at their own pace."
+tutorBrief: >-
+  Interview walkthrough for a real-time collaborative text editor like Google Docs. 45 minutes:
+  requirements within the first 10 to 15, entities, API, high-level design, then a long low-level
+  design. Board top to bottom: title and one line (an online word processor to create and format
+  documents and work with others in near real time); 1 functional requirements (left) and
+  non-functional (right); 2 core entities; 3 API; 4 high-level design; 5 low-level design.
+  Functional: create, update and delete documents; several users edit one document at once; each
+  sees the others' changes in near real time; each sees the others' cursors and who is present;
+  versions of a document. Non-functional: millions of users and billions of documents; availability
+  over consistency for a document edited alone (eventual is fine); edits reach collaborators within
+  about 100 ms. Correction: live co-editing does not need strong consistency either; every client
+  applies its own edit at once and all copies converge (OT, CRDT), which is what keeps the 100 ms.
+  Entities: user (editor), document, edit, cursor. API: POST /v1/api/docs/create returns a documentId;
+  GET /v1/api/docs/{docId} opens it read-only; WS /v1/api/docs/{docId} edits it over a websocket
+  (an HTTP request upgraded to a two-way connection); later GET /v1/api/docs/{docId}/versions lists
+  versions and GET /v1/api/docs/{docId}/{versionId} opens one. High-level design: clients, a load
+  balancer and API gateway (authentication and authorization, rate limiting, routing), a document
+  metadata service writing a database, a document editor service on the websocket, and blob storage
+  (S3) for the content, because a document can be thousands of lines. Low-level design: the metadata
+  service puts metadata changes on Kafka and a metadata consumer writes Cassandra (Postgres or MySQL
+  would also do; metadata writes are light, so the queue is optional); the document table holds id,
+  docId, title, blob URL, createdBy, createdTime, lastModifiedTime, lastModifiedBy. Five approaches:
+  (1) file replacement: send the whole file on every change over HTTP and push it to the others
+  with server-sent events; heavy payloads and a flood of requests. (2) locking: one writer at a time;
+  pessimistic (take the lock first, as checking a file out) or optimistic (write, detect the conflict
+  at commit, as a rejected git push); not simultaneous. (3) edit events over a websocket: send only
+  the change (user A inserts r at position 29) over one two-way connection; but applying the other
+  side's raw index diverges: document BC, user A inserts A at 0 (ABC), user B inserts D at 2 (BCD);
+  user A applies D at 2 and gets ABDC, user B applies A at 0 and gets ABCD. (4) operational
+  transformation: transform the incoming operation against the concurrent one: D at 2 becomes D at 3
+  because A was inserted before it, both get ABCD. Limits: in the client-server form every operation
+  on a document goes through one server that orders and transforms it, and it is hard to implement.
+  Google Docs uses OT. (5) CRDT: give every character a position that never changes, B at 0.5 and C
+  at 0.75; A goes in at 0.25 and D at 0.875; sorting by position gives ABCD everywhere, with no
+  central server; concurrent inserts at one spot need a tie-break by site id, and the per-character
+  metadata and tombstones cost memory. Final design: a separate websocket load balancer and gateway;
+  OT runs in the client and in the editor service; a websocket registry and consistent hashing on the
+  document id put every editor of a document on the same editor server; each edit event is appended to
+  Kafka and an operation consumer writes the operations database (documentId, timestamp, event, data);
+  the server applies OT to the canonical copy in a Redis cluster (in memory, with a TTL once nobody
+  edits; not the durable copy). Snapshots go to S3 on a manual save or an autosave every 10 to 20
+  seconds; each snapshot sends an event through Kafka so the metadata consumer updates the document's
+  URL and the version table (id, docId, versionId, createdBy, modifiedTime, url). A new collaborator
+  gets the canonical copy and its revision, then the operations after it. A CDN serves read-only
+  opens, keyed by version URL. At the end of a session a reconciliation (replay) service takes the
+  last full version (10), replays the session's operations, writes the next version (10.1) to S3,
+  deletes the minor versions (10.0.0, 10.0.1 ... 10.0.100) and the operations, and tells the
+  metadata consumer through Kafka. Cursors travel over the websocket, are transformed like edits, and
+  are kept in Redis with a TTL so a reconnecting user finds them.
+components:
+  - key: client
+    name: Client
+    tone: sand
+    kind: client
+    summary: A browser tab with the document open, running its own copy of the transformation logic.
+    owns: [its local copy of the document, its pending edits]
+    talksTo: [api-gateway, ws-gateway]
+  - key: api-gateway
+    name: Load balancer and API gateway
+    tone: blue
+    kind: gateway
+    summary: "Takes the HTTP calls: authenticates and authorizes them, rate-limits them and routes each path to its service."
+    owns: [routing rules, rate limits]
+    talksTo: [metadata-service]
+  - key: ws-gateway
+    name: Websocket load balancer and gateway
+    tone: blue
+    kind: gateway
+    summary: Holds the long-lived websocket connections and sends every editor of one document to the same editor server.
+    owns: [the websocket registry, document to server]
+    talksTo: [editor-service]
+  - key: metadata-service
+    name: Document metadata service
+    tone: green
+    kind: service
+    summary: Creates documents and changes their metadata (title, owner, times, the URL of the latest version); serves read-only opens.
+    owns: [nothing durable]
+    talksTo: [metadata-queue, blob-store]
+  - key: metadata-queue
+    name: Kafka, metadata events
+    tone: orange
+    kind: queue
+    summary: Metadata changes and new-version events, read by the metadata consumer.
+    owns: [metadata events]
+    talksTo: [metadata-consumer]
+  - key: metadata-consumer
+    name: Metadata consumer
+    tone: gray
+    kind: worker
+    summary: Reads metadata and version events and writes the document and version tables.
+    owns: [nothing]
+    talksTo: [metadata-db]
+  - key: metadata-db
+    name: Metadata database
+    tone: yellow
+    kind: datastore
+    summary: "Cassandra: the document table and the version table."
+    owns: [document, version]
+    talksTo: []
+  - key: blob-store
+    name: Blob storage (S3)
+    tone: yellow
+    kind: datastore
+    summary: The document's content, one file per version snapshot.
+    owns: [document snapshots]
+    talksTo: []
+  - key: cdn
+    name: CDN
+    tone: green
+    kind: cache
+    summary: Serves read-only opens of a version's file from the edge.
+    owns: [cached snapshots, keyed by version]
+    talksTo: [blob-store]
+  - key: editor-service
+    name: Document editor service
+    tone: green
+    kind: service
+    summary: "The heart of the system: receives edit events, orders and transforms them, applies them to the canonical copy, sends them to the other editors, logs them and snapshots the document."
+    owns: [the order of operations for its documents]
+    talksTo: [canonical-cache, ops-queue, blob-store, metadata-queue]
+  - key: canonical-cache
+    name: Redis cluster, canonical copy
+    tone: orange
+    kind: cache
+    summary: The live, in-memory copy of each document being edited, and every editor's cursor, each with a TTL.
+    owns: [canonical copies, cursors]
+    talksTo: []
+  - key: ops-queue
+    name: Kafka, edit operations
+    tone: orange
+    kind: queue
+    summary: Every edit event, appended durably before it is written to the operations database.
+    owns: [edit operations]
+    talksTo: [ops-consumer]
+  - key: ops-consumer
+    name: Operation consumer
+    tone: gray
+    kind: worker
+    summary: Reads edit operations from Kafka and writes them to the operations database.
+    owns: [nothing]
+    talksTo: [ops-db]
+  - key: ops-db
+    name: Operations database
+    tone: yellow
+    kind: datastore
+    summary: "Every operation of an editing session: documentId, timestamp, event, data."
+    owns: [operations]
+    talksTo: []
+  - key: reconciliation
+    name: Reconciliation service
+    tone: gray
+    kind: worker
+    summary: At the end of a session, replays its operations on the last full version, writes the next version and deletes the minor versions and the operations.
+    owns: [nothing]
+    talksTo: [ops-db, blob-store, metadata-queue]
+content:
+  # ────────────────────────────────────────────────────────────────── Problem statement
+  - __component: sd.section
+    key: problem-statement
+    title: Understanding the problem.
+    railLabel: Problem
+    intro: "The prompt: design a real-time text editor like Google Docs. Most people have used one, so say what it is in a sentence, agree it with the interviewer, and move to the requirements."
+  - __component: sd.rich-text
+    key: problem-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Google Docs is an online word processor: it lets you create and format documents and work on them with other people in near real time. Two people can have one document open, both type, and each sees the other's letters appear a moment later, with a coloured cursor showing where the other one is."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Run the interview in five steps and number each on the board as you reach it: functional and non-functional requirements, core entities, the API, a high-level design, and a low-level design. Creating and storing documents is ordinary; the interview is decided by the low-level design of simultaneous editing, where several copies of one document change at once and must end up identical."
+  - __component: sd.quiz
+    key: problem-quiz
+    title: Quick check
+    questions:
+      - question: Which part of a Google Docs design decides the interview?
+        optionA: Choosing the database for document titles
+        optionB: Keeping every open copy of a document identical while several people edit it at once
+        optionC: The login page
+        optionD: The colour of the cursors
+        answer: B
+        explanation: Storing documents is routine. Concurrent edits to one document, merged so that every copy converges, are the hard part.
+  # ────────────────────────────────────────────────────────────────── 1. Requirements
+  - __component: sd.section
+    key: requirements
+    title: Requirements.
+    railLabel: Requirements
+    intro: "Five functional lines on the left, three non-functional ones on the right. The requirements here are short, so keep this step well inside ten to fifteen minutes."
+  - __component: sd.subsection
+    key: functional-sub
+    title: Functional requirements
+    railLabel: Functional
+  - __component: sd.checklist
+    key: functional
+    idPrefix: FR-
+    items:
+      - text: Users can create, update and delete documents.
+      - text: Several users can edit the same document at the same time, or one user alone.
+      - text: Each user sees the other users' changes in near real time.
+      - text: Each user sees the other users' cursor positions and who is present.
+        note: Presence means who has the document open right now.
+      - text: Documents keep versions, so an earlier one can be opened.
+  - __component: sd.subsection
+    key: non-functional-sub
+    title: Non-functional requirements
+    railLabel: Non-functional
+  - __component: sd.requirement-table
+    key: non-functional
+    rows:
+      - area: Scale
+        requirement: A consumer product on the scale of Google Docs.
+        targets: [millions of users, billions of documents]
+        note: Ask for the numbers first; they decide everything after.
+      - area: Availability
+        requirement: "A document edited by one person stays available; a short delay before others see a save is fine."
+        targets: [availability over consistency, eventual consistency]
+      - area: Latency
+        requirement: Edits reach the other collaborators quickly.
+        targets: [about 100 ms]
+        note: Say where it applies, between collaborators editing one document.
+  - __component: sd.rich-text
+    key: cap-choice
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "For a document one person edits, availability wins: if a reader sees the change a second or two late, nothing is lost. It is tempting to say the opposite for a document being edited together, that it must be strongly consistent. It is not, and saying so is a common slip. Waiting for every copy to agree before showing a keystroke would blow the 100 ms budget. Instead each client shows its own edit at once and sends it on, and the system guarantees that all copies converge to the same text once the edits have arrived. That convergence, within about 100 ms, is the requirement; the low-level design is how to keep it."
+  - __component: sd.quiz
+    key: requirements-quiz
+    title: Quick check
+    questions:
+      - question: Which is the better way to write the latency requirement?
+        optionA: Real time
+        optionB: "Edits reach the other collaborators within about 100 ms"
+        optionC: Use websockets
+        optionD: As fast as possible
+        answer: B
+        explanation: A number and where it applies. A websocket is a solution, not a requirement.
+      - question: Two people edit one paragraph at once. What does the system guarantee?
+        optionA: Every keystroke waits until both copies agree
+        optionB: Each sees their own typing at once, and both copies converge to the same text once the edits arrive
+        optionC: Only one of them may type
+        optionD: Nothing; the last save wins
+        answer: B
+        explanation: Strong consistency would cost a round trip per keystroke. Convergence keeps the editor instant and the copies identical.
+  # ────────────────────────────────────────────────────────────────── 2. Entities
+  - __component: sd.section
+    key: entities
+    title: Core entities.
+    railLabel: Entities
+    intro: "Read the functional requirements and name the nouns. Four come out of them; more will appear during the design."
+  - __component: sd.table
+    key: entities-table
+    columns:
+      - { label: Entity, style: strong }
+      - { label: What it is, style: text }
+    rows:
+      - [User, "The editor: who creates, opens and changes documents."]
+      - [Document, "Its metadata (title, owner, times) and its content."]
+      - [Edit, "One change to a document's content, such as inserting a character at a position."]
+      - [Cursor, "Where each editor is in the document, shown to the others."]
+  - __component: sd.quiz
+    key: entities-quiz
+    title: Quick check
+    questions:
+      - question: Why is an edit an entity of its own, and not just part of the document?
+        optionA: It is not; only documents are stored
+        optionB: "Several users change one document at once, so each change is sent, ordered, merged and logged on its own"
+        optionC: For billing
+        optionD: Because edits are large
+        answer: B
+        explanation: The whole low-level design moves edits, not documents. Naming the edit early points there.
+  # ────────────────────────────────────────────────────────────────── 3. API
+  - __component: sd.section
+    key: api
+    title: API.
+    railLabel: API
+    intro: "Endpoints map one to one, or one to many, onto the functional requirements. Two are ordinary REST calls; editing is not a REST call at all."
+  - __component: sd.endpoint
+    key: create-doc
+    method: POST
+    path: /v1/api/docs/create
+    summary: Creates a document and returns its id. Update and delete are the usual CRUD calls beside it.
+    requestHeaders: ["Authorization: Bearer <token>"]
+    requestBody:
+      title: Launch plan
+    responses:
+      - label: Created
+        status: "201"
+        body:
+          documentId: d_8f3k2
+  - __component: sd.endpoint
+    key: view-doc
+    method: GET
+    path: "/v1/api/docs/{docId}"
+    summary: Opens the latest version of a document read-only.
+    responses:
+      - label: Found
+        status: "200"
+        body:
+          documentId: d_8f3k2
+          title: Launch plan
+          contentUrl: "https://cdn.example.com/docs/d_8f3k2/v10.1"
+  - __component: sd.endpoint
+    key: edit-doc
+    method: GET
+    path: "/v1/api/docs/{docId}"
+    summary: "Written WS on the board: the same path opened as a websocket (an HTTP request with Upgrade: websocket), over which edit events and cursors flow both ways."
+    requestHeaders: ["Upgrade: websocket", "Connection: Upgrade"]
+    responses:
+      - label: Switching protocols
+        status: "101"
+        body:
+          then: "edit events both ways, e.g. { op: insert, char: r, pos: 29, rev: 41 }"
+  - __component: sd.table
+    key: requirement-to-endpoint
+    title: Requirements to endpoints
+    columns:
+      - { label: Requirement, style: text }
+      - { label: Endpoint, style: mono-strong }
+    rows:
+      - ["Create, update, delete a document", "POST /v1/api/docs/create (and CRUD)"]
+      - [View a document, "GET /v1/api/docs/{docId}"]
+      - ["Edit together, see changes and cursors", "WS /v1/api/docs/{docId}"]
+      - [Versions, "two GET endpoints, added in the low-level design"]
+  - __component: sd.quiz
+    key: api-quiz
+    title: Quick check
+    questions:
+      - question: Why is editing not a REST endpoint?
+        optionA: REST cannot carry text
+        optionB: "Edits flow both ways many times a second, so one long-lived two-way websocket replaces a request per keystroke and lets the server push others' edits"
+        optionC: Websockets are more secure
+        optionD: Because GET cannot change data
+        answer: B
+        explanation: The server has to push other people's edits as they happen, which a request-response call cannot do.
+  # ────────────────────────────────────────────────────────────────── 4. High-level design
+  - __component: sd.section
+    key: high-level-design
+    title: High-level design.
+    railLabel: High level
+    intro: "At this scale the work is split into services behind one entry point: a gateway, a service for the document's metadata, a service for editing its content, a database and blob storage."
+  - __component: sd.component-diagram
+    key: hld-diagram
+    title: The first design
+    direction: LR
+    nodes:
+      - { key: client, details: [many users] }
+      - { key: api-gateway, details: [authentication and authorization, rate limiting, routing] }
+      - { key: metadata-service, details: [create, change metadata, open] }
+      - { key: editor-service, details: [edits over a websocket] }
+      - { key: metadata-db, details: [title, owner, times] }
+      - { key: blob-store, details: [the document's text] }
+    edges:
+      - { from: client, to: api-gateway }
+      - { from: api-gateway, to: metadata-service, label: HTTP }
+      - { from: api-gateway, to: editor-service, label: websocket }
+      - { from: metadata-service, to: metadata-db, label: metadata }
+      - { from: metadata-service, to: blob-store, label: "create, read" }
+      - { from: editor-service, to: blob-store, label: save }
+  - __component: sd.rich-text
+    key: hld-flows
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Every request first reaches a load balancer and API gateway, which authenticates and authorizes it, rate-limits it and routes it by path. Creating a document goes to the document metadata service: it writes a row with the title, the owner and the times to the database, creates an empty file in blob storage and returns the document id. Opening the document goes through the same service, which reads the file from blob storage."
+      - type: paragraph
+        children:
+          - type: text
+            text: "The content is kept in blob storage (S3), not in the database, because a document can run to thousands of lines and a database row is the wrong place for a large, growing file. Editing goes to a second service, the document editor service, over a websocket, a two-way connection on which edits can travel in both directions at once; when an edit session is saved the file in blob storage is overwritten. The arrow is easy; what happens inside the editor service when two people change the same words is the low-level design."
+  - __component: sd.quiz
+    key: hld-quiz
+    title: Quick check
+    questions:
+      - question: Why does the document's text go to blob storage instead of the metadata database?
+        optionA: Databases cannot store text
+        optionB: "A document can be thousands of lines and keeps growing; blob storage holds large files cheaply, and the database keeps the small metadata row that points to it"
+        optionC: Blob storage is faster for every query
+        optionD: To avoid the gateway
+        answer: B
+        explanation: The row holds the title, owner, times and the file's URL; the file itself lives in S3.
+  # ────────────────────────────────────────────────────────────────── 5. LLD, the metadata service
+  - __component: sd.section
+    key: lld-metadata
+    title: "Low-level design: the metadata service."
+    railLabel: LLD, metadata
+    intro: "Copy the high-level design down the board and open the boxes one by one, starting with the document metadata service."
+  - __component: sd.rich-text
+    key: metadata-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "The video puts a buffer between the metadata service and its database: the service writes each metadata change to a Kafka topic, and a metadata consumer reads the topic and writes the database. A queue absorbs bursts the database could not take directly, and the consumer can retry. Be precise about why: metadata writes are light (a title change, a last-modified time), so the queue is optional here; the truly heavy write stream is the edit operations, which get the same pattern later. Keeping it is still useful, because the same topic will carry the new-version events."
+      - type: paragraph
+        children:
+          - type: text
+            text: "The metadata is a flat record per document, so almost any database works: Postgres or MySQL, or a write-friendly store such as Cassandra, the video's choice. The document table holds an id, the document id, the title, the URL of its file in blob storage, who created it and when, and who modified it last and when."
+  - __component: sd.db-schema
+    key: metadata-tables
+    stores:
+      - key: metadata-store
+        engine: Cassandra (Postgres or MySQL would also do)
+        component: metadata-db
+        why: A flat row per document, read by document id.
+        tables:
+          - name: document
+            columns:
+              - { name: id, type: uuid, role: primary }
+              - { name: doc_id, type: text }
+              - { name: title, type: text }
+              - { name: url, type: text, note: the latest version's file in blob storage }
+              - { name: created_by, type: text }
+              - { name: created_time, type: timestamp }
+              - { name: last_modified_time, type: timestamp }
+              - { name: last_modified_by, type: text }
+  - __component: sd.quiz
+    key: metadata-quiz
+    title: Quick check
+    questions:
+      - question: What does the Kafka topic in front of the metadata database buy?
+        optionA: Strong consistency
+        optionB: "A buffer: the service returns once the change is on the log, and the consumer writes the database at its own pace and retries failures"
+        optionC: Smaller rows
+        optionD: Nothing; it only adds latency
+        answer: B
+        explanation: Metadata writes are light, so it is optional here; the same pattern matters most for the edit operations.
+  # ────────────────────────────────────────────────────────────────── 5. LLD, approach 1: file replacement
+  - __component: sd.section
+    key: lld-file-replacement
+    title: "Low-level design, approach 1: file replacement."
+    railLabel: LLD 1, file
+    intro: "Now the editor service, the heart of the system. Start with the brute-force way to share changes between user A and user B editing one file."
+  - __component: sd.rich-text
+    key: file-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "User A types abc. The client sends the whole file to the editor service in an HTTP request, the service saves it, and pushes a notice of the change to user B over server-sent events (SSE, a one-way push channel from server to browser; the video calls it SSC). User B's client fetches the new file and redraws it."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Two problems sink it. Every change, even one letter, sends the entire file, so a long document makes every request heavy. And every keystroke is a request in and a push and fetch out to every collaborator, millions of round trips across the system. Name it file replacement, write both flaws beside it, and move on."
+  - __component: sd.quiz
+    key: file-quiz
+    title: Quick check
+    questions:
+      - question: What are the two flaws of file replacement?
+        optionA: It loses data and needs a lock
+        optionB: Every change sends the whole file, and every keystroke costs a request plus a push and fetch to each collaborator
+        optionC: It cannot use HTTP
+        optionD: It needs a CDN
+        answer: B
+        explanation: Payload size and request count. The next approaches fix them one at a time.
+  # ────────────────────────────────────────────────────────────────── 5. LLD, approach 2: locking
+  - __component: sd.section
+    key: lld-locking
+    title: "Low-level design, approach 2: a locking protocol."
+    railLabel: LLD 2, locking
+    intro: "If two writers are the problem, allow one at a time: lock the document for user A, and let user B in when user A lets go."
+  - __component: sd.rich-text
+    key: locking-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Locking comes in two kinds. Pessimistic locking takes the lock before writing, so nobody else can change the document until it is released, like checking a file out or a seat held during a ticket booking. Optimistic locking takes no lock: each writer works on a copy and the conflict is detected when they try to commit, from a version number, like a git push that is rejected because someone else pushed first and must be merged by hand. (The video gives banking and its ACID transactions as the pessimistic example; ACID is a property of transactions, not a kind of lock, though banks do lock rows pessimistically.)"
+      - type: paragraph
+        children:
+          - type: text
+            text: "Either way it fails the requirement: with a pessimistic lock only one person edits at a time, and with an optimistic one people edit at once but their conflicts surface late and are resolved by hand. Neither is simultaneous collaborative editing."
+  - __component: sd.quiz
+    key: locking-quiz
+    title: Quick check
+    questions:
+      - question: Why does locking not meet the requirements?
+        optionA: Locks are slow to take
+        optionB: "A pessimistic lock lets one person edit at a time, and an optimistic one leaves conflicts to be merged by hand; neither is simultaneous editing"
+        optionC: Locks need a database
+        optionD: It does meet them
+        answer: B
+        explanation: The requirement is several users typing at once and seeing each other in near real time.
+  # ────────────────────────────────────────────────────────────────── 5. LLD, approach 3: events over a websocket
+  - __component: sd.section
+    key: lld-events
+    title: "Low-level design, approach 3: edit events over a websocket."
+    railLabel: LLD 3, events
+    intro: "Fix file replacement's two flaws directly: send only the change, and send it over one open connection."
+  - __component: sd.rich-text
+    key: events-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "User A types an r at position 29. Instead of the file, the client sends one small event: user A inserts r at position 29. That fixes the payload. Then replace the request per keystroke with a websocket: one persistent, two-way connection per editor, on which user A's events go up and the server pushes them down to user B. That fixes the request count."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Sending is now right, but applying is not. The document is BC. User A inserts A at position 0 and sees ABC. At the same moment user B inserts D at position 2 and sees BCD. Each client then applies the other's event as it was sent: user A applies insert D at 2 to ABC and gets ABDC; user B applies insert A at 0 to BCD and gets ABCD. Both did what they were told, and the two copies now differ. The index in user B's event was relative to BC, not to the ABC that user A already has. Reconciliation is the problem; the next two approaches are the two known solutions."
+  - __component: sd.quiz
+    key: events-quiz
+    title: Quick check
+    questions:
+      - question: User A inserts A at 0 and user B inserts D at 2 into BC at once. Each applies the other's event as sent. What do they see?
+        optionA: Both see ABCD
+        optionB: "User A sees ABDC and user B sees ABCD: the copies diverge"
+        optionC: Both see ABDC
+        optionD: The server rejects one edit
+        answer: B
+        explanation: User B's position 2 was counted in BC; in user A's ABC it points one character too early.
+  # ────────────────────────────────────────────────────────────────── 5. LLD, approach 4: OT
+  - __component: sd.section
+    key: lld-ot
+    title: "Low-level design, approach 4: operational transformation."
+    railLabel: LLD 4, OT
+    intro: "Operational transformation, OT, adjusts each incoming operation for the concurrent operations it did not know about before applying it."
+  - __component: sd.rich-text
+    key: ot-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "OT transforms concurrent operations when they are merged: a transformation function shifts an operation's effect to account for the changes another operation already made. Take the same example. User B's insert D at 2 reaches user A, whose copy already has an A inserted at 0, before position 2. So OT transforms it into insert D at 3, and user A gets ABCD. User A's insert A at 0 reaches user B unchanged, since nothing was inserted before position 0, and user B also gets ABCD. Both copies converge."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Two limits. In the client-server form that Google Docs uses, every operation on a document goes through one server, which puts the operations in one order and transforms them; so all editors of one document must reach the same server. And OT is hard to implement correctly: every pair of operation types needs a transformation, and the edge cases are subtle. Google Docs uses OT, so the rest of this design does too."
+  - __component: sd.quiz
+    key: ot-quiz
+    title: Quick check
+    questions:
+      - question: User B's insert D at 2 reaches user A, who has already inserted A at 0. What does OT apply?
+        optionA: Insert D at 2
+        optionB: "Insert D at 3, because one character was inserted before position 2"
+        optionC: Insert D at 0
+        optionD: It drops the operation
+        answer: B
+        explanation: The transformation shifts the position past the concurrent insert, so both copies read ABCD.
+      - question: What does client-server OT require of the backend?
+        optionA: A CDN
+        optionB: Every operation on one document goes through the same server, which orders and transforms them
+        optionC: One database per user
+        optionD: Nothing special
+        answer: B
+        explanation: That is why the final design routes every editor of a document to one editor server.
+  # ────────────────────────────────────────────────────────────────── 5. LLD, approach 5: CRDT
+  - __component: sd.section
+    key: lld-crdt
+    title: "Low-level design, approach 5: CRDTs."
+    railLabel: LLD 5, CRDT
+    intro: "A conflict-free replicated data type, CRDT, avoids transforming anything: it is a data structure whose edits can be merged in any order and still give the same result."
+  - __component: sd.rich-text
+    key: crdt-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Give every character a position that never changes, instead of an index that shifts. In BC, B sits at 0.5 and C at 0.75. User A inserts A before B, at a position below 0.5, say 0.25. User B inserts D after C, at a position above 0.75, say 0.875. Each client simply sorts characters by position, so both get A at 0.25, B at 0.5, C at 0.75, D at 0.875: ABCD, whatever order the inserts arrive in, with no central server needed."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Two details the video skips. If two users insert at the same spot at the same moment they can pick the same number, so real CRDTs make each position unique with a tie-break, such as the inserting site's id. And CRDTs are not free: every character carries its position and deleted characters are kept as tombstones, so memory grows. OT needs a central server; CRDTs need more metadata. Google Docs uses OT, so we continue with OT."
+  - __component: sd.quiz
+    key: crdt-quiz
+    title: Quick check
+    questions:
+      - question: How does a CRDT make both copies read ABCD?
+        optionA: A server transforms each operation
+        optionB: "Every character has a fixed position (A 0.25, B 0.5, C 0.75, D 0.875), and each copy sorts by it, in any arrival order"
+        optionC: It locks the document
+        optionD: The last writer wins
+        answer: B
+        explanation: Merges commute, so replicas converge without a central ordering server.
+      - question: Two users insert at the same spot at once and pick the same position. What keeps the order deterministic?
+        optionA: Nothing; it cannot happen
+        optionB: A tie-break that makes every position unique, such as the inserting site's id
+        optionC: The CDN
+        optionD: A lock
+        answer: B
+        explanation: Positions alone can collide; adding a site id gives every copy the same order.
+  # ────────────────────────────────────────────────────────────────── 5. LLD, the editor service
+  - __component: sd.section
+    key: lld-editor
+    title: "Low-level design: the editor service, with OT, and its versions."
+    railLabel: LLD, editor
+    intro: "Back to the board's design, now grown to run OT: a gateway for the websockets, OT at both ends, one server per document, a log of every operation and the live copy in memory; then snapshots, versions, a replay job, cursors and two more endpoints finish the requirements."
+  - __component: sd.rich-text
+    key: editor-gateway-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "The system is websocket-heavy, so give websockets their own load balancer and gateway. Modern load balancers can carry both, but a dedicated one keeps the long-lived connections apart from the short HTTP calls. Every HTTP call goes through the API gateway; every websocket through the websocket gateway, and the editor service now talks only to it. OT runs in two places: in each client, so a user sees their own typing at once and others' edits transformed on arrival, and in the editor service, which orders and transforms every operation for the document."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Opening a document is a normal HTTP call: the metadata service returns the file from S3, read-only. If the user may write, the client opens a websocket: an HTTP request upgraded to a two-way connection. A websocket registry records which editor server holds which document, and consistent hashing on the document id sends every editor of one document to the same server, which is what client-server OT needs. (The video speaks of finding the user's server; it is the document that must decide the server.)"
+      - type: paragraph
+        children:
+          - type: text
+            text: "On each edit event the editor service does two things. It appends the event to a Kafka topic for durability, and an operation consumer writes it to the operations database, one row per operation: document id, timestamp, event, data. And it applies the operation, transformed, to the canonical copy of the document held in memory in a Redis cluster, then sends it on to the other editors. The canonical copy is fast, temporary state with a TTL once nobody edits; it is not the durable copy (the video calls it persistent): what makes an edit durable is the operation log and, later, the snapshot in S3."
+  - __component: sd.component-diagram
+    key: editor-diagram
+    title: The editor service with OT
+    direction: LR
+    nodes:
+      - { key: client, details: [OT in the browser] }
+      - { key: ws-gateway, details: [registry, hash on document id] }
+      - { key: editor-service, details: [orders and transforms operations] }
+      - { key: canonical-cache, details: [canonical copy, TTL] }
+      - { key: ops-queue }
+      - { key: ops-consumer }
+      - { key: ops-db, details: ["documentId, timestamp, event, data"] }
+    edges:
+      - { from: client, to: ws-gateway, label: websocket }
+      - { from: ws-gateway, to: editor-service, label: same server per document }
+      - { from: editor-service, to: canonical-cache, label: apply }
+      - { from: editor-service, to: ops-queue, label: append }
+      - { from: ops-queue, to: ops-consumer }
+      - { from: ops-consumer, to: ops-db, label: write }
+  # ────────────────────────────────────────────────────────────────── (editor, continued) snapshots, versions, cursors
+  - __component: sd.subsection
+    key: versions-sub
+    title: "Snapshots, versions and cursors"
+  - __component: sd.rich-text
+    key: snapshot-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Walk the flow. User A edits alone: the editor service loads the file from S3 into the canonical copy and applies every edit to it. Then user B opens the document, but S3 still holds the empty file, because user A's changes live only in Redis. So the editor service writes snapshots: on a manual save, or by autosave every 10 to 20 seconds, it writes the canonical copy to S3 as a new minor version (10.0.0, then 10.0.1 and so on). When user B starts editing, the service hands over the canonical copy itself, with its revision number, and then streams the operations after it, so both users are on the same text and OT runs at both ends."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Each snapshot also puts an event on the metadata Kafka topic, so the metadata consumer updates the document's URL to the newest file, and adds a row to a version table: id, document id, version id, who created it, when, and the file's URL. The canonical copy gets a TTL, so a document nobody edits leaves Redis. A CDN in front of S3 serves read-only opens; key it by the version's URL and sign it, since documents are private and change constantly, so the edge never serves a stale latest copy."
+  - __component: sd.db-schema
+    key: version-tables
+    stores:
+      - key: version-store
+        engine: Cassandra, beside the document table
+        component: metadata-db
+        why: One row per saved version, listed by document id.
+        tables:
+          - name: version
+            columns:
+              - { name: id, type: uuid, role: primary }
+              - { name: doc_id, type: text }
+              - { name: version_id, type: text, note: "10, 10.0.1, 10.1" }
+              - { name: created_by, type: text }
+              - { name: modified_time, type: timestamp }
+              - { name: url, type: text }
+      - key: ops-store
+        engine: A write-heavy store fed by the operation consumer
+        component: ops-db
+        why: Every operation of a session, replayed at its end.
+        tables:
+          - name: operations
+            columns:
+              - { name: document_id, type: text, role: primary }
+              - { name: timestamp, type: timestamp }
+              - { name: event, type: text }
+              - { name: data, type: text }
+  - __component: sd.rich-text
+    key: reconcile-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Minor versions every 10 to 20 seconds would fill S3. So when a session ends and nobody is editing, a reconciliation service runs. It takes the last full version from S3, version 10, replays every operation of the session from the operations database onto it, and writes the result as the next version, 10.1. Then it deletes the session's minor versions, 10.0.0 to 10.0.100, and its operations, and sends an event through Kafka so the metadata consumer points the document at 10.1."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Cursors, the last requirement: each client sends its cursor position over the websocket, the editor service passes it to the others, and keeps it in Redis with a TTL so a user who reconnects finds their place. A cursor is a position in the text, so it is transformed by OT like an edit, or it would drift when someone types before it. Last, two endpoints the API left out: GET /v1/api/docs/{docId}/versions lists a document's versions, and GET /v1/api/docs/{docId}/{versionId} opens one; the plain GET still opens the latest."
+  - __component: sd.component-diagram
+    key: final-diagram
+    title: The final design
+    direction: LR
+    nodes:
+      - { key: client, details: [OT in the browser] }
+      - { key: cdn, details: [read-only opens] }
+      - { key: api-gateway }
+      - { key: ws-gateway }
+      - { key: metadata-service }
+      - { key: metadata-queue }
+      - { key: metadata-consumer }
+      - { key: metadata-db, details: [document, version] }
+      - { key: blob-store, details: [snapshots] }
+      - { key: editor-service, details: [OT, snapshot on save or every 10 to 20 s] }
+      - { key: canonical-cache, details: [canonical copy, cursors, TTL] }
+      - { key: ops-queue }
+      - { key: ops-consumer }
+      - { key: ops-db }
+      - { key: reconciliation, details: [replay at the end of a session] }
+    edges:
+      - { from: client, to: cdn, label: read-only }
+      - { from: cdn, to: blob-store }
+      - { from: client, to: api-gateway, label: HTTP }
+      - { from: client, to: ws-gateway, label: websocket }
+      - { from: api-gateway, to: metadata-service }
+      - { from: metadata-service, to: metadata-queue }
+      - { from: metadata-queue, to: metadata-consumer }
+      - { from: metadata-consumer, to: metadata-db }
+      - { from: ws-gateway, to: editor-service }
+      - { from: editor-service, to: canonical-cache }
+      - { from: editor-service, to: blob-store, label: snapshot }
+      - { from: editor-service, to: metadata-queue, label: new version }
+      - { from: editor-service, to: ops-queue }
+      - { from: ops-queue, to: ops-consumer }
+      - { from: ops-consumer, to: ops-db }
+      - { from: reconciliation, to: ops-db, label: read operations }
+      - { from: reconciliation, to: blob-store, label: next version }
+      - { from: reconciliation, to: metadata-queue, label: final version }
+  - __component: sd.quiz
+    key: editor-quiz
+    title: Quick check
+    questions:
+      - question: How do all editors of one document reach the same editor server?
+        optionA: Round robin
+        optionB: "A websocket registry and consistent hashing on the document id"
+        optionC: Each user picks one
+        optionD: Through the CDN
+        answer: B
+        explanation: Client-server OT needs one server to order a document's operations, so the document id decides the server.
+      - question: The Redis node holding a document's canonical copy restarts. What keeps the edits?
+        optionA: Redis, because it is persistent
+        optionB: The operation log in Kafka and the operations database, plus the last snapshot in S3, from which the copy is rebuilt
+        optionC: The clients' memory only
+        optionD: Nothing
+        answer: B
+        explanation: The canonical copy is working state in memory; durability comes from the log and the snapshots.
+      - question: User B opens a document user A has been editing for a minute without saving. How does user B get the current text?
+        optionA: From S3, which is always current
+        optionB: "From the editor service: the canonical copy and its revision, then the operations after it; autosave also snapshots to S3 every 10 to 20 seconds"
+        optionC: From the CDN
+        optionD: User B must wait for user A to save
+        answer: B
+        explanation: The latest text lives in the canonical copy; S3 lags by up to one autosave.
+      - question: What does the reconciliation service do at the end of a session?
+        optionA: Deletes the document
+        optionB: "Replays the session's operations on the last full version, writes the next version (10 to 10.1), and deletes the minor versions and the operations"
+        optionC: Rebuilds the CDN
+        optionD: Restarts Redis
+        answer: B
+        explanation: It turns many minor snapshots into one version and frees the space.
+      - question: Why must a cursor position be transformed like an edit?
+        optionA: It need not be
+        optionB: "It is an index into the text; when someone inserts before it, it must shift or it points at the wrong place"
+        optionC: For the CDN
+        optionD: To save memory
+        answer: B
+        explanation: Cursors are positions, so concurrent inserts and deletes move them just as they move other operations.

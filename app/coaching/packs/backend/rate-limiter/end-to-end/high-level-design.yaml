@@ -1,0 +1,177 @@
+# Rate limiter interview, high-level design: "4. High level designing" under the requirements, as the video draws it. First any service's picture, clients, a tall load balancer and API gateway, backend services, with the three places the limiter could go noted beside it; then, under it, the redrawn picture: the gateway's copies holding a load balancer and the rate limiter inside the gateway, backend services, Redis under the gateway, the policy service and its Postgres database, the flow and the rule table as notes.
+id: backend/rate-limiter/end-to-end/high-level-design
+title: Where the limiter sits, and its shared state
+source:
+  hash: "2c0913636468"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/rate-limiter/end-to-end/api
+  assumes:
+    - "Functional: limit per client, rules configurable at runtime, 429, bursts, tiers. Non-functional: 1M rps, availability over consistency, under 5 ms."
+    - "The admin API creates and reads rules; a blocked client gets 429."
+  carries:
+    - "The limiter sits in the API gateway: not on the client (tamperable), not per service replica (each counts alone)."
+    - "Flow: load balancer, gateway auth check, limit check, then the backend or 429."
+    - "Counters live in one shared Redis, updated atomically, because the gateway is replicated."
+    - "A policy service saves rules to PostgreSQL, then writes them to Redis (write-through), so rules are eventually consistent."
+  terms:
+    - term: API gateway
+      means: The entry point that authenticates requests and routes each to the right backend service.
+    - term: write-through
+      means: "Writing a change to the database and then to the cache, so the cache holds what the database holds."
+    - term: replica
+      means: One of many identical copies of a service, run to carry more traffic.
+board:
+  keep: [title, prompt-desc, prompt-example, fr, fr-limit, fr-config, fr-429, fr-burst, fr-tier, nfr, nfr-scale, nfr-cap, nfr-latency]
+  elements:
+    - { id: hld, kind: region, label: 4. High level design, at: [4, 24], size: [70, 47] }
+    - { id: c1, kind: box, label: client 1, at: [5, 27], size: [7, 3], in: hld }
+    - { id: c2, kind: box, label: client 2, at: [5, 32], size: [7, 3], in: hld }
+    - { id: c3, kind: box, label: client 3, at: [5, 37], size: [7, 3], in: hld }
+    - { id: lbgw, kind: box, label: Load balancer and API gateway, at: [16, 27], size: [10, 13], in: hld }
+    - { id: svc-image, kind: box, label: "image service, 10 per minute", at: [31, 27], size: [13, 3], in: hld, tone: blue }
+    - { id: svc-text, kind: box, label: "text service, 100 per minute", at: [31, 32], size: [13, 3], in: hld, tone: blue }
+    - { id: svc-other, kind: box, label: Backend service, at: [31, 37], size: [13, 3], in: hld, tone: blue }
+    - { id: opt-client, kind: note, label: "1. on the client, a cookie counter, easy to fake", at: [47, 27], in: hld }
+    - { id: opt-service, kind: note, label: "2. in each service, every replica counts alone", at: [47, 29], in: hld }
+    - { id: opt-gateway, kind: note, label: "3. in the API gateway, where every request passes", at: [47, 31], in: hld }
+    - { id: places, kind: note, label: "also a reverse proxy, a sidecar, its own service", at: [47, 33], in: hld }
+    - { id: tier, kind: region, label: Gateway copies, at: [15, 44], size: [12, 17], dashed: true, in: hld }
+    - { id: g-clients, kind: box, label: clients, at: [5, 46], size: [7, 10], in: hld }
+    - { id: g-lb, kind: box, label: Load balancer, at: [16, 46], size: [10, 3], in: tier }
+    - { id: g-rl, kind: box, label: Rate limiter in the API gateway, at: [16, 52], size: [10, 8], in: tier, tone: green }
+    - { id: g-backends, kind: box, label: Backend services, at: [33, 46], size: [12, 9], in: hld, tone: blue }
+    - { id: flow-1, kind: note, label: "flow: auth check, then the limit check", at: [47, 46], in: hld }
+    - { id: flow-2, kind: note, label: "allowed goes on, rejected gets 429", at: [47, 47], in: hld }
+    - { id: g-redis, kind: oval, label: Redis, at: [16, 66], size: [10, 3], in: hld, tone: amber }
+    - { id: redis-why, kind: note, label: "one Redis, so every gateway copy agrees", at: [47, 50], in: hld }
+    - { id: redis-atomic, kind: note, label: "each check and count is one atomic step", at: [47, 51], in: hld }
+    - { id: g-policy, kind: box, label: Rate limiter policy service, at: [33, 57], size: [12, 4], in: hld, tone: grey }
+    - { id: g-policydb, kind: oval, label: "Policy DB, Postgres", at: [33, 66], size: [12, 3], in: hld, tone: amber }
+    - { id: eventual, kind: note, label: "rules reach Redis a moment later", at: [47, 53], in: hld }
+    - { id: schema-1, kind: note, label: "rate_limit_rules: rule_id,", at: [47, 57], in: hld }
+    - { id: schema-2, kind: note, label: "subject_type, subject_value,", at: [49, 58], in: hld }
+    - { id: schema-3, kind: note, label: "endpoint, algorithm,", at: [49, 59], in: hld }
+    - { id: schema-4, kind: note, label: "request_limit, window_sec,", at: [49, 60], in: hld }
+    - { id: schema-5, kind: note, label: "burst_capacity, refill_rate,", at: [49, 61], in: hld }
+    - { id: schema-6, kind: note, label: "enforce_by, is_active }", at: [49, 62], in: hld }
+  arrows:
+    - { id: c1-lbgw, from: c1, to: lbgw }
+    - { id: c2-lbgw, from: c2, to: lbgw }
+    - { id: c3-lbgw, from: c3, to: lbgw }
+    - { id: lbgw-image, from: lbgw, to: svc-image }
+    - { id: lbgw-text, from: lbgw, to: svc-text }
+    - { id: lbgw-other, from: lbgw, to: svc-other }
+    - { id: g-clients-lb, from: g-clients, to: g-lb }
+    - { id: g-lb-rl, from: g-lb, to: g-rl }
+    - { id: g-rl-backends, from: g-rl, to: g-backends, label: if allowed }
+    - { id: g-rl-redis, from: g-rl, to: g-redis, label: counters }
+    - { id: g-rl-policy, from: g-rl, to: g-policy, label: admin }
+    - { id: g-policy-db, from: g-policy, to: g-policydb, label: save }
+    - { id: g-policy-redis, from: g-policy, to: g-redis, label: write-through }
+beats:
+  - point: "Start from any service's picture: clients, a load balancer and API gateway that route each request, and backend services such as an image service at 10 a minute and a text service at 100 a minute."
+    kind: component
+    weight: core
+    teach:
+      - "Step four. Before placing the limiter, draw where it lives: clients on the left, then the load balancer and API gateway, then the backend services."
+      - "The gateway routes each request by its path to the right service; the load balancer spreads it across that service's copies. Here an image service allows 10 images a minute, and a text service 100 conversations a minute."
+    draw: [hld, c1, c2, c3, lbgw, c1-lbgw, c2-lbgw, c3-lbgw, svc-image, lbgw-image, svc-text, lbgw-text, svc-other, lbgw-other]
+    check: What does the gateway do with a request, and what does the load balancer do?
+    answer: "The gateway routes it by its path to the right backend service; the load balancer spreads requests across that service's copies."
+  - point: "The limiter could sit on the client, counting clicks in a cookie or local storage, but the user can clear or edit that, so it is never a real control."
+    kind: failure
+    weight: core
+    teach:
+      - "First place to try: where the request starts, the button on the client. Count clicks in a cookie or local storage and disable the button after 10 a minute."
+      - "But anything on the client belongs to the user: clear the cookie and the count is gone. A courtesy, not enforcement."
+    draw: [opt-client]
+    check: Why can't the client be trusted to enforce its own limit?
+    answer: "Its counter lives in a cookie or local storage the user can clear or change."
+  - point: "Inside each backend service fits per-service limits, but each service runs many replicas, and each replica's counter sees only its own share of a client's requests."
+    kind: failure
+    weight: core
+    teach:
+      - "Second place: inside each service, so the image service enforces 10 a minute and the text service 100."
+      - "At a million requests a service runs thousands of replicas. My first image request lands on replica one, my second on replica two: each counts 1. A shared counter could fix it, but there is a better place."
+    draw: [opt-service]
+    check: Two requests from one user land on two replicas of the image service. What does each replica's counter say?
+    answer: "Each says 1, because neither sees the other's count; the limit is never added up."
+  - point: "The usual place is the API gateway, as a plugin, middleware or filter, the one point every request passes; a reverse proxy, sidecar or dedicated service also work."
+    kind: decision
+    weight: core
+    teach:
+      - "Third place: where every request first arrives, the gateway. The limiter is a plugin or middleware inside it, and the gateway is the enforcement point."
+      - "Other places exist, a reverse proxy, a sidecar, a dedicated rate limiter service, a layer before the database. Now redraw it below: the gateway has copies, each holding a load balancer in front and the rate limiter inside the gateway."
+    draw: [opt-gateway, places, tier, g-clients, g-lb, g-clients-lb, g-rl, g-lb-rl]
+    check: Why is the gateway the most common place to enforce limits?
+    answer: "Every request passes through it before any backend, so one check covers all services, and the client cannot bypass it."
+  - point: "The flow: the request passes the load balancer to the gateway, which checks authentication, then asks the limiter; allowed goes on to the backend, rejected gets 429."
+    kind: flow
+    weight: core
+    teach:
+      - "Walk one request. Client, load balancer, gateway. The gateway first checks authentication, then calls the limiter for a decision, which reads the client's rule and counter."
+      - "True: forward to the backend. False: answer 429 to the client."
+    draw: [g-backends, g-rl-backends, flow-1, flow-2]
+    check: In what order does the gateway check a request?
+    answer: "Authentication first, then the rate limit; if allowed it forwards to the backend, otherwise it answers 429."
+  - point: "The gateway is replicated too, so each copy's counter would disagree; keep every counter in one shared Redis, in memory for the 5 ms budget, updated atomically."
+    kind: mechanism
+    weight: core
+    teach:
+      - "The same replica problem comes back: at this scale there are many gateway copies, so many limiters, and a client's next request may hit a different one with a fresh counter."
+      - "Move the counters outside, to one shared store all copies use. It must answer in well under 5 milliseconds, so it is a cache: Redis. Each check and count is one atomic step, or two copies read the same count and both let a request through."
+    draw: [g-redis, g-rl-redis, redis-why, redis-atomic]
+    check: Why must the counters move out of the gateways, and why into Redis?
+    answer: "Each gateway copy would count a client separately; one shared in-memory store gives every copy the same count within the 5 ms budget."
+    misconceptions:
+      - "Each gateway can keep its own counter and divide the limit by the number of gateways -> traffic is not spread evenly per client, so local counters still over or under count."
+  - point: "A rate limiter policy service serves the admin API and saves rules to a policy database, then writes them to Redis, write-through, so rules arrive a moment later: the eventual consistency agreed earlier."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Rules must be configurable, so add a rate limiter policy service behind the gateway to handle the admin endpoints, and a policy database to keep the rules."
+      - "But the limiter reads Redis, not the database. So the policy service writes the rule to the database first, then to Redis: write-through. Two writes take a moment; that is why we chose availability over consistency."
+    draw: [g-policy, g-rl-policy, g-policydb, g-policy-db, g-policy-redis, eventual]
+    check: How does a rule an admin creates reach the limiters?
+    answer: "Through the policy service, which saves it to the policy database and then writes it to Redis, where the limiters read it, a moment later."
+  - point: "The policy database is PostgreSQL with one rate_limit_rules table: a subject type and value (user, API key, IP, tier, global), the endpoint, the algorithm, and its limits."
+    kind: decision
+    weight: core
+    teach:
+      - "Rules are small structured rows, so a relational database: Postgres."
+      - "One table, rate limit rules: rule ID; subject type and subject value, such as user ID user 123, API key, IP, tier PREMIUM, or global; the endpoint, star for all; the algorithm; request limit and window seconds; burst capacity and refill rate; enforce by; whether it is active."
+    draw: [schema-1, schema-2, schema-3, schema-4, schema-5, schema-6]
+    check: How would you store a rule that gives premium users a higher limit on one endpoint?
+    answer: "One row with subject type TIER, subject value PREMIUM, that endpoint, the algorithm, and its request limit and window."
+asks:
+  - ids: [lbgw]
+    beats: [1]
+    question: "Before placing the limiter, sketch any service for me: clients on the left, backend services on the right. What sits between them?"
+    hints:
+      - Something has to route each request to the right service.
+      - And spread the traffic across copies of it.
+  - ids: [opt-client, opt-service, opt-gateway]
+    beats: [2, 3, 4]
+    question: "Where could the rate limiter go in this picture? Give me every place you can think of, and what's wrong with each."
+    hints:
+      - Start where the request is created, then follow it in.
+      - What happens to a counter when a service has many copies?
+  - ids: [g-redis]
+    beats: [6]
+    question: "The gateway has many copies too, and each would count a client on its own. Where would you keep the counters?"
+    hints:
+      - Somewhere outside the gateways that all of them can reach.
+      - It has to answer well within 5 milliseconds.
+  - ids: [g-policy, g-policydb]
+    beats: [7]
+    question: "Admins must change rules at runtime. What would you add to the picture for that?"
+    hints:
+      - Something has to serve the admin endpoints.
+      - And the rules need a durable home.
+task:
+  prompt: "Draw the high-level design: clients, a load balancer, the rate limiter inside the API gateway, backend services, Redis for the counters, and the policy service writing rules to its database and through to Redis."
+  expects: [4, 6, 7]

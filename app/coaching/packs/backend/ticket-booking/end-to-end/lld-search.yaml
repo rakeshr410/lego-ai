@@ -1,0 +1,114 @@
+# Ticket booking interview, low-level design 2: search. Under "5. Low level designing", the picture so far, then Elasticsearch above Cassandra with the search service pointing at it, an arrow up from Cassandra labelled CDC with "change data capture" beside it, the event rows, and the booking service writing the seat count to Cassandra, as the video draws it. The video's rule of thumb that Postgres cannot index several columns is corrected.
+id: backend/ticket-booking/end-to-end/lld-search
+title: "Low-level design, 2: search"
+source:
+  hash: "bebaf09849d5"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/ticket-booking/end-to-end/lld-databases
+  assumes:
+    - "Bookings in MySQL or PostgreSQL; event and movie metadata in Cassandra."
+    - "Available for search and view, consistent for booking."
+  carries:
+    - "Search runs on Elasticsearch, because Cassandra reads fast only by key and cannot run ad hoc text, location and date queries."
+    - "Change data capture (Debezium, Kafka, a consumer) copies every Cassandra change into Elasticsearch within seconds."
+    - "After a booking, the seat count in Cassandra drops (20 to 19) and search shows it moments later; that count is for display only."
+  terms:
+    - term: Elasticsearch
+      means: "A search engine built on an inverted index: free text, filters, location and ranking in one query."
+    - term: change data capture
+      means: "Reading a database's changes as they happen and sending each one on, here into the search index."
+board:
+  keep: [title, nfr, nfr-scale, nfr-available, nfr-consistent]
+  elements:
+    - { id: lld-search, kind: region, label: "5. Low level designing: 2. Search", at: [6, 22], size: [70, 25] }
+    - { id: s-clients, kind: box, label: client apps, at: [7, 33], size: [7, 3], in: lld-search }
+    - { id: s-gateway, kind: box, label: API gateway, at: [17, 25], size: [9, 20], in: lld-search }
+    - { id: s-search, kind: box, label: Search, at: [30, 26], size: [12, 3], tone: blue, in: lld-search }
+    - { id: s-event, kind: box, label: Event details, at: [30, 33], size: [12, 3], tone: blue, in: lld-search }
+    - { id: s-booking, kind: box, label: Booking, at: [30, 40], size: [12, 3], tone: blue, in: lld-search }
+    - { id: s-cassandra, kind: oval, label: Cassandra, at: [46, 33], size: [14, 4], tone: amber, in: lld-search }
+    - { id: s-postgres, kind: oval, label: MySQL or Postgres, at: [46, 39], size: [14, 5], tone: amber, in: lld-search }
+    - { id: s-es, kind: oval, label: Elasticsearch, at: [46, 25], size: [14, 4], tone: amber, in: lld-search }
+    - { id: s-cdc-note, kind: note, label: "CDC, change data capture", at: [55, 30], in: lld-search }
+    - { id: s-cdc-pipeline, kind: note, label: Debezium to Kafka to a consumer, at: [55, 31], in: lld-search }
+    - { id: s-event-row-1, kind: note, label: "event: id, venue, artistId,", at: [61, 33], in: lld-search }
+    - { id: s-event-row-2, kind: note, label: "name, description, seats", at: [62, 34], in: lld-search }
+    - { id: s-movie-row, kind: note, label: "movie: id, title, actors, seats", at: [61, 36], in: lld-search }
+    - { id: s-seats-left, kind: note, label: "seats left, 20 becomes 19", at: [61, 38], in: lld-search }
+    - { id: s-display, kind: note, label: the count is for display only, at: [61, 39], in: lld-search }
+  arrows:
+    - { id: s-clients-gateway, from: s-clients, to: s-gateway }
+    - { id: s-gateway-search, from: s-gateway, to: s-search }
+    - { id: s-gateway-event, from: s-gateway, to: s-event }
+    - { id: s-gateway-booking, from: s-gateway, to: s-booking }
+    - { id: s-event-cassandra, from: s-event, to: s-cassandra }
+    - { id: s-booking-postgres, from: s-booking, to: s-postgres }
+    - { id: s-search-es, from: s-search, to: s-es }
+    - { id: s-cdc, from: s-cassandra, to: s-es, label: CDC }
+    - { id: s-booking-cassandra, from: s-booking, to: s-cassandra }
+beats:
+  - point: "The picture so far: client apps, the API gateway, the search, event details and booking services, Cassandra for events and MySQL or Postgres for bookings."
+    kind: rule
+    weight: supporting
+    teach:
+      - "Last time we split the database: bookings in MySQL or Postgres, event metadata in Cassandra. Here is that picture again."
+      - "One box still points nowhere: search. That is this part."
+    draw: [lld-search, s-clients, s-gateway, s-clients-gateway, s-search, s-gateway-search, s-event, s-gateway-event, s-booking, s-gateway-booking, s-cassandra, s-event-cassandra, s-postgres, s-booking-postgres]
+    check: Which store holds the events, and which the bookings?
+    answer: Cassandra holds the event metadata; MySQL or PostgreSQL holds the bookings.
+  - point: "Cassandra reads fast by partition key but cannot run ad hoc text, location and date queries across all events, so search runs on Elasticsearch."
+    kind: mechanism
+    weight: core
+    teach:
+      - "A search like Spider-Man, near me, this weekend has to look across millions of events by any mix of text, place and date. Cassandra is quick when you ask for a row by its key, such as an event id, but it has no full-text matching and no free mix of filters."
+      - "That is what a search engine is for. The search service queries Elasticsearch and gets back a ranked page of event ids."
+    draw: [s-es, s-search-es]
+    check: Cassandra is fast. Why not search on it directly?
+    answer: It is fast for look-ups by its partition key, but it cannot run ad hoc full-text, location and date queries across every event.
+    misconceptions:
+      - "Cassandra is slow at reads -> it reads fast by key; what it lacks is ad hoc querying and full-text search."
+  - point: "PostgreSQL can index several columns and even do full-text search, but ranked text matching combined with location and date over a huge catalogue is a search engine's job."
+    kind: decision
+    weight: supporting
+    teach:
+      - "Why not put the catalogue in Postgres instead? It can carry several indexes, and some full-text search."
+      - "But users search by title, place and date in any combination, ranked by relevance, over millions of rows. A search engine does that in one query; that is why Elasticsearch sits beside the store."
+    check: What makes Elasticsearch a better fit than indexes in Postgres here?
+    answer: Ranked full-text matching combined with location and date filters, in any mix, over a huge catalogue.
+    misconceptions:
+      - "Postgres cannot have more than one index -> it can have many; the case for a search engine is ranked text plus filters at scale."
+  - point: "Change data capture keeps Elasticsearch in step with Cassandra: Debezium reads each change, publishes it to Kafka, and a consumer writes it into the index, within seconds."
+    kind: mechanism
+    weight: core
+    teach:
+      - "The events live in Cassandra, so the index is a copy. Copy it with change data capture: every time an event row changes, the change is captured and sent on into Elasticsearch."
+      - "In practice Debezium reads Cassandra's change log, publishes each change to Kafka, and a consumer indexes it. The copy trails by seconds, which our availability line allows. These are the rows it copies."
+    draw: [s-cdc, s-cdc-note, s-cdc-pipeline, s-event-row-1, s-event-row-2, s-movie-row]
+    check: How does a new event added to Cassandra end up in search results?
+    answer: Change data capture reads the change, publishes it to Kafka, and a consumer indexes it into Elasticsearch.
+  - point: "When a booking is confirmed, the booking service updates the seat count in Cassandra, 20 left becomes 19, and the change reaches search moments later; that count is shown, never trusted to sell a seat."
+    kind: flow
+    weight: core
+    teach:
+      - "Seats are real-time data. Say 20 seats are left. Once a booking is confirmed, the booking service also writes to Cassandra: 19 left. Cassandra takes small writes fast, and change data capture carries it to search, so the next user sees 19."
+      - "But the index and Cassandra may lag by seconds, so that number is for display. Whether a seat can be sold is decided in the booking path, which is the next part."
+    draw: [s-booking-cassandra, s-seats-left, s-display]
+    check: Can the booking service trust the seat count in the search index to decide a booking?
+    answer: No; it lags by seconds and is for display only. The booking path decides.
+asks:
+  - ids: [s-es]
+    beats: [2]
+    question: "Users search by title, place and date, in any mix, across millions of events. Where would you run those searches?"
+    hints:
+      - Cassandra is fast by key. Is a free-text search a key look-up?
+      - A store built around an index of words.
+  - ids: [s-cdc-note]
+    beats: [4]
+    question: "The events live in Cassandra, the searches run on Elasticsearch. How do you keep the two in step?"
+    hints:
+      - Something has to notice each change in Cassandra.
+      - Then send it on to the index, a few seconds later.

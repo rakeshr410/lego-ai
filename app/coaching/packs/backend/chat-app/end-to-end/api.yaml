@@ -1,0 +1,99 @@
+# Chat app interview, API: "3. API Designing" beside the entities: the register POST on top, the one-to-one calls on the left (WS send, the chat list, a chat's messages), the group calls on the right (create, add, remove, WS send, the group's messages), as in the video; receipts have no endpoint.
+id: backend/chat-app/end-to-end/api
+title: REST for the rest, a WebSocket for messages
+source:
+  hash: "0415ae35e684"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/chat-app/end-to-end/entities
+  assumes:
+    - "Functional: register, one-to-one and group messaging, text and media, history, receipts."
+    - "The core entities are the user, the group and the message."
+  carries:
+    - "POST /v1/user/register with the user's details; WS /v1/messages/send for messages; GET /v1/chat/{userId} and GET /v1/message/{userId}/{receiverId} for history, lazy loaded."
+    - "Groups: POST create, add and remove; the same WS send to a group id; GET /v1/groups/{groupId}/messages."
+    - Receipts have no REST endpoint; they ride the WebSocket.
+  terms:
+    - term: WebSocket
+      means: "A persistent two-way connection between the app and a server; written WS on the board."
+    - term: lazy load
+      means: "The next block of older messages is fetched as the user scrolls up, asked for with a cursor."
+board:
+  keep: [title, prompt-desc, fr, fr-register, fr-one, fr-group, fr-media, fr-history, fr-receipts, nfr, nfr-scale, nfr-volume, nfr-cap, nfr-latency, nfr-reliable, entities, ent-user, ent-group, ent-message]
+  elements:
+    - { id: api, kind: region, label: 3. API design, at: [30, 23], size: [56, 12], dashed: true }
+    - { id: api-register, kind: note, label: "POST /v1/user/register { userName, phone or email }", at: [31, 25], in: api }
+    - { id: api-one-head, kind: note, label: one-to-one, at: [31, 27], in: api }
+    - { id: api-ws, kind: note, label: WS /v1/messages/send, at: [31, 28], in: api }
+    - { id: api-chats, kind: note, label: "GET /v1/chat/{userId}, the list of chats, paginated", at: [31, 29], in: api }
+    - { id: api-msgs, kind: note, label: "GET /v1/message/{userId}/{receiverId}, lazy load", at: [31, 30], in: api }
+    - { id: api-receipts, kind: note, label: "receipts ride the WebSocket, no endpoint", at: [31, 32], in: api }
+    - { id: api-group-head, kind: note, label: groups, at: [62, 27], in: api }
+    - { id: api-g-create, kind: note, label: POST /v1/groups/create, at: [62, 28], in: api }
+    - { id: api-g-add, kind: note, label: "POST /v1/groups/{groupId}/add", at: [62, 29], in: api }
+    - { id: api-g-remove, kind: note, label: "POST /v1/groups/{groupId}/remove", at: [62, 30], in: api }
+    - { id: api-g-ws, kind: note, label: "WS /v1/messages/send, to a groupId", at: [62, 31], in: api }
+    - { id: api-g-msgs, kind: note, label: "GET /v1/groups/{groupId}/messages, lazy load", at: [62, 32], in: api }
+  arrows: []
+beats:
+  - point: "Registering is a POST to /v1/user/register with the user's details: a phone number for WhatsApp, an email for Messenger."
+    kind: flow
+    weight: core
+    teach:
+      - "Step three, the API: one call per functional requirement. Registering submits data, so it is a POST to v1 user register, with the user name and a phone number, or an email for Messenger."
+      - "Updating and deleting a user are the usual calls; name them and leave them off the board."
+    draw: [api, api-register]
+    check: Why is registration a POST?
+    answer: It submits new data, the user's details, to the server.
+  - point: "One-to-one: messages are sent over a WebSocket, WS /v1/messages/send; history is two GETs, the user's chats, paginated, and one chat's messages, lazy loaded."
+    kind: flow
+    weight: core
+    teach:
+      - "Sending a message is not a POST: it is WS, a WebSocket to v1 messages send. Why not plain HTTP is a question for the low-level design."
+      - "History is ordinary GETs. GET v1 chat with the user id gives the list of chats, a page at a time. GET v1 message with the user id and the receiver id gives one chat's messages, lazy loaded: as the user scrolls up, the next older block comes back, asked for with a cursor, not page numbers."
+    draw: [api-one-head, api-ws, api-chats, api-msgs]
+    check: How is the message history of a long chat paged?
+    answer: "Lazily, as the user scrolls up, each request carrying a cursor to the oldest message shown."
+    misconceptions:
+      - "History pages by page number like a website -> it loads lazily on scroll, by cursor, so new messages do not shift the pages."
+  - point: "Receipts get no REST endpoint: sent, delivered and read travel over the same WebSocket."
+    kind: rule
+    weight: supporting
+    teach:
+      - "Notice there is no endpoint for the ticks. Sent, delivered and read are small messages on the WebSocket we already have open."
+    draw: [api-receipts]
+    check: How do delivery and read receipts reach the sender?
+    answer: Over the open WebSocket, not through a REST call.
+  - point: "Group management is three POSTs: create a group, add a member, remove a member."
+    kind: flow
+    weight: core
+    teach:
+      - "Now groups. First, managing them: POST v1 groups create, then add and remove a member on v1 groups, group id, add or remove."
+    draw: [api-group-head, api-g-create, api-g-add, api-g-remove]
+    check: Which calls manage a group's membership?
+    answer: "POST /v1/groups/{groupId}/add and /remove; creating it is POST /v1/groups/create."
+  - point: "Talking in a group reuses the WebSocket send, addressed to a group id, and its history is GET /v1/groups/{groupId}/messages, lazy loaded."
+    kind: flow
+    weight: core
+    teach:
+      - "Chatting in a group is the same WebSocket send, with a group id in place of the receiver."
+      - "And the group's history: GET v1 groups, group id, messages, lazy loaded like a one-to-one chat."
+    draw: [api-g-ws, api-g-msgs]
+    check: What changes when a message goes to a group instead of a friend?
+    answer: The same WebSocket send carries a group id instead of a user id.
+asks:
+  - ids: [api-ws, api-chats, api-msgs]
+    beats: [2]
+    question: "For one-to-one chat, what calls do we need: one to send, and how would you read the history back?"
+    hints:
+      - Sending must work both ways in real time; is that a normal HTTP call?
+      - For history, think of the chat list first, then one chat's messages.
+  - ids: [api-g-create, api-g-add, api-g-remove]
+    beats: [4]
+    question: "Before anyone can talk in a group, how do we manage groups? Give me the calls."
+    hints:
+      - A group has to exist first.
+      - Then people join it and leave it.

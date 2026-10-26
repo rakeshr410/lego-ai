@@ -1,0 +1,140 @@
+# Food delivery interview, deep dive 5, matching a delivery partner: as the video draws it, Kafka with the accepted orders above the delivery matching service and its geohash note; Redis to the right with the TTL note and the driver DB below it (write-through); the partners' stack underneath the matching service (location update service, a Kafka for location pings, the gateway, the partners). Corrected: the pings go through an ingestion gateway to Kafka (no "Kafka gateway"), Redis is a shared store, not a local cache, matching is a plain consumer (not Kafka Connect), and the TTL spans a few missed pings.
+id: backend/food-delivery/end-to-end/lld-matching
+title: "Deep dive: matching a partner"
+source:
+  hash: "fdc05d89748b"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/food-delivery/end-to-end/lld-order
+  assumes:
+    - "The restaurant's accept is an orderStatus confirmed event on Kafka; the order consumer updates the order DB."
+    - "Partners send their location and status every few seconds."
+  carries:
+    - "The delivery matching service consumes accepted orders and finds the nearest idle partners with a geohash proximity search."
+    - "Location pings, every 5 to 10 s, go through a gateway to Kafka; the location update service writes the latest position to Redis, written through to the driver DB."
+    - "Each Redis entry has a TTL of a few missed pings, so partners who go offline drop out of matching."
+    - "Matching publishes deliveryPartnerAssigned; the order consumer writes the driver id on the order."
+  terms:
+    - term: geohash
+      means: "A short string for a latitude and longitude; nearby points share a prefix, so a prefix is a cell on the map."
+    - term: TTL
+      means: "Time to live: an entry deletes itself when not refreshed in time."
+    - term: write-through
+      means: "Each write to the cache is also written to the database behind it."
+board:
+  keep: [title, prompt-desc, nfr, nfr-scale, nfr-available, nfr-consistent]
+  elements:
+    - { id: lld-matching, kind: region, label: "5. Deep dive, matching a delivery partner", at: [2, 20], size: [70, 51] }
+    - { id: m-kafka, kind: box, label: "Kafka, accepted orders", at: [8, 24], size: [14, 3], in: lld-matching, tone: grey }
+    - { id: m-assigned, kind: note, label: deliveryPartnerAssigned sets the driverId, at: [26, 27], in: lld-matching }
+    - { id: m-matching, kind: box, label: Delivery matching service, at: [8, 32], size: [16, 3], in: lld-matching, tone: blue }
+    - { id: m-geohash, kind: note, label: geohash proximity search for the nearest idle partner, at: [8, 36], in: lld-matching }
+    - { id: m-redis, kind: oval, label: "Redis, live locations", at: [40, 32], size: [14, 4], in: lld-matching, tone: green }
+    - { id: m-ttl, kind: note, label: "TTL about 30 s, offline partners drop out", at: [40, 37], in: lld-matching }
+    - { id: m-driver-db, kind: oval, label: Driver DB, at: [56, 46], size: [12, 3], in: lld-matching, tone: amber }
+    - { id: m-location, kind: box, label: Location update service, at: [8, 44], size: [16, 3], in: lld-matching, tone: blue }
+    - { id: m-kafka-loc, kind: box, label: "Kafka, location pings", at: [8, 51], size: [16, 3], in: lld-matching, tone: grey }
+    - { id: m-gateway, kind: box, label: Location gateway, at: [8, 58], size: [16, 3], in: lld-matching }
+    - { id: m-partners, kind: box, label: delivery partners, at: [8, 65], size: [16, 3], in: lld-matching }
+    - { id: m-ping, kind: note, label: location and status every 5 to 10 seconds, at: [26, 69], in: lld-matching }
+  arrows:
+    - { id: m-reads, from: m-kafka, to: m-matching, label: reads, both: true }
+    - { id: m-nearest, from: m-matching, to: m-redis, label: nearest idle }
+    - { id: m-ping-in, from: m-partners, to: m-gateway }
+    - { id: m-to-log, from: m-gateway, to: m-kafka-loc }
+    - { id: m-consume, from: m-kafka-loc, to: m-location }
+    - { id: m-geoadd, from: m-location, to: m-redis }
+    - { id: m-through, from: m-redis, to: m-driver-db, label: write through }
+beats:
+  - point: "The delivery matching service is a consumer of the accepted-order events: it reads orders that have no partner yet."
+    kind: component
+    weight: core
+    teach:
+      - "Now the partner. Once the restaurant accepts, the event is on Kafka. The delivery matching service is simply a consumer of it, reading the accepted orders that have no partner."
+    draw: [lld-matching, m-kafka, m-matching, m-reads]
+    check: How does the matching service learn there is an order to match?
+    answer: It consumes the accepted-order events from Kafka and picks up orders without a partner.
+    misconceptions:
+      - "Matching connects through Kafka Connect -> it is an ordinary consumer in a consumer group; Kafka Connect is for syncing external systems."
+  - point: "It finds partners near the restaurant with a geohash proximity search, and only idle partners count."
+    kind: mechanism
+    weight: core
+    teach:
+      - "To find who is near the restaurant: geohashing. A latitude and longitude become a short string, and nearby points share a prefix, so the restaurant's cell and its neighbours are a few prefixes to look up."
+      - "Only idle partners: someone already carrying an order is not offered another until they deliver it."
+    draw: [m-geohash]
+    check: Two partners' geohashes share a long prefix. What does that tell you?
+    answer: They are close to each other; a prefix is a cell on the map.
+  - point: "Partners send location and status every 5 to 10 seconds, thousands at once, so the pings go through a gateway straight into a Kafka topic and the location update service consumes them."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Where do positions come from? Every partner's phone sends location and status every 5 to 10 seconds. Thousands of partners: too many writes for one server and a database, row by row."
+      - "So change the structure: the pings go through a gateway that writes them straight to a Kafka topic, and the location update service becomes a consumer of it."
+    draw: [m-partners, m-gateway, m-ping-in, m-kafka-loc, m-to-log, m-location, m-consume, m-ping]
+    check: Why put Kafka between the partners' phones and the location service?
+    answer: It absorbs bursts of pings durably, so the location service reads at its own pace and no ping waits on a database.
+  - point: "The location update service writes each partner's latest position to Redis, a shared in-memory geo index, and the matching service reads Redis instead of the driver DB."
+    kind: decision
+    weight: core
+    teach:
+      - "Instead of writing the driver DB, the location update service writes Redis: a shared in-memory store with a geo index, add a point, search by radius. Writes and reads in memory keep it near real time."
+      - "And the matching service reads the nearest idle partners from Redis, not the database."
+    draw: [m-redis, m-geoadd, m-nearest]
+    check: Why does matching read Redis rather than the driver DB?
+    answer: Redis holds the latest positions in memory with a geo index, so radius searches are fast and current.
+    misconceptions:
+      - "Redis is a local cache on each server -> it is a shared store every service instance reads and writes."
+  - point: "Each partner's entry has a TTL of a few missed pings, about 30 seconds; a partner who loses signal drops out of matching."
+    kind: failure
+    weight: core
+    teach:
+      - "What if a partner's phone loses signal? They stop sending, and we must not offer them orders. Give each Redis entry a TTL: if it is not refreshed, it expires."
+      - "Make it a few missed pings, about 30 seconds for a 10 second interval. Exactly one interval would take a partner offline on a single late ping."
+    draw: [m-ttl]
+    check: Why not set the TTL to exactly the ping interval?
+    answer: One delayed ping would expire the entry and take a working partner offline; a few intervals tolerates jitter.
+  - point: "Redis is written through to the driver DB, which keeps profiles and the last known position."
+    kind: decision
+    weight: supporting
+    teach:
+      - "The driver DB still matters: profiles and the last known location and status. Write-through: each update to Redis is also written to it."
+    draw: [m-driver-db, m-through]
+    check: What does the driver DB hold now that Redis has live positions?
+    answer: Partners' profiles and their last known location and status, written through from Redis.
+  - point: "When a partner is found, matching publishes deliveryPartnerAssigned to Kafka and the order consumer writes the driver id on the order."
+    kind: flow
+    weight: core
+    teach:
+      - "Say matching found someone. It posts deliveryPartnerAssigned on Kafka, and the same order consumer reads it and sets the driver id on the order. The order's life so far: placed, accepted, partner assigned."
+    draw: [m-assigned]
+    check: How does the order DB learn which partner was assigned?
+    answer: Matching publishes deliveryPartnerAssigned to Kafka, and the order consumer writes the driver id on the order.
+asks:
+  - ids: [m-geohash]
+    beats: [2]
+    question: "The matching service has the restaurant's location. How would it find the nearest free partners quickly?"
+    hints:
+      - Think of cutting the map into cells with short names.
+      - Partners who are busy shouldn't count.
+  - ids: [m-kafka-loc, m-gateway]
+    beats: [3]
+    question: "Thousands of partners send their position every few seconds. How would you take in that stream without drowning a server?"
+    hints:
+      - Something in front that just accepts the pings.
+      - A durable log that the location service can read at its own pace.
+  - ids: [m-redis]
+    beats: [4]
+    question: "Where would you keep the live positions so matching can search them by radius, fast?"
+    hints:
+      - Writes every few seconds, reads on every match.
+      - In memory, with a geo index.
+  - ids: [m-ttl]
+    beats: [5]
+    question: "A partner's phone goes out of signal. How do we stop offering them orders?"
+    hints:
+      - They stop refreshing their position.
+      - What if the entry expired on its own?

@@ -1,0 +1,674 @@
+# yaml-language-server: $schema=../../../../../lego/content-kit/schema/topic.schema.json
+# provenance: ai-drafted by claude-opus-5-5 on 2026-10-27
+#
+# A whole backend system design interview for a distributed rate limiter, run step by step on one
+# whiteboard. The order and the board follow a common five-step interview framework: requirements,
+# core entities, API, high-level design (where the limiter sits, a shared Redis for its counters, a
+# policy service and database for its rules), then a deep dive through the five classic algorithms,
+# fixed window, sliding window log, sliding window counter, token bucket and leaky bucket, each judged
+# against the requirements, before choosing one and wiring the five behind one strategy interface.
+# Every latency figure is an illustrative round number for the exercise, not a measurement.
+# A backend system of lego-ai's own (app/articles/backend): it stands alone and links to no main-site topic.
+catalogVersion: 5
+title: Designing a distributed rate limiter, end to end
+shortTitle: Rate limiter interview
+summary: "A 45-minute backend design interview for a rate limiter that guards every API behind a gateway, step by step on one board: requirements with numbers, entities, the admin API and the 429 answer, where the limiter sits and how its copies share state, then the five rate limiting algorithms, each judged against the requirements, and the one to choose."
+group: design
+order: 21
+xp: 260
+difficulty: intermediate
+tags: [interview, rate-limiting, api-gateway, redis, algorithms, scalability]
+eyebrow: Design
+breadcrumb: [Rate limiter, Interview walkthrough]
+lede: "You have about forty-five minutes and one whiteboard to design the service that decides, for every request into a company's APIs, whether it may go through: ten images a minute for a free user, a hundred chat turns for a paying one, nothing at all for a bot hammering the login page. This walkthrough runs the interview the way a strong candidate runs it: pin the requirements down with numbers, name the entities and the admin API, place the limiter and give its many copies one shared memory, then walk the five classic algorithms, say where each one breaks, and choose."
+reviewStatus: draft
+author: rakeshr410
+provenance: ai-drafted
+sources:
+  - title: "System Design 21: Design a Distributed Rate Limiter (InterviewWithBunny, YouTube)"
+    url: https://www.youtube.com/watch?v=SfV42UuZEBY
+    note: "Order, numbers and drawings. Corrected: CAP is a choice made under a partition; fixed window lets 2x through at an edge; sliding counter counts the current window whole; leaky bucket is a FIFO queue, not CDC; shared counters need atomic updates."
+  - title: "RFC 6585, Additional HTTP Status Codes: 429 Too Many Requests"
+    url: https://www.rfc-editor.org/rfc/rfc6585#section-4
+    note: "The status a rate limiter answers with, optionally with a Retry-After header."
+  - title: "RFC 9110, HTTP Semantics: Retry-After"
+    url: https://www.rfc-editor.org/rfc/rfc9110#section-10.2.3
+    note: "How long the client should wait before its next request, in seconds or as a date."
+  - title: Scaling your API with rate limiters (Stripe)
+    url: https://stripe.com/blog/rate-limiters
+    note: "Token bucket limiters in Redis in production, and the kinds of limiter an API needs."
+  - title: INCR (Redis documentation)
+    url: https://redis.io/docs/latest/commands/incr/
+    note: "An atomic increment on one key; the documentation's own rate limiter pattern pairs it with EXPIRE."
+  - title: Token bucket (Wikipedia)
+    url: https://en.wikipedia.org/wiki/Token_bucket
+    note: "Tokens added at a fixed rate up to a capacity; a request spends tokens; bursts up to the capacity pass."
+  - title: Leaky bucket (Wikipedia)
+    url: https://en.wikipedia.org/wiki/Leaky_bucket
+    note: "The queue form: arrivals wait in a bounded queue that drains at a constant rate; overflow is dropped."
+tutorBrief: >-
+  Interview walkthrough for a distributed rate limiter in front of an AI product's APIs (image
+  generation is costly, so a user may make 15 image requests a minute). The interviewer often asks for
+  code at the end too: the algorithm behind a strategy interface. Five numbered steps on the board,
+  top to bottom: 1 requirements (functional left, non-functional right), 2 core entities, 3 API (beside
+  the entities, the 429 response under it), 4 high-level design, 5 deep dive into the algorithms.
+  Functional: limit a client's requests by user ID, API key or IP (say 10 a minute); rules configurable
+  at runtime by an admin; over the limit answer HTTP 429 Too Many Requests; handle burst traffic (a
+  sale); different limits per tier (free, an $8 tier, a $20 tier). Non-functional: 1 million requests
+  per second; availability over consistency (a rule change may take about a minute to reach every
+  limiter, but the limiter must never be down, since every request passes it); latency under 5 ms per
+  decision. Entities: rate limit rule (policy), client, request counter. API, admin only (clients never
+  call the limiter): POST /v1/admin/rules, GET /v1/admin/rules?clientId=xyz, GET
+  /v1/admin/rate-limit/metrics?resource={url}. The 429 answer: X-RateLimit-Limit 100,
+  X-RateLimit-Remaining 0, X-RateLimit-Reset 1712345708 (a Unix time), Retry-After 30, body { error:
+  rate_limit_exceeded, message }. High-level design: clients, a load balancer and API gateway, backend
+  services (image service 10 per minute, text service 100 conversations per minute). Three places for
+  the limiter: on the client (a counter in a cookie or local storage, easily cleared, never trusted);
+  inside each backend service (each replica counts on its own, so two requests on two replicas both see
+  1); in the API gateway as a plugin, middleware or filter (the usual enforcement point); also a reverse
+  proxy, a sidecar, a dedicated service, or before the database. Flow: client, load balancer, gateway:
+  auth check, then call the limiter (policy cache, Redis token state); allowed goes to the backend,
+  rejected gets 429. The gateway is replicated too, so counters live in one shared Redis. Rules: a rate
+  limiter policy service (the admin API) saves to a policy database, PostgreSQL, then writes the rule to
+  Redis (write-through), so rules are eventually consistent. Table rate_limit_rules: rule_id,
+  subject_type (USER_ID, API_KEY, IP, TIER, GLOBAL), subject_value (user_123, api_456, PREMIUM, null for
+  GLOBAL), endpoint (* for all), algorithm, request_limit, window_sec, burst_capacity, refill_rate,
+  enforce_by, is_active, created_at, updated_at. Deep dive, five algorithms: (1) fixed window counter:
+  one counter per client per 10 s window, at most 5, reset at each window start; simple, but 5 at 9.9 s
+  and 5 at 10.1 s let 10 through in 0.2 s, twice the limit. (2) sliding window log: a timestamp per
+  request; drop those older than 10 s, allow if fewer than 5 remain; exact, but memory grows with every
+  request kept, too costly at 1M rps. (3) sliding window counter: two counters, previous and current
+  window; estimate = previous x overlap share + current; at 12 s, 5 x 80% + 0 = 4, plus this request is
+  5, allowed; two numbers per client, approximate because it assumes the previous window was even. (4)
+  token bucket: capacity 10, refill 1 token per second, cost 1 per request; a request takes a token or
+  gets 429; a full bucket lets a burst of 10 through; state per client is tokens left and last refill
+  time, refilled lazily on each request; the usual production choice. (5) leaky bucket: requests join a
+  queue of 8 drained at 1 per second; a full queue drops; smooth output but queued requests wait; use it
+  when a backend needs a steady rate. Choose token bucket; code it with the strategy pattern: one
+  RateLimiterStrategy interface with allowRequest, five implementations, a factory that picks one from
+  the rule's algorithm, and the gateway calling allowRequest. In Redis the read and update must be one
+  atomic step (INCR, or a Lua script for the token bucket), or two gateways race.
+components:
+  - key: client
+    name: Client
+    tone: sand
+    kind: client
+    summary: A browser, app or partner system calling the product's APIs.
+    owns: [nothing of its own]
+    talksTo: [load-balancer]
+  - key: load-balancer
+    name: Load balancer
+    tone: blue
+    kind: gateway
+    summary: Spreads incoming requests across the gateway's copies.
+    owns: [the list of healthy gateways]
+    talksTo: [api-gateway]
+  - key: api-gateway
+    name: API gateway with the rate limiter
+    tone: green
+    kind: gateway
+    summary: Checks authentication, asks the rate limiter for a decision, then forwards the request or answers 429.
+    owns: [routing, the limiter plugin]
+    talksTo: [backend-services, redis, policy-service]
+  - key: backend-services
+    name: Backend services
+    tone: blue
+    kind: service
+    summary: The services being protected, such as image generation and text generation, each with many replicas.
+    owns: [the product's work]
+    talksTo: []
+  - key: redis
+    name: Redis
+    tone: orange
+    kind: cache
+    summary: The shared memory of every limiter copy, holding each client's counters or tokens and a copy of the rules.
+    owns: [counters, token state, rules]
+    talksTo: []
+  - key: policy-service
+    name: Rate limiter policy service
+    tone: purple
+    kind: service
+    summary: Serves the admin API; saves rules to the policy database, then writes them to Redis.
+    owns: [the admin API]
+    talksTo: [policy-db, redis]
+  - key: policy-db
+    name: Policy database
+    tone: yellow
+    kind: datastore
+    summary: PostgreSQL holding the rate_limit_rules table, the source of truth for rules.
+    owns: [rate_limit_rules]
+    talksTo: []
+content:
+  # ────────────────────────────────────────────────────────────────── Problem statement
+  - __component: sd.section
+    key: problem-statement
+    title: Understanding the problem.
+    railLabel: Problem
+    intro: "The prompt is one line: design a rate limiter. Say what it protects, with an example, then run the interview in five steps. Expect to be asked for code at the end, too."
+  - __component: sd.rich-text
+    key: problem-why
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "A rate limiter decides, for each request, whether a client may make it now, and blocks the client once it goes past a limit within a time window. It protects backend services from abuse, overload, unfair use, bot traffic, brute-force attacks and runaway cost. Take an AI product whose image generation runs on a costly model: each user may ask for 15 images a minute, and the sixteenth request is refused until the minute moves on."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Run the interview in five steps and say them once: gather the requirements, name the core entities, write the API, draw the high-level design, then go deep. Number each step on the board as you reach it. This question differs from most design questions in one way: once the design is done, interviewers often ask for the limiting algorithm as working code, organised with a design pattern, so leave time for it."
+  - __component: sd.card-grid
+    key: board-steps
+    title: The board, in the order you fill it
+    columns: 3
+    cards:
+      - title: 1. Requirements
+        text: Functional on the left, non-functional on the right, each non-functional line with a number.
+      - title: 2. Entities
+        text: The rule, the client, and the counter of the client's requests.
+      - title: 3. API
+        text: The admin endpoints that manage rules, and the 429 answer a blocked client gets.
+      - title: 4. High-level design
+        text: Where the limiter sits, how its copies share state, and where the rules live.
+      - title: 5. Deep dive
+        text: "The five algorithms, each judged against the requirements: fixed window, sliding window log, sliding window counter, token bucket, leaky bucket. Then the choice, and the code's shape."
+  - __component: sd.quiz
+    key: problem-quiz
+    title: Quick check
+    questions:
+      - question: What makes the rate limiter question different from most design questions?
+        optionA: It has no requirements
+        optionB: After the design, the interviewer often asks for the limiting algorithm as working code behind a design pattern
+        optionC: It needs no database
+        optionD: It is always answered with a queue
+        answer: B
+        explanation: The architecture is small; the algorithms are the substance, so expect to explain them and write one.
+  # ────────────────────────────────────────────────────────────────── 1. Requirements
+  - __component: sd.section
+    key: requirements
+    title: Requirements.
+    railLabel: Requirements
+    intro: "Five functional lines and three non-functional ones, side by side. The non-functional numbers are tight: every request in the company passes through this service."
+  - __component: sd.subsection
+    key: functional-sub
+    title: Functional requirements
+    railLabel: Functional
+  - __component: sd.checklist
+    key: functional
+    idPrefix: FR-
+    items:
+      - text: "Limit the number of requests a client makes, keyed by user ID, API key or IP address (for example, 10 a minute)."
+      - text: Rate limit rules are configurable at runtime by an admin, not fixed in code.
+      - text: "When a client goes over its limit, answer HTTP 429 Too Many Requests, with enough detail to know when to retry."
+      - text: Handle burst traffic, such as the spike at the start of a sale.
+        note: The algorithms in the deep dive differ most on this line.
+      - text: "Support different limits per client tier: free, an $8 tier, a $20 tier."
+  - __component: sd.subsection
+    key: non-functional-sub
+    title: Non-functional requirements
+    railLabel: Non-functional
+  - __component: sd.requirement-table
+    key: non-functional
+    rows:
+      - area: Scale
+        requirement: Every request into the company's APIs passes the limiter.
+        targets: [1 million requests per second]
+      - area: Availability
+        requirement: The limiter is never down; a rule change may take a while to reach every copy.
+        targets: [availability over consistency]
+        note: "If the limiter is down, every request behind it fails. A new rule reaching every limiter about a minute later is fine."
+      - area: Latency
+        requirement: The allow or block decision adds almost nothing to a request.
+        targets: [under 5 ms per decision]
+        note: It sits in front of every call, so its latency is added to all of them.
+  - __component: sd.rich-text
+    key: cap-choice
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "CAP says that when the network between a distributed system's machines splits, each part must choose between answering anyway and staying consistent; when there is no split, a system can have both. For a rate limiter the choice is easy: answer. An admin's new rule can take a minute to reach every copy, eventual consistency, but a limiter that stops answering takes every API behind it down."
+  - __component: sd.quiz
+    key: requirements-quiz
+    title: Quick check
+    questions:
+      - question: Why does the rate limiter choose availability over consistency?
+        optionA: Consistency is impossible in any distributed system
+        optionB: Every request passes it, so downtime breaks every API, while a rule reaching all copies a minute late costs little
+        optionC: Because it uses Redis
+        optionD: Because rules never change
+        answer: B
+        explanation: The trade is made under a network partition. Here a slightly stale rule is harmless; an unavailable limiter is an outage.
+      - question: Why is the latency target so tight, under 5 ms?
+        optionA: Redis is slow
+        optionB: The decision is added to every request into every API
+        optionC: Admins need fast dashboards
+        optionD: 429 answers are large
+        answer: B
+        explanation: A limiter in front of everything multiplies its delay across the whole product.
+  # ────────────────────────────────────────────────────────────────── 2. Entities
+  - __component: sd.section
+    key: entities
+    title: Core entities.
+    railLabel: Entities
+    intro: "Read the functional requirements and the nouns fall out: the rule, the client it applies to, and the count of what that client has done."
+  - __component: sd.table
+    key: entities-table
+    columns:
+      - { label: Entity, style: strong }
+      - { label: What it is, style: text }
+    rows:
+      - [Rate limit rule, "The configured limit: who it applies to, which endpoint, which algorithm, how many requests in what window."]
+      - [Client, "Who is being limited: a user ID, an API key, an IP address or a tier."]
+      - [Request counter, "How many requests the client has made in the current window, or the tokens it has left: the state the decision reads."]
+  - __component: sd.quiz
+    key: entities-quiz
+    title: Quick check
+    questions:
+      - question: Which two numbers does every decision compare?
+        optionA: The client's IP and its user ID
+        optionB: The limit in the client's rule, and the client's request counter
+        optionC: The window size and the time of day
+        optionD: The number of gateways and backends
+        answer: B
+        explanation: The rule says how many are allowed; the counter says how many have been used.
+  # ────────────────────────────────────────────────────────────────── 3. API
+  - __component: sd.section
+    key: api
+    title: API.
+    railLabel: API
+    intro: "Ask first whether the interviewer wants endpoints at all; listing them takes time. Clients never call a rate limiter, so the API is the admin's: three endpoints to manage rules and watch them, plus the 429 answer every blocked client sees."
+  - __component: sd.endpoint
+    key: create-rule
+    method: POST
+    path: /v1/admin/rules
+    summary: "Creates a rule, such as 10 image requests a minute for the free tier. This is how rules stay configurable at runtime."
+    requestHeaders: ["Authorization: Bearer <admin token>"]
+    requestBody:
+      subjectType: TIER
+      subjectValue: FREE
+      endpoint: /v1/images
+      algorithm: TOKEN_BUCKET
+      requestLimit: 10
+      windowSec: 60
+    responses:
+      - label: Created
+        status: "201"
+        body:
+          ruleId: r_1042
+  - __component: sd.endpoint
+    key: get-rules
+    method: GET
+    path: "/v1/admin/rules?clientId=xyz"
+    summary: Reads the rules that apply to one client.
+    responses:
+      - label: Found
+        status: "200"
+        body:
+          rules: [{ ruleId: r_1042, algorithm: TOKEN_BUCKET, requestLimit: 10, windowSec: 60 }]
+  - __component: sd.endpoint
+    key: get-metrics
+    method: GET
+    path: "/v1/admin/rate-limit/metrics?resource={url}"
+    summary: "Metrics for one resource, for dashboards and audits: requests allowed and blocked."
+    responses:
+      - label: Found
+        status: "200"
+        body:
+          allowed: 98120
+          blocked: 4211
+  - __component: sd.table
+    key: too-many-requests
+    title: "What a blocked client gets: HTTP/1.1 429 Too Many Requests"
+    columns:
+      - { label: Header or field, style: mono-strong }
+      - { label: Example, style: mono }
+      - { label: Meaning, style: text }
+    rows:
+      - [X-RateLimit-Limit, "100", The client's limit in the window]
+      - [X-RateLimit-Remaining, "0", Requests left in the window]
+      - [X-RateLimit-Reset, "1712345708", "When the window resets, as a Unix time"]
+      - [Retry-After, "30", Seconds to wait before trying again]
+      - [error, rate_limit_exceeded, "In the body, with a message such as: you have exceeded 100 requests a minute, retry after 30 seconds"]
+  - __component: sd.quiz
+    key: api-quiz
+    title: Quick check
+    questions:
+      - question: Why does the API have no endpoint for ordinary clients?
+        optionA: Clients use GraphQL
+        optionB: The limiter sits inside the request path; clients reach it only by calling the product's own APIs
+        optionC: Clients are not allowed to see their limits
+        optionD: It is an oversight
+        answer: B
+        explanation: Only admins manage rules; clients meet the limiter as a 429 answer and its headers.
+      - question: Why send a meaningful 429 instead of a bare error?
+        optionA: HTTP requires a body
+        optionB: So the client knows it was limited, not broken, and when it may retry
+        optionC: To make the response larger
+        optionD: To log the user out
+        answer: B
+        explanation: Without the limit, remaining count and Retry-After, a blocked client looks like a defect and retries blindly.
+  # ────────────────────────────────────────────────────────────────── 4. High-level design
+  - __component: sd.section
+    key: high-level-design
+    title: High-level design.
+    railLabel: High level
+    intro: "The architecture is small. The questions are where the limiter sits, how its many copies agree on a client's count, and how an admin's rule reaches them."
+  - __component: sd.rich-text
+    key: hld-placement
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Start from the picture of any service: clients, a load balancer and API gateway that route each request to a backend service, and the backend services, here an image service limited to 10 images a minute and a text service limited to 100 conversations a minute. Then try the three places the limiter could go."
+      - type: paragraph
+        children:
+          - type: text
+            text: "On the client: the button that sends the request counts clicks in a cookie or local storage. Anyone can clear or edit that, so it is a courtesy, never a control. Inside each backend service: a limiter per service fits different limits per service, but each service runs as many replicas, and each replica counts on its own. A user's first request lands on replica one and the second on replica two, and both see a count of 1. In the API gateway, as a plugin, middleware or filter: the one place every request passes, and the usual enforcement point. A reverse proxy, a sidecar, a dedicated rate limiter service or a layer before the database also work; whatever the place, the gateway usually enforces the decision."
+      - type: paragraph
+        children:
+          - type: text
+            text: "The flow: the client's request reaches the load balancer, then the gateway. The gateway checks authentication, then asks the limiter for a decision, which reads the client's rule and its counter. Allowed, the request goes on to the backend; rejected, the client gets 429."
+  - __component: sd.component-diagram
+    key: hld-diagram
+    title: The high-level design
+    direction: LR
+    nodes:
+      - { key: client }
+      - { key: load-balancer }
+      - { key: api-gateway, details: [auth check, then the limit check] }
+      - { key: backend-services, details: [image service, 10 a minute, text service, 100 a minute] }
+      - { key: redis, details: [counters and token state, the rules] }
+      - { key: policy-service, details: [the admin API] }
+      - { key: policy-db, details: [PostgreSQL, rate_limit_rules] }
+    edges:
+      - { from: client, to: load-balancer }
+      - { from: load-balancer, to: api-gateway }
+      - { from: api-gateway, to: backend-services, label: if allowed }
+      - { from: api-gateway, to: redis, label: read and count }
+      - { from: api-gateway, to: policy-service, label: admin calls }
+      - { from: policy-service, to: policy-db, label: save the rule }
+      - { from: policy-service, to: redis, label: write-through }
+  - __component: sd.rich-text
+    key: hld-state
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "The gateway is replicated too, so the limiter inside it is as well, and the replica problem returns: two gateways counting one client separately. Keep the counters outside the gateways, in one shared store every copy reads and updates. Within a 5 ms budget that store has to be in memory, so Redis. Each read-and-update must be atomic, an INCR or a short Lua script, or two gateways can read the same count and both let a request through."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Rules need a home and an owner. A rate limiter policy service serves the admin API and saves each rule in a policy database. Rules are small structured rows, so a relational database such as PostgreSQL fits. The limiter reads rules from Redis, not from the database, so the policy service writes each rule to the database first and then to Redis, write-through. The two writes take a moment, which is the eventual consistency the requirements allowed."
+  - __component: sd.db-schema
+    key: hld-tables
+    stores:
+      - key: policy-store
+        engine: PostgreSQL
+        component: policy-db
+        why: A few structured rows per rule, edited by admins, read into Redis.
+        tables:
+          - name: rate_limit_rules
+            columns:
+              - { name: rule_id, type: bigint, role: primary }
+              - { name: subject_type, type: text, note: "USER_ID, API_KEY, IP, TIER or GLOBAL" }
+              - { name: subject_value, type: text, note: "user_123, api_456, PREMIUM, or null for GLOBAL" }
+              - { name: endpoint, type: text, note: "a path, or * for every endpoint" }
+              - { name: algorithm, type: text, note: "TOKEN_BUCKET, FIXED_WINDOW, SLIDING_WINDOW" }
+              - { name: request_limit, type: int }
+              - { name: window_sec, type: int }
+              - { name: burst_capacity, type: int }
+              - { name: refill_rate, type: int }
+              - { name: enforce_by, type: text, note: "USER_ID, API_KEY, IP or TENANT" }
+              - { name: is_active, type: bool }
+              - { name: created_at, type: timestamp }
+              - { name: updated_at, type: timestamp }
+  - __component: sd.quiz
+    key: hld-quiz
+    title: Quick check
+    questions:
+      - question: Why not enforce the limit on the client?
+        optionA: Clients are too slow
+        optionB: The counter lives in a cookie or local storage that the user can clear or edit
+        optionC: Browsers do not support counters
+        optionD: It costs more
+        answer: B
+        explanation: Anything on the client is under the user's control; it can be a courtesy, never the enforcement.
+      - question: A limiter runs inside each of a service's replicas. What goes wrong?
+        optionA: Nothing
+        optionB: Each replica counts on its own, so a client's requests spread across replicas are never added up
+        optionC: The service gets slower
+        optionD: The rules cannot be read
+        answer: B
+        explanation: Two requests on two replicas both see a count of 1. The count has to be shared.
+      - question: Why does a replicated gateway need Redis?
+        optionA: To store the rules permanently
+        optionB: So every gateway copy reads and updates one shared counter per client, in memory, within the 5 ms budget
+        optionC: To balance the load
+        optionD: To send the 429
+        answer: B
+        explanation: The same replica problem as in the services; one in-memory store shared by all copies fixes it.
+      - question: How does an admin's new rule reach the limiters?
+        optionA: The limiters query PostgreSQL on every request
+        optionB: The policy service saves it to the policy database, then writes it to Redis, so it arrives a moment later
+        optionC: Through the load balancer
+        optionD: It needs a restart
+        answer: B
+        explanation: Write-through to the cache; the short delay is the eventual consistency agreed in the requirements.
+  # ────────────────────────────────────────────────────────────────── 5. Deep dive, 1: fixed window counter
+  - __component: sd.section
+    key: lld-fixed-window
+    title: "Deep dive, 1: fixed window counter."
+    railLabel: Deep dive 1, fixed window
+    intro: "Inside, a rate limiter is an algorithm run against the client's rule and counter. Name the five common ones, fixed window counter, sliding window log, sliding window counter, token bucket and leaky bucket, then take them in turn, starting with the simplest."
+  - __component: sd.rich-text
+    key: fixed-window-idea
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Cut time into fixed windows, 0 to 10 seconds, 10 to 20, and so on, and keep one counter per client per window. Say the rule is at most 5 requests in 10 seconds: each request adds one, the first five pass, the sixth gets 429, and at the start of the next window the counter starts again at zero. It needs two numbers per client, a count and the window it belongs to. In Redis it is an atomic INCR on a key named for the client and the window, with the key set to expire when the window ends."
+      - type: paragraph
+        children:
+          - type: text
+            text: "The flaw is at the edges. Five requests at 9.9 seconds fill the first window; five more at 10.1 seconds open the second. Ten requests pass in 0.2 seconds, twice the limit, because the windows reset on the clock rather than following the traffic. The algorithm does not fail to take a burst; it lets too much of one through at a window boundary."
+  - __component: sd.quiz
+    key: fixed-window-quiz
+    title: Quick check
+    questions:
+      - question: "Limit 5 per 10 s. Five requests arrive at 9.9 s and five at 10.1 s. What does a fixed window do?"
+        optionA: Blocks the second five
+        optionB: Allows all ten, because the counter resets at 10 s
+        optionC: Allows five in total
+        optionD: Queues the second five
+        answer: B
+        explanation: Ten pass in 0.2 s, twice the limit, the fixed window's edge problem.
+      - question: Why must the Redis counter be updated with an atomic increment?
+        optionA: Redis has no other way to write
+        optionB: Two gateways reading and then writing the count separately can both see 4 and both allow a request
+        optionC: It makes the key expire
+        optionD: It is faster to read
+        answer: B
+        explanation: Read-then-write races across gateway copies; one atomic INCR returns a distinct count to each.
+  # ────────────────────────────────────────────────────────────────── 5. Deep dive, 2: sliding window log
+  - __component: sd.section
+    key: lld-sliding-log
+    title: "Deep dive, 2: sliding window log."
+    railLabel: Deep dive 2, sliding log
+    intro: "The fixed window broke at its edges because the windows stood still. Let the window slide with time instead, and count exactly what fell inside it."
+  - __component: sd.rich-text
+    key: sliding-log-idea
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Keep a log of timestamps, one per allowed request, for each client. When a request arrives, drop every timestamp older than the window, 10 seconds, and count what is left. Fewer than 5: allow it and add its timestamp. Otherwise answer 429. With requests at 0, 2, 4, 6 and 8 seconds, a sixth at 9 seconds is refused; at 11 seconds the stamp from 0 seconds has expired, so one more fits."
+      - type: paragraph
+        children:
+          - type: text
+            text: "It is exact: any 10-second span holds at most 5 requests, so there is no edge burst. The cost is memory: every allowed request is stored until it ages out, so each client's log grows with its limit, and at a million requests a second the timestamps and their eviction become the bulk of the work. Precise, but rarely worth it at this scale."
+  - __component: sd.quiz
+    key: sliding-log-quiz
+    title: Quick check
+    questions:
+      - question: What does the sliding window log store per client?
+        optionA: One counter
+        optionB: A timestamp for every request still inside the window
+        optionC: The tokens left
+        optionD: A queue of pending requests
+        answer: B
+        explanation: Exactness comes from keeping every request's time, and so does the memory cost.
+      - question: Why is it rarely used at a million requests a second?
+        optionA: It allows edge bursts
+        optionB: Memory and eviction work grow with every request kept in the window
+        optionC: It cannot return 429
+        optionD: It needs a database
+        answer: B
+        explanation: Two numbers per client would do almost as well; storing every timestamp does not scale cheaply.
+  # ────────────────────────────────────────────────────────────────── 5. Deep dive, 3: sliding window counter
+  - __component: sd.section
+    key: lld-sliding-counter
+    title: "Deep dive, 3: sliding window counter."
+    railLabel: Deep dive 3, sliding counter
+    intro: "Keep the sliding window, drop the log: two counters and a weighted sum estimate how many requests the sliding window holds."
+  - __component: sd.rich-text
+    key: sliding-counter-idea
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Keep the fixed windows' counts, but only two of them: the previous window and the current one. When a request arrives, the sliding window reaches back one window length from now and overlaps both. Assume the previous window's requests were spread evenly, so the share of them inside the sliding window is the share of the previous window it overlaps. The estimate is the previous count times that overlap share, plus the current window's count, taken whole."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Worked through with a limit of 5 per 10 seconds: the previous window, 0 to 10 seconds, saw 5 requests; the current one, 10 to 20, has none yet. A request at 12 seconds makes the sliding window 2 to 12 seconds, which covers 80 percent of the previous window. The estimate is 5 times 0.8 plus 0, which is 4; with this request it is 5, within the limit, so it is allowed."
+      - type: paragraph
+        children:
+          - type: text
+            text: "It needs two numbers per client instead of a log, and it smooths the edge burst away. It is an approximation, not an exact count: if the previous window's requests were bunched at its end, the estimate is too low, and a few extra requests can pass. In practice it is close enough for most APIs."
+  - __component: sd.quiz
+    key: sliding-counter-quiz
+    title: Quick check
+    questions:
+      - question: "Limit 5 per 10 s. The previous window had 5, the current has 0, and a request arrives at 12 s. What is the estimate before it?"
+        optionA: "0"
+        optionB: "4: five times the 80 percent overlap, plus the current count of 0"
+        optionC: "5"
+        optionD: "1"
+        answer: B
+        explanation: "Adding this request makes 5, which is within the limit, so it passes."
+      - question: What does the sliding window counter assume?
+        optionA: Requests in the previous window were spread evenly
+        optionB: Every client sends the same number of requests
+        optionC: The window never moves
+        optionD: Redis never fails
+        answer: A
+        explanation: That assumption turns two counts into an estimate; bunched traffic makes it inexact.
+  # ────────────────────────────────────────────────────────────────── 5. Deep dive, 4: token bucket
+  - __component: sd.section
+    key: lld-token-bucket
+    title: "Deep dive, 4: token bucket."
+    railLabel: Deep dive 4, token bucket
+    intro: "The two algorithms interviewers ask about most are the token bucket and the leaky bucket. The token bucket meets the burst requirement head on: it lets a burst through, up to a cap, and holds the long-run rate."
+  - __component: sd.rich-text
+    key: token-bucket-idea
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Three settings: the bucket's capacity, 10 tokens; the refill rate, 1 token a second; and the cost of a request, normally 1 token. Tokens drip into the bucket at the refill rate and stop when it is full. Each request takes a token and goes on to the backend; a request that finds the bucket empty gets 429."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Send ten requests at once into a full bucket and all ten pass; the eleventh is refused, and after that one more request passes each second as tokens return. That is the burst requirement met with a cap: a quiet client saves up to 10 tokens and may spend them together, but never more than 1 a second over time. Retry-After falls out of it: the time until the next token, here 1 second."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Nothing has to drip on a timer. Each client's state is two numbers in Redis, the tokens left and the time of the last refill. On each request, add the tokens earned since then, the seconds elapsed times the rate, capped at the capacity, then take one if there is one. That read and update must be one atomic step, usually a short Lua script, or two gateways can spend the same token. Cheap, burst-friendly and simple to reason about, it is the algorithm most production limiters choose."
+  - __component: sd.quiz
+    key: token-bucket-quiz
+    title: Quick check
+    questions:
+      - question: "Capacity 10, refill 1 a second, the bucket full. Fifteen requests arrive at once. What happens?"
+        optionA: All fifteen pass
+        optionB: Ten pass and five get 429; then one passes each second as tokens return
+        optionC: One passes each second, the rest wait in a queue
+        optionD: None pass
+        answer: B
+        explanation: The capacity is the largest burst; the refill rate is the long-run limit.
+      - question: What does the token bucket keep per client?
+        optionA: A timestamp per request
+        optionB: The tokens left and the time of the last refill
+        optionC: A queue of requests
+        optionD: Two window counts
+        answer: B
+        explanation: Refilling lazily from the elapsed time means nothing has to run on a timer.
+  # ────────────────────────────────────────────────────────────────── 5. Deep dive, 5: leaky bucket, and the choice
+  - __component: sd.section
+    key: lld-leaky-bucket
+    title: "Deep dive, 5: leaky bucket, and the choice."
+    railLabel: Deep dive 5, leaky bucket
+    intro: "The leaky bucket turns the bucket around: instead of spending saved-up tokens, requests wait in a queue that empties at a fixed rate. Then choose, and shape the code."
+  - __component: sd.rich-text
+    key: leaky-bucket-idea
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Incoming requests join a first-in, first-out queue of fixed size, 8, and a worker takes them off at a steady rate, 1 a second, whatever the rate they arrive at. A burst fills the queue; once it is full, further requests are dropped with 429. The backend sees a perfectly smooth stream."
+      - type: paragraph
+        children:
+          - type: text
+            text: "The cost is waiting. A request at the back of the queue waits for everything ahead of it, up to 8 seconds here, which a 5 ms decision budget cannot hide. Use it when the backend needs a steady rate, a fragile downstream system or a provider that allows a fixed number of calls a second, not for an interactive API."
+  - __component: sd.subsection
+    key: choice
+    title: Choosing, and the code's shape
+  - __component: sd.table
+    key: algorithm-comparison
+    title: The five algorithms against the requirements
+    columns:
+      - { label: Algorithm, style: strong }
+      - { label: State per client, style: text }
+      - { label: Bursts, style: text }
+      - { label: Verdict, style: text }
+    rows:
+      - [Fixed window counter, A count and its window, Up to twice the limit at a window edge, Simple; edges leak]
+      - [Sliding window log, A timestamp per request, None past the limit, Exact; too much memory at scale]
+      - [Sliding window counter, Two counts, "Smoothed, approximately", Close and cheap]
+      - [Token bucket, Tokens left and last refill time, "Allowed, up to the capacity", The usual choice]
+      - [Leaky bucket, A queue, "Queued, then dropped", Smooth output; adds waiting]
+  - __component: sd.rich-text
+    key: strategy
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Choose the token bucket: it allows bursts within a cap, keeps two numbers per client and decides in one Redis call. Then the code. Each algorithm is one strategy behind a single RateLimiterStrategy interface with one method, allowRequest. A factory reads the rule's algorithm, such as TOKEN_BUCKET, and returns the matching strategy built with that rule's settings, capacity and refill rate for a token bucket, a limit and window for the window algorithms. The gateway holds the strategy it was given and calls allowRequest on every request, so changing a rule's algorithm changes behaviour without changing the gateway."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Close by reading the non-functional list back. Scale: the gateways scale out and share one Redis. Latency: one in-memory call per decision. Availability: rules arrive by write-through a moment late, and nothing waits on the policy database during a request."
+  - __component: sd.quiz
+    key: leaky-bucket-quiz
+    title: Quick check
+    questions:
+      - question: How does the leaky bucket treat a burst?
+        optionA: Lets it all through
+        optionB: Queues it and drains it at a fixed rate, dropping requests once the queue is full
+        optionC: Spends saved tokens
+        optionD: Counts it in two windows
+        answer: B
+        explanation: Output is smooth; the price is the wait in the queue.
+      - question: When is the leaky bucket the better choice?
+        optionA: For any interactive API
+        optionB: When the backend needs requests at a steady rate
+        optionC: When memory is short
+        optionD: When rules change often
+        answer: B
+        explanation: Elsewhere its queueing delay hurts more than smoothing helps.
+      - question: Which design pattern fits five interchangeable algorithms chosen per rule at runtime?
+        optionA: Observer
+        optionB: Strategy, with a factory that picks the strategy from the rule's algorithm
+        optionC: Singleton
+        optionD: Decorator
+        answer: B
+        explanation: One interface, allowRequest; the gateway calls it without knowing which algorithm runs.

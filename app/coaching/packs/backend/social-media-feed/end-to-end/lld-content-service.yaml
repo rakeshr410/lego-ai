@@ -1,0 +1,131 @@
+# Social media interview, low-level design, the content service: the high-level picture copied down under "5. Low-level design" (gateway, the settled user service), then the content service rebuilt as in the video: Kafka with raw, filtered and blocked topics, a moderator above it, a post consumer to its right writing to the post DB (Cassandra, schema beside it) and S3, and a notification service for blocked posts.
+id: backend/social-media-feed/end-to-end/lld-content-service
+title: "Low-level design: the content service"
+source:
+  hash: "1c9d28b36457"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/social-media-feed/end-to-end/lld-user-service
+  assumes:
+    - "The content service stores text in a post DB and media in S3."
+    - "Non-functional: 500M daily users, availability over consistency, about 500 ms to upload a post."
+  carries:
+    - "The content service puts each post on Kafka topic raw_post and answers once Kafka has it."
+    - "A moderator service moves each post to filtered_post or blocked_post; a post consumer stores filtered posts, text in the post DB (Cassandra) and media in S3."
+    - "A notification service tells the author when a post is blocked."
+  terms:
+    - term: Kafka topic
+      means: "A durable, ordered log that producers append to and consumers read at their own pace."
+    - term: moderation
+      means: Checking a post against the policy before anyone sees it.
+board:
+  keep: [title, prompt-desc, nfr, nfr-scale, nfr-cap, nfr-latency]
+  elements:
+    - { id: lld-head, kind: note, label: 5. Low-level design, at: [2, 20] }
+    - { id: gw, kind: box, label: API gateway and load balancer, at: [2, 23], size: [9, 66] }
+    - { id: user-svc, kind: box, label: User service, at: [16, 23], size: [12, 3], tone: grey }
+    - { id: user-db, kind: oval, label: "User DB, Postgres", at: [32, 23], size: [12, 3], tone: grey }
+    - { id: content-svc, kind: box, label: Content service, at: [16, 33], size: [12, 3], tone: blue }
+    - { id: kafka-posts, kind: box, label: "Kafka, post topics", at: [34, 33], size: [12, 3] }
+    - { id: topics, kind: note, label: "topics raw, filtered and blocked posts", at: [34, 37] }
+    - { id: moderator, kind: box, label: Moderator service, at: [34, 27], size: [11, 3], tone: blue }
+    - { id: post-consumer, kind: box, label: Post consumer service, at: [52, 33], size: [13, 3], tone: blue }
+    - { id: post-db, kind: oval, label: "Post DB, Cassandra", at: [74, 27], size: [14, 4], tone: amber }
+    - { id: s3, kind: oval, label: "S3, media files", at: [74, 37], size: [12, 3], tone: amber }
+    - { id: post-schema-1, kind: note, label: "post: post_id, user_id, post_type,", at: [90, 27] }
+    - { id: post-schema-2, kind: note, label: "content_text, media_url, thumbnail_url,", at: [92, 28] }
+    - { id: post-schema-3, kind: note, label: "like, share and comment counts", at: [92, 29] }
+    - { id: notification, kind: box, label: Notification service, at: [56, 23], size: [14, 3], tone: blue }
+  arrows:
+    - { id: gw-user, from: gw, to: user-svc }
+    - { id: user-userdb, from: user-svc, to: user-db }
+    - { id: gw-content, from: gw, to: content-svc }
+    - { id: content-kafka, from: content-svc, to: kafka-posts }
+    - { id: kafka-moderator, from: kafka-posts, to: moderator, both: true }
+    - { id: kafka-consumer, from: kafka-posts, to: post-consumer, label: filtered }
+    - { id: consumer-postdb, from: post-consumer, to: post-db, label: text and metadata }
+    - { id: consumer-s3, from: post-consumer, to: s3, label: media }
+    - { id: kafka-notification, from: kafka-posts, to: notification, label: blocked }
+beats:
+  - point: "Copy the high-level picture down: the user service is settled, but a content service writing straight to its stores cannot take millions of uploads at this scale."
+    kind: failure
+    weight: core
+    teach:
+      - "Copy the picture into the low-level section: the gateway, and the user service with its Postgres, which is settled."
+      - "Now the content service. In the high-level design it wrote straight to the post DB and S3. With millions of posts arriving every minute, the stores cannot keep up, and every upload would wait on them."
+    draw: [lld-head, gw, user-svc, gw-user, user-db, user-userdb, content-svc, gw-content]
+    check: What goes wrong if the content service writes every upload straight to its stores?
+    answer: At millions of uploads the stores fall behind, and every upload waits on them.
+  - point: "The content service puts each post on a Kafka topic, raw_post, and answers once Kafka has it, so the upload stays inside 500 ms however busy the stores are."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Put a temporary, durable buffer in between: a Kafka broker. The content service appends each new post to a topic called raw post."
+      - "The client is answered as soon as Kafka has the post, which keeps the upload inside its 500 milliseconds; storing and publishing happen behind it. The broker will hold three topics: raw, filtered and blocked posts."
+    draw: [kafka-posts, content-kafka, topics]
+    check: How does Kafka help the 500 ms upload target?
+    answer: The upload is answered once Kafka durably has the post; moderation and storage happen afterwards.
+  - point: "A moderator service consumes raw_post, checks each post against the policy with a model, and moves it to filtered_post or blocked_post."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Anything can be uploaded, including malicious or explicit content, so the platform must check it first. A moderator service consumes raw post and sanitizes it, with an AI or ML model."
+      - "Each post comes out one of two ways: valid, onto filtered post, or against the policy, onto blocked post."
+    draw: [moderator, kafka-moderator]
+    check: What does the moderator do with each raw post?
+    answer: Checks it against the policy and moves it to filtered_post if valid, blocked_post if not.
+  - point: "A post consumer service reads filtered_post and stores each post: text and metadata in the post DB, the image or video in S3."
+    kind: flow
+    weight: core
+    teach:
+      - "Valid posts still have to reach storage. A post consumer service reads filtered post and drives it into the stores."
+      - "If it is text, the text and metadata go to the post DB; if it is a media file, the file goes to S3. Uploading a video properly, in chunks with encoding, is a design of its own; here the post just records its type and URL."
+    draw: [post-consumer, kafka-consumer, post-db, consumer-postdb, s3, consumer-s3]
+    check: Which topic does the post consumer read, and where does it write?
+    answer: "filtered_post; text and metadata to the post DB, media to S3."
+  - point: "The post table holds post ID, user ID, type, text, media and thumbnail URLs and the counts, in Cassandra, because the post store is write heavy and Cassandra's writes are cheap."
+    kind: decision
+    weight: core
+    teach:
+      - "The schema: post ID, the user who posted, the post type, the text, the media URL, a thumbnail URL for videos, and the like, share and comment counts."
+      - "The store takes thousands of writes a second, so it needs cheap writes: Cassandra appends each write to a log and memory, and scales writes by adding nodes."
+    draw: [post-schema-1, post-schema-2, post-schema-3]
+    check: Why Cassandra for posts?
+    answer: The post store is write heavy, and Cassandra's log-structured writes are cheap and spread across nodes.
+  - point: "A notification service reads blocked_post and tells the author the post broke the policy."
+    kind: flow
+    weight: supporting
+    teach:
+      - "One more flow: a blocked post must not just vanish. A notification service reads blocked post and tells the author the post was blocked by the policy."
+      - "Storing blocked posts to retrain the model is possible, but out of scope."
+    draw: [notification, kafka-notification]
+    check: What happens to a post that breaks the policy?
+    answer: It goes to blocked_post and the notification service tells the author.
+asks:
+  - ids: [kafka-posts]
+    beats: [2]
+    question: "Millions of uploads a minute, and the stores can't keep up. What would you put between the content service and the stores?"
+    hints:
+      - Something durable that can hold posts until they are processed.
+      - A streaming platform with topics.
+  - ids: [moderator]
+    beats: [3]
+    question: "Anyone can upload anything. What should happen to a post before it is published?"
+    hints:
+      - Think about content that breaks the policy.
+      - Something could read the raw topic and sort the posts.
+  - ids: [post-consumer]
+    beats: [4]
+    question: "Valid posts are now on the filtered topic. How do they get into the stores?"
+    hints:
+      - Something has to read that topic.
+      - Text and media go to different stores.
+  - ids: [notification]
+    beats: [6]
+    question: "And a blocked post? What should the author experience?"
+    hints:
+      - Should it disappear silently?
+      - Something could read the blocked topic.

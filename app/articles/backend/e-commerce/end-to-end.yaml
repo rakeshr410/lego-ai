@@ -1,0 +1,1059 @@
+# yaml-language-server: $schema=../../../../../lego/content-kit/schema/topic.schema.json
+# provenance: ai-drafted by claude-opus-5-5 on 2026-10-27
+#
+# A whole backend system design interview for an e-commerce platform like Amazon or Flipkart, run step
+# by step on one whiteboard. The order and the board follow a five-step interview framework:
+# requirements, core entities, API, a high-level design of one microservice per requirement behind an
+# API gateway, then a low-level design that walks the services one at a time: users and search
+# (Elasticsearch fed by change data capture, MongoDB, S3 and a CDN), the cart, the checkout (an
+# inventory service, then Kafka in place of three separate writes), limited stock (a Redis lock with a
+# TTL), and last a cache in front of the inventory database and the stock count copied to the catalogue.
+# Every latency figure is an illustrative round number for the exercise, not a measurement.
+# A backend system of lego-ai's own (app/articles/backend): it stands alone and links to no main-site topic.
+catalogVersion: 5
+title: Designing an e-commerce platform, end to end
+shortTitle: E-commerce interview
+summary: "A backend design interview for an online shop like Amazon or Flipkart, step by step on one board: six requirements with the CAP choice made per module, five entities, six endpoints, a microservice per requirement behind an API gateway, then each service opened in turn, from Elasticsearch and a CDN to Kafka, a Redis lock for flash sales and a cached inventory."
+group: design
+order: 5
+xp: 280
+difficulty: intermediate
+tags: [interview, microservices, search, change-data-capture, event-driven, distributed-locks, caching]
+eyebrow: Design
+breadcrumb: [E-commerce, Interview walkthrough]
+lede: "You have about an hour and one whiteboard to design a shop like Amazon or Flipkart, where people search for products, read their details, fill a cart, pay and track the order, and where a thousand people may try to buy the last five phones in a flash sale. This walkthrough runs the interview the way a strong candidate runs it: requirements with numbers and a CAP choice per module, the entities and the endpoints, one service per requirement behind a gateway, and then the deep dive, service by service, until search is fast, payment and stock stay consistent, and the last phone is sold once."
+reviewStatus: draft
+author: rakeshr410
+provenance: ai-drafted
+sources:
+  - title: "System Design 3: E-Commerce Platform like Amazon / Flipkart (InterviewWithBunny, YouTube)"
+    url: https://www.youtube.com/watch?v=-wJuExkI97s
+    note: "Order and board kept. Corrected: CAP is a choice during a partition; a title index can't do keyword search; Kafka is at least once, so outbox and idempotent consumers; lock per product; stock decided in the DB, not a cache; a CDN."
+  - title: CAP theorem (Wikipedia)
+    url: https://en.wikipedia.org/wiki/CAP_theorem
+    note: "During a network partition a replicated store either answers with possibly stale data or refuses; the choice can differ per operation."
+  - title: Inverted index (Wikipedia)
+    url: https://en.wikipedia.org/wiki/Inverted_index
+    note: "A map from each word to the documents containing it, the structure a search engine such as Elasticsearch answers keyword queries from."
+  - title: Debezium documentation
+    url: https://debezium.io/documentation/
+    note: "Change data capture: reads a database's change log and publishes each row change to Kafka."
+  - title: Transactional outbox (microservices.io)
+    url: https://microservices.io/patterns/data/transactional-outbox.html
+    note: "Write the state change and the event in one local transaction, then relay the event, so a crash cannot lose one of the two."
+  - title: SET command (Redis documentation)
+    url: https://redis.io/docs/latest/commands/set/
+    note: "SET with NX and EX sets a key only if it is absent, with an expiry, in one atomic step: the stock lock."
+tutorBrief: >-
+  Interview walkthrough for an e-commerce platform like Amazon or Flipkart (an online shop for mobiles,
+  laptops, cameras, books, watches, apparel, shoes). Scope first: the shopper's flow, not warehouse
+  operations. Five numbered steps on the board, top to bottom: 1 functional (left) and non-functional
+  (right) requirements, 2 core entities, 3 API (beside the entities), 4 high-level design, 5 low-level
+  design (the high-level picture copied and grown service by service). Functional: search products by
+  title or name; view a product's details (description, images, available quantity, reviews); choose a
+  quantity and add to the cart; pay and check out; check an order's status; handle purchases of items in
+  limited stock (a flash sale: thousands of buyers for five or six iPhones). Non-functional: scale 10M
+  monthly active users and 10 orders per second; CAP per module: search and viewing highly available,
+  payment, orders and inventory highly consistent (CAP is the choice a replicated store makes during a
+  network partition, answer possibly stale or refuse); search latency about 200 ms. Entities: user,
+  product, cart, order, checkout. API: GET /v1/product/search?q=term returns a paginated list of product
+  ids with partial data (thumbnail, price); GET /v1/product/{productId} returns details as JSON; POST
+  /v1/cart/add with productId and quantity, the user from the header, returns cartId; checkout is two
+  steps: POST /v1/checkout with the items, quantities and prices returns orderId, then POST /v1/payment
+  with orderId and payment details returns a confirmation or failure; GET /v1/status/{orderId}. Update and
+  delete cart endpoints are said, not written. High-level design: clients, a load balancer (round robin)
+  and API gateway (routing, authentication and authorization, rate limiting), then one microservice per
+  requirement: user, search, product, cart, order status, checkout, payment (calls a third-party payment
+  gateway), each with its database: user DB, product DB (search and product services), cart DB, order DB
+  (checkout writes, order status reads), payment DB. Low-level design: user service on MySQL (name, email,
+  password hash, mobile, addresses), login returns a JWT the gateway checks on later calls. Search: a
+  scan of the product table per query is slow, and a B-tree index on title only helps exact or prefix
+  matches, not keywords anywhere, typos or ranking, so search moves to Elasticsearch (an inverted index),
+  fed from the product DB by CDC (a connector reads the change log, Kafka carries it). Product DB is
+  MongoDB for a flexible schema per category (productId, name, description, category, qty, price,
+  currency, image URLs). Images (say 2 MB each, 7 or 8 per product) go to S3, URLs in the product
+  document, replicated to a CDN so the browser loads them from nearby. Cart on Postgres: cartId, userId,
+  products (productId, qty); no price stored, the cart service reads current prices from the product DB.
+  Checkout: an inventory service and inventory DB (Postgres, indexed on productId, the only source of
+  truth for stock, written only by the inventory service); checkout checks stock before payment. Doing
+  three writes after payment (payment DB, inventory, order DB) from one service is not atomic: one can
+  fail after the money is taken. Instead the payment service records the payment, checkout publishes one
+  event to Kafka, and consumers update the order DB, the inventory and send notifications; Kafka keeps
+  the event until each consumer has processed it (at least once), so consumers are idempotent (keyed by
+  orderId) and the event is written with an outbox so it cannot be lost between the DB write and the
+  publish. Order DB on MySQL: orderId, userId, items (productId, qty, price at purchase, currency), total,
+  paymentId, status. Limited stock: with 10 checkout replicas and one iPhone left, ten concurrent checks
+  all read one and all ten pay. Fix: a Redis lock keyed by the product, set only if absent (SET NX) with a
+  TTL of 30 s to 1 min, holding the buyer and quantity; a second buyer finds the lock and is told it is
+  sold out or may retry. For several units, reserve by an atomic conditional decrement (qty minus n only
+  where qty is at least n) rather than one lock per product. Inventory cache: every order reads the
+  inventory DB, a hot spot and a single point of failure, so a Redis cache sits in front of it; after a
+  sale the cache may still say 1 when the DB says 0, so keep it fresh by write-through (the inventory
+  service updates DB and cache) or CDC; the final stock decision is still the DB's conditional update.
+  The product DB's qty, shown to shoppers, is refreshed from the inventory DB by CDC (or a cron or
+  Kafka). Order status service reads the order DB by orderId.
+components:
+  - key: client
+    name: Shopper's app
+    tone: sand
+    kind: client
+    summary: A browser or phone app where a shopper searches, adds to the cart, pays and tracks orders.
+    owns: [nothing of its own]
+    talksTo: [api-gateway, cdn]
+  - key: api-gateway
+    name: Load balancer and API gateway
+    tone: blue
+    kind: gateway
+    summary: Spreads requests round robin, routes each path to its service, checks the JWT and rate-limits.
+    owns: [routes, rate limits]
+    talksTo: [user-service, search-service, product-service, cart-service, order-status-service, checkout-service]
+  - key: user-service
+    name: User service
+    tone: blue
+    kind: service
+    summary: Sign-up and login; issues the JWT the gateway checks on every later call.
+    owns: [accounts]
+    talksTo: [user-db]
+  - key: search-service
+    name: Search service
+    tone: blue
+    kind: service
+    summary: Answers keyword searches from Elasticsearch, a page at a time, with image URLs on the CDN.
+    owns: [nothing durable]
+    talksTo: [elasticsearch]
+  - key: product-service
+    name: Product service
+    tone: blue
+    kind: service
+    summary: Adds and edits products and their images; serves a product's details.
+    owns: [the catalogue]
+    talksTo: [product-db, s3]
+  - key: cart-service
+    name: Cart service
+    tone: blue
+    kind: service
+    summary: Keeps each user's cart and prices it from the product database when it is shown.
+    owns: [carts]
+    talksTo: [cart-db, product-db]
+  - key: checkout-service
+    name: Checkout service
+    tone: blue
+    kind: service
+    summary: Takes the stock lock, checks stock, starts the payment and publishes the result as one event.
+    owns: [nothing durable]
+    talksTo: [inventory-service, payment-service, redis-lock, kafka]
+  - key: payment-service
+    name: Payment service
+    tone: blue
+    kind: service
+    summary: Calls the third-party payment gateway and records every attempt, paid or failed.
+    owns: [payments]
+    talksTo: [payment-gateway, payment-db]
+  - key: payment-gateway
+    name: Payment gateway
+    tone: gray
+    kind: external
+    summary: A third party that charges the card and answers with a confirmation or a failure.
+    owns: [card processing]
+    talksTo: []
+  - key: inventory-service
+    name: Inventory service
+    tone: blue
+    kind: service
+    summary: The only writer of the inventory database; answers stock checks, through its cache.
+    owns: [stock counts]
+    talksTo: [inventory-db, inventory-cache]
+  - key: order-status-service
+    name: Order status service
+    tone: blue
+    kind: service
+    summary: Looks an order up by its id and returns its status.
+    owns: [nothing durable]
+    talksTo: [order-db]
+  - key: kafka
+    name: Kafka
+    tone: purple
+    kind: queue
+    summary: Holds each checkout's result event until every consumer has processed it.
+    owns: [checkout events]
+    talksTo: [order-consumer, inventory-consumer, notification-service]
+  - key: order-consumer
+    name: Order consumer
+    tone: gray
+    kind: worker
+    summary: Writes the order and its status to the order database, once per orderId.
+    owns: [nothing]
+    talksTo: [order-db]
+  - key: inventory-consumer
+    name: Inventory consumer
+    tone: gray
+    kind: worker
+    summary: Reduces the stock of what was bought, through the inventory service, once per orderId.
+    owns: [nothing]
+    talksTo: [inventory-service]
+  - key: notification-service
+    name: Notification service
+    tone: gray
+    kind: worker
+    summary: Tells the shopper whether the order went through.
+    owns: [nothing]
+    talksTo: []
+  - key: redis-lock
+    name: Redis lock
+    tone: orange
+    kind: cache
+    summary: One key per product, set only if absent with a TTL, so only one checkout at a time takes the last units.
+    owns: [stock locks]
+    talksTo: []
+  - key: inventory-cache
+    name: Inventory cache
+    tone: orange
+    kind: cache
+    summary: Redis in front of the inventory database for stock reads, kept fresh by write-through or CDC.
+    owns: [cached stock counts]
+    talksTo: []
+  - key: elasticsearch
+    name: Elasticsearch
+    tone: yellow
+    kind: datastore
+    summary: An inverted index of the products, fed by CDC, for keyword search with ranking.
+    owns: [search index]
+    talksTo: []
+  - key: cdc
+    name: CDC pipeline
+    tone: gray
+    kind: worker
+    summary: A connector reads a database's change log and streams each change through Kafka to a copy.
+    owns: [nothing]
+    talksTo: [elasticsearch, product-db]
+  - key: cdn
+    name: CDN
+    tone: green
+    kind: cache
+    summary: Copies of the product images at edge locations near the shoppers.
+    owns: [image copies]
+    talksTo: [s3]
+  - key: s3
+    name: S3 bucket
+    tone: yellow
+    kind: datastore
+    summary: Blob storage for product images; the product document keeps only their URLs.
+    owns: [images]
+    talksTo: []
+  - key: user-db
+    name: User DB
+    tone: yellow
+    kind: datastore
+    summary: MySQL; one row per account.
+    owns: [user]
+    talksTo: []
+  - key: product-db
+    name: Product DB
+    tone: yellow
+    kind: datastore
+    summary: MongoDB; one document per product, fields varying by category.
+    owns: [product]
+    talksTo: []
+  - key: cart-db
+    name: Cart DB
+    tone: yellow
+    kind: datastore
+    summary: Postgres; one cart per user with its products and quantities.
+    owns: [cart]
+    talksTo: []
+  - key: order-db
+    name: Order DB
+    tone: yellow
+    kind: datastore
+    summary: MySQL; every order with its items, total, payment and status.
+    owns: [order]
+    talksTo: []
+  - key: payment-db
+    name: Payment DB
+    tone: yellow
+    kind: datastore
+    summary: Every payment attempt and its outcome.
+    owns: [payment]
+    talksTo: []
+  - key: inventory-db
+    name: Inventory DB
+    tone: yellow
+    kind: datastore
+    summary: Postgres, indexed on productId; the only source of truth for how many of each product are left.
+    owns: [inventory]
+    talksTo: []
+content:
+  # ────────────────────────────────────────────────────────────────── Problem statement
+  - __component: sd.section
+    key: problem-statement
+    title: Understanding the problem.
+    railLabel: Problem
+    intro: "The prompt is one line: design an e-commerce platform like Amazon or Flipkart. An application that size has many systems, so first agree which one you are designing: the shopper's flow from search to delivery status, or the warehouse and inventory back office."
+  - __component: sd.rich-text
+    key: problem-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "An e-commerce platform is an online shop where people buy mobiles, laptops, cameras, books, watches, apparel and shoes. Write that line under the title so the interviewer can correct it. Then ask the scoping question out loud: this walkthrough designs the shopper's flow, search, product page, cart, checkout and payment, order status, plus the one hard back-office problem the shopper feels, selling items in limited stock."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Run the interview in five steps and number each on the board as you reach it, top to bottom: requirements, core entities, API, high-level design, low-level design. The first three are quick and decide everything after; the low-level design, where each service is opened and made to meet the non-functional numbers, is where most of the hour goes."
+  - __component: sd.card-grid
+    key: board-steps
+    title: The board, in the order you fill it
+    columns: 3
+    cards:
+      - title: 1. Requirements
+        text: Functional on the left, six lines; non-functional on the right, each with a number or a CAP choice.
+      - title: 2. Entities
+        text: The nouns the shop keeps. Five of them.
+      - title: 3. API
+        text: One or two endpoints per functional requirement, each written as a request and what it returns.
+      - title: 4. High-level design
+        text: Clients, a gateway, one microservice per requirement, a database each, the flows as arrows.
+      - title: 5. Low-level design
+        text: "The high-level picture copied and grown one service at a time: users and search, the cart, the checkout, limited stock, then the inventory cache."
+  - __component: sd.quiz
+    key: problem-quiz
+    title: Quick check
+    questions:
+      - question: The interviewer says only "design Amazon". What do you ask first?
+        optionA: Which database Amazon uses
+        optionB: Which part to design, the shopper's flow or the warehouse and inventory back office, and then the requirements
+        optionC: How many servers to draw
+        optionD: Nothing; start drawing
+        answer: B
+        explanation: Amazon is many systems. Agreeing the scope first keeps an hour's design on the part the interviewer cares about.
+  # ────────────────────────────────────────────────────────────────── 1. Requirements
+  - __component: sd.section
+    key: requirements
+    title: Requirements.
+    railLabel: Requirements
+    intro: "Two lists side by side: what the shop does for a shopper, and how well. The non-functional side carries numbers and a CAP choice made per module, because one shop needs both."
+  - __component: sd.subsection
+    key: functional-sub
+    title: Functional requirements
+    railLabel: Functional
+  - __component: sd.checklist
+    key: functional
+    idPrefix: FR-
+    items:
+      - text: Search for products by title or name.
+      - text: "View a product's details: description, images, available quantity, reviews."
+      - text: Choose a quantity and add the item to the cart.
+      - text: Pay and check out.
+        note: The four core steps of the shopper's flow end here.
+      - text: Check the status of an order.
+      - text: "Handle purchases of items in limited stock: a flash sale where thousands of buyers want five or six iPhones."
+        note: Say this one out loud; it is the concurrency problem the low-level design must solve.
+  - __component: sd.subsection
+    key: non-functional-sub
+    title: Non-functional requirements
+    railLabel: Non-functional
+  - __component: sd.requirement-table
+    key: non-functional
+    rows:
+      - area: Scale
+        requirement: A large consumer shop.
+        targets: [10M monthly active users, 10 orders per second]
+        note: Ask for the scale first; it is what rules out one server and leads to microservices.
+      - area: Availability
+        requirement: Searching and viewing products always work.
+        targets: [highly available search and product pages]
+        note: A shopper who cannot search leaves; a slightly stale result is fine.
+      - area: Consistency
+        requirement: Money and stock are never wrong.
+        targets: [payment and orders consistent, inventory consistent]
+        note: Never take money for an item that is not there, never sell one unit twice.
+      - area: Latency
+        requirement: Search feels instant.
+        targets: ["about 200 ms for a search"]
+        note: Quantify it; a number is what the search design is later judged against.
+  - __component: sd.rich-text
+    key: cap-choice
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "At this scale no single server carries the load, so the shop is split into services and its data spread over machines. The CAP theorem says what such a system must choose when the network between its machines splits: keep answering, perhaps with stale data, or refuse until the copies agree. It is not that availability and consistency can never both hold; it is a choice for the moment of a partition, and it can be made per module."
+      - type: paragraph
+        children:
+          - type: text
+            text: "So choose per module. Search and product pages favour availability: a price a few seconds old harms nobody, an error page loses the sale. Payment and orders, and the inventory, favour consistency: an order taken for stock that is not there, or a payment without an order, is a real failure."
+  - __component: sd.quiz
+    key: requirements-quiz
+    title: Quick check
+    questions:
+      - question: Which modules should favour consistency over availability?
+        optionA: Search and product pages
+        optionB: Payment and order management, and the inventory
+        optionC: All of them
+        optionD: None; e-commerce is eventually consistent
+        answer: B
+        explanation: Money and stock must be right. Search can show a slightly stale result and stay up.
+      - question: What does the CAP theorem actually force a choice about?
+        optionA: Whether a distributed system can ever be both available and consistent
+        optionB: What a replicated system does during a network partition, answer possibly stale or refuse
+        optionC: Which database to buy
+        optionD: How many servers to run
+        answer: B
+        explanation: Without a partition both hold. The choice is for the partition, and it can differ per module.
+  # ────────────────────────────────────────────────────────────────── 2. Entities
+  - __component: sd.section
+    key: entities
+    title: Core entities.
+    railLabel: Entities
+    intro: "Name the nouns the shop keeps. Five cover the requirements; more may appear as the design grows."
+  - __component: sd.table
+    key: entities-table
+    columns:
+      - { label: Entity, style: strong }
+      - { label: What it is, style: text }
+    rows:
+      - [User, "The shopper's account: who they are, how to reach them, where to deliver."]
+      - [Product, "An item for sale: its details, images, price and how many are left."]
+      - [Cart, The products and quantities a user has chosen but not yet bought.]
+      - [Order, "A purchase: its items, total, payment and status."]
+      - [Checkout, "The step that turns a cart into an order and a payment."]
+  - __component: sd.quiz
+    key: entities-quiz
+    title: Quick check
+    questions:
+      - question: Why is the cart an entity of its own, not part of the order?
+        optionA: It is not; carts are orders
+        optionB: A cart is chosen items not yet bought, kept for days and changed freely; an order is a fixed purchase with a payment
+        optionC: For the load balancer
+        optionD: Because carts are stored in Elasticsearch
+        answer: B
+        explanation: They have different lives. A cart changes until checkout turns it into an order.
+  # ────────────────────────────────────────────────────────────────── 3. API
+  - __component: sd.section
+    key: api
+    title: API.
+    railLabel: API
+    intro: "With the requirements written, the endpoints are almost a one-to-one copy: one or two per requirement. Write the main ones and say the rest, update and delete on the cart, out loud."
+  - __component: sd.endpoint
+    key: search-products
+    method: GET
+    path: "/v1/product/search?q={searchTerm}"
+    summary: "Searches by keyword. Returns a page of matching products, each as partial data (id, title, thumbnail, price), never every match at once."
+    responses:
+      - label: OK
+        status: "200"
+        body:
+          products: [{ productId: p42, title: iPhone 15, thumbnail: "https://cdn.example.com/p42/1.jpg", price: 79900 }]
+          nextCursor: c2
+  - __component: sd.endpoint
+    key: product-details
+    method: GET
+    path: "/v1/product/{productId}"
+    summary: "Returns the product's details as JSON: description, images, available quantity, reviews."
+    responses:
+      - label: OK
+        status: "200"
+        body:
+          productId: p42
+          name: iPhone 15
+          price: 79900
+          currency: INR
+          qty: 6
+  - __component: sd.endpoint
+    key: cart-add
+    method: POST
+    path: /v1/cart/add
+    summary: "Adds a product and quantity to the user's cart; the user comes from the header's token. Returns the cart id."
+    requestHeaders: ["Authorization: Bearer <token>"]
+    requestBody:
+      productId: p42
+      qty: 1
+    responses:
+      - label: OK
+        status: "200"
+        body:
+          cartId: c7
+  - __component: sd.endpoint
+    key: checkout
+    method: POST
+    path: /v1/checkout
+    summary: "Starts the checkout for the cart's items with their quantities and prices. Returns an order id to pay against."
+    requestHeaders: ["Authorization: Bearer <token>"]
+    requestBody:
+      items: [{ productId: p42, qty: 1, price: 79900 }]
+    responses:
+      - label: Created
+        status: "201"
+        body:
+          orderId: o901
+      - label: Out of stock
+        status: "409"
+        body:
+          error: insufficient_stock
+  - __component: sd.endpoint
+    key: payment
+    method: POST
+    path: /v1/payment
+    summary: "Pays for an order with the payment details; the payment gateway's answer comes back as confirmed or failed."
+    requestHeaders: ["Authorization: Bearer <token>"]
+    requestBody:
+      orderId: o901
+      paymentDetails: tok_card_from_gateway
+    responses:
+      - label: Confirmed
+        status: "200"
+        body:
+          status: confirmed
+      - label: Failed
+        status: "402"
+        body:
+          status: failed
+  - __component: sd.endpoint
+    key: order-status
+    method: GET
+    path: "/v1/status/{orderId}"
+    summary: Returns the order's current status.
+    responses:
+      - label: OK
+        status: "200"
+        body:
+          orderId: o901
+          status: placed
+  - __component: sd.rich-text
+    key: api-notes
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Two details are worth saying. Search returns pages: thousands of matches sent at once would slow the response past 200 ms and hang the page, so the response carries a page and a cursor for the next. And checkout is two calls: the first checks the cart and creates an order id, the second pays for it through the payment gateway, whose answer marks the order placed or failed. Send the card as a token from the payment gateway, not as raw card number and CVV."
+  - __component: sd.table
+    key: requirement-to-endpoint
+    title: Endpoints per functional requirement
+    columns:
+      - { label: Requirement, style: text }
+      - { label: Endpoint, style: mono-strong }
+    rows:
+      - [Search products, "GET /v1/product/search?q="]
+      - [View a product, "GET /v1/product/{productId}"]
+      - [Add to the cart, POST /v1/cart/add]
+      - [Pay and check out, "POST /v1/checkout, then POST /v1/payment"]
+      - [Order status, "GET /v1/status/{orderId}"]
+  - __component: sd.quiz
+    key: api-quiz
+    title: Quick check
+    questions:
+      - question: Why does the search endpoint return pages?
+        optionA: Because GET cannot return lists
+        optionB: Thousands of matches at once would be slow to send and render; a page and a cursor keep it fast
+        optionC: To hide products
+        optionD: Elasticsearch requires it
+        answer: B
+        explanation: Pagination keeps the response small, inside the 200 ms target.
+      - question: Why is checkout two endpoints?
+        optionA: One for each database
+        optionB: The first turns the cart into an order id, the second pays for that order through the payment gateway
+        optionC: To retry twice
+        optionD: It should be one
+        answer: B
+        explanation: The order exists before payment, so the payment has something to confirm or fail.
+  # ────────────────────────────────────────────────────────────────── 4. High-level design
+  - __component: sd.section
+    key: high-level-design
+    title: High-level design.
+    railLabel: High level
+    intro: "Ten million users is more than one server takes, so the design is microservices: one service per requirement, behind a load balancer and an API gateway, each with its own database. Which database, and what is inside each service, waits for the low-level design."
+  - __component: sd.component-diagram
+    key: hld-diagram
+    title: The first design
+    direction: LR
+    nodes:
+      - { key: client, details: [many users] }
+      - { key: api-gateway, details: [round robin, routing, auth, rate limiting] }
+      - { key: user-service }
+      - { key: search-service }
+      - { key: product-service }
+      - { key: cart-service }
+      - { key: order-status-service }
+      - { key: checkout-service }
+      - { key: payment-service }
+      - { key: payment-gateway, details: [third party] }
+      - { key: user-db }
+      - { key: product-db }
+      - { key: cart-db }
+      - { key: order-db }
+      - { key: payment-db }
+    edges:
+      - { from: client, to: api-gateway }
+      - { from: api-gateway, to: user-service }
+      - { from: api-gateway, to: search-service }
+      - { from: api-gateway, to: product-service }
+      - { from: api-gateway, to: cart-service }
+      - { from: api-gateway, to: order-status-service }
+      - { from: api-gateway, to: checkout-service }
+      - { from: user-service, to: user-db }
+      - { from: search-service, to: product-db, label: query }
+      - { from: product-service, to: product-db, label: write }
+      - { from: cart-service, to: cart-db }
+      - { from: checkout-service, to: payment-service }
+      - { from: checkout-service, to: order-db }
+      - { from: payment-service, to: payment-gateway }
+      - { from: payment-service, to: payment-db }
+      - { from: order-status-service, to: order-db, label: read }
+  - __component: sd.rich-text
+    key: hld-flows
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "The gateway does three jobs: routes each path to its service, authenticates and authorizes the caller, and rate-limits; the load balancer in front spreads requests round robin. Then one service per requirement: user (sign-up and login, so we know the address and contact), search, product (adds the catalogue), cart, checkout, payment, order status."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Walk the flows. A user signs up, saved in the user DB. Search queries the product DB that the product service fills. The cart service stores the cart in the cart DB. Checkout calls the payment service, which calls the third-party payment gateway and records each payment, paid or failed, in the payment DB; the order and its status go to the order DB, which the order status service reads. Every functional requirement now has a path on the board."
+  - __component: sd.quiz
+    key: hld-quiz
+    title: Quick check
+    questions:
+      - question: What are the API gateway's three jobs here?
+        optionA: Caching, storage and search
+        optionB: Routing to the right service, authentication and authorization, and rate limiting
+        optionC: Payments, orders and stock
+        optionD: Only load balancing
+        answer: B
+        explanation: The load balancer spreads load; the gateway decides where a request goes and whether it may.
+  # ────────────────────────────────────────────────────────────────── 5. LLD: users and search
+  - __component: sd.section
+    key: lld-user-search
+    title: "Low-level design: users and search."
+    railLabel: LLD, search
+    intro: "Copy the high-level picture down the board and open one service at a time, starting where a shopper starts: logging in, then searching, which must answer in about 200 ms and stay up."
+  - __component: sd.rich-text
+    key: user-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "User service: the data is simple rows that must be right, so MySQL. A user has a name, an email, a password (stored as a salted hash, never as text), a mobile number and a list of delivery addresses. On login the service checks the credentials and returns a JWT; later calls carry it, and the gateway checks it before routing."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Search: the high-level search service queries the product database. Without help that is a scan of every product for each search, far too slow at scale. An ordinary index on the title helps exact or prefix matches, but not what shoppers type: words anywhere in the title or description, misspellings, ranking by relevance. That needs an inverted index, a map from each word to the products containing it, which is what a search engine keeps. So the search service queries Elasticsearch instead of the product database."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Elasticsearch must see every change to the products. Feed it by change data capture: a connector reads the product database's change log and publishes each change to Kafka, and from there it is applied to the index within seconds. Search results may be a moment stale, which the availability choice for search accepts."
+  - __component: sd.db-schema
+    key: user-product-schema
+    stores:
+      - key: users-store
+        engine: MySQL
+        component: user-db
+        why: Simple account rows that must be consistent.
+        tables:
+          - name: user
+            columns:
+              - { name: user_id, type: bigint, role: primary }
+              - { name: name, type: text }
+              - { name: email, type: text, note: unique }
+              - { name: password_hash, type: text }
+              - { name: mobile, type: text }
+              - { name: addresses, type: json, note: list of delivery addresses }
+      - key: products-store
+        engine: MongoDB (a document database)
+        component: product-db
+        why: "Products of different categories have different fields; a document per product keeps that flexible."
+        tables:
+          - name: product
+            columns:
+              - { name: productId, type: string, role: primary }
+              - { name: name, type: string }
+              - { name: description, type: string }
+              - { name: category, type: string }
+              - { name: qty, type: int, note: "a copy for display; the inventory DB is the truth" }
+              - { name: price, type: decimal }
+              - { name: currency, type: string }
+              - { name: imageUrls, type: "string[]", note: CDN URLs of the images in S3 }
+  - __component: sd.rich-text
+    key: images-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Product database: MongoDB, because a phone, a shirt and a book have different details and a document per product holds whatever fields its category needs. The search speed comes from Elasticsearch, not from the document store."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Images do not go in the database: at about 2 MB each and seven or eight per product, millions of products would make it enormous. Store them in an S3 bucket and keep only their URLs in the product document. Better still, replicate the bucket to a CDN, a content delivery network with copies near the shoppers: search returns the CDN URLs, and the browser loads the images straight from the nearest copy, so the page renders quickly and the services never carry image bytes."
+  - __component: sd.component-diagram
+    key: search-diagram
+    title: Users and search, opened
+    direction: LR
+    nodes:
+      - { key: client }
+      - { key: cdn, details: [images near the user] }
+      - { key: api-gateway, details: [checks the JWT] }
+      - { key: user-service, details: [login returns a JWT] }
+      - { key: search-service, details: [keyword queries, pages] }
+      - { key: product-service, details: [writes products and images] }
+      - { key: user-db, details: [MySQL] }
+      - { key: elasticsearch, details: [inverted index] }
+      - { key: cdc, details: [change log to Kafka] }
+      - { key: product-db, details: [MongoDB] }
+      - { key: s3, details: [images, URLs in the product] }
+    edges:
+      - { from: client, to: api-gateway }
+      - { from: client, to: cdn, label: images }
+      - { from: api-gateway, to: user-service }
+      - { from: api-gateway, to: search-service }
+      - { from: api-gateway, to: product-service }
+      - { from: user-service, to: user-db }
+      - { from: search-service, to: elasticsearch }
+      - { from: product-service, to: product-db }
+      - { from: product-service, to: s3 }
+      - { from: product-db, to: cdc }
+      - { from: cdc, to: elasticsearch }
+      - { from: s3, to: cdn, label: replicated }
+  - __component: sd.quiz
+    key: search-quiz
+    title: Quick check
+    questions:
+      - question: Why is an index on the product title not enough for search?
+        optionA: Indexes are slow
+        optionB: It helps exact or prefix matches, not keywords anywhere in the text, misspellings or ranking, which need an inverted index
+        optionC: MySQL cannot index text
+        optionD: It is enough
+        answer: B
+        explanation: Shoppers type words in any order and spelling; a search engine's inverted index answers that.
+      - question: How does Elasticsearch learn about a new or changed product?
+        optionA: The search service copies it on every query
+        optionB: Change data capture reads the product database's change log and streams each change through Kafka to the index
+        optionC: A nightly export
+        optionD: The shopper's browser sends it
+        answer: B
+        explanation: CDC keeps the index seconds behind the database without the product service writing twice.
+      - question: Where do product images live, and how do shoppers get them?
+        optionA: In MongoDB, served by the search service
+        optionB: In S3 with their URLs in the product document, replicated to a CDN the browser loads them from
+        optionC: In Elasticsearch
+        optionD: In the cart DB
+        answer: B
+        explanation: Large static files belong in blob storage, served from copies near the user.
+  # ────────────────────────────────────────────────────────────────── 5. LLD: cart
+  - __component: sd.section
+    key: lld-cart
+    title: "Low-level design: the cart."
+    railLabel: LLD, cart
+    intro: "The cart is a simple store of what a user chose, but one decision matters: what not to store in it."
+  - __component: sd.rich-text
+    key: cart-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "A shopper picks a quantity and saves the item in the cart. The cart must be right, so a relational database, Postgres. A cart holds a cart id, the user id and a list of products, each a product id and a quantity: one iPhone is the iPhone's id and the quantity one."
+      - type: paragraph
+        children:
+          - type: text
+            text: "The price is deliberately not stored. Prices change: an item added at one lakh may cost less or more ten days later. So each time the cart is shown the cart service reads the current prices from the product database and totals the cart from them."
+  - __component: sd.db-schema
+    key: cart-schema
+    stores:
+      - key: carts-store
+        engine: Postgres
+        component: cart-db
+        why: A user's chosen items, kept consistent.
+        tables:
+          - name: cart
+            columns:
+              - { name: cartId, type: bigint, role: primary }
+              - { name: userId, type: bigint }
+              - { name: products, type: jsonb, note: "list of productId and qty; no price" }
+  - __component: sd.component-diagram
+    key: cart-diagram
+    title: The cart, opened
+    direction: LR
+    nodes:
+      - { key: cart-service, details: [prices the cart when shown] }
+      - { key: cart-db, details: [Postgres, no prices] }
+      - { key: product-db, details: [current prices] }
+    edges:
+      - { from: cart-service, to: cart-db, label: save items }
+      - { from: cart-service, to: product-db, label: latest price }
+  - __component: sd.quiz
+    key: cart-quiz
+    title: Quick check
+    questions:
+      - question: Why does the cart not store the price?
+        optionA: To save space
+        optionB: Prices change while an item sits in the cart, so the cart service reads the current price from the product database each time it is shown
+        optionC: Postgres cannot store decimals
+        optionD: The payment gateway sets the price
+        answer: B
+        explanation: A stored price would go stale; reading it fresh shows the shopper what they will pay.
+  # ────────────────────────────────────────────────────────────────── 5. LLD: checkout
+  - __component: sd.section
+    key: lld-checkout
+    title: "Low-level design: the checkout."
+    railLabel: LLD, checkout
+    intro: "Checkout is where money and stock meet, the two things the requirements say must stay consistent. It needs a stock check before payment, and a way to record everything after payment that cannot half-fail."
+  - __component: sd.rich-text
+    key: inventory-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Before paying, check the stock: three iPhones added to the cart yesterday may not all be in the warehouse today. Add an inventory service with an inventory database holding each product and how many are left. It must be strongly consistent and the only source of truth for stock, so Postgres, indexed on productId, and only the inventory service writes to it. The checkout service asks the inventory service whether every item is available; if not, the shopper is told before paying; if so, the checkout goes on to the payment service, which takes the card details and calls the payment gateway."
+      - type: paragraph
+        children:
+          - type: text
+            text: "After payment three things must happen: record the payment, paid or failed, in the payment DB; reduce the stock; write the order and its status to the order DB. Doing them as three separate calls from one service is the trap. If the payment succeeds and the stock update or the order write fails, money is taken with no order, or stock is sold that still shows as available. Three databases cannot share one local transaction. (These steps belong in the checkout service rather than the payment service; drawing them from payment just shows the flow.)"
+  - __component: sd.rich-text
+    key: kafka-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Replace the three calls with one event. The payment service records the payment and answers the checkout service, which publishes one event, the cart and the payment status, to a Kafka topic. Consumers each do one job: an order consumer writes the order to the order DB, an inventory consumer reduces the stock through the inventory service, and a notification service tells the shopper. Kafka keeps the event until each consumer has processed it, so a consumer that is down catches up when it returns."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Two details make it truly reliable, and the video glosses them. Delivery is at least once, so a consumer may see an event twice: make each consumer idempotent, keyed by orderId, so a repeat changes nothing. And the event itself must not be lost between saving the payment and publishing: write it to an outbox table in the same transaction and relay it to Kafka, or capture it by CDC. The result is eventual consistency across the three stores, reached in near real time, instead of three writes that can disagree for ever."
+  - __component: sd.db-schema
+    key: order-schema
+    stores:
+      - key: orders-store
+        engine: MySQL
+        component: order-db
+        why: Orders and their status must be consistent.
+        tables:
+          - name: order
+            columns:
+              - { name: orderId, type: bigint, role: primary }
+              - { name: userId, type: bigint }
+              - { name: items, type: json, note: "productId, qty, price at purchase, currency" }
+              - { name: total, type: decimal }
+              - { name: paymentId, type: bigint }
+              - { name: status, type: text }
+      - key: inventory-store
+        engine: Postgres
+        component: inventory-db
+        why: The only source of truth for stock, written only by the inventory service.
+        tables:
+          - name: inventory
+            columns:
+              - { name: productId, type: text, role: primary }
+              - { name: qty, type: int }
+      - key: payments-store
+        engine: A relational database
+        component: payment-db
+        why: Every attempt and its outcome, paid or failed.
+        tables:
+          - name: payment
+            columns:
+              - { name: paymentId, type: bigint, role: primary }
+              - { name: orderId, type: bigint }
+              - { name: status, type: text }
+  - __component: sd.component-diagram
+    key: checkout-diagram
+    title: Checkout with one event
+    direction: LR
+    nodes:
+      - { key: checkout-service, details: [checks stock, publishes the result] }
+      - { key: inventory-service, details: [only writer of stock] }
+      - { key: inventory-db, details: [Postgres, indexed on productId] }
+      - { key: payment-service, details: [records every attempt] }
+      - { key: payment-gateway }
+      - { key: payment-db }
+      - { key: kafka, details: [one event per checkout] }
+      - { key: order-consumer, details: [idempotent by orderId] }
+      - { key: inventory-consumer, details: [idempotent by orderId] }
+      - { key: notification-service }
+      - { key: order-db, details: [MySQL] }
+    edges:
+      - { from: checkout-service, to: inventory-service, label: check stock }
+      - { from: inventory-service, to: inventory-db }
+      - { from: checkout-service, to: payment-service, label: make payment }
+      - { from: payment-service, to: payment-gateway }
+      - { from: payment-service, to: payment-db }
+      - { from: checkout-service, to: kafka, label: result event }
+      - { from: kafka, to: order-consumer }
+      - { from: kafka, to: inventory-consumer }
+      - { from: kafka, to: notification-service }
+      - { from: order-consumer, to: order-db }
+      - { from: inventory-consumer, to: inventory-service, label: stock update }
+  - __component: sd.quiz
+    key: checkout-quiz
+    title: Quick check
+    questions:
+      - question: Why check the inventory before payment?
+        optionA: To warm the cache
+        optionB: Stock may have run out since the item went in the cart; better to say so before taking money
+        optionC: The payment gateway requires it
+        optionD: It is not needed
+        answer: B
+        explanation: The cart is days old; the stock check happens at the moment of buying.
+      - question: What goes wrong when one service makes three separate writes after payment?
+        optionA: It is slow
+        optionB: One can fail after the money is taken, leaving a payment without an order or stock that is not reduced
+        optionC: Kafka loses them
+        optionD: Nothing, if the service retries
+        answer: B
+        explanation: Three databases share no transaction, so the three writes can disagree.
+      - question: Kafka may deliver an event twice. What keeps the order from being written twice?
+        optionA: Kafka never redelivers
+        optionB: Idempotent consumers keyed by orderId, so a repeat changes nothing
+        optionC: A bigger topic
+        optionD: The notification service
+        answer: B
+        explanation: At-least-once delivery plus idempotent consumers gives an effect that happens once.
+  # ────────────────────────────────────────────────────────────────── 5. LLD: limited stock
+  - __component: sd.section
+    key: lld-limited-stock
+    title: "Low-level design: limited stock."
+    railLabel: LLD, flash sale
+    intro: "The last functional requirement is still open. A stock check before payment works for one shopper at a time; in a flash sale thousands check at once."
+  - __component: sd.rich-text
+    key: race-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Every service runs as several replicas. Say the checkout service has ten, sized for 10 orders a second, and one iPhone is left. Ten shoppers check out at the same moment, each request on a different replica. All ten ask the inventory service, all ten hear one is left, all ten go on to pay, and nine people have paid for a phone that does not exist. The check and the purchase are separate steps, and nothing stops others from passing the check in between: a race condition."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Fix it with a lock in Redis. When a shopper starts the checkout, take a lock keyed by the product, set only if absent (SET with NX), holding the buyer and the quantity, with a TTL of 30 seconds to a minute, the longest a checkout takes. While it is held, the next shopper's checkout finds the lock, fails, and is told there is not enough stock, or retries after it is released. If the first shopper never pays, the TTL frees the lock by itself. The key must be the product alone: a key that includes the user would let every user take a different lock and the race would remain."
+      - type: paragraph
+        children:
+          - type: text
+            text: "One lock per product serialises every buyer of that product. When there are several units, reserve them instead: one atomic conditional decrement, quantity minus n only where the quantity is at least n, in the inventory database or as a Redis counter, so five buyers of five phones all succeed and the sixth fails, with no lock to wait on."
+  - __component: sd.component-diagram
+    key: lock-diagram
+    title: The stock lock
+    direction: LR
+    nodes:
+      - { key: checkout-service, details: [ten replicas] }
+      - { key: redis-lock, details: [key per product, set if absent, TTL 30 s to 1 min] }
+      - { key: inventory-service, details: [stock check] }
+      - { key: inventory-db }
+    edges:
+      - { from: checkout-service, to: redis-lock, label: take the lock }
+      - { from: checkout-service, to: inventory-service, label: check stock }
+      - { from: inventory-service, to: inventory-db }
+  - __component: sd.quiz
+    key: lock-quiz
+    title: Quick check
+    questions:
+      - question: Ten checkout replicas each see one iPhone left. Why do all ten sell it?
+        optionA: The database is down
+        optionB: The check and the purchase are separate steps, so all ten pass the check before anyone reduces the stock
+        optionC: Redis lost the stock
+        optionD: Ten replicas are too many
+        answer: B
+        explanation: A race condition. Something must make check-and-take one step, or let only one in at a time.
+      - question: Why does the lock need a TTL?
+        optionA: Redis requires one
+        optionB: A shopper who never pays would hold the item for ever; the TTL frees it after 30 seconds to a minute
+        optionC: To make the lock faster
+        optionD: It does not
+        answer: B
+        explanation: The TTL bounds how long an abandoned checkout can block the item.
+      - question: What should the lock's key be?
+        optionA: The product, user and quantity together
+        optionB: The product alone, so a second buyer of the same product finds it taken
+        optionC: The user alone
+        optionD: The order id
+        answer: B
+        explanation: Different keys never conflict. The buyer and quantity go in the value, not the key.
+  # ────────────────────────────────────────────────────────────────── 5. LLD: inventory cache, and finishing
+  - __component: sd.section
+    key: lld-inventory-cache
+    title: "Low-level design: the inventory cache, and finishing."
+    railLabel: LLD, inventory
+    intro: "Every functional requirement is met. What is left is making the backbone, the inventory database, survive the load, keeping copies of the stock count honest, and reading the requirements back."
+  - __component: sd.rich-text
+    key: cache-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Every order checks the inventory, so at 10 orders a second, and far more during a sale, all of them land on one inventory database: the backbone of the system, a hot spot and a single point of failure. Put a Redis cache in front of it: the inventory service reads stock from the cache first and goes to the database only on a miss, which cuts the calls to the database. Run the database itself with replicas so losing one machine does not stop the shop."
+      - type: paragraph
+        children:
+          - type: text
+            text: "The cache brings a consistency problem. One iPhone is cached as 1; it sells, the inventory consumer sets the database to 0, and the cache still says 1. Keep it fresh in one of two ways: write-through, where the inventory service updates the database and the cache together, or CDC, where the database's change log updates the cache in near real time. Even so, use the cache for showing and pre-checking stock; the decision to sell stays with the database's conditional update and the lock, which a stale cache cannot fool."
+      - type: paragraph
+        children:
+          - type: text
+            text: "One more copy: the qty field in the product document, which the product page shows, never changes as stock sells. Refresh it from the inventory database by CDC (a cron job or a Kafka consumer also works), so the shopper sees a count seconds behind the truth. Last, the order status service: it looks the order up by orderId in the order DB and returns its status."
+  - __component: sd.component-diagram
+    key: final-diagram
+    title: The final design, the order side
+    direction: LR
+    nodes:
+      - { key: client }
+      - { key: api-gateway }
+      - { key: checkout-service, details: [lock, check, pay, publish] }
+      - { key: redis-lock }
+      - { key: inventory-service, details: [cache first, write-through] }
+      - { key: inventory-cache, details: [stock reads] }
+      - { key: inventory-db, details: [source of truth] }
+      - { key: product-db, details: [qty copied by CDC] }
+      - { key: payment-service }
+      - { key: payment-db }
+      - { key: kafka }
+      - { key: order-consumer }
+      - { key: inventory-consumer }
+      - { key: notification-service }
+      - { key: order-db }
+      - { key: order-status-service }
+    edges:
+      - { from: client, to: api-gateway }
+      - { from: api-gateway, to: checkout-service }
+      - { from: api-gateway, to: order-status-service }
+      - { from: checkout-service, to: redis-lock, label: lock }
+      - { from: checkout-service, to: inventory-service, label: check stock }
+      - { from: inventory-service, to: inventory-cache }
+      - { from: inventory-service, to: inventory-db }
+      - { from: inventory-db, to: product-db, label: CDC }
+      - { from: checkout-service, to: payment-service }
+      - { from: payment-service, to: payment-db }
+      - { from: checkout-service, to: kafka, label: event }
+      - { from: kafka, to: order-consumer }
+      - { from: kafka, to: inventory-consumer }
+      - { from: kafka, to: notification-service }
+      - { from: order-consumer, to: order-db }
+      - { from: inventory-consumer, to: inventory-db }
+      - { from: order-status-service, to: order-db, label: read }
+  - __component: sd.rich-text
+    key: read-back
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Close by reading the non-functional list against the board. Scale: services behind a load balancer, each scaled on its own. Availability for search: Elasticsearch and the CDN serve reads even while a write path is busy. Latency: keyword search from an inverted index and images from a nearby CDN, inside 200 ms. Consistency for money and stock: one source of truth for stock, a lock or an atomic reservation per product, and one event per checkout that every consumer applies once."
+  - __component: sd.quiz
+    key: finish-quiz
+    title: Quick check
+    questions:
+      - question: Why put a cache in front of the inventory database?
+        optionA: To store orders
+        optionB: Every order reads stock, so the one database is a hot spot and a single point of failure; the cache absorbs the reads
+        optionC: Redis is more consistent
+        optionD: To replace the database
+        answer: B
+        explanation: Reads go to memory first; the database handles misses and writes.
+      - question: The cache says 1 iPhone, the database says 0. What prevents a sale?
+        optionA: Nothing
+        optionB: Write-through or CDC keep the cache fresh, and the sale itself is decided by the database's conditional update and the lock, not the cache
+        optionC: The CDN
+        optionD: The notification service
+        answer: B
+        explanation: A cache is for fast reads; the decision that must be right is made against the source of truth.
+      - question: How does the product page's quantity stay roughly right?
+        optionA: The product service counts orders
+        optionB: Changes in the inventory database are copied to the product document by CDC, a cron job or a Kafka consumer
+        optionC: It is never shown
+        optionD: The shopper refreshes
+        answer: B
+        explanation: The inventory DB is the truth; the product document holds a copy for display.

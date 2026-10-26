@@ -1,0 +1,22 @@
+slug: backend-proximity-search
+title: "Proximity search: quadtree, geohash, PostGIS, Elasticsearch"
+summary: "Finding everything within 5 km of a user, the building block of Uber, food delivery and hotel booking designs: four approaches built one after another on one board, then the choice between them."
+outline: "The proximity search lessons follow the four numbered approaches and the drawings of InterviewWithBunny's System Design 7, Design Proximity Search (youtube.com/watch?v=6K6ihHNkO_0), section by section; no text is taken from it, and its factual slips are corrected in the article."
+lessons:
+  - slug: proximity-search
+    title: "Proximity search: the problem, then a quadtree"
+    summary: "The problem at the top of the board, then a quadtree: the world split into quarters, uneven data and uneven depth, a 5 km search walking up the tree, and why it is hard to run."
+    parts:
+      - { title: Find what is near a point, minutes: 4, packs: [backend/proximity-search/end-to-end/problem-statement] }
+      - { title: "1. A quadtree", minutes: 16, packs: [backend/proximity-search/end-to-end/quadtree] }
+  - slug: proximity-search-geohash
+    title: "Proximity search: geohash"
+    summary: "Cells named by strings whose prefix is the parent cell, base32 precision by length, the restaurants table, and the prefix query over the user's cell and its neighbours."
+    parts:
+      - { title: "2. Geohash", minutes: 16, packs: [backend/proximity-search/end-to-end/geohash] }
+  - slug: proximity-search-postgis-elasticsearch
+    title: "Proximity search: PostGIS, Elasticsearch, and choosing"
+    summary: "PostgreSQL with PostGIS and ST_DWithin, Elasticsearch's built-in geo queries, then which approach to pick for location-only and for location-and-text searches."
+    parts:
+      - { title: "3. PostgreSQL with PostGIS", minutes: 7, packs: [backend/proximity-search/end-to-end/postgis] }
+      - { title: "4. Elasticsearch, and choosing", minutes: 8, packs: [backend/proximity-search/end-to-end/elasticsearch] }

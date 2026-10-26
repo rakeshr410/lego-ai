@@ -1,0 +1,151 @@
+# Proximity search, 2. Geohash: "2. Geohash" with the video's three levels left to right (0 to 3, then 00 to 03 inside 0, then 000 to 003 inside 00), the Bangalore walk to tdr1wk96 and the restaurants table under it; on the right, the precision table and the prefix query with the neighbours, as the video lays them out. Corrected: base32 with 32 cells a character, not base64 quarters; neighbours share a prefix, not one changed bit, and the eight neighbour cells are always searched.
+id: backend/proximity-search/end-to-end/geohash
+title: "2. Geohash"
+source:
+  hash: "66ce6a5d996a"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/proximity-search/end-to-end/quadtree
+  assumes:
+    - "Proximity search returns the places within a radius of the user, say 5 km."
+    - "A quadtree splits the map into quarters recursively but lives in memory and is hard to keep in sync."
+  carries:
+    - "Geohash names each cell with a string whose prefix is its parent cell: base32, five bits and 32 smaller cells per character."
+    - "Places close together usually share a long prefix; a McDonald's in Koramangala, Bangalore, is tdr1wk96."
+    - "Length 5 cells are about 4.9 km, length 6 about 1.2 km by 609 m, length 9 about 4.8 m."
+    - "Store the geohash in an indexed column; query the user's cell and its 8 neighbours by prefix, then filter by exact distance."
+  terms:
+    - term: geohash
+      means: "A short base32 string naming a cell of the map; each extra character picks one of 32 smaller cells inside it."
+    - term: precision
+      means: "The geohash's length; longer means smaller cells."
+    - term: neighbours
+      means: "The 8 cells around a cell at the same length, searched with it so places just over an edge are not missed."
+board:
+  keep: [title, prompt-desc, prompt-example]
+  elements:
+    - { id: gh, kind: region, label: 2. Geohash, at: [2, 5], size: [56, 21] }
+    - { id: gh-level-1, kind: box, label: "level 1: 0, 1, 2, 3", at: [4, 8], size: [13, 3], in: gh, tone: blue }
+    - { id: gh-level-2, kind: box, label: "level 2: 00 to 03 inside 0", at: [23, 8], size: [13, 3], in: gh, tone: blue }
+    - { id: gh-level-3, kind: box, label: "level 3: 000 to 003 inside 00", at: [42, 8], size: [14, 3], in: gh, tone: blue }
+    - { id: gh-base32, kind: note, label: "real geohash: base32, 32 smaller cells a character", at: [4, 13], in: gh }
+    - { id: gh-bits, kind: note, label: "longitude and latitude bits, interleaved", at: [4, 14], in: gh }
+    - { id: gh-walk, kind: note, label: "Bangalore: t, then d, then r", at: [4, 16], in: gh }
+    - { id: gh-mcd, kind: note, label: "tdr1wk96, a McDonald's in Koramangala", at: [4, 17], in: gh }
+    - { id: gh-near, kind: note, label: "a shop 100 metres away shares the prefix", at: [4, 18], in: gh }
+    - { id: gh-table, kind: note, label: "restaurants: id, name, latitude, longitude, geohash", at: [4, 21], in: gh }
+    - { id: gh-onboard, kind: note, label: "geohash computed once, when the owner onboards", at: [4, 22], in: gh }
+    - { id: gh-index, kind: note, label: "an ordinary index on the geohash column", at: [4, 23], in: gh }
+    - { id: gq, kind: region, label: Precision and the query, at: [63, 5], size: [28, 21] }
+    - { id: gq-len-5, kind: note, label: "length 5: 4.9 km by 4.9 km, for 5 km", at: [65, 8], in: gq }
+    - { id: gq-len-6, kind: note, label: "length 6: 1.2 km by 609 m, for 500 m", at: [65, 9], in: gq }
+    - { id: gq-len-9, kind: note, label: "length 9: 4.8 m by 4.8 m", at: [65, 10], in: gq }
+    - { id: gq-select, kind: note, label: SELECT * FROM restaurants, at: [65, 13], in: gq }
+    - { id: gq-where, kind: note, label: "WHERE geohash LIKE 'sgkztus%'", at: [67, 14], in: gq }
+    - { id: gq-or-1, kind: note, label: "OR geohash LIKE 'sgkztur%'", at: [67, 15], in: gq }
+    - { id: gq-or-2, kind: note, label: "OR geohash LIKE 'sgkztuq%'", at: [67, 16], in: gq }
+    - { id: gq-or-rest, kind: note, label: "OR the other neighbours, 8 in all", at: [67, 17], in: gq }
+    - { id: gq-filter, kind: note, label: "then keep rows within the exact distance", at: [65, 19], in: gq }
+    - { id: gq-edge, kind: note, label: "two places across a cell edge can share no prefix", at: [65, 21], in: gq }
+    - { id: gq-verdict, kind: note, label: "no tree to keep in memory: the video's pick", at: [65, 23], in: gq }
+  arrows:
+    - { id: gh-split-0, from: gh-level-1, to: gh-level-2, label: split 0 }
+    - { id: gh-split-00, from: gh-level-2, to: gh-level-3, label: split 00 }
+beats:
+  - point: "Geohash splits the map like a quadtree but names each cell: the world's quarters are 0 to 3, the quarters of 0 are 00 to 03, of 00 are 000 to 003, so a cell's name starts with its parent's."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Number two, geohash. Cut the world into four cells and number them 0, 1, 2, 3. Cut cell 0 into four: 00, 01, 02, 03. Cut 00: 000 to 003."
+      - "Every name starts with its parent's name. The string is the path down the tree, so we no longer need the tree itself."
+    draw: [gh, gh-level-1, gh-level-2, gh-level-3, gh-split-0, gh-split-00]
+    check: What does a cell's geohash have in common with its parent's?
+    answer: It starts with the parent's geohash; each extra character picks a smaller cell inside it.
+  - point: "Real geohash interleaves longitude and latitude bits and writes them in base32, five bits a character, so each character picks one of 32 smaller cells; it is base32, not base64."
+    kind: mechanism
+    weight: supporting
+    teach:
+      - "The quarters are the picture. Real geohash alternates a bit of longitude and a bit of latitude, and writes every five bits as one base32 character: digits and the letters b to z without a, i, l and o."
+      - "So each character splits a cell into 32, not 4, and it is base32, not base64."
+    draw: [gh-base32, gh-bits]
+    check: How many smaller cells does one more geohash character pick from?
+    answer: "32, because each base32 character holds five bits."
+    misconceptions:
+      - "A geohash is base64 -> it is base32, five bits a character."
+  - point: "Follow Bangalore down: t, then d, then r, and on through Koramangala to tdr1wk96 for one McDonald's; a shop 100 metres away shares the prefix and differs in the last characters."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Zoom in on India. Bangalore is in cell t, then d inside it, then r. Keep going through Koramangala and one McDonald's there is tdr1wk96."
+      - "A shop about a hundred metres away shares most of that string and differs only at the end. Nearby places share a prefix: that is the whole trick."
+    draw: [gh-walk, gh-mcd, gh-near]
+    check: Two shops are a hundred metres apart. What do you expect of their geohashes?
+    answer: They share a long prefix and differ only in the last characters.
+    misconceptions:
+      - "Change one bit to get the neighbours -> neighbours share a prefix; a library computes the 8 neighbour cells, which can differ in more than the last character."
+  - point: "Precision is the length: length 5 cells are about 4.9 km, length 6 about 1.2 km by 609 m, length 9 about 4.8 m; pick the length whose cell is about the radius."
+    kind: metric
+    weight: core
+    teach:
+      - "How long a string? Length 5 cells are about 4.9 by 4.9 kilometres, so use 5 for a 5 kilometre search."
+      - "Length 6 is about 1.2 kilometres by 609 metres, good for 500 metres. Length 9 is under 5 metres, a shop front."
+    draw: [gq, gq-len-5, gq-len-6, gq-len-9]
+    check: Which length would you use for a 5 km search?
+    answer: Length 5, whose cells are about 4.9 km across.
+  - point: "Store it: the restaurants table keeps id, name, latitude, longitude and the geohash, computed once when the owner onboards, with an ordinary index on the geohash column."
+    kind: decision
+    weight: core
+    teach:
+      - "When an owner onboards a restaurant they give its latitude and longitude. A library turns that into the geohash once, and we store it beside them."
+      - "The table: id, name, latitude, longitude, geohash. An ordinary B-tree index on geohash answers prefix queries; no special database needed."
+    draw: [gh-table, gh-onboard, gh-index]
+    check: Why is an ordinary database index enough for geohash?
+    answer: The geohash is a plain string and the search is a prefix match, which a sorted B-tree index answers.
+  - point: "Query the user's cell and its neighbours by prefix, geohash LIKE 'sgkztus%' OR the 8 neighbours, then keep only the rows within the exact distance."
+    kind: flow
+    weight: core
+    teach:
+      - "To search, compute the user's geohash at length 5, say sgkztus cut to the right length, and select every restaurant whose geohash starts with it."
+      - "Add the neighbouring cells, OR geohash LIKE each of them, eight in all, which a library computes. Then drop rows beyond the exact distance."
+    draw: [gq-select, gq-where, gq-or-1, gq-or-2, gq-or-rest, gq-filter]
+    check: Why filter by exact distance after the prefix query?
+    answer: The cells are squares bigger than the circle, so some rows they return are outside the radius.
+  - point: "The neighbours are not optional: two places a few metres apart on either side of a cell edge can share no prefix; with no tree in memory, geohash is the video's pick."
+    kind: failure
+    weight: supporting
+    teach:
+      - "Why always the neighbours? Two places either side of a cell edge are close but can share no prefix at all; near the equator even the first character differs."
+      - "Searching the three by three block covers it. And there is no tree to hold in memory or keep in sync: it is a column and a query, which is why the video calls it the best of the approaches in practice."
+    draw: [gq-edge, gq-verdict]
+    check: What goes wrong if you search only the user's own cell?
+    answer: Places just over the cell's edge are missed, even if they are a few metres away.
+asks:
+  - ids: [gh-level-2]
+    beats: [1]
+    frame: [gh, gh-level-1]
+    question: "The world's four cells are 0, 1, 2 and 3. If we split cell 0 into four, what would you call the new cells?"
+    hints:
+      - Keep the parent's name in the child's.
+      - Add one more digit for the quarter.
+  - ids: [gh-near]
+    beats: [3]
+    question: "A McDonald's is tdr1wk96. What would you expect of the geohash of a shop a hundred metres away?"
+    hints:
+      - Each character is a smaller cell inside the last.
+      - Would the two shops be in the same big cells?
+  - ids: [gh-table]
+    beats: [5]
+    question: "How would you store restaurants so we can search them by geohash? Give me the columns."
+    hints:
+      - What does the owner give you when they sign up?
+      - What do you compute from it once and keep?
+  - ids: [gq-where, gq-or-rest]
+    beats: [6]
+    frame: [gq-select]
+    question: "The user's geohash is sgkztus. Write the condition that finds restaurants near them."
+    hints:
+      - Nearby places share a prefix; how does SQL match a prefix?
+      - Is the user's own cell enough, or what about the cells around it?

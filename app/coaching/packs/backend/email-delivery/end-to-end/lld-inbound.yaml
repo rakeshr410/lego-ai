@@ -1,0 +1,103 @@
+# Email delivery interview, deep dive into receiving mail and the wrap-up, as the video ends its board: an inbound SMTP service taking mail from Outlook or Yahoo, checking the recipient with the user service and publishing to Kafka's inbound topic for the delivery consumer; then the mailbox items and outbox tables, the Kafka topics, and the requirements read back.
+id: backend/email-delivery/end-to-end/lld-inbound
+title: "Deep dive: receiving mail, tables and topics"
+source:
+  hash: "55fed6906a59"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/email-delivery/end-to-end/lld-search
+  assumes:
+    - "The delivery consumer reads the inbound send request topic and writes mailbox items."
+    - "The user service knows every account; the spam and malware filter checks content."
+  carries:
+    - "An inbound SMTP service receives mail from other providers, checks the recipient exists with the user service, runs the checks and publishes to the inbound topic."
+    - "mailbox_items and outbox share columns (user, message, thread, from, to, subject, attachment); the outbox adds a status. The thread ID groups replies."
+    - "Topics: outbound, internal, SMTP delivery queue, delay queue, email check, delivery status."
+  terms:
+    - term: inbound SMTP
+      means: The front door that accepts SMTP connections from other providers' servers.
+board:
+  keep: [title, nfr, nfr-scale, nfr-available, nfr-signup, nfr-durable]
+  elements:
+    - { id: lld-inbound, kind: region, label: "5. Deep dive: receiving mail", at: [6, 22], size: [64, 30] }
+    - { id: i-outside, kind: box, label: Outlook or Yahoo SMTP, at: [8, 27], size: [12, 3], tone: grey }
+    - { id: i-inbound, kind: box, label: Inbound SMTP service, at: [30, 27], size: [12, 3], tone: blue }
+    - { id: i-user, kind: box, label: User service, at: [30, 38], size: [12, 3] }
+    - { id: i-checks, kind: note, label: the same spam and malware checks first, at: [8, 32], in: lld-inbound }
+    - { id: i-kafka, kind: box, label: Kafka, at: [54, 27], size: [12, 3], tone: grey }
+    - { id: i-delivery, kind: box, label: Delivery consumer, at: [54, 34], size: [12, 3], tone: blue }
+    - { id: i-items-1, kind: note, label: "mailbox_items: user_id, message_id, thread_id,", at: [8, 44], in: lld-inbound }
+    - { id: i-items-2, kind: note, label: "from_email, to_emails, subject,", at: [10, 45], in: lld-inbound }
+    - { id: i-items-3, kind: note, label: "has_attachment, url_attachment", at: [10, 46], in: lld-inbound }
+    - { id: i-outbox, kind: note, label: "outbox: the same columns, plus status", at: [8, 47], in: lld-inbound }
+    - { id: i-thread, kind: note, label: thread_id groups replies into a conversation, at: [8, 49], in: lld-inbound }
+    - { id: i-topics-1, kind: note, label: "topics: outbound, internal, SMTP delivery queue,", at: [42, 44], in: lld-inbound }
+    - { id: i-topics-2, kind: note, label: "delay queue, email check, delivery status", at: [44, 45], in: lld-inbound }
+  arrows:
+    - { id: i-outside-inbound, from: i-outside, to: i-inbound, label: port 25 }
+    - { id: i-inbound-user, from: i-inbound, to: i-user, label: "user exists?" }
+    - { id: i-inbound-kafka, from: i-inbound, to: i-kafka, label: inbound send request }
+    - { id: i-kafka-delivery, from: i-kafka, to: i-delivery }
+beats:
+  - point: "Mail from Outlook or Yahoo arrives at an inbound SMTP service, which asks the user service whether the recipient exists and runs the same spam and malware checks."
+    kind: component
+    weight: core
+    teach:
+      - "One flow is missing: other providers send mail to our users the same way we send to theirs. An inbound SMTP service accepts those connections."
+      - "It asks the user service whether the recipient exists, refusing an unknown address at RCPT TO, and runs the same spam and malware checks before trusting the mail."
+    draw: [lld-inbound, i-outside, i-inbound, i-outside-inbound, i-user, i-inbound-user, i-checks]
+    check: What must the inbound SMTP service check before accepting an email for one of our users?
+    answer: That the recipient exists, via the user service, and that the mail passes the spam and malware checks.
+  - point: "It then publishes to the inbound send request topic, and the existing delivery consumer puts the email in the inbox and notifies the recipient."
+    kind: flow
+    weight: core
+    teach:
+      - "Then it reuses everything built: publish to Kafka's inbound send request topic, the same one Gmail-to-Gmail mail uses."
+      - "The delivery consumer picks it up, writes it into the recipient's inbox and triggers the new-mail alert. Only the front door is new."
+    draw: [i-kafka, i-inbound-kafka, i-delivery, i-kafka-delivery]
+    check: Why does receiving mail need so little new design?
+    answer: After the inbound SMTP service, it reuses the inbound topic and the delivery consumer already built for mail inside our domain.
+  - point: "The mailbox items and outbox tables share their columns (user, message, thread, from, to, subject, attachment), the outbox adding a status; the thread ID is what groups replies."
+    kind: decision
+    weight: core
+    teach:
+      - "Write the two main tables. Mailbox items: user ID, message ID, thread ID, from, to, subject, has attachment and the attachment's URL."
+      - "The outbox holds almost the same, plus a status. And the thread ID on every row is what groups replies into one conversation, our last functional requirement."
+    draw: [i-items-1, i-items-2, i-items-3, i-outbox, i-thread]
+    check: Which column makes replies show up as one conversation?
+    answer: The thread ID stored on every mailbox row.
+  - point: "Kafka carries a topic per stage: outbound and internal mail, the SMTP delivery queue, a delay queue for retries, email checks and delivery status."
+    kind: component
+    weight: supporting
+    teach:
+      - "And the topics: outbound and internal mail, the SMTP delivery queue for checked mail waiting on a worker, a delay queue for anything to retry later, such as a slow check, the email checks, and delivery status."
+    draw: [i-topics-1, i-topics-2]
+    check: What is the delay queue for?
+    answer: Emails to retry later, such as one waiting on a slow check or a receiving server that did not answer.
+  - point: "Close by reading the non-functional list back: scale from many copies and a sharded user DB, availability from asynchronous sending, consistent sign-up from the primary key, durability from the outbox."
+    kind: rule
+    weight: core
+    teach:
+      - "Read the requirements on the right back against the board. Scale: every service has many copies behind the gateway, and the user DB is sharded."
+      - "Availability: sending is asynchronous through Kafka, and a slow checker holds only its own emails. Consistent sign-up: the email ID is a primary key on its one shard. Durability: every email is saved in the outbox first."
+    check: Which part of the design meets the durability requirement?
+    answer: The outbox; every email is saved in the outbox table before anything else touches it, so a crash only delays it.
+asks:
+  - ids: [i-inbound]
+    beats: [1]
+    question: "Yahoo's server wants to hand us an email for one of our users. What receives it?"
+    hints:
+      - We send to them over SMTP; they send to us the same way.
+      - A service that accepts SMTP connections.
+  - ids: [i-kafka, i-delivery]
+    beats: [2]
+    question: "The inbound SMTP service has a checked email for our user. How would you get it into their inbox without building anything new?"
+    hints:
+      - We already deliver Gmail-to-Gmail mail somehow.
+      - Which topic and which consumer did that?
+task:
+  prompt: "Draw the final design: clients and the gateway, the user, compose, mail send and search services, the outbox and its consumer, Kafka, the orchestrator with its checks and validation DB, the SMTP relay workers, the delivery consumer, notifications, Elasticsearch, and the inbound SMTP service."
+  expects: [1, 2, 5]

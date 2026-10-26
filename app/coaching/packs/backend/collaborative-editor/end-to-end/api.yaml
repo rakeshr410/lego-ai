@@ -1,0 +1,65 @@
+# Collaborative editor interview, API: "3. API design" beside the entities, three numbered lines as in the video (POST create, GET view read-only, WS edit), with room for the two version endpoints the final design adds.
+id: backend/collaborative-editor/end-to-end/api
+title: Three endpoints, one of them a websocket
+source:
+  hash: "e5b31da2312b"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/collaborative-editor/end-to-end/entities
+  assumes:
+    - "Functional: CRUD on documents, several users editing one document at once, changes in near real time, cursors and presence, versions."
+    - "The core entities are the user, the document, the edit and the cursor."
+  carries:
+    - "POST /v1/api/docs/create returns a document id; update and delete are the usual CRUD calls."
+    - "GET /v1/api/docs/{docId} opens a document read-only."
+    - "Editing is a websocket on /v1/api/docs/{docId}, not a REST call: edits flow both ways many times a second."
+  terms:
+    - term: websocket
+      means: "A persistent, two-way connection that starts as an HTTP request and is upgraded; either side can send at any time."
+board:
+  keep: [title, prompt-desc, fr, fr-crud, fr-together, fr-see, fr-cursor, fr-versions, nfr, nfr-scale, nfr-cap, nfr-latency, entities, ent-user, ent-doc, ent-edit, ent-cursor]
+  elements:
+    - { id: api, kind: region, label: 3. API design, at: [26, 21], size: [29, 8], dashed: true }
+    - { id: api-post, kind: note, label: "POST /v1/api/docs/create, returns a document id", at: [27, 23], in: api }
+    - { id: api-get, kind: note, label: "GET /v1/api/docs/{docId}, view it read-only", at: [27, 24], in: api }
+    - { id: api-ws, kind: note, label: "WS /v1/api/docs/{docId}, edit over a websocket", at: [27, 25], in: api }
+  arrows: []
+beats:
+  - point: "Creating a document is a POST to /v1/api/docs/create that returns its document id; update and delete are the usual CRUD calls beside it."
+    kind: flow
+    weight: core
+    teach:
+      - "Step three, the API. Endpoints map one to one, or one to many, onto the requirements. Creating a document submits something new, so it is a POST to v1 api docs create, and it returns the document id."
+      - "Update and delete are ordinary CRUD calls; say them, no need to write them all."
+    draw: [api, api-post]
+    check: What does the create call return, and why that?
+    answer: The new document's id, which every later call uses to name the document.
+  - point: "Viewing is a GET on the document id that returns the document read-only."
+    kind: flow
+    weight: core
+    teach:
+      - "Once it exists, a user opens it: a GET on v1 api docs with the document id. It comes back read-only; viewing changes nothing."
+    draw: [api-get]
+    check: Why is opening the document a GET?
+    answer: It only fetches the document, read-only, and changes nothing.
+  - point: "Editing is not a REST call: the client opens a websocket on the document, a two-way connection on which edits flow both ways many times a second."
+    kind: decision
+    weight: core
+    teach:
+      - "Editing, alone or together, is the third line, and it is not REST. The client opens a websocket on the document: one long-lived, two-way connection."
+      - "Why: edits go up many times a second, and the server must push other people's edits down as they happen, which a request and response cannot do. The low-level design comes back to this, and adds two endpoints for versions."
+    draw: [api-ws]
+    check: Why is editing done over a websocket rather than a REST endpoint?
+    answer: Edits flow both ways many times a second and the server must push others' edits, so one open two-way connection replaces a request per keystroke.
+    misconceptions:
+      - "Editing can be a PUT of the document on every change -> that resends the whole document per keystroke and cannot push others' edits; a websocket carries small edits both ways."
+asks:
+  - ids: [api-post, api-get, api-ws]
+    beats: [1, 2, 3]
+    question: "Looking at the requirements, what endpoints do we need? Give me the method and the path, and I'll write them."
+    hints:
+      - One creates a document and one opens it.
+      - And editing together, does a request per keystroke make sense?

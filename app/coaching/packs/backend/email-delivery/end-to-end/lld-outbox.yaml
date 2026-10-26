@@ -1,0 +1,93 @@
+# Email delivery interview, deep dive into the mail send service: light pre-checks, the draft fetched by ID, a row in the outbox_email table of the mailbox DB, then an outbox consumer publishing to Kafka, laid out as the video grows its picture (Kafka above the outbox consumer, the mailbox DB beside it). The video calls the outbox "highly consistent"; this pack teaches no loss, at least once, with dedupe.
+id: backend/email-delivery/end-to-end/lld-outbox
+title: "Deep dive: the mail send service and the outbox"
+source:
+  hash: "dc8ca6a88665"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/email-delivery/end-to-end/lld-compose
+  assumes:
+    - "The draft is saved in the draft DB before send; attachments are in S3."
+    - "Reliable and durable: no sent email may be lost."
+  carries:
+    - "The mail send service only does light checks, fetches the draft by ID and writes it to the outbox_email table in the mailbox DB."
+    - "An outbox consumer reads new outbox rows (change data capture) and publishes them to Kafka; nothing calls SMTP directly."
+    - "The outbox means a sent email is never lost; delivery is at least once, so consumers drop message IDs they have seen."
+  terms:
+    - term: transactional outbox
+      means: "Save the message in an outbox table first, and publish it to the broker afterwards, so a crash cannot lose it."
+    - term: change data capture
+      means: Reading a table's new rows as a stream of events.
+board:
+  keep: [title, nfr, nfr-scale, nfr-available, nfr-signup, nfr-durable, lld-compose, c-draft, c-draft-holds]
+  elements:
+    - { id: lld-outbox, kind: region, label: "5. Deep dive: mail send service", at: [6, 42], size: [62, 24] }
+    - { id: o-light, kind: note, label: "light checks only: file type, format", at: [8, 44], in: lld-outbox }
+    - { id: o-request, kind: note, label: the request carries only the draft ID, at: [8, 45], in: lld-outbox }
+    - { id: o-send, kind: box, label: Mail send service, at: [40, 47], size: [12, 3], tone: blue }
+    - { id: o-mailbox, kind: oval, label: Mailbox DB, at: [40, 58], size: [12, 3], tone: amber }
+    - { id: o-table, kind: note, label: outbox_email table, at: [54, 59], in: lld-outbox }
+    - { id: o-consumer, kind: box, label: Outbox consumer, at: [20, 58], size: [12, 3], tone: grey }
+    - { id: o-kafka, kind: box, label: Kafka, at: [20, 47], size: [12, 3], tone: grey }
+    - { id: o-never-lost, kind: note, label: "saved first: never lost, delivered at least once", at: [8, 62], in: lld-outbox }
+    - { id: o-dedupe, kind: note, label: consumers drop a message ID seen before, at: [8, 63], in: lld-outbox }
+  arrows:
+    - { id: o-send-draft, from: o-send, to: c-draft, label: fetch draft by ID }
+    - { id: o-send-mailbox, from: o-send, to: o-mailbox, label: outbox row }
+    - { id: o-mailbox-consumer, from: o-mailbox, to: o-consumer, label: "new rows, CDC" }
+    - { id: o-consumer-kafka, from: o-consumer, to: o-kafka }
+beats:
+  - point: "On send, the mail send service does only light checks (file type, format), because thousands of sends a second would back up behind any slow work; the request carries the draft ID and the service fetches the draft."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Send is pressed and the request reaches the mail send service. It does only light checks, the file types and the format. Thousands of sends arrive every second; any heavy work here and latency builds up at the very front."
+      - "The request does not carry the email, only the draft's ID. The service fetches the content and the attachment links from the draft DB."
+    draw: [lld-outbox, o-light, o-request, o-send, o-send-draft]
+    check: Why does the mail send service skip the heavy checks?
+    answer: It takes thousands of sends a second, so slow work there would back up every send; the heavy checks run later, asynchronously.
+  - point: "It writes the email into the outbox_email table of the mailbox DB, the outbox you see for a moment in a mail client before an email moves to sent."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Then it saves the email as a row in an outbox table in the mailbox DB: this email has to be sent. That is the outbox you glimpse for a second before an email moves to sent."
+      - "The email is still not sent. But it is now durably stored."
+    draw: [o-mailbox, o-send-mailbox, o-table]
+    check: Where is the email right after the mail send service is done with it?
+    answer: In the outbox_email table of the mailbox DB, saved but not yet sent.
+  - point: "The mail send service does not call SMTP itself: an outbox consumer reads each new outbox row, by change data capture, and publishes it to Kafka."
+    kind: flow
+    weight: core
+    teach:
+      - "In the high-level picture the mail send service called SMTP directly. It does not. An outbox consumer watches the outbox table, change data capture, and each new row becomes an event."
+      - "It publishes that event to Kafka, the event stream every later step reads from."
+    draw: [o-consumer, o-mailbox-consumer, o-kafka, o-consumer-kafka]
+    check: Who puts the email on Kafka, and from where?
+    answer: The outbox consumer, which reads the new row from the outbox table and publishes it.
+  - point: "This is the outbox pattern: saved first, a sent email is never lost, but it may be published twice after a crash, so every consumer drops a message ID it has already handled."
+    kind: decision
+    weight: core
+    teach:
+      - "Why the detour? The email is saved before anything else happens, so a crash anywhere after it only delays it; the consumer just publishes again. That meets our durability line."
+      - "It gives at least once, not exactly once: after a crash a row can be published twice. So every consumer downstream checks the message ID and drops one it has seen."
+    draw: [o-never-lost, o-dedupe]
+    check: The outbox consumer crashes after publishing but before recording it. What happens, and what protects us?
+    answer: The row is published again on restart, so the email appears twice on Kafka; consumers drop the duplicate by its message ID.
+    misconceptions:
+      - "The outbox makes the system strongly consistent -> it makes the email durable and delivered at least once; duplicates are handled by dedupe."
+asks:
+  - ids: [o-mailbox]
+    beats: [2]
+    question: "The email must never be lost once send is pressed. Where should the mail send service put it before anything else happens?"
+    hints:
+      - Think of the folder an email sits in for a second before sent.
+      - A table, in a durable database.
+  - ids: [o-consumer, o-kafka]
+    beats: [3]
+    question: "So the email is in the outbox table. How does it get to the rest of the pipeline, without the mail send service calling anyone?"
+    hints:
+      - Something could watch that table for new rows.
+      - And put them on a stream that later steps read.

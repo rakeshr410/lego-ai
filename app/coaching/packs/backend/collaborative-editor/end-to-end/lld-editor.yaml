@@ -1,0 +1,181 @@
+# Collaborative editor interview, the editor service's final design under "5. Low level design", as the video redraws it: clients with OT on the left, the API gateway above a separate websocket gateway, the metadata service, Redis (canonical copy) and the document editor service in a column, Kafka, S3 and the operations path on the right, then snapshots and versions, the reconciliation service, the CDN, cursors, and the two version endpoints added to the API list. The video routes by user, calls Redis persistent and leaves cursors untransformed; the pack corrects those.
+id: backend/collaborative-editor/end-to-end/lld-editor
+title: "Low-level design: the editor service and its versions"
+source:
+  hash: "259ce8371119"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/collaborative-editor/end-to-end/lld-crdt
+  assumes:
+    - "OT transforms concurrent operations; client-server OT needs every operation of a document to go through one server."
+    - "The metadata service writes metadata through Kafka and a metadata consumer; the content is in S3."
+    - "Edits must reach collaborators within about 100 ms."
+  carries:
+    - "A separate websocket gateway; OT in the client and in the editor service; consistent hashing on the document id puts a document's editors on one server."
+    - "Every edit is appended to Kafka and written to the operations database; the server applies it to the canonical copy in Redis, in memory, with a TTL."
+    - "Snapshots go to S3 on save or every 10 to 20 seconds, with a version row and a URL update through Kafka; a joiner gets the canonical copy and the operations after it."
+    - "A reconciliation service replays a session's operations into the next version and deletes the minor versions; cursors travel on the websocket, transformed, kept in Redis."
+    - "GET versions lists a document's versions and GET with a version id opens one."
+  terms:
+    - term: canonical copy
+      means: "The server's live copy of a document being edited, to which every transformed operation is applied."
+    - term: websocket registry
+      means: "The record of which editor server holds which document's connections."
+    - term: snapshot
+      means: "The canonical copy written to S3 as a minor version, on a manual save or by autosave."
+    - term: reconciliation
+      means: "Here, the end-of-session job that replays the session's operations on the last full version to make the next one."
+board:
+  keep: [title, prompt-desc, nfr, nfr-scale, nfr-cap, nfr-latency, api, api-post, api-get, api-ws]
+  elements:
+    - { id: lld-editor, kind: region, label: "5. Low-level design: editor service", at: [4, 32], size: [70, 42] }
+    - { id: d-cdn, kind: oval, label: "CDN, by version", at: [5, 35], size: [10, 4], tone: green, in: lld-editor }
+    - { id: d-clients, kind: box, label: "clients, OT in the browser", at: [5, 46], size: [10, 3], in: lld-editor }
+    - { id: d-api-gw, kind: box, label: LB and API gateway, at: [24, 36], size: [10, 8], in: lld-editor }
+    - { id: d-ws-gw, kind: box, label: Websocket LB and gateway, at: [24, 50], size: [10, 10], tone: blue, in: lld-editor }
+    - { id: d-meta, kind: box, label: Metadata service, at: [39, 37], size: [10, 4], in: lld-editor }
+    - { id: d-meta-kafka, kind: box, label: "Kafka, metadata", at: [52, 37], size: [9, 3], tone: amber, in: lld-editor }
+    - { id: d-meta-consumer, kind: box, label: Metadata consumer, at: [64, 37], size: [10, 3], tone: grey, in: lld-editor }
+    - { id: d-redis, kind: oval, label: "Redis, canonical copy", at: [39, 46], size: [12, 5], tone: green, in: lld-editor }
+    - { id: d-s3, kind: oval, label: "S3, snapshots", at: [53, 46], size: [9, 4], tone: amber, in: lld-editor }
+    - { id: d-editor, kind: box, label: Document editor service, at: [39, 54], size: [11, 4], tone: blue, in: lld-editor }
+    - { id: d-kafka-ops, kind: box, label: "Kafka, operations", at: [53, 55], size: [9, 3], tone: amber, in: lld-editor }
+    - { id: d-reconcile, kind: box, label: "Reconciliation service, replay", at: [64, 54], size: [10, 4], tone: grey, in: lld-editor }
+    - { id: d-ops-consumer, kind: box, label: Operation consumer, at: [53, 61], size: [8, 3], tone: grey, in: lld-editor }
+    - { id: d-ops-db, kind: oval, label: Operations DB, at: [53, 67], size: [9, 4], tone: amber, in: lld-editor }
+    - { id: d-ttl, kind: note, label: "in memory, with a TTL", at: [39, 52], in: lld-editor }
+    - { id: d-ot-server, kind: note, label: OT on the server too, at: [39, 59], in: lld-editor }
+    - { id: d-registry, kind: note, label: "registry, hash on document id", at: [22, 61], in: lld-editor }
+    - { id: d-snapshot, kind: note, label: snapshot on save or every 10 to 20 s, at: [6, 63], in: lld-editor }
+    - { id: d-versions, kind: note, label: "versions 10, 10.0.0 to 10.0.100, then 10.1", at: [6, 65], in: lld-editor }
+    - { id: d-new-version, kind: note, label: "each version, an event on Kafka", at: [30, 66], in: lld-editor }
+    - { id: d-vt-1, kind: note, label: "version table: id, docId, versionId,", at: [6, 67], in: lld-editor }
+    - { id: d-vt-2, kind: note, label: "createdBy, modifiedTime, url", at: [8, 68], in: lld-editor }
+    - { id: d-ops-schema, kind: note, label: "documentId, timestamp, event, data", at: [30, 68], in: lld-editor }
+    - { id: d-cursor, kind: note, label: "cursors over the websocket, in Redis, transformed", at: [6, 70], in: lld-editor }
+    - { id: api-versions, kind: note, label: "GET /v1/api/docs/{docId}/versions, list them", at: [27, 26], in: api }
+    - { id: api-version, kind: note, label: "GET /v1/api/docs/{docId}/{versionId}, open one", at: [27, 27], in: api }
+  arrows:
+    - { id: d-clients-api, from: d-clients, to: d-api-gw, label: HTTP }
+    - { id: d-clients-ws, from: d-clients, to: d-ws-gw, label: websocket, both: true }
+    - { id: d-api-meta, from: d-api-gw, to: d-meta }
+    - { id: d-ws-editor, from: d-ws-gw, to: d-editor, both: true }
+    - { id: d-meta-s3, from: d-meta, to: d-s3, label: open }
+    - { id: d-editor-kafka, from: d-editor, to: d-kafka-ops }
+    - { id: d-kafka-consumer, from: d-kafka-ops, to: d-ops-consumer }
+    - { id: d-consumer-db, from: d-ops-consumer, to: d-ops-db }
+    - { id: d-editor-redis, from: d-editor, to: d-redis }
+    - { id: d-editor-s3, from: d-editor, to: d-s3, label: snapshot }
+    - { id: d-meta-mkafka, from: d-meta, to: d-meta-kafka }
+    - { id: d-mkafka-consumer, from: d-meta-kafka, to: d-meta-consumer }
+    - { id: d-recon-s3, from: d-reconcile, to: d-s3 }
+    - { id: d-recon-db, from: d-reconcile, to: d-ops-db }
+    - { id: d-recon-mkafka, from: d-reconcile, to: d-meta-kafka, label: final version }
+    - { id: d-clients-cdn, from: d-clients, to: d-cdn, label: read-only }
+beats:
+  - point: "The system is websocket-heavy, so websockets get their own load balancer and gateway: HTTP calls go through the API gateway to the metadata service, websockets through the websocket gateway to the editor service."
+    kind: component
+    weight: core
+    teach:
+      - "Now build the editor service for OT. Redraw the picture: clients on the left. Most of the traffic is websockets, so give them their own load balancer and gateway; modern load balancers can carry both, but a dedicated one keeps long-lived connections apart from short calls."
+      - "HTTP calls go through the API gateway to the metadata service; every websocket goes through the websocket gateway, and the editor service talks only to it."
+    draw: [lld-editor, d-clients, d-api-gw, d-clients-api, d-meta, d-api-meta, d-ws-gw, d-clients-ws, d-editor, d-ws-editor]
+    check: Why a separate gateway for websockets?
+    answer: The system is websocket-heavy; a dedicated gateway holds the long-lived connections apart from the short HTTP calls.
+  - point: "OT runs at both ends: in each client, so a user sees their own typing at once and others' edits transformed, and in the editor service, which orders and transforms every operation of the document."
+    kind: mechanism
+    weight: core
+    teach:
+      - "OT runs in two places. In the client, so your own typing shows at once and others' edits are transformed as they arrive. And on the server, where the editor service puts every operation of a document in one order and transforms it."
+    draw: [d-ot-server]
+    check: Why does OT run in the client as well as on the server?
+    answer: The client applies its own edits at once and must transform incoming ones against them; the server orders and transforms every operation for the document.
+  - point: "Opening is an HTTP read of the file from S3; writing opens a websocket, an upgraded HTTP request, and a registry with consistent hashing on the document id sends every editor of one document to the same editor server."
+    kind: mechanism
+    weight: core
+    teach:
+      - "A user opens a document: a normal call to the metadata service, which returns the file from S3, read-only. If they may write, the client opens a websocket, which starts as an HTTP request and is upgraded."
+      - "OT needs one server per document, so a websocket registry and consistent hashing on the document id send every editor of a document to the same editor server. It is the document, not the user, that picks the server."
+    draw: [d-s3, d-meta-s3, d-registry]
+    check: Two users edit the same document. How do they end up on the same editor server?
+    answer: The websocket registry and consistent hashing on the document id route every connection for that document to one editor server.
+    misconceptions:
+      - "Round robin is fine for websockets -> the editors of one document must share a server for OT, so routing is by document id."
+  - point: "Every edit event is appended to a Kafka topic for durability, and an operation consumer writes it to the operations database: document id, timestamp, event, data."
+    kind: mechanism
+    weight: core
+    teach:
+      - "On each edit event the editor service does two things. First, durability: it appends the event to Kafka, and an operation consumer writes it to an operations database. Keystrokes are the heavy write stream, so this queue earns its place."
+      - "A row per operation: the document id, a timestamp, the event, its data. With it, a session can be replayed or rolled back."
+    draw: [d-kafka-ops, d-editor-kafka, d-ops-consumer, d-kafka-consumer, d-ops-db, d-consumer-db, d-ops-schema]
+    check: Why log every operation instead of only saving the file?
+    answer: So every edit is durable as soon as it is on the log, and a session can be replayed or rolled back from it.
+  - point: "Second, the server applies the transformed operation to the canonical copy kept in memory in a Redis cluster, with a TTL once nobody edits; it is fast working state, not the durable copy."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Second, it applies the operation, transformed, to the canonical copy of the document, kept in memory in a Redis cluster so thousands of operations a second are cheap, and sends it on to the other editors."
+      - "Give it a TTL so a document nobody edits leaves memory. And it is not the durable copy: what makes an edit safe is the log, and the snapshots coming next."
+    draw: [d-redis, d-editor-redis, d-ttl]
+    check: The Redis node with a canonical copy restarts. What keeps the edits?
+    answer: The operation log and the last snapshot in S3, from which the copy is rebuilt; Redis is only working state.
+    misconceptions:
+      - "The canonical copy in Redis is persistent -> it is in-memory working state; durability comes from the operation log and the S3 snapshots."
+  - point: "The editor service writes snapshots to S3 on a manual save or an autosave every 10 to 20 seconds; each sends an event through Kafka so the metadata consumer updates the URL and the version table. A joiner gets the canonical copy and the operations after it."
+    kind: flow
+    weight: core
+    teach:
+      - "Walk the flow. User A edits alone; the changes live in Redis. User B opens the document, and S3 still has the empty file. So snapshot: on a manual save, or by autosave every 10 to 20 seconds, the editor service writes the canonical copy to S3 as a minor version."
+      - "Each snapshot also puts an event on Kafka, so the metadata consumer points the document's URL at the newest file and adds a row to the version table. When user B starts editing, the service hands over the canonical copy and its revision, then the operations after it."
+    draw: [d-editor-s3, d-snapshot, d-meta-kafka, d-meta-mkafka, d-meta-consumer, d-mkafka-consumer, d-new-version, d-vt-1, d-vt-2]
+    check: User B joins a document user A has edited for a minute without saving. What does user B get?
+    answer: The canonical copy from the editor service with its revision, then the operations after it; S3 lags by up to one autosave.
+  - point: "At the end of a session a reconciliation service replays the session's operations on the last full version, writes the next version (10 to 10.1), deletes the minor versions and the operations, and tells Kafka."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Minor versions every 10 to 20 seconds would fill S3. When the session ends, a reconciliation service takes version 10 from S3, replays every operation of the session from the operations database, and writes version 10.1."
+      - "Then it deletes the minor versions, 10.0.0 to 10.0.100, and the session's operations, and sends an event through Kafka so the metadata consumer points the document at 10.1."
+    draw: [d-reconcile, d-recon-s3, d-recon-db, d-recon-mkafka, d-versions]
+    check: What does the reconciliation service do with the minor versions?
+    answer: It replays the session's operations into one new version, then deletes the minor versions and the operations to save space.
+  - point: "Cursors travel over the websocket, are transformed like edits and kept in Redis with a TTL; a CDN keyed by version serves read-only opens; and two endpoints list a document's versions and open one."
+    kind: decision
+    weight: core
+    teach:
+      - "The last requirement, cursors: each client sends its cursor over the websocket, the service passes it on and keeps it in Redis with a TTL so a reconnecting user finds their place. A cursor is a position, so it is transformed like an edit, or it drifts."
+      - "Read-only opens can come from a CDN in front of S3, keyed by the version's URL and signed, since documents are private. And two endpoints for versions: GET versions lists them, GET with a version id opens one. Then read the requirements back against the board."
+    draw: [d-cdn, d-clients-cdn, d-cursor, api-versions, api-version]
+    check: Why must a cursor position be transformed like an edit?
+    answer: It is an index into the text; when someone inserts before it, it must shift or it points at the wrong place.
+asks:
+  - ids: [d-ws-gw]
+    beats: [1]
+    question: "Most of our traffic is now long-lived websockets. Would you change anything at the entry point?"
+    hints:
+      - The API gateway was built for short HTTP calls.
+      - What if websockets had their own way in?
+  - ids: [d-kafka-ops, d-ops-db]
+    beats: [4]
+    question: "Every keystroke is an operation. How would you make sure none is lost, without slowing the editor down?"
+    hints:
+      - We used the same pattern for the metadata.
+      - Something durable to append to, and something that writes a database behind it.
+  - ids: [d-redis]
+    beats: [5]
+    question: "The server has to apply thousands of operations a second to the document. Where would you keep its working copy?"
+    hints:
+      - S3 is far too slow for every keystroke.
+      - Somewhere in memory, shared and fast.
+  - ids: [d-reconcile]
+    beats: [7]
+    question: "Autosave makes a minor version every 10 to 20 seconds. How would you stop those piling up in S3?"
+    hints:
+      - We have every operation of the session in a database.
+      - What if something replayed them into one version at the end?
+task:
+  prompt: "Draw the final design: clients with OT, an API gateway and a websocket gateway, the metadata service, the document editor service with Redis for the canonical copy, Kafka and an operation consumer writing the operations database, S3 for snapshots, and the reconciliation service."
+  expects: [1, 4, 5, 6]

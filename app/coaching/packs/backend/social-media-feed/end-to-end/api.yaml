@@ -1,0 +1,110 @@
+# Social media interview, API: "3. API design" beside the entities, three groups side by side as in the video: 1. user onboarding, 2. post (with the paginated feed), 3. interaction. The video's offset paging and unlike path are written here as a cursor and a DELETE on the like.
+id: backend/social-media-feed/end-to-end/api
+title: Endpoints in three groups
+source:
+  hash: "26e908418a22"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/social-media-feed/end-to-end/entities
+  assumes:
+    - "Functional: sign up and log in, create posts, follow, like and comment, see a feed."
+    - "The core entities are the user, the post, followers, likes and comments, and the feed."
+  carries:
+    - "User onboarding: register, login, GET and PUT the profile."
+    - "Posts: create, read, edit, delete; the feed and a user's posts are paginated with a limit and a cursor."
+    - "Interaction: like and unlike, comments, follow and unfollow; one requirement may need several endpoints."
+  terms:
+    - term: pagination
+      means: "Returning a long list one page at a time, 30 to 50 posts, with a cursor for the next page."
+board:
+  keep: [title, prompt-desc, fr, fr-login, fr-post, fr-follow, fr-engage, fr-feed, nfr, nfr-scale, nfr-cap, nfr-latency, entities, ent-user, ent-post, ent-followers, ent-engage, ent-feed]
+  elements:
+    - { id: api, kind: region, label: 3. API design, at: [22, 23], size: [52, 13], dashed: true }
+    - { id: api-user-head, kind: note, label: 1. User onboarding, at: [23, 25], in: api }
+    - { id: api-register, kind: note, label: "POST /v1/users/register", at: [23, 26], in: api }
+    - { id: api-login, kind: note, label: "POST /v1/users/login", at: [23, 27], in: api }
+    - { id: api-profile-get, kind: note, label: "GET /v1/users/{id}/profile", at: [23, 28], in: api }
+    - { id: api-profile-put, kind: note, label: "PUT /v1/users/{id}/profile", at: [23, 29], in: api }
+    - { id: api-post-head, kind: note, label: 2. Post, at: [38, 25], in: api }
+    - { id: api-post-create, kind: note, label: "POST /v1/posts", at: [38, 26], in: api }
+    - { id: api-post-get, kind: note, label: "GET /v1/posts/{id}", at: [38, 27], in: api }
+    - { id: api-post-put, kind: note, label: "PUT /v1/posts/{id}", at: [38, 28], in: api }
+    - { id: api-post-delete, kind: note, label: "DELETE /v1/posts/{id}", at: [38, 29], in: api }
+    - { id: api-feed, kind: note, label: "GET /v1/posts/feed?limit=50&cursor=c1", at: [38, 30], in: api }
+    - { id: api-user-posts, kind: note, label: "GET /v1/users/{id}/posts?cursor=c1", at: [38, 31], in: api }
+    - { id: api-int-head, kind: note, label: 3. Interaction, at: [58, 25], in: api }
+    - { id: api-like, kind: note, label: "POST /v1/posts/{id}/like", at: [58, 26], in: api }
+    - { id: api-unlike, kind: note, label: "DELETE /v1/posts/{id}/like", at: [58, 27], in: api }
+    - { id: api-comment, kind: note, label: "POST /v1/posts/{id}/comments", at: [58, 28], in: api }
+    - { id: api-comments-get, kind: note, label: "GET /v1/posts/{id}/comments", at: [58, 29], in: api }
+    - { id: api-comment-put, kind: note, label: "PUT /v1/comments/{id}", at: [58, 30], in: api }
+    - { id: api-comment-delete, kind: note, label: "DELETE /v1/comments/{id}", at: [58, 31], in: api }
+    - { id: api-follow, kind: note, label: "POST /v1/users/{id}/follow", at: [58, 32], in: api }
+    - { id: api-unfollow, kind: note, label: "DELETE /v1/users/{id}/follow", at: [58, 33], in: api }
+  arrows: []
+beats:
+  - point: "User onboarding takes four endpoints: POST register, POST login, and GET and PUT on the user's profile."
+    kind: flow
+    weight: core
+    teach:
+      - "Step three, the API. Group it by requirement. First, onboarding: registering submits name, email and the rest, so a POST to users register. Logging in submits credentials, another POST."
+      - "Then reading a profile, a GET on the user's profile, and editing it, a PUT. Cover photo and profile picture endpoints exist too; leave them out and say so. One requirement, four endpoints."
+    draw: [api, api-user-head, api-register, api-login, api-profile-get, api-profile-put]
+    check: Why is register a POST and editing a profile a PUT?
+    answer: Register creates something new on the server; the profile edit replaces existing data.
+  - point: "Posts get create, read, edit and delete: POST, GET, PUT and DELETE on posts."
+    kind: flow
+    weight: core
+    teach:
+      - "Second group, posts. Creating is a POST to posts. Reading one is a GET by its ID, which brings back the description, the like count and the comments."
+      - "Editing is a PUT, removing is a DELETE."
+    draw: [api-post-head, api-post-create, api-post-get, api-post-put, api-post-delete]
+    check: What does the GET on a single post return?
+    answer: "The post with its metadata: description, media, like count and comments."
+  - point: "The feed and a user's own posts are huge lists, so both are paginated, 30 to 50 posts at a time, with a cursor rather than an offset."
+    kind: decision
+    weight: core
+    teach:
+      - "The most important endpoint: the feed, a GET with a limit. Someone with thousands of friends has a huge pool of posts, so the app loads 30 to 50 and asks for the next page as you scroll."
+      - "Use a cursor, the position of the last post seen, not an offset: new posts keep arriving at the top, and an offset would shift and repeat or skip posts. A user's own posts, by user ID, are paginated the same way."
+    draw: [api-feed, api-user-posts]
+    check: Why paginate the feed with a cursor rather than an offset?
+    answer: New posts arrive at the top while the user scrolls, so an offset shifts and repeats or skips posts; a cursor marks the last one seen.
+    misconceptions:
+      - "Load the whole feed at once so scrolling is smooth -> thousands of posts would make the first load slow; pages of 30 to 50 load fast."
+  - point: "Interaction: like and unlike, comments (add, read, edit, delete), follow and unfollow; unliking and unfollowing are DELETEs on the like and the follow."
+    kind: flow
+    weight: core
+    teach:
+      - "Third group, interaction. A POST likes a post, and unliking is a DELETE on that same like; keep the path a resource and let the method say the action."
+      - "Comments get a POST, a GET for a post's comments, and PUT and DELETE on a comment. Following is a POST on the user, unfollowing a DELETE."
+    draw: [api-int-head, api-like, api-unlike, api-comment, api-comments-get, api-comment-put, api-comment-delete, api-follow, api-unfollow]
+    check: How do you write unliking a post?
+    answer: A DELETE on the post's like, not a separate unlike path.
+    misconceptions:
+      - "Unlike needs its own POST /unlike path -> the like is the resource; removing it is a DELETE on it."
+asks:
+  - ids: [api-register, api-login, api-profile-get, api-profile-put]
+    frame: [api, api-user-head]
+    beats: [1]
+    question: "Start with onboarding. What endpoints does a new user need? Method and path, and I'll write them."
+    hints:
+      - How does someone get an account, and then get in?
+      - And how do they see or change their profile?
+  - ids: [api-post-create, api-post-get, api-post-put, api-post-delete, api-feed, api-user-posts]
+    frame: [api-post-head]
+    beats: [2, 3]
+    question: "Now posts. What endpoints do posts and the feed need?"
+    hints:
+      - Think create, read, update, delete.
+      - And how does the app fetch the feed, all at once or in pages?
+  - ids: [api-like, api-unlike, api-comment, api-comments-get, api-comment-put, api-comment-delete, api-follow, api-unfollow]
+    frame: [api-int-head]
+    beats: [4]
+    question: "Last, the interactions. What endpoints for likes, comments and follows?"
+    hints:
+      - Each action has an undo; which method removes something?
+      - Comments can be added, read, edited and deleted.

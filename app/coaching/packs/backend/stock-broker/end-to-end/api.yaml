@@ -1,0 +1,120 @@
+# Stock broker interview, API: "3. API design" beside the entities, six groups as in the video, Users, Market data and Funds on the top row, Trading, Portfolio and Watchlists under them. A PATCH to modify an order is added (the video's list has none for its own modify requirement).
+id: backend/stock-broker/end-to-end/api
+title: Six groups of endpoints
+source:
+  hash: "50fe50c52dbc"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/stock-broker/end-to-end/entities
+  assumes:
+    - "Functional: KYC onboarding, live prices and history, orders, watchlists, a dashboard."
+    - "The core entities are user, stock, order, trade, portfolio and watchlist."
+  carries:
+    - "Users: signup, login, verify-kyc. Market data: stocks (paginated), a stock, its history. Funds: deposit, withdraw, history."
+    - "Trading: POST orders with symbol, side, type, quantity and limit price; list, get, PATCH to modify, DELETE to cancel."
+    - "Portfolio, holdings, positions, performance, with the user taken from the token; watchlists and their symbols."
+    - "In an interview, go deep on market data, trading and portfolio."
+  terms:
+    - term: pagination
+      means: Returning a long list a page at a time, with a cursor or page number for the next page.
+board:
+  keep: [title, prompt-desc, prompt-example, fr, fr-kyc, fr-prices, fr-orders, fr-watch, fr-dash, nfr, nfr-scale, nfr-cap, nfr-view, nfr-latency, nfr-region, entities, ent-user, ent-stock, ent-order, ent-trade, ent-portfolio, ent-watchlist]
+  elements:
+    - { id: api, kind: region, label: 3. API design, at: [22, 21], size: [70, 17], dashed: true }
+    - { id: api-users, kind: note, label: Users, at: [23, 23], in: api }
+    - { id: api-signup, kind: note, label: POST /auth/signup, at: [23, 24], in: api }
+    - { id: api-login, kind: note, label: POST /auth/login, at: [23, 25], in: api }
+    - { id: api-kyc, kind: note, label: POST /auth/verify-kyc, at: [23, 26], in: api }
+    - { id: api-market, kind: note, label: Market data, at: [45, 23], in: api }
+    - { id: api-stocks, kind: note, label: "GET /api/v1/stocks, paginated", at: [45, 24], in: api }
+    - { id: api-stock, kind: note, label: "GET /api/v1/stocks/{symbol}", at: [45, 25], in: api }
+    - { id: api-history, kind: note, label: "GET /api/v1/stocks/{symbol}/history", at: [45, 26], in: api }
+    - { id: api-funds, kind: note, label: Funds, at: [68, 23], in: api }
+    - { id: api-deposit, kind: note, label: POST /api/v1/funds/deposit, at: [68, 24], in: api }
+    - { id: api-withdraw, kind: note, label: POST /api/v1/funds/withdraw, at: [68, 25], in: api }
+    - { id: api-funds-history, kind: note, label: GET /api/v1/funds/history, at: [68, 26], in: api }
+    - { id: api-trading, kind: note, label: Trading, at: [23, 28], in: api }
+    - { id: api-order-post, kind: note, label: POST /api/v1/orders, at: [23, 29], in: api }
+    - { id: api-order-body-1, kind: note, label: "{ symbol, side, orderType,", at: [25, 30], in: api }
+    - { id: api-order-body-2, kind: note, label: "quantity, limitPrice? }", at: [27, 31], in: api }
+    - { id: api-order-list, kind: note, label: GET /api/v1/orders, at: [23, 32], in: api }
+    - { id: api-order-get, kind: note, label: "GET /api/v1/orders/{orderId}", at: [23, 33], in: api }
+    - { id: api-order-patch, kind: note, label: "PATCH /api/v1/orders/{orderId}", at: [23, 34], in: api }
+    - { id: api-order-delete, kind: note, label: "DELETE /api/v1/orders/{orderId}", at: [23, 35], in: api }
+    - { id: api-portfolio, kind: note, label: Portfolio, at: [45, 28], in: api }
+    - { id: api-pf, kind: note, label: GET /api/v1/portfolio, at: [45, 29], in: api }
+    - { id: api-pf-holdings, kind: note, label: GET /api/v1/portfolio/holdings, at: [45, 30], in: api }
+    - { id: api-pf-positions, kind: note, label: GET /api/v1/portfolio/positions, at: [45, 31], in: api }
+    - { id: api-pf-performance, kind: note, label: GET /api/v1/portfolio/performance, at: [45, 32], in: api }
+    - { id: api-watchlists, kind: note, label: Watchlists, at: [68, 28], in: api }
+    - { id: api-wl-get, kind: note, label: GET /api/v1/watchlists, at: [68, 29], in: api }
+    - { id: api-wl-post, kind: note, label: POST /api/v1/watchlists, at: [68, 30], in: api }
+    - { id: api-wl-symbols, kind: note, label: "POST /api/v1/watchlists/{watchlistId}/symbols", at: [68, 31], in: api }
+  arrows: []
+beats:
+  - point: "Onboarding is three POSTs: sign up, log in, and verify KYC."
+    kind: flow
+    weight: supporting
+    teach:
+      - "Step three, the API. Each requirement gives one or more endpoints, so group them. Users first: sign up submits data, so a POST; then verify KYC; then log in."
+    draw: [api, api-users, api-signup, api-login, api-kyc]
+    check: Why are sign-up and KYC POSTs?
+    answer: They submit data for the backend to store and verify.
+  - point: "Market data: a paginated list of stocks, one stock's details, and its price history; the live price itself will travel over a WebSocket."
+    kind: flow
+    weight: core
+    teach:
+      - "Market data. A GET on stocks lists them, paginated, since there are up to 10 thousand. A GET on one symbol gives its details, and a GET on its history gives the past prices for a chart."
+      - "Keep in mind the live price will not be a GET: polling it would be far too slow. We will move it to a WebSocket in the deep dive."
+    draw: [api-market, api-stocks, api-stock, api-history]
+    check: Why paginate the stock list?
+    answer: There are up to 10 thousand symbols, too many to send in one response.
+    misconceptions:
+      - "A GET on the symbol is enough for live prices -> the app would have to poll it; live prices are pushed over a WebSocket."
+  - point: "Funds: deposit to and withdraw from the trading wallet, and list its history."
+    kind: flow
+    weight: supporting
+    teach:
+      - "Before trading you need money in the wallet: a POST to deposit, a POST to withdraw, a GET for the history."
+    draw: [api-funds, api-deposit, api-withdraw, api-funds-history]
+    check: Which funds call changes the wallet balance downward?
+    answer: The POST to withdraw.
+  - point: "Trading: POST an order with symbol, side, order type, quantity and an optional limit price; list orders, get one, PATCH to modify it, DELETE to cancel it."
+    kind: flow
+    weight: core
+    teach:
+      - "Trading. Placing is a POST on orders, and its body says what to trade: the symbol, buy or sell, market or limit, the quantity, and a limit price only for limit orders."
+      - "Then a GET to list my orders and one for a single order's status. Modify is a requirement too, so a PATCH on the order, and a DELETE cancels it."
+    draw: [api-trading, api-order-post, api-order-body-1, api-order-body-2, api-order-list, api-order-get, api-order-patch, api-order-delete]
+    check: What goes in the body of the POST that places an order?
+    answer: "The symbol, buy or sell, the order type, the quantity, and a limit price for a limit order."
+  - point: "Portfolio and watchlists: GETs for the portfolio, holdings, positions and performance, with the user read from the token, and endpoints to create watchlists and add symbols."
+    kind: flow
+    weight: core
+    teach:
+      - "Portfolio: GETs for the overview, holdings, positions and performance. No user ID in the path: the gateway reads the user from the auth token in the header, so nobody can ask for someone else's holdings."
+      - "Watchlists: list them, create one, and add symbols to one."
+    draw: [api-portfolio, api-pf, api-pf-holdings, api-pf-positions, api-pf-performance, api-watchlists, api-wl-get, api-wl-post, api-wl-symbols]
+    check: Why is there no user ID in the portfolio paths?
+    answer: The user comes from the authenticated token in the header, so a caller cannot read another user's portfolio.
+  - point: "That is too many endpoints for an interview: agree to go deep on market data, trading and portfolio, and leave funds and watchlists for later."
+    kind: rule
+    weight: supporting
+    teach:
+      - "Be honest about time: you cannot design all of these in an hour. Ask the interviewer what to emphasize; usually market data, trading and the portfolio."
+asks:
+  - ids: [api-stocks, api-stock, api-history]
+    beats: [2]
+    question: "For the prices, what endpoints would the app call? Method and path, and I'll write them."
+    hints:
+      - The app first needs to know which stocks exist.
+      - Then one stock's details, and its past prices for a chart.
+  - ids: [api-order-post, api-order-list, api-order-get, api-order-patch, api-order-delete]
+    beats: [4]
+    question: "Now trading. Which endpoints do we need for orders?"
+    hints:
+      - Look at the requirement, place, modify and cancel.
+      - And how would a user see their orders?

@@ -1,0 +1,134 @@
+# Rate limiter interview, deep dive 5: leaky bucket, and the choice. Under "5. Deep dive: 5. Leaky bucket": a burst of requests joining a queue of 8 drained at 1 a second into a steady backend, the overflow dropped below the queue, the waiting it costs; then the choice of the token bucket and the code's shape the video walks through: a rule's algorithm read by the factory, which returns the token bucket strategy, which the gateway calls. The video likens the queue to a CDC pipeline; this pack calls it a first-in, first-out queue.
+id: backend/rate-limiter/end-to-end/lld-leaky-bucket
+title: "Deep dive, 5: leaky bucket, and the choice"
+source:
+  hash: "d266b2f3a157"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/rate-limiter/end-to-end/lld-token-bucket
+  assumes:
+    - "Token bucket: capacity, refill rate and cost; bursts up to the capacity; two numbers per client in Redis."
+    - "Non-functional: 1M rps, availability over consistency, under 5 ms."
+  carries:
+    - "Leaky bucket: a FIFO queue of 8 drained at 1 a second; a full queue drops; smooth output, but queued requests wait."
+    - "Use the leaky bucket when a backend needs a steady rate; choose the token bucket for an API gateway."
+    - "Code: a RateLimiterStrategy interface with allowRequest, five strategies, a factory choosing one from the rule's algorithm, the gateway calling allowRequest."
+  terms:
+    - term: strategy pattern
+      means: "Interchangeable algorithms behind one interface, chosen at runtime, so the caller does not change when the algorithm does."
+    - term: factory
+      means: "A function or class that builds the right object, here the right strategy, from a setting."
+board:
+  keep: [title, nfr, nfr-scale, nfr-cap, nfr-latency]
+  elements:
+    - { id: lld-lk, kind: region, label: "5. Deep dive: 5. Leaky bucket, and the choice", at: [4, 24], size: [62, 41] }
+    - { id: lk-idea, kind: note, label: "requests join a queue, drained at a fixed rate", at: [6, 27], in: lld-lk }
+    - { id: lk-burst, kind: box, label: burst of requests, at: [6, 30], size: [12, 3], in: lld-lk }
+    - { id: lk-queue, kind: box, label: "queue, 8 slots", at: [26, 30], size: [14, 3], in: lld-lk, tone: amber }
+    - { id: lk-backend, kind: box, label: "steady backend, 1 a second", at: [48, 30], size: [14, 3], in: lld-lk, tone: green }
+    - { id: lk-drop, kind: box, label: "queue full, dropped", at: [26, 39], size: [14, 3], in: lld-lk, tone: red }
+    - { id: lk-wait, kind: note, label: the last in line waits up to 8 seconds, at: [6, 44], in: lld-lk }
+    - { id: lk-when, kind: note, label: use it when a backend needs a steady rate, at: [6, 45], in: lld-lk }
+    - { id: lk-choice, kind: note, label: "choose token bucket, bursts within a cap, two numbers", at: [6, 47], in: lld-lk }
+    - { id: st-rule, kind: box, label: "rule's algorithm, token bucket", at: [6, 50], size: [12, 3], in: lld-lk }
+    - { id: st-factory, kind: box, label: Rate limiter factory, at: [26, 50], size: [14, 3], in: lld-lk, tone: blue }
+    - { id: st-strategy, kind: box, label: Token bucket strategy, at: [48, 50], size: [14, 3], in: lld-lk, tone: blue }
+    - { id: st-interface, kind: note, label: "one interface, allowRequest; five strategies behind it", at: [6, 55], in: lld-lk }
+    - { id: st-gateway, kind: box, label: "API gateway, allow request", at: [48, 58], size: [14, 3], in: lld-lk, tone: green }
+    - { id: st-readback, kind: note, label: "gateways scale out, one Redis call, rules arrive late", at: [6, 62], in: lld-lk }
+  arrows:
+    - { id: lk-burst-queue, from: lk-burst, to: lk-queue, label: joins }
+    - { id: lk-queue-backend, from: lk-queue, to: lk-backend, label: drains }
+    - { id: lk-queue-drop, from: lk-queue, to: lk-drop, label: overflow }
+    - { id: st-rule-factory, from: st-rule, to: st-factory, label: read by }
+    - { id: st-factory-strategy, from: st-factory, to: st-strategy, label: returns }
+    - { id: st-gateway-strategy, from: st-gateway, to: st-strategy, label: calls }
+beats:
+  - point: "The leaky bucket puts incoming requests in a first-in, first-out queue of fixed size, 8, and a worker takes them off at a fixed rate, 1 a second, whatever rate they arrive at."
+    kind: mechanism
+    weight: core
+    teach:
+      - "The leaky bucket turns the idea around. Instead of tokens, a queue: every request joins it, and a consumer takes them off in order at a steady rate."
+      - "Here the queue holds 8 and drains at 1 a second. A burst arrives, the queue fills, and the backend still sees exactly one request a second."
+    draw: [lld-lk, lk-idea, lk-burst, lk-queue, lk-burst-queue, lk-backend, lk-queue-backend]
+    check: "A burst of 6 requests arrives at once at an empty leaky bucket, size 8, draining 1 a second. When does the backend see them?"
+    answer: "One a second, over about 6 seconds, in arrival order."
+    misconceptions:
+      - "The leaky bucket is a CDC pipeline -> it is a bounded first-in, first-out queue drained at a fixed rate; change data capture streams database changes, a different thing."
+  - point: "When the queue is full, new requests are dropped with 429."
+    kind: failure
+    weight: core
+    teach:
+      - "The queue is bounded. With 8 waiting, a ninth request has nowhere to go: it is dropped, and the client gets 429."
+    draw: [lk-drop, lk-queue-drop]
+    check: What happens to a request that arrives when all 8 slots are taken?
+    answer: "It is dropped, answered with 429."
+  - point: "The cost is waiting: a request at the back waits behind everything ahead of it, up to 8 seconds here, so use it only when a backend needs a steady rate."
+    kind: failure
+    weight: core
+    teach:
+      - "Queues add latency. The last request in line waits for all the others, up to 8 seconds here, far past a 5 millisecond budget."
+      - "So use it when the backend demands a steady rate, a delicate service or a provider that allows a fixed number of calls a second, not in front of an interactive API."
+    draw: [lk-wait, lk-when]
+    check: Why is the leaky bucket a poor fit for an interactive API gateway?
+    answer: "Requests wait in the queue, so a burst adds seconds of delay, far beyond the 5 millisecond budget."
+  - point: "Of the five, choose the token bucket: it allows bursts within a cap, keeps two numbers per client and decides in one Redis call."
+    kind: decision
+    weight: core
+    teach:
+      - "Now choose, as the interviewer will ask. Fixed window leaks at edges, the log costs memory, the sliding counter approximates, the leaky bucket adds waiting."
+      - "The token bucket is the one most used in industry: burst friendly within a cap, systematic, cheap."
+    draw: [lk-choice]
+    check: Which algorithm would you choose for the gateway, and why not the leaky bucket?
+    answer: "The token bucket, for bursts within a cap and a cheap fast decision; the leaky bucket smooths by queueing, which adds delay."
+  - point: "Code it with the strategy pattern: one RateLimiterStrategy interface with allowRequest, five strategies behind it, and a factory that reads the rule's algorithm and returns the matching strategy built with that rule's settings."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Then the code. Each algorithm is a strategy behind one interface with one method, allow request."
+      - "The rule from Redis says which algorithm, say token bucket. A rate limiter factory switches on it and returns a token bucket strategy built with the rule's capacity and refill rate; a window algorithm gets its limit and window instead."
+    draw: [st-interface, st-rule, st-factory, st-rule-factory, st-strategy, st-factory-strategy]
+    check: Why use the strategy pattern here?
+    answer: "Five interchangeable algorithms, chosen per rule at runtime, behind one allowRequest interface, so the caller never changes when the algorithm does."
+  - point: "The gateway holds the strategy it was given and calls allowRequest on every request, so changing a rule's algorithm changes behaviour without changing the gateway."
+    kind: flow
+    weight: core
+    teach:
+      - "The API gateway is handed the strategy and calls allow request for each incoming request; true forwards it, false answers 429."
+      - "It never knows which algorithm runs. An admin switching a rule to sliding window changes only what the factory returns."
+    draw: [st-gateway, st-gateway-strategy]
+    check: An admin changes a rule from token bucket to sliding window counter. What code in the gateway changes?
+    answer: "None; the factory returns a different strategy and the gateway still calls allowRequest."
+  - point: "Read the requirements back: gateways scale out to 1 million requests a second with one shared Redis, a decision is one in-memory call under 5 ms, and rules arrive by write-through a moment late."
+    kind: decision
+    weight: supporting
+    teach:
+      - "Close by reading the non-functional list on the right against the design: scale from gateway copies sharing one Redis, latency from one in-memory call per decision, availability with rules arriving a moment late and nothing waiting on the policy database during a request."
+    draw: [st-readback]
+    check: Which part of the design keeps each decision under 5 milliseconds?
+    answer: "One atomic call to the in-memory Redis per request, with the rule already cached there."
+asks:
+  - ids: [lk-queue]
+    beats: [1]
+    question: "Suppose the backend can only take one request a second, however many arrive. What would you put in front of it?"
+    hints:
+      - Somewhere for requests to wait their turn.
+      - Taken off in order at a fixed rate.
+  - ids: [lk-choice]
+    beats: [4]
+    question: "You've seen all five. Which would you choose for the gateway, and why?"
+    hints:
+      - Look at the burst requirement and the 5 millisecond budget.
+      - Which one allows bursts within a cap without a queue or a log?
+  - ids: [st-factory, st-strategy]
+    beats: [5]
+    question: "The interviewer asks you to code it so any of the five can be chosen per rule. How would you structure it?"
+    hints:
+      - One interface the gateway can call, whatever the algorithm.
+      - Something that builds the right one from the rule's algorithm.
+task:
+  prompt: "Draw the leaky bucket, a burst joining a bounded queue that drains at a fixed rate with the overflow dropped, then the code's shape: the rule's algorithm read by a factory that returns a strategy, which the gateway calls."
+  expects: [1, 2, 5, 6]

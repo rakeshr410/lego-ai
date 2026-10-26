@@ -1,0 +1,46 @@
+# Ticket booking interview, core entities: "2. Identify core entities" under the functional list, four lines (user, event, venue, ticket), as in the video.
+id: backend/ticket-booking/end-to-end/entities
+title: Four entities
+source:
+  hash: "b6c54bbc2c70"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/ticket-booking/end-to-end/requirements
+  assumes:
+    - "Functional: search events, view an event's details and seats, book seats."
+  carries:
+    - "The core entities are the user, the event (movie or concert), the venue (hall or location) and the ticket."
+  terms:
+    - term: core entity
+      means: A noun the system stores and moves.
+board:
+  keep: [title, prompt-desc, fr, fr-search, fr-view, fr-book, nfr, nfr-scale, nfr-available, nfr-consistent]
+  elements:
+    - { id: entities, kind: region, label: 2. Identify core entities, at: [6, 21], size: [22, 13], dashed: true }
+    - { id: ent-user, kind: note, label: user, at: [7, 23], in: entities }
+    - { id: ent-event, kind: note, label: "event, a movie or concert", at: [7, 25], in: entities }
+    - { id: ent-venue, kind: note, label: "venue, a hall or location", at: [7, 27], in: entities }
+    - { id: ent-ticket, kind: note, label: ticket, at: [7, 29], in: entities }
+  arrows: []
+  lists:
+    - { id: entity-list, in: entities, at: [7, 23], step: 2, slots: 5, width: 20, items: [ent-user, ent-event, ent-venue, ent-ticket] }
+beats:
+  - point: "The four core entities are the user, the event (a movie or a concert), the venue (a hall or location) and the ticket."
+    kind: component
+    weight: core
+    teach:
+      - "Step two: the core entities, the nouns the system keeps, read off the requirements."
+      - "The user who books. The event, a movie or a concert. The venue, the hall or location, which owns the seats. And the ticket being booked. The list may grow as we design."
+    draw: [entities, ent-user, ent-event, ent-venue, ent-ticket]
+    check: Why is the venue its own entity rather than a field of the event?
+    answer: One hall hosts many events and owns the seat layout they all sell.
+asks:
+  - list: entity-list
+    beats: [1]
+    question: "What are the core entities here, the things this system keeps track of?"
+    hints:
+      - Who is booking, and what are they booking for?
+      - Where does it happen, and what do they walk away with?

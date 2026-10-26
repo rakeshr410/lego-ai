@@ -1,0 +1,92 @@
+# Ride-sharing interview, API: "3. API designing" beside the entities, the rider's five endpoints under "User", then the driver's four under "Driver", the location as a WebSocket, as in the video.
+id: backend/ride-sharing/end-to-end/api
+title: Rider endpoints, then driver endpoints
+source:
+  hash: "a3d3ac452132"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/ride-sharing/end-to-end/entities
+  assumes:
+    - "Functional: fare estimate, request, categories, accept or decline, matching, tracking, ratings, payment."
+    - "The core entities are the rider, the driver, the location, the fare and the ride."
+  carries:
+    - "GET /v1/api/fare with pick-up and drop latitude and longitude returns a list of fares, each with a requestId, vehicle type and estimate."
+    - "POST /v1/api/rides/request with the requestId books; it returns the rideId and driver once a driver accepts."
+    - "Rider also has history, cancel and ratings; the driver streams location over a WebSocket, accepts or denies, starts and ends the ride."
+  terms:
+    - term: requestId
+      means: The ID of one fare quote; the rider books by it, so the booking carries the price they saw.
+    - term: WebSocket
+      means: One long-lived connection that carries messages both ways.
+board:
+  keep: [title, prompt-desc, fr, fr-fare, fr-request, fr-category, fr-accept, fr-match, fr-track, fr-rate, fr-pay, nfr, nfr-scale, nfr-rider, nfr-match, nfr-latency, entities, ent-rider, ent-driver, ent-location, ent-fare, ent-ride]
+  elements:
+    - { id: api, kind: region, label: 3. API designing, at: [26, 26], size: [36, 18], dashed: true }
+    - { id: api-user, kind: note, label: rider endpoints, at: [27, 28], in: api }
+    - { id: api-fare, kind: note, label: "GET /v1/api/fare?pickupLat&pickupLng&dropLat&dropLng", at: [28, 29], in: api }
+    - { id: api-fare-ret, kind: note, label: "returns fares, each with requestId, vehicle type, estimate", at: [30, 30], in: api }
+    - { id: api-request, kind: note, label: "POST /v1/api/rides/request { requestId }", at: [28, 31], in: api }
+    - { id: api-request-ret, kind: note, label: "returns rideId and the driver, once one accepts", at: [30, 32], in: api }
+    - { id: api-history, kind: note, label: GET /v1/api/rides/history, at: [28, 33], in: api }
+    - { id: api-cancel, kind: note, label: "POST /v1/api/rides/{rideId}/cancel", at: [28, 34], in: api }
+    - { id: api-ratings, kind: note, label: "POST /v1/api/rides/{rideId}/ratings", at: [28, 35], in: api }
+    - { id: api-driver, kind: note, label: driver endpoints, at: [27, 37], in: api }
+    - { id: api-ws, kind: note, label: "WebSocket /v1/drivers/location { lat, long }", at: [28, 38], in: api }
+    - { id: api-accept, kind: note, label: "POST /v1/api/ride/rides { requestId, accept or deny }", at: [28, 39], in: api }
+    - { id: api-start, kind: note, label: "POST /v1/api/ride/{rideId}/start", at: [28, 40], in: api }
+    - { id: api-end, kind: note, label: "POST /v1/api/ride/{rideId}/end", at: [28, 41], in: api }
+  arrows: []
+beats:
+  - point: "The fare estimate is a GET with the pick-up and drop latitude and longitude, returning a list of fares, one per vehicle type, each with a requestId."
+    kind: flow
+    weight: core
+    teach:
+      - "Step three, the API. Two actors, so list the rider's endpoints first, then the driver's. The first requirement is the fare: we compute and return data, so a GET on v1 api fare, with pick-up latitude and longitude and drop latitude and longitude."
+      - "It returns a list, one fare per vehicle type, each with a request ID, the type and the estimate."
+    draw: [api, api-user, api-fare, api-fare-ret]
+    check: Why does each fare come back with its own requestId?
+    answer: The rider books by it, so the booking is tied to the vehicle type and price they were shown.
+  - point: "Booking is a POST of the chosen requestId; the backend offers it to nearby drivers and returns the rideId and the driver's details once one accepts."
+    kind: flow
+    weight: core
+    teach:
+      - "To book, POST to v1 api rides request with the request ID the rider picked. The backend offers the ride to nearby drivers."
+      - "When a driver accepts, it returns a ride ID and the details of the driver who is coming."
+    draw: [api-request, api-request-ret]
+    check: What does the booking call return?
+    answer: A rideId and the details of the driver who accepted.
+  - point: "The rider also needs ride history, cancel a ride by its rideId, and rate a ride."
+    kind: flow
+    weight: supporting
+    teach:
+      - "Three more for the rider: GET rides history for past trips, POST cancel on a ride ID if they change their mind after a driver is assigned, and POST ratings on a ride ID."
+    draw: [api-history, api-cancel, api-ratings]
+    check: Which ID do cancel and ratings take?
+    answer: The rideId of the booked ride.
+  - point: "The driver streams its location over a WebSocket, not a REST call, then accepts or denies a request by its requestId, and starts and ends the ride."
+    kind: flow
+    weight: core
+    teach:
+      - "Now the driver. Most important is the driver's location: without it we cannot match. It is sent every few seconds, so it is a WebSocket carrying latitude and longitude, not an API call; why, we will see in the deep dive."
+      - "Then POST rides with the request ID and accept or deny, which returns the ride ID on an accept, and POST start and end on the ride ID at pick-up and drop. List the main ones and move on; 45 minutes is short."
+    draw: [api-driver, api-ws, api-accept, api-start, api-end]
+    check: Which driver endpoint is not a REST call, and why?
+    answer: "The location: it is sent every few seconds, so it rides on one open WebSocket."
+    misconceptions:
+      - "Every endpoint should be REST -> a continuous stream of positions fits one long-lived WebSocket better than a new request every few seconds."
+asks:
+  - ids: [api-fare, api-request]
+    beats: [1, 2]
+    question: "Looking at the first two requirements, what endpoints does the rider need? Give me the method and the path, and I'll write them."
+    hints:
+      - One gets a price for two points, the other books it.
+      - What would the booking call send, so it matches the price shown?
+  - ids: [api-ws, api-accept]
+    beats: [4]
+    question: "And the driver? What does the driver's app need to send us?"
+    hints:
+      - We cannot match a driver if we do not know where they are.
+      - And how does a driver answer an offer?

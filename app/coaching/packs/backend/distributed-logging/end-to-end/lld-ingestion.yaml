@@ -1,0 +1,123 @@
+# Distributed logging interview, deep dive, the ingestion pipeline: the video's deep-dive diagram redrawn under "5. Deep dive design" (clients, a tall gateway, onboarding and the client DB), then the ingestion service split into file ingestion and agent-based services, Kafka with topic raw_logs, the Apache Flink diamond with its duties written above it, and the log DB, Cassandra, as the video grows it left to right.
+id: backend/distributed-logging/end-to-end/lld-ingestion
+title: "Deep dive: the ingestion pipeline"
+source:
+  hash: "c64bcde15755"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/distributed-logging/end-to-end/lld-onboarding
+  assumes:
+    - "Clients run an agent or a file uploader; the gateway authenticates with the client ID and token from onboarding."
+    - "The high-level ingestion service does every step and every write, and is the bottleneck."
+  carries:
+    - "Ingestion splits into a file ingestion service (offline) and an agent-based service (real time)."
+    - "Both produce to Kafka, topic raw_logs, a durable buffer between ingestion and processing."
+    - "One Apache Flink job validates, parses and normalizes, enriches and deduplicates, and writes to the log DB, Cassandra."
+  terms:
+    - term: Kafka topic
+      means: "A named, durable, partitioned log that producers append to and consumers read at their own pace."
+    - term: stream processor
+      means: "A system such as Flink that runs a continuous job over records as they arrive."
+board:
+  keep: [title, nfr, nfr-scale, nfr-latency, nfr-cap, nfr-reliable]
+  elements:
+    - { id: dd, kind: region, label: 5. Deep dive design, at: [4, 22], size: [70, 38] }
+    - { id: dd-agents, kind: note, label: agents and file uploaders on the clients, at: [6, 25], in: dd }
+    - { id: dd-clients, kind: box, label: clients, at: [6, 40], size: [8, 4], in: dd }
+    - { id: dd-gw, kind: box, label: gateway and load balancer, at: [17, 27], size: [10, 32], in: dd }
+    - { id: dd-onboard, kind: box, label: onboarding service, at: [31, 26], size: [14, 3], in: dd, tone: grey }
+    - { id: dd-clientdb, kind: oval, label: Client DB, at: [49, 25], size: [11, 4], in: dd, tone: grey }
+    - { id: dd-file, kind: box, label: file ingestion service, at: [31, 36], size: [14, 3], in: dd, tone: blue }
+    - { id: dd-agentsvc, kind: box, label: agent based service, at: [31, 41], size: [14, 3], in: dd, tone: blue }
+    - { id: dd-kafka, kind: box, label: Kafka, at: [49, 38], size: [10, 4], in: dd, tone: amber }
+    - { id: dd-topic-raw, kind: note, label: topic raw_logs, at: [49, 43], in: dd }
+    - { id: dd-flink-1, kind: note, label: "validate, parse, normalize", at: [61, 34], in: dd }
+    - { id: dd-flink-2, kind: note, label: "enrich, deduplicate", at: [61, 35], in: dd }
+    - { id: dd-flink, kind: diamond, label: Apache Flink, at: [64, 37], size: [10, 6], in: dd, tone: blue }
+    - { id: dd-logdb, kind: oval, label: "Log DB, Cassandra", at: [79, 55], size: [12, 5], tone: amber }
+  arrows:
+    - { id: dd-clients-gw, from: dd-clients, to: dd-gw }
+    - { id: dd-gw-onboard, from: dd-gw, to: dd-onboard }
+    - { id: dd-onboard-db, from: dd-onboard, to: dd-clientdb }
+    - { id: dd-gw-file, from: dd-gw, to: dd-file }
+    - { id: dd-gw-agentsvc, from: dd-gw, to: dd-agentsvc }
+    - { id: dd-file-kafka, from: dd-file, to: dd-kafka }
+    - { id: dd-agentsvc-kafka, from: dd-agentsvc, to: dd-kafka }
+    - { id: dd-kafka-flink, from: dd-kafka, to: dd-flink, label: read }
+    - { id: dd-flink-logdb, from: dd-flink, to: dd-logdb, label: write }
+beats:
+  - point: "The deep-dive picture so far: clients with their agents, the gateway, and onboarding with its client DB; now the ingestion side."
+    kind: component
+    weight: supporting
+    teach:
+      - "Back to the deep-dive picture. On the left the clients with their agents and uploaders, then the gateway and load balancer, then onboarding and its client DB, which we just designed."
+      - "Now the meat of the design: the ingestion service."
+    draw: [dd, dd-agents, dd-clients, dd-gw, dd-clients-gw, dd-onboard, dd-gw-onboard, dd-clientdb, dd-onboard-db]
+    check: What does the gateway check before a log is accepted?
+    answer: The client ID and token the organisation got at onboarding.
+  - point: "First split the ingestion service by how logs arrive: a file ingestion service for offline batches and an agent-based service for the real-time stream."
+    kind: decision
+    weight: core
+    teach:
+      - "One service doing real-time and offline ingestion, plus all the processing, is a bottleneck. Split it in two by traffic."
+      - "A file ingestion service for the offline, batch path, and an agent-based service for real time. Each scales to its own load, and a burst of uploads cannot slow the live stream."
+    draw: [dd-file, dd-gw-file, dd-agentsvc, dd-gw-agentsvc]
+    check: Why split real-time and batch ingestion into two services?
+    answer: They have different loads and patterns, so each scales on its own and a burst of uploads cannot slow the live stream.
+  - point: "At millions of events an hour, writing straight to a database ties ingestion to the database's worst moment; both services produce to Kafka, topic raw_logs, a durable buffer."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Now the writes. Millions of events an hour, in bursts, written straight into one database: when the database slows, ingestion slows and starts refusing logs."
+      - "So drop the direct write and put Kafka between them, producer and consumer. Both services append to topic raw_logs, every log as it arrived, unvalidated. Kafka keeps it durably and replicated, so an accepted log survives a slow consumer: that is our no-data-loss line."
+    draw: [dd-kafka, dd-file-kafka, dd-agentsvc-kafka, dd-topic-raw]
+    check: What does Kafka give us here that a direct database write doesn't?
+    answer: A durable buffer, so ingestion keeps accepting at its own pace while processing and storage catch up, with no accepted log lost.
+    misconceptions:
+      - "Kafka is just another database here -> it is a buffer between producers and consumers; logs are stored for search elsewhere."
+  - point: "Processing could be one consumer service per step, topic to topic; simpler is one Apache Flink job that validates, parses and normalizes, enriches and deduplicates."
+    kind: decision
+    weight: core
+    teach:
+      - "Then the sanitising. One way: a consumer service per step. One reads raw_logs, validates, writes to a validated topic; the next parses and normalizes, and so on. It works, but it is a chain of services to run."
+      - "Simpler: Apache Flink, a stream processor. One job reads raw_logs and does validation, parsing and normalization, enrichment and deduplication. Write its duties above it."
+    draw: [dd-flink, dd-kafka-flink, dd-flink-1, dd-flink-2]
+    check: What does the single Flink job replace?
+    answer: A chain of consumer services, one per step, each reading one topic and writing the next.
+  - point: "Flink writes the clean logs to the log DB, which must be write-optimised: Cassandra, append-only and scaled out by adding nodes."
+    kind: decision
+    weight: core
+    teach:
+      - "Clean logs go to the log DB. Logs are appended, never updated, at a high rate, so the database must be write-optimised."
+      - "Cassandra fits: append-only writes, more nodes for more throughput, tables laid out by query, which the search will decide. It fits this workload; it is not a rule for every write-heavy system."
+    draw: [dd-logdb, dd-flink-logdb]
+    check: Why does Cassandra suit the log DB?
+    answer: Logs are written at a high rate and never updated; Cassandra's append-only writes scale out by adding nodes.
+asks:
+  - ids: [dd-file, dd-agentsvc]
+    beats: [2]
+    question: "The ingestion service does everything. How would you split it first?"
+    hints:
+      - Logs arrive two different ways.
+      - What if each way had its own service?
+  - ids: [dd-kafka]
+    beats: [3]
+    question: "Millions of events an hour, in bursts. What would you put between the ingestion services and the database?"
+    hints:
+      - Something that takes writes fast and lets the readers catch up.
+      - Producers on one side, consumers on the other.
+  - ids: [dd-flink]
+    beats: [4]
+    question: "Someone has to validate, parse, normalize, enrich and deduplicate every log in that topic. What would you use?"
+    hints:
+      - You could write one consumer service per step.
+      - Or one streaming engine that does all of it in one job.
+  - ids: [dd-logdb]
+    beats: [5]
+    question: "Which database would you store the processed logs in, and why?"
+    hints:
+      - Logs are written all the time and never updated.
+      - Which databases are built for heavy writes and scale by adding nodes?

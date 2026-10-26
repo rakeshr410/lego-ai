@@ -1,0 +1,56 @@
+# Online learning interview, the problem statement: the title, a one-line description, the three actors and the agreed scope written at the top of the board, as the video writes its title and description line.
+id: backend/online-learning/end-to-end/problem-statement
+title: The problem, its actors, and the scope
+source:
+  hash: "7d795934df7c"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: null
+  assumes: []
+  carries:
+    - "An online learning platform is a marketplace where instructors upload courses of videos, quizzes and assignments, and students who join or buy them work through them."
+    - "Three actors: students, instructors, and admins or moderators who approve content; the scope is the student flow and the instructor upload flow."
+    - "The interview runs in five steps: requirements, core entities, API, high-level design, deep dive."
+  terms:
+    - term: actor
+      means: A kind of user with flows of its own, such as a student, an instructor or a moderator.
+board:
+  keep: []
+  elements:
+    - { id: title, kind: note, label: "Online learning platform like Udemy or Coursera", at: [44, 0] }
+    - { id: prompt-desc, kind: note, label: "a global marketplace of on-demand online courses", at: [40, 2] }
+    - { id: prompt-actors, kind: note, label: "actors: students, instructors, admins or moderators", at: [40, 3] }
+    - { id: prompt-scope, kind: note, label: "in scope: the student flow and the instructor upload flow", at: [40, 4] }
+  arrows: []
+beats:
+  - point: "An online learning platform like Udemy or Coursera is a global marketplace: instructors upload courses of videos, quizzes and assignments, and students who join or buy a course work through it."
+    kind: rule
+    weight: core
+    teach:
+      - "Write the title: an online learning platform like Udemy or Coursera. Under it, one line: a global marketplace of on-demand online courses."
+      - "Instructors anywhere upload videos, questions and assignments; once a student buys or joins a course, they can go through all of it."
+    draw: [title, prompt-desc]
+    check: In one sentence, what does this platform do?
+    answer: Instructors upload courses of videos, quizzes and assignments, and students who enroll or buy them can take them.
+  - point: "There are three actors, students, instructors and moderators, each with their own flows, so agree the scope: the student flow and the instructor upload flow."
+    kind: decision
+    weight: core
+    teach:
+      - "The question looks easy, but count the actors: students taking lessons, instructors uploading courses, and admins or moderators who check every course before it goes public."
+      - "Many actors means many flows, more than forty-five minutes can hold. So ask which side the interviewer cares about, and say what you will design: the student flow and how an instructor's content gets into the backend."
+    draw: [prompt-actors, prompt-scope]
+    check: Why agree on scope before writing requirements?
+    answer: Several actors each bring their own flows; there is no time to design them all, so you pick the core ones with the interviewer.
+    misconceptions:
+      - "Design every actor's flow to be thorough -> you run out of time; agree the core flows and name the rest as out of scope."
+  - point: "The interview runs in five steps: requirements, core entities, API, high-level design, then a deep dive."
+    kind: rule
+    weight: supporting
+    teach:
+      - "Say the plan once: functional and non-functional requirements, the core entities, the API, a high-level design, and a deep dive where most of the time goes."
+      - Said, not written; each step gets its number on the board when we reach it.
+    check: Which step comes after the core entities?
+    answer: The API, then the high-level design.

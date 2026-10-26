@@ -1,0 +1,64 @@
+# Proximity search, the problem: the title and the one-line problem written at the top of the board as the video does, then the four approaches said once (said, not drawn; each gets its number on the board when it is reached).
+id: backend/proximity-search/end-to-end/problem-statement
+title: Find what is near a point
+source:
+  hash: "64d29a82e132"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: null
+  assumes: []
+  carries:
+    - "Proximity search returns the places (restaurants, drivers, hotels) within a radius of a user's location, say 5 km."
+    - "It is a building block of designs like Uber, food delivery or hotel booking, rarely the question itself."
+    - "Four approaches, in this order: quadtree, geohash, PostgreSQL with PostGIS, Elasticsearch."
+  terms:
+    - term: proximity search
+      means: "Given a latitude, a longitude and a radius, find the stored places inside that circle."
+    - term: spatial index
+      means: An index that narrows a search to the part of the map near a point, so not every row is read.
+board:
+  keep: []
+  elements:
+    - { id: title, kind: note, label: Design a proximity search, at: [53, 0] }
+    - { id: prompt-desc, kind: note, label: "find the nearby restaurants, drivers or hotels to a location", at: [4, 2] }
+    - { id: prompt-example, kind: note, label: "a user at one point, every place within 5 km", at: [4, 3] }
+  arrows: []
+beats:
+  - point: "Proximity search answers one question: which stored places, restaurants, drivers or hotels, lie within a radius of the user's location, say 5 km."
+    kind: rule
+    weight: core
+    teach:
+      - "Write the title: design a proximity search. Under it, what it does: find the nearby restaurants, drivers or hotels to a location."
+      - "Then the example we will use all the way down: a user at one point, and every place within 5 kilometres of it."
+    draw: [title, prompt-desc]
+    check: What goes into a proximity search, and what comes out?
+    answer: "The user's latitude and longitude and a radius go in; the places inside that circle come out."
+  - point: "It is rarely asked on its own: it is the part of an Uber, a food delivery app or a hotel booking design that finds what is near, and comparing the user with every row does not scale."
+    kind: rule
+    weight: core
+    teach:
+      - "An interviewer seldom says design a proximity search. You meet it inside another design: drivers near a rider, restaurants near a diner, hotels near a landmark."
+      - "The naive answer, compute the distance to every place, reads millions of rows per search. So every real answer is an index built for space."
+    draw: [prompt-example]
+    check: Why not compute the distance from the user to every restaurant?
+    answer: It reads every row on every search, which does not scale to millions of places and many searches a second.
+    misconceptions:
+      - "Sorting all rows by distance is fine with a good database -> without a spatial index it is still a full scan per search."
+  - point: "Four approaches come up, and we take them in this order: a quadtree, geohash, PostgreSQL with the PostGIS extension, and Elasticsearch, then choose."
+    kind: rule
+    weight: supporting
+    teach:
+      - "Say the plan once: number one the quadtree, two geohash, three PostgreSQL with the PostGIS extension, four Elasticsearch. Then we pick by use case."
+      - Said, not written; each one gets its number on the board when we reach it.
+    check: Which approach do we start with?
+    answer: The quadtree, then geohash, PostGIS and Elasticsearch.
+asks:
+  - ids: [prompt-desc]
+    beats: [1]
+    question: "Before anything, tell me in one line what a proximity search has to do."
+    hints:
+      - Think of opening a food app and asking what is close by.
+      - What does the app send, and what should come back?

@@ -1,0 +1,69 @@
+# OTT streaming interview, API: "3. API Designing" beside the entities, six numbered endpoints in the video's order, one group per functional requirement.
+id: backend/ott-streaming/end-to-end/api
+title: Six endpoints
+source:
+  hash: "94903472b5cc"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/ott-streaming/end-to-end/entities
+  assumes:
+    - "Functional: create an account and subscribe, search titles, watch at a chosen resolution."
+    - "Entities: user, user metadata, video, video metadata."
+  carries:
+    - "Account and plan: POST /v1/user/register (plus login, logout, update), GET /v1/subscription/plans, POST /v1/subscription with the user and plan id."
+    - "Search: GET /v1/videos/search?q=name returns a paginated list of video ids with partial metadata."
+    - "GET /v1/videos/{videoId} returns the metadata; GET /v1/videos/play/{videoId} starts playback."
+  terms:
+    - term: pagination
+      means: Returning a long result a page at a time, with a cursor for the next page.
+board:
+  keep: [title, prompt-desc, fr, fr-account, fr-search, fr-watch, fr-out, nfr, nfr-scale, nfr-cap, nfr-buffer, nfr-micro, entities, ent-user, ent-user-meta, ent-video, ent-video-meta]
+  elements:
+    - { id: api, kind: region, label: 3. API design, at: [36, 21], size: [38, 11], dashed: true }
+    - { id: api-register, kind: note, label: "POST /v1/user/register, plus login, logout", at: [37, 23], in: api }
+    - { id: api-plans, kind: note, label: "GET /v1/subscription/plans, all plans", at: [37, 24], in: api }
+    - { id: api-subscribe, kind: note, label: "POST /v1/subscription, user and plan id", at: [37, 25], in: api }
+    - { id: api-search, kind: note, label: "GET /v1/videos/search?q=name, paged", at: [37, 26], in: api }
+    - { id: api-details, kind: note, label: "GET /v1/videos/{videoId}, metadata JSON", at: [37, 27], in: api }
+    - { id: api-play, kind: note, label: "GET /v1/videos/play/{videoId}, start", at: [37, 28], in: api }
+  arrows: []
+  lists:
+    - { id: api-list, in: api, at: [37, 23], step: 1, slots: 7, width: 34, items: [api-register, api-plans, api-subscribe, api-search, api-details, api-play] }
+beats:
+  - point: "The account requirement takes three endpoints: POST register (with login, logout and update named), GET the subscription plans, and POST a subscription with the user and the plan id."
+    kind: flow
+    weight: core
+    teach:
+      - "Step three, the API: one group per functional requirement. Registering submits data, so a POST to v1 user register, with name, email and password in the body. Name login, logout and update profile beside it and move on."
+      - "Then a GET on v1 subscription plans that lists every plan, and a POST on v1 subscription with the user and the plan they picked."
+    draw: [api, api-register, api-plans, api-subscribe]
+    check: Why is registering a POST and listing plans a GET?
+    answer: Registering creates data on the server; listing plans only reads it.
+  - point: "Search is a GET with the name as a query, returning video ids with partial metadata, title, thumbnail, a short description, a page at a time."
+    kind: flow
+    weight: core
+    teach:
+      - "Search: a GET on v1 videos search with q equal to the name. It returns the matching video ids, and with each a little metadata, the thumbnail, a title, a short description, so the list can be drawn."
+      - "Many titles can match, so the result is paginated; sending all of them at once would swamp the client."
+    draw: [api-search]
+    check: Why does the search result come back paginated and partial?
+    answer: A query can match many titles; a page of ids with a thumbnail and title is enough for the list, and the rest comes from the details endpoint.
+  - point: "Then a GET on one video id for its full metadata as JSON, and a GET on play with the video id to start watching."
+    kind: flow
+    weight: core
+    teach:
+      - "The user clicks a result: a GET on v1 videos slash the video id returns its full metadata as JSON for the details page."
+      - "Last, play: a GET on v1 videos play slash the video id. Six endpoints for three requirements."
+    draw: [api-details, api-play]
+    check: Which endpoint does the details page call, and what does it get?
+    answer: GET on the video id, which returns that title's full metadata as JSON.
+asks:
+  - list: api-list
+    beats: [1, 2, 3]
+    question: "Take the requirements one by one. What endpoints do we need? Give me the method and the path and I'll write them."
+    hints:
+      - The first requirement needs an account and a plan; how many calls is that?
+      - After search, what does the user click, and then what?

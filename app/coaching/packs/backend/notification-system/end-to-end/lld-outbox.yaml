@@ -1,0 +1,76 @@
+# Notification system interview, deep dive 6: never lose an accepted message. As in the video: the notification service now writes the notifications DB (its notifications and outbox tables) and a CDC pipeline carries new outbox rows to the queue, drawn beside the notifications DB, replacing the notification consumer. The video says Kafka going down loses messages; the pack teaches the narrower real gap and the one-transaction write.
+id: backend/notification-system/end-to-end/lld-outbox
+title: "Deep dive: the transactional outbox"
+source:
+  hash: "ffb6f0489c6d"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/notification-system/end-to-end/lld-preference-cache
+  assumes:
+    - "The notification service publishes to the queue; a notification consumer writes the notifications DB as pending."
+    - "Non-functional: promotional within 5 to 10 s."
+  carries:
+    - "Acknowledging the client right after a Kafka publish promises a message nothing has stored."
+    - "The service writes the notification row and an outbox row in one transaction, then acknowledges; a CDC pipeline publishes outbox rows to Kafka and replaces the notification consumer."
+    - "The outbox adds latency, well inside 5 to 10 s for standard and promotional messages."
+  terms:
+    - term: transactional outbox
+      means: "Writing a business row and an event row in one database transaction, then relaying the event to the broker."
+    - term: CDC
+      means: "Change data capture: reading committed changes from the database's log and publishing them."
+board:
+  keep: [title, fr, fr-channels, fr-templates, fr-prefs, fr-schedule, fr-status, nfr, nfr-scale, nfr-cap, nfr-latency, hld, hld-clients, hld-gw, hld-tpl-svc, hld-tpl-db, hld-pref-svc, hld-pref-db, hld-notif-svc, hld-provider, hld-provider-note, hld-clients-gw, hld-gw-tpl, hld-tpl-db-arrow, hld-gw-pref, hld-pref-db-arrow, hld-gw-notif, hld-notif-provider, hld-notif-pref, lld, lld-clients, lld-gw, gw-jobs-1, gw-jobs-2, tpl-svc, tpl-db, tpl-table-1, tpl-table-2, tpl-table-3, lld-clients-gw, gw-tpl, tpl-svc-db, pref-svc, pref-scale, pref-kafka, pref-consumer, pref-db, pref-table-1, pref-table-2, pref-table-3, gw-pref, pref-svc-kafka, pref-kafka-consumer, pref-consumer-db, notif-svc, sms-prov, email-prov, inapp-prov, twilio, sendgrid, fcm, fcm-note, queue, topic-critical, topic-standard, topic-promo, topic-bulk, topic-retry, gw-notif, sms-twilio, email-sendgrid, inapp-fcm, notif-queue, queue-sms, queue-email, queue-inapp, notif-consumer, notif-db, notif-table-1, notif-table-2, notif-table-3, status-note, writers-note, delivery-kafka, delivery-consumer, reporting, event-db, queue-notif-consumer, notif-consumer-db, sms-delivery, email-delivery, inapp-delivery, delivery-kafka-consumer, delivery-consumer-db, gw-reporting, reporting-db, delivery-consumer-events, reporting-events, pref-check, pref-cache, sms-cache, email-cache, inapp-cache, cache-pref-db]
+  elements:
+    - { id: ack-note, kind: note, label: acknowledge the client after the commit, at: [21, 80], in: lld }
+    - { id: outbox-1, kind: note, label: "outbox: id, notification id, event type,", at: [48, 56], in: lld }
+    - { id: outbox-2, kind: note, label: "payload, published, created at", at: [50, 57], in: lld }
+    - { id: cdc, kind: box, label: CDC pipeline, at: [21, 66], size: [9, 3], tone: grey }
+  arrows:
+    - { id: notif-svc-db, from: notif-svc, to: notif-db, label: write }
+    - { id: db-cdc, from: notif-db, to: cdc }
+    - { id: cdc-queue, from: cdc, to: queue }
+beats:
+  - point: "The service acknowledges the client as soon as it has handed the message to Kafka, before anything is stored, so an accepted message can be lost."
+    kind: failure
+    weight: core
+    teach:
+      - "Amazon sends message ABC. The service drops it in Kafka and tells Amazon: received, it'll go out soon. But nothing is stored yet."
+      - "The video's worry is Kafka going down and losing it. Kafka is in fact replicated and keeps acknowledged messages, so the real gap is narrower: acknowledging before the broker durably has it, or crashing in between. Either way Amazon was promised something nobody stored."
+    check: What has the client been promised, and what is actually stored at that moment?
+    answer: "It was told the message is accepted, while nothing is in the database and the publish may not be durable yet."
+    misconceptions:
+      - "Messages in Kafka vanish whenever a broker goes down -> Kafka replicates its log across brokers; the risk is acknowledging before a durable write."
+  - point: "Fix it with a transactional outbox: the service writes the notification row and an outbox row in one transaction in the notifications DB, and only then acknowledges."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Write to the database first. The notifications DB gets a second table, the outbox: outbox id, notification id, event type, payload, published, created at."
+      - "The service writes the notification and the outbox row in one transaction, so both are saved or neither, and acknowledges the client after the commit."
+    draw: [notif-svc-db, outbox-1, outbox-2, ack-note]
+    check: Why one transaction for both rows?
+    answer: "So both are saved or neither; two separate writes could leave a notification without its event, or an event without its row."
+  - point: "A CDC pipeline reads new outbox rows and publishes them to the queue, replacing the notification consumer; the extra hop costs latency, within the 5 to 10 seconds standard and promotional messages allow."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Now a CDC pipeline, change data capture, watches the outbox and publishes each new row to the Kafka queue. The flow after that is unchanged, and the notification consumer is no longer needed: the row is saved before Kafka sees it."
+      - "The price: a database write and a CDC hop add latency. For standard and promotional messages that is well under 5 to 10 seconds, so they take this durable path."
+    draw: [cdc, db-cdc, cdc-queue]
+    check: What does the outbox path cost, and why is that acceptable here?
+    answer: "Extra latency from the database write and the CDC hop; standard and promotional messages may take 5 to 10 seconds anyway."
+asks:
+  - ids: [outbox-1, outbox-2]
+    beats: [2]
+    question: "How would you make sure that once we tell the client 'accepted', the message can never be lost?"
+    hints:
+      - Store it before you acknowledge.
+      - And the event for Kafka has to be saved in the same step as the row.
+  - ids: [cdc]
+    beats: [3]
+    question: "The event now sits in an outbox table. How does it get to Kafka?"
+    hints:
+      - Something that watches the database for new rows.
+      - Databases keep a log of every committed change.

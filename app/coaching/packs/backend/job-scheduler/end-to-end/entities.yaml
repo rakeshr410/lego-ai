@@ -1,0 +1,45 @@
+# Job scheduler interview, core entities: "2. Core entities" under the functional list, three lines (job, schedule, executor), as in the video.
+id: backend/job-scheduler/end-to-end/entities
+title: Three entities
+source:
+  hash: "7e0d008c4caf"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/job-scheduler/end-to-end/requirements
+  assumes:
+    - "Functional: create and schedule a job, monitor it, cancel or update it."
+  carries:
+    - "The core entities are the job, its schedule, and the executor that runs it."
+  terms:
+    - term: executor
+      means: The worker that runs a job and reports how it went.
+board:
+  keep: [title, prompt-desc, prompt-use, fr, fr-create, fr-monitor, fr-cancel, fr-scope, nfr, nfr-scale, nfr-cap, nfr-once, nfr-latency]
+  elements:
+    - { id: entities, kind: region, label: 2. Core entities, at: [4, 21], size: [16, 11], dashed: true }
+    - { id: ent-job, kind: note, label: job, at: [5, 23], in: entities }
+    - { id: ent-schedule, kind: note, label: schedule, at: [5, 25], in: entities }
+    - { id: ent-executor, kind: note, label: executor, at: [5, 27], in: entities }
+  arrows: []
+  lists:
+    - { id: entity-list, in: entities, at: [5, 23], step: 2, slots: 4, width: 12, items: [ent-job, ent-schedule, ent-executor] }
+beats:
+  - point: "The core entities are the job, the schedule that says when it runs, and the executor that runs it."
+    kind: component
+    weight: core
+    teach:
+      - "Step two: the core entities, read off the requirements. The job, the work and its settings."
+      - "The schedule, when it runs: now, once, or a cron expression. And the executor, the worker that runs it and reports back."
+    draw: [entities, ent-job, ent-schedule, ent-executor]
+    check: Why is the executor an entity and not just a detail?
+    answer: Each run records which executor runs it, to report status and to notice when one dies.
+asks:
+  - list: entity-list
+    beats: [1]
+    question: "What are the core entities here, the things this system keeps track of?"
+    hints:
+      - What does the user hand us, and what says when it runs?
+      - And what actually does the work?

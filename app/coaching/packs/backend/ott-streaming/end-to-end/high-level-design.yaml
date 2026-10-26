@@ -1,0 +1,114 @@
+# OTT streaming interview, high-level design: "4. High Level Design" under the API, as in the video: users on the left, a tall load balancer and API gateway with its roles, a column of four services (user, subscription, search, play), the user DB and the payment gateway beside them, and on the right the internal uploader writing to the video DB and blob storage.
+id: backend/ott-streaming/end-to-end/high-level-design
+title: Gateway, four services, their stores
+source:
+  hash: "a2ead415383b"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/ott-streaming/end-to-end/api
+  assumes:
+    - "Six endpoints: register, plans, subscribe, search, details, play."
+    - "Non-functional: 200M users, 10k videos, availability first except payments, negligible buffering; microservices."
+  carries:
+    - "Users reach a round-robin load balancer and an API gateway that authenticates, routes and rate-limits."
+    - "Four services: user (user DB), subscription (user DB and a third-party payment gateway), search (video DB), play (blob storage)."
+    - "An internal uploader writes text metadata to the video DB and video files and thumbnails to blob storage (S3)."
+  terms:
+    - term: API gateway
+      means: "The single entry point that authenticates and authorizes calls, routes each to its service, and rate-limits."
+    - term: blob storage
+      means: "Object storage such as S3 for large files: videos and thumbnails."
+board:
+  keep: [title, prompt-desc, fr, fr-account, fr-search, fr-watch, fr-out, nfr, nfr-scale, nfr-cap, nfr-buffer, nfr-micro, entities, ent-user, ent-user-meta, ent-video, ent-video-meta, api, api-register, api-plans, api-subscribe, api-search, api-details, api-play]
+  elements:
+    - { id: hld, kind: region, label: 4. High-level design, at: [2, 35], size: [70, 27] }
+    - { id: hld-users, kind: box, label: users, at: [4, 44], size: [7, 6], in: hld }
+    - { id: hld-gateway, kind: box, label: Load balancer and API gateway, at: [14, 38], size: [10, 20], in: hld }
+    - { id: hld-gw-roles, kind: note, label: "gateway, auth, routing, rate limiting", at: [4, 59], in: hld }
+    - { id: hld-lb-rr, kind: note, label: "load balancer, round robin", at: [4, 60], in: hld }
+    - { id: hld-user-svc, kind: box, label: User service, at: [30, 38], size: [13, 3], in: hld, tone: blue }
+    - { id: hld-sub-svc, kind: box, label: Subscription service, at: [30, 43], size: [13, 3], in: hld, tone: blue }
+    - { id: hld-search-svc, kind: box, label: Search service, at: [30, 49], size: [13, 3], in: hld, tone: blue }
+    - { id: hld-play-svc, kind: box, label: Play service, at: [30, 55], size: [13, 3], in: hld, tone: blue }
+    - { id: hld-user-db, kind: oval, label: User DB, at: [47, 37], size: [10, 4], in: hld, tone: amber }
+    - { id: hld-pay-gw, kind: box, label: Payment gateway, at: [47, 43], size: [12, 3], in: hld, tone: grey }
+    - { id: hld-uploader, kind: box, label: Uploader, at: [62, 38], size: [9, 3], in: hld, tone: grey }
+    - { id: hld-video-db, kind: oval, label: Video DB, at: [55, 48], size: [10, 4], in: hld, tone: amber }
+    - { id: hld-blob, kind: oval, label: "Blob storage, S3", at: [58, 55], size: [13, 4], in: hld, tone: amber }
+    - { id: hld-blob-note, kind: note, label: video files and thumbnails, at: [44, 60], in: hld }
+  arrows:
+    - { id: hld-users-gw, from: hld-users, to: hld-gateway }
+    - { id: hld-gw-user, from: hld-gateway, to: hld-user-svc }
+    - { id: hld-gw-sub, from: hld-gateway, to: hld-sub-svc }
+    - { id: hld-gw-search, from: hld-gateway, to: hld-search-svc }
+    - { id: hld-gw-play, from: hld-gateway, to: hld-play-svc }
+    - { id: hld-user-userdb, from: hld-user-svc, to: hld-user-db }
+    - { id: hld-sub-userdb, from: hld-sub-svc, to: hld-user-db }
+    - { id: hld-sub-paygw, from: hld-sub-svc, to: hld-pay-gw }
+    - { id: hld-up-videodb, from: hld-uploader, to: hld-video-db }
+    - { id: hld-up-blob, from: hld-uploader, to: hld-blob }
+    - { id: hld-search-videodb, from: hld-search-svc, to: hld-video-db }
+    - { id: hld-play-blob, from: hld-play-svc, to: hld-blob }
+beats:
+  - point: "Users reach a load balancer, round robin, and an API gateway that authenticates and authorizes every call, routes it to its service and rate-limits it."
+    kind: component
+    weight: core
+    teach:
+      - "Step four, the high-level design. Users on the left, the devices where video plays."
+      - "We said microservices, so first a load balancer and an API gateway. The load balancer spreads traffic round robin; the gateway checks who is calling and what they may do, routes each API to its service, and rate-limits."
+    draw: [hld, hld-users, hld-gateway, hld-users-gw, hld-gw-roles, hld-lb-rr]
+    check: What three jobs does the API gateway do here?
+    answer: Authentication and authorization, routing each API to its service, and rate limiting.
+  - point: "A user service onboards users into a user DB; a subscription service takes the payment through a third-party payment gateway and records the plan in the user DB."
+    kind: component
+    weight: core
+    teach:
+      - "One service per requirement. A user service onboards new users and handles login; it saves them in a user DB."
+      - "A subscription service: it takes the payment through a payment gateway, a third party we do not build, and on success records the user's plan in the user DB. How payments work in detail waits for the low-level design."
+    draw: [hld-user-svc, hld-gw-user, hld-user-db, hld-user-userdb, hld-sub-svc, hld-gw-sub, hld-sub-userdb, hld-pay-gw, hld-sub-paygw]
+    check: Which services write to the user DB, and why both?
+    answer: The user service writes the account; the subscription service records the plan against the user after a successful payment.
+  - point: "A search service finds titles and a play service plays them."
+    kind: component
+    weight: core
+    teach:
+      - "Then search: a search service that finds a title by name. Where it reads from comes in a moment."
+      - "And play: a play service that starts the video once the user picks one."
+    draw: [hld-search-svc, hld-gw-search, hld-play-svc, hld-gw-play]
+    check: Which service handles the GET on play?
+    answer: The play service, routed by the gateway.
+  - point: "Content comes from an internal uploader: text metadata into a video DB, which search reads, and the video files and thumbnails into blob storage, which play reads."
+    kind: flow
+    weight: core
+    teach:
+      - "Users never upload. Assume an uploader the internal team already uses; it is out of scope, but where it writes is not."
+      - "The heavy files, the videos and the thumbnails, go to blob storage such as S3. The text, titles and descriptions, goes to a video DB."
+      - "Now the flows close: search queries the video DB, play fetches from blob storage. Every functional requirement is met; whether play can really send a film that way is the low-level design's question."
+    draw: [hld-uploader, hld-video-db, hld-up-videodb, hld-blob, hld-up-blob, hld-blob-note, hld-search-videodb, hld-play-blob]
+    check: Why do the videos go to blob storage and not into the video DB?
+    answer: Videos and thumbnails are large immutable files, which object storage holds cheaply; the DB keeps the small text that is queried.
+asks:
+  - ids: [hld-gateway]
+    beats: [1]
+    question: "Two hundred million users hit us. What sits between them and our services? Name it and I'll draw it."
+    hints:
+      - Something has to spread the traffic.
+      - And something has to check who is calling before any service sees the request.
+  - ids: [hld-user-svc, hld-sub-svc, hld-search-svc, hld-play-svc]
+    beats: [2, 3]
+    question: "Behind the gateway, which services do we need? One per requirement is a good start."
+    hints:
+      - Look at the functional list on the left.
+      - Signing up and paying are different jobs.
+  - ids: [hld-video-db, hld-blob]
+    beats: [4]
+    question: "The uploader brings in videos and their titles and descriptions. Where would you store each?"
+    hints:
+      - One kind of data is huge files, the other small text.
+      - Search reads one; play reads the other.
+task:
+  prompt: "Draw the high-level design: users, the load balancer and API gateway, the user, subscription, search and play services, the user DB and payment gateway, and the uploader writing to the video DB and blob storage."
+  expects: [1, 2, 3, 4]

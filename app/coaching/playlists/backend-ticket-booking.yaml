@@ -1,0 +1,32 @@
+slug: backend-ticket-booking
+title: "The ticket booking interview"
+summary: "A backend design interview for a service like BookMyShow, run step by step on one whiteboard: requirements with the CAP choice made per operation, entities, the API, a high-level design, then the databases, search, and two ways to make sure one seat is sold once."
+outline: "The ticket booking lessons follow the five-step order and the drawings of InterviewWithBunny's System Design 2, Design Ticket Booking System like BookMyShow, District (youtube.com/watch?v=uamf0wRMx5o), section by section; no text is taken from it, and its factual slips are corrected in the article."
+lessons:
+  - slug: ticket-booking
+    title: "The ticket booking interview: the problem, requirements, entities and API"
+    summary: "The problem at the top of the board, functional and non-functional requirements side by side with CAP split by operation, the four entities, and the four endpoints."
+    parts:
+      - { title: "The problem, then two lists", minutes: 9, packs: [backend/ticket-booking/end-to-end/problem-statement, backend/ticket-booking/end-to-end/requirements] }
+      - { title: "Entities, then the API", minutes: 8, packs: [backend/ticket-booking/end-to-end/entities, backend/ticket-booking/end-to-end/api] }
+  - slug: ticket-booking-design
+    title: "The ticket booking interview: high-level design, then the databases"
+    summary: "Clients, an API gateway and one service, split into search, event and booking services; then the low-level design splits the database into Cassandra for events and Postgres for bookings."
+    parts:
+      - { title: "Gateway, services, database", minutes: 8, packs: [backend/ticket-booking/end-to-end/high-level-design] }
+      - { title: "Two databases", minutes: 7, packs: [backend/ticket-booking/end-to-end/lld-databases] }
+  - slug: ticket-booking-search
+    title: "The ticket booking interview: search"
+    summary: "Elasticsearch for searching by title, place and date, kept in step with Cassandra by change data capture, and the seat count that follows each booking."
+    parts:
+      - { title: "Elasticsearch and change data capture", minutes: 10, packs: [backend/ticket-booking/end-to-end/lld-search] }
+  - slug: ticket-booking-holds
+    title: "The ticket booking interview: holding seats with a cron job"
+    summary: "Two users, one seat: reserve for 10 minutes, pay through the payment gateway, and a cron job that frees unpaid holds, and why it falls short."
+    parts:
+      - { title: "Reserve, pay, and a cron job", minutes: 10, packs: [backend/ticket-booking/end-to-end/lld-booking-cron] }
+  - slug: ticket-booking-redis
+    title: "The ticket booking interview: Redis holds, and finishing"
+    summary: "Holds as Redis keys that expire by themselves, the paid and unpaid paths, the requirements read back against the board, and a waiting queue for traffic peaks."
+    parts:
+      - { title: "Redis holds, then the last questions", minutes: 14, packs: [backend/ticket-booking/end-to-end/lld-booking-redis] }

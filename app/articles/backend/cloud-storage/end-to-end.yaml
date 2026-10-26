@@ -1,0 +1,837 @@
+# yaml-language-server: $schema=../../../../../lego/content-kit/schema/topic.schema.json
+# provenance: ai-drafted by claude-opus-5-5 on 2026-10-27
+#
+# A whole backend system design interview for a cloud storage platform like Google Drive or Dropbox,
+# run step by step on one whiteboard. The order and the board follow InterviewWithBunny's System Design 18
+# (requirements, core entities, API, high-level design, then a deep dive): the deep dive opens the client
+# (chunker, upload manager, local metadata index), walks a large upload through its numbered steps
+# (initiate, chunk and hash, signed URLs, parallel upload, commit, save and publish), then syncs the other
+# devices, uploads only changed chunks, serves downloads, and ends on the follow-ups (validation at commit,
+# deduplication, post-processing). The video's factual slips are corrected in the text; its drawing is kept.
+# A backend system of lego-ai's own (app/articles/backend): it stands alone and links to no main-site topic.
+catalogVersion: 5
+title: Designing a cloud storage platform, end to end
+shortTitle: Cloud storage interview
+summary: "A backend design interview for a file storage and sync service like Google Drive or Dropbox, step by step on one board: requirements, entities, folder and file endpoints, the high-level design, then a deep dive into chunked, resumable uploads through signed URLs, device sync, changed-chunk uploads, downloads and deduplication."
+group: design
+order: 18
+xp: 300
+difficulty: intermediate
+tags: [interview, file-upload, chunking, sync, object-storage, metadata]
+eyebrow: Design
+breadcrumb: [Cloud storage, Interview walkthrough]
+lede: "Design a service like Google Drive or Dropbox: people upload files of any size, organise them in folders, share them with permissions, and every device on the account stays in sync. The high-level picture is small. The interview is won in the deep dive: how a 10 GB file gets from a laptop to storage in pieces that survive a dropped connection, how the other devices learn it changed, and how an edit uploads only the piece that changed."
+reviewStatus: draft
+author: rakeshr410
+provenance: ai-drafted
+sources:
+  - title: "System Design 18: Design Cloud Storage Platform, Google Drive, Dropbox (InterviewWithBunny, YouTube)"
+    url: https://www.youtube.com/watch?v=Dnp_-xZjNRo
+    note: "Order, chapters and drawings. Corrected: CAP is a choice under partition; the service signs URLs itself; S3 can check each chunk's hash on upload; versions reuse chunks; fixed chunks shift on inserts; chunks count from 0; downloads fetch chunks."
+  - title: Uploading and copying objects using multipart upload (Amazon S3 User Guide)
+    url: https://docs.aws.amazon.com/AmazonS3/latest/userguide/mpuoverview.html
+    note: "Parts uploaded independently and in parallel, then completed in one call; parts are at least 5 MiB except the last, at most 10,000 of them."
+  - title: Sharing objects with presigned URLs (Amazon S3 User Guide)
+    url: https://docs.aws.amazon.com/AmazonS3/latest/userguide/ShareObjectPreSignedURL.html
+    note: "A URL signed with the service's own credentials that lets a client PUT or GET one object until it expires."
+  - title: Checking object integrity (Amazon S3 User Guide)
+    url: https://docs.aws.amazon.com/AmazonS3/latest/userguide/checking-object-integrity.html
+    note: "A SHA-256 checksum sent with an upload is verified by S3, which rejects the part if the bytes do not match."
+  - title: Rolling hash (Wikipedia)
+    url: https://en.wikipedia.org/wiki/Rolling_hash
+    note: "Content-defined chunk boundaries, so an insertion shifts only nearby chunks."
+tutorBrief: >-
+  Interview walkthrough for a cloud storage platform like Google Drive or Dropbox: upload, download,
+  share with permissions, folders, and every device on the account kept in sync. Five numbered steps
+  on the board: 1 requirements (functional left, non-functional right), 2 core entities, 3 API design
+  (folder operations, then file operations), 4 high-level design, 5 deep dive (the high-level diagram
+  copied and grown, with the upload steps numbered beside it). Functional: create an account; upload
+  (resumable after a disconnect) and download files of any size; changes sync across all of a user's
+  devices automatically; share files and folders with other users, with permissions; create, delete,
+  rename and organise folders; a storage quota per user (15 GB free, more for paying users). Out of
+  scope: real-time collaborative editing of one document. Non-functional: millions of users and
+  billions of files; availability over consistency for uploads and sync (eventual consistency, a
+  few seconds of lag), strong consistency for metadata; very large files (2 to 3 GB videos, 10 to
+  15 GB); upload and sync latency as low as the bandwidth allows; durable and secure, zero data loss.
+  Entities: user, file metadata, files and folders. A folder is only a metadata row whose type is
+  folder; create, rename and move change metadata, never bytes. Folder API: POST /api/v1/folders,
+  GET /api/v1/folders/{folderId}, GET /api/v1/folders/{folderId}/contents. File API: POST
+  /api/v1/files/upload/init, POST /api/v1/files/uploads/{uploadId}/chunk-url, PUT to the signed URL,
+  POST /api/v1/files/uploads/{uploadId}/commit, GET /api/v1/files/{fileId}/download, PUT and DELETE
+  /api/v1/files/{fileId}. High-level design: clients, a load balancer and API gateway, a user
+  onboarding service with a user DB, a file uploader service with blob storage (S3), a file metadata
+  service with a metadata DB. Deep dive: the client app has a chunker, an upload manager, a local
+  metadata index (what is already uploaded, by version and chunk hash), later a sync engine and a
+  watcher. User service on Postgres (userId, email, password, createdAt, storage used). Upload steps:
+  (1) init with fileName, fileSize (52,428,800 bytes, a 50 MB video) and parentFolderId; the uploader
+  checks the quota in the user DB and answers fileId, uploadId, chunkSize 5 MB (fixed for every file)
+  and existingChunks, empty on a fresh upload; a resumed upload sends resumeUploadId and gets back the
+  chunks already stored (for a 500 MB file, chunks 0 to 4) so it sends only the rest. (2) the chunker
+  splits the file into chunkSize pieces, 10 chunks numbered 0 to 9, and computes a SHA-256 of each.
+  (3) for each chunk the client asks for a signed URL (uploadId, chunkId, chunkHash); the uploader
+  validates the upload and the chunk, records the expected hash in Redis (uploadId, a bitmap of chunks
+  received, chunk hash per chunk, retry count, with a TTL), and signs a short-lived PUT URL itself.
+  (4) the client PUTs chunks straight to S3, about 3 at a time, skipping the load balancer and the
+  uploader. (5) commit: POST .../commit. (6) the uploader validates every chunk (hash of the stored
+  bytes against the hash in Redis), saves the file, its version and its chunk list through the
+  metadata service into the metadata DB, and publishes a file-changed event to Kafka. Sync: a sync
+  service consumes Kafka and pushes (fan-out) to the online devices that care; a device's sync engine
+  also pulls on start or refresh, sending its local versions; the sync service compares them with
+  the metadata DB through the metadata service and answers which files to download. Eventual
+  consistency comes from this asynchronous path. Metadata tables: folders (folder_id, parent_folder_id,
+  null for the root, owner_id, name, created_at), files (file_id, parent_folder_id, owner_id, name,
+  size_bytes, current_version_id, created_at, is_deleted), file_versions (version_id, file_id,
+  size_bytes, created_by, created_at), file_version_chunks (version_id, chunk_index, chunk_id), chunks
+  (chunk_id, object_key s3://bucket/path, size_bytes, checksum, created_at), permissions
+  (permission_id, resource_type file or folder, resource_id, user_id, role, created_at). Edits: a
+  watcher in the client notices a changed file; only chunks whose hash changed are uploaded; a new
+  file version lists every chunk, reusing the unchanged chunk ids. Download: a download service asks
+  the metadata service whether the user may read the file (permissions table), then returns signed
+  GET URLs for the version's chunks. Follow-ups: validating every chunk on every S3 event is costly at
+  millions of chunks, so a validator service checks the whole upload once at commit, asynchronously
+  (S3 can also check a SHA-256 sent with each PUT); deduplication works because chunks have one fixed
+  size, so identical content gives identical chunk hashes and one stored copy (a 20 MB file is 5+5+5+5,
+  a 17 MB file 5+5+5+2); fixed boundaries shift after an insertion, which content-defined chunking
+  avoids; more async jobs on the bucket: virus scan, thumbnails.
+components:
+  - key: client
+    name: Client app
+    tone: sand
+    kind: client
+    summary: "The desktop or mobile app: a chunker, an upload manager, a local metadata index, a sync engine and a watcher."
+    owns: [local metadata index]
+    talksTo: [gateway, blob-store, sync-service]
+  - key: gateway
+    name: Load balancer and API gateway
+    tone: blue
+    kind: gateway
+    summary: Authenticates and routes every API call to its service; file bytes do not pass through it.
+    owns: [routes]
+    talksTo: [user-service, uploader, metadata-service, download-service, sync-service]
+  - key: user-service
+    name: User onboarding service
+    tone: blue
+    kind: service
+    summary: Sign-up and sign-in; keeps each user's account and storage used.
+    owns: [accounts]
+    talksTo: [user-db]
+  - key: uploader
+    name: File uploader service
+    tone: green
+    kind: service
+    summary: "Starts uploads, checks the quota, signs a URL per chunk, tracks the upload in Redis, and on commit validates and saves the file."
+    owns: [upload sessions]
+    talksTo: [user-db, upload-state, blob-store, metadata-service, kafka, validator]
+  - key: metadata-service
+    name: File metadata service
+    tone: green
+    kind: service
+    summary: "Owns the folder tree, files, versions, chunk lists and permissions."
+    owns: [metadata]
+    talksTo: [metadata-db]
+  - key: download-service
+    name: Download service
+    tone: green
+    kind: service
+    summary: Checks read permission through the metadata service and returns signed download URLs.
+    owns: [nothing durable]
+    talksTo: [metadata-service]
+  - key: sync-service
+    name: Sync service
+    tone: green
+    kind: service
+    summary: Consumes file-changed events and pushes them to devices; answers a device's pull with the files it is missing.
+    owns: [device connections]
+    talksTo: [kafka, metadata-service, client]
+  - key: validator
+    name: Validator service
+    tone: gray
+    kind: worker
+    summary: After commit, hashes the stored chunks and compares them with the hashes the client sent.
+    owns: [nothing]
+    talksTo: [blob-store]
+  - key: dedup
+    name: Deduplication service
+    tone: gray
+    kind: worker
+    summary: An async job that keeps one copy of chunks with identical hashes.
+    owns: [nothing]
+    talksTo: [blob-store]
+  - key: user-db
+    name: User DB
+    tone: yellow
+    kind: datastore
+    summary: Postgres; users with their email, password hash and storage used.
+    owns: [users]
+    talksTo: []
+  - key: blob-store
+    name: Blob storage (S3)
+    tone: yellow
+    kind: datastore
+    summary: The file bytes, stored chunk by chunk under object keys.
+    owns: [chunks]
+    talksTo: []
+  - key: upload-state
+    name: Redis upload state
+    tone: orange
+    kind: cache
+    summary: "Short-lived state of uploads in progress: chunks received, expected hashes, retries, with a TTL."
+    owns: [upload sessions]
+    talksTo: []
+  - key: metadata-db
+    name: Metadata DB
+    tone: yellow
+    kind: datastore
+    summary: "A relational database: folders, files, file versions, version chunks, chunks, permissions."
+    owns: [folders, files, versions, chunks, permissions]
+    talksTo: []
+  - key: kafka
+    name: Kafka
+    tone: purple
+    kind: queue
+    summary: Carries file-changed events from the upload path to the sync service.
+    owns: [file-changed events]
+    talksTo: []
+content:
+  # ────────────────────────────────────────────────────────────────── Problem statement
+  - __component: sd.section
+    key: problem-statement
+    title: Understanding the problem.
+    railLabel: Problem
+    intro: "The prompt: design a distributed storage platform like Google Drive or Dropbox. Say in one line what it is, then run the interview in five steps."
+  - __component: sd.rich-text
+    key: problem-what
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "A cloud storage platform lets people upload files, photos and videos, keep them in folders, download them from anywhere in the world, and share them with friends and family with permissions. One line on the board says it: a globally distributed storage system with reliable upload and download, versioning, and sync across devices, at scale."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Two things make it different from most designs. Files are large, gigabytes, so the bytes and the facts about them travel separately. And the client is ours too: the Drive or Dropbox app on each device does real work, splitting files, uploading pieces and keeping itself in sync, so the interview covers the app as well as the servers."
+  - __component: sd.card-grid
+    key: board-steps
+    title: The board, in the order you fill it
+    columns: 3
+    cards:
+      - title: 1. Requirements
+        text: Functional on the left, non-functional on the right, each quality with a number where it has one.
+      - title: 2. Core entities
+        text: "The nouns: user, file metadata, files and folders."
+      - title: 3. API design
+        text: "Folder operations, then file operations. For this system the API matters more than usual."
+      - title: 4. High-level design
+        text: "Clients, a gateway, three services and three stores."
+      - title: 5. Deep dive
+        text: "The high-level picture copied and grown: the client opened, the upload in numbered steps, sync, edits, downloads, and the follow-ups."
+  - __component: sd.quiz
+    key: problem-quiz
+    title: Quick check
+    questions:
+      - question: What sets this design apart from a typical web backend?
+        optionA: It needs no database
+        optionB: "Files are gigabytes, so bytes and metadata travel separately, and the client app does real work: chunking, uploading, syncing"
+        optionC: It has no users
+        optionD: It is read-only
+        answer: B
+        explanation: The deep dive spends most of its time on the large-file upload path and the app's part in it.
+  # ────────────────────────────────────────────────────────────────── 1. Requirements
+  - __component: sd.section
+    key: requirements
+    title: Requirements.
+    railLabel: Requirements
+    intro: "Five functional lines from the product, a sixth for the quota, and one thing left out on purpose. Then the qualities, each with where it applies."
+  - __component: sd.subsection
+    key: functional-sub
+    title: Functional requirements
+    railLabel: Functional
+  - __component: sd.checklist
+    key: functional
+    idPrefix: FR-
+    items:
+      - text: A user can create an account.
+      - text: "Upload files of any size, resuming after a dropped connection, and download them from anywhere."
+      - text: "Changes sync to every device on the account automatically: a phone, a tablet and a laptop all see the new file."
+      - text: Share a file or a folder with other users, with a permission.
+      - text: "Create, delete and rename folders, and organise files in them."
+      - text: "A storage quota per user: 15 GB free, more for paying users."
+        note: "Out of scope: real-time collaborative editing of one document, which is a design of its own."
+  - __component: sd.subsection
+    key: non-functional-sub
+    title: Non-functional requirements
+    railLabel: Non-functional
+  - __component: sd.requirement-table
+    key: non-functional
+    rows:
+      - area: Scale
+        requirement: A very large user base and file count.
+        targets: [millions of users, billions of files]
+        note: "The scale decides the architecture: separate services, how the bytes move, what is stored where."
+      - area: Availability
+        requirement: "Uploads and sync keep working when machines fail."
+        targets: ["availability over consistency for upload and sync", strong consistency for metadata]
+        note: "A photo reaching the family's devices a few seconds late is fine. The folder tree, versions and permissions must not disagree."
+      - area: Large files
+        requirement: Files of any size up to the user's free space.
+        targets: ["2 to 3 GB videos", "10 to 15 GB files"]
+      - area: Latency
+        requirement: Uploading and syncing as fast as the connection allows.
+        targets: [upload limited by bandwidth, sync lag of seconds]
+      - area: Durability
+        requirement: "Nothing uploaded is ever lost, and files are secure."
+        targets: [zero data loss]
+        note: "Whatever crashes, a copy of every file survives."
+  - __component: sd.rich-text
+    key: cap-choice
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "CAP says that when the network between replicas splits, a system must either answer anyway or wait until the copies agree; it is a choice made per piece of data, during a partition, not a label for a whole system. For uploads and sync, answer anyway: the user must be able to upload when they open the app, and a new photo reaching the other devices seconds later, eventual consistency, costs nothing. For metadata, wait: two devices must never see different folder trees, versions or permissions."
+  - __component: sd.quiz
+    key: requirements-quiz
+    title: Quick check
+    questions:
+      - question: Where does this design accept eventual consistency, and where not?
+        optionA: Everywhere
+        optionB: "Uploads and sync may lag by seconds; metadata such as the folder tree, versions and permissions must be consistent"
+        optionC: Nowhere
+        optionD: Only for downloads
+        answer: B
+        explanation: The choice is per kind of data. A late photo is harmless; two versions of a folder tree are not.
+      - question: Why is the storage quota a functional requirement?
+        optionA: It is not one
+        optionB: "Every upload must be refused if it would take the user past their limit, 15 GB on the free plan, so the upload path has to check it"
+        optionC: To size the database
+        optionD: For analytics
+        answer: B
+        explanation: It changes what the upload API does on its first call.
+  # ────────────────────────────────────────────────────────────────── 2. Entities
+  - __component: sd.section
+    key: entities
+    title: Core entities.
+    railLabel: Entities
+    intro: "Read them off the functional list. Three are enough to start; more appear in the deep dive."
+  - __component: sd.table
+    key: entities-table
+    columns:
+      - { label: Entity, style: strong }
+      - { label: What it is, style: text }
+    rows:
+      - [User, "Who owns files, shares them and has a quota."]
+      - [File metadata, "Everything about a file but its bytes: name, size, type, owner, folder, who may read or write it."]
+      - [Files and folders, "The content itself, and the folders that organise it."]
+  - __component: sd.quiz
+    key: entities-quiz
+    title: Quick check
+    questions:
+      - question: Why is file metadata an entity of its own, apart from the file?
+        optionA: It is not
+        optionB: "The bytes live in blob storage, while name, size, owner, folder and permissions are small records that are read and changed far more often"
+        optionC: For backups
+        optionD: Because files are encrypted
+        answer: B
+        explanation: Splitting the two is the backbone of the whole design.
+  # ────────────────────────────────────────────────────────────────── 3. API
+  - __component: sd.section
+    key: api
+    title: API design.
+    railLabel: API
+    intro: "Here the API deserves time: how a folder is just metadata, and the endpoints a large upload needs. Folder operations first, then file operations."
+  - __component: sd.rich-text
+    key: folders-are-metadata
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Creating a folder creates no directory anywhere. It inserts one metadata record, a name, a date and a type of folder, and the app draws a folder icon because of that type. A file is the same record with type file. A folder's contents are its children, so the tree is records pointing at parents. Renaming changes a name; moving a file into another folder changes its parent. No bytes move."
+  - __component: sd.code
+    key: folder-json
+    snippets:
+      - label: A folder as metadata
+        language: json
+        code: |
+          { "name": "Holidays", "date": "2026-10-01", "type": "folder",
+            "children": [
+              { "name": "Beach", "date": "2026-10-02", "type": "folder", "children": [] },
+              { "name": "video.mp4", "date": "2026-10-03", "type": "file" }
+            ] }
+  - __component: sd.endpoint
+    key: create-folder
+    method: POST
+    path: /api/v1/folders
+    summary: Creates a folder, which is one metadata record of type folder.
+    requestBody:
+      name: Holidays
+      parentFolderId: root121413
+      type: folder
+    responses:
+      - label: Created
+        status: "201"
+        body:
+          folderId: fld_42
+  - __component: sd.endpoint
+    key: get-folder
+    method: GET
+    path: "/api/v1/folders/{folderId}"
+    summary: "A folder's metadata: name, owner, created date, permissions."
+    responses:
+      - label: OK
+        status: "200"
+        body:
+          folderId: fld_42
+          name: Holidays
+          ownerId: u_1
+  - __component: sd.endpoint
+    key: folder-contents
+    method: GET
+    path: "/api/v1/folders/{folderId}/contents"
+    summary: "The folder's children, files and subfolders, for the app to list."
+    responses:
+      - label: OK
+        status: "200"
+        body:
+          children: [Beach, video.mp4]
+  - __component: sd.table
+    key: file-endpoints
+    title: File operations
+    columns:
+      - { label: Endpoint, style: mono-strong }
+      - { label: What it does, style: text }
+    rows:
+      - ["POST /api/v1/files/upload/init", "Starts or resumes an upload: checks the quota, returns the file id, the upload id, the chunk size and the chunks already stored."]
+      - ["POST /api/v1/files/uploads/{uploadId}/chunk-url", "Returns a short-lived signed URL to PUT one chunk straight into blob storage."]
+      - ["POST /api/v1/files/uploads/{uploadId}/commit", "Says every chunk is uploaded; the server validates and saves the file."]
+      - ["GET /api/v1/files/{fileId}/download", "Checks read permission and returns signed URLs to fetch the file's chunks."]
+      - ["PUT, DELETE /api/v1/files/{fileId}", "Rename, move or delete: metadata changes."]
+  - __component: sd.quiz
+    key: api-quiz
+    title: Quick check
+    questions:
+      - question: What does POST /api/v1/folders create in the backend?
+        optionA: A directory on a disk
+        optionB: "One metadata record with type folder; the app draws the folder from that type"
+        optionC: An S3 bucket
+        optionD: A Kafka topic
+        answer: B
+        explanation: Folders, renames and moves are all metadata changes. No bytes move.
+      - question: Why does uploading a file need several endpoints instead of one POST with the bytes?
+        optionA: REST requires it
+        optionB: "A large file goes up in chunks: start the upload, get a signed URL per chunk, upload, then commit, so it can resume and skip our servers"
+        optionC: To count requests
+        optionD: It does not
+        answer: B
+        explanation: Each endpoint is a step of the upload the deep dive walks through.
+  # ────────────────────────────────────────────────────────────────── 4. High-level design
+  - __component: sd.section
+    key: high-level-design
+    title: High-level design.
+    railLabel: High level
+    intro: "The fewest boxes that meet the functional requirements: clients, a gateway, a service per job and a store per kind of data."
+  - __component: sd.component-diagram
+    key: hld-diagram
+    title: The first design
+    direction: LR
+    nodes:
+      - { key: client, details: [phone, laptop, tablet] }
+      - { key: gateway, details: [routes each call] }
+      - { key: user-service, details: [sign up, sign in] }
+      - { key: uploader, details: [uploads files] }
+      - { key: metadata-service, details: ["folders, renames, permissions"] }
+      - { key: user-db }
+      - { key: blob-store }
+      - { key: metadata-db }
+    edges:
+      - { from: client, to: gateway }
+      - { from: gateway, to: user-service }
+      - { from: gateway, to: uploader }
+      - { from: gateway, to: metadata-service }
+      - { from: user-service, to: user-db }
+      - { from: uploader, to: blob-store }
+      - { from: metadata-service, to: metadata-db }
+  - __component: sd.rich-text
+    key: hld-flows
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Every request from the apps goes through a load balancer and an API gateway to one of three services. The user onboarding service signs people up and in, and keeps them in a user database. The file uploader service puts file bytes into blob storage such as an S3 bucket, because gigabyte files do not belong in a relational or NoSQL database. The file metadata service handles creating folders, renaming and permissions, all changes to metadata records, which it keeps in a metadata database."
+      - type: paragraph
+        children:
+          - type: text
+            text: "This meets every functional line on paper. It does not say how a 10 GB file gets uploaded through one request, how sharing works, or how the other devices learn about a change. That is the deep dive."
+  - __component: sd.quiz
+    key: hld-quiz
+    title: Quick check
+    questions:
+      - question: Why do file bytes go to blob storage and not to the metadata database?
+        optionA: Databases cannot store text
+        optionB: "Files are gigabytes; object storage is built for large blobs, while the metadata DB keeps small records that are queried"
+        optionC: Blob storage is faster for everything
+        optionD: To save money on the database only
+        answer: B
+        explanation: Big immutable bytes in object storage, small queryable facts in a database.
+  # ────────────────────────────────────────────────────────────────── 5. Deep dive: the client
+  - __component: sd.section
+    key: lld-client
+    title: "Deep dive: the client, and the user service."
+    railLabel: Client
+    intro: "Copy the high-level picture into the deep dive and open the client first: here the app is ours, and it does real work."
+  - __component: sd.rich-text
+    key: client-parts
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Drop a file into the Dropbox folder on a laptop. A 16 MB file, or a 15 GB one, is not sent in one piece. A chunker in the app splits it into chunks, and an upload manager sends the chunks to the backend. A small file under one chunk skips the chunker and goes up whole."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Before any of that the app checks a local metadata index: a small database on the device of every file already uploaded, with its version and its chunk hashes. If the dropped file is already there, nothing is uploaded; if it is an edited copy, the index says which parts changed. The same index is what lets the device sync later."
+      - type: paragraph
+        children:
+          - type: text
+            text: "The user service is plain: user data is flat and relational, so Postgres, with a user id, email, password hash, created date and the storage used, which the upload path will check against the quota."
+  - __component: sd.quiz
+    key: client-quiz
+    title: Quick check
+    questions:
+      - question: What does the local metadata index on the device hold, and why?
+        optionA: The files themselves
+        optionB: "Every uploaded file's version and chunk hashes, so the app knows whether a file is new, unchanged or edited, and can sync"
+        optionC: The user's password
+        optionD: Nothing; it is a cache of thumbnails
+        answer: B
+        explanation: It saves uploads of what is already there and drives sync.
+  # ────────────────────────────────────────────────────────────────── 5. Deep dive: Step 1
+  - __component: sd.section
+    key: lld-initiate
+    title: "Step 1: initiate the upload."
+    railLabel: "Step 1, initiate"
+    intro: "The upload manager's first call goes to the file uploader service: may this user upload this file, and how should it be cut?"
+  - __component: sd.rich-text
+    key: init-fresh
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "The client sends the file name, its size and the folder to put it in: video.mp4, 52,428,800 bytes, which is 50 MB, into folder root121413. The uploader reads the user's storage used from the user DB; if the file does not fit in what is left of the quota, it answers with an error and nothing is uploaded. The quota is checked again at commit, since two uploads can start at once."
+      - type: paragraph
+        children:
+          - type: text
+            text: "If it fits, the answer has four fields: a new file id, an upload id that ties every later call of this upload together, the chunk size, 5 MB, and existingChunks, empty for a fresh upload. The chunk size is fixed by the backend and is the same for every file."
+  - __component: sd.rich-text
+    key: init-resume
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Scenario two: the connection drops halfway through a 500 MB upload. Starting again wastes bandwidth. The client calls init again with the same name and size and a resumeUploadId, the upload id it got the first time. The server answers with the same upload id and the chunks it already holds, say chunks 0 to 4, so the client sends only the rest, from chunk 5."
+  - __component: sd.quiz
+    key: init-quiz
+    title: Quick check
+    questions:
+      - question: What makes a resumed upload skip what was already sent?
+        optionA: The client remembers nothing; it starts over
+        optionB: "It sends the earlier upload id as resumeUploadId, and the server answers with existingChunks, the chunks it already stored"
+        optionC: S3 resumes by itself
+        optionD: The load balancer
+        answer: B
+        explanation: The upload id correlates the calls; existingChunks says where to continue.
+  # ────────────────────────────────────────────────────────────────── 5. Deep dive: Steps 2 to 4
+  - __component: sd.section
+    key: lld-chunks
+    title: "Steps 2 to 4: chunk, sign, upload."
+    railLabel: Steps 2 to 4
+    intro: "The client cuts the file and hashes each piece, gets a signed URL per piece, and uploads the pieces straight to storage, a few at a time."
+  - __component: sd.rich-text
+    key: chunk-hash
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Step 2: the chunker cuts the file at the chunk size from step 1. A 50 MB file in 5 MB chunks is 10 chunks, numbered 0 to 9. For each chunk it also computes a SHA-256 hash, a fingerprint of its bytes, used later to prove each chunk arrived intact."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Step 3: the bytes should not pass through our load balancer and services. For each chunk the client asks the uploader for a signed URL, sending the upload id, the chunk id and the chunk hash. The uploader checks the upload id belongs to a live upload and the chunk id is in range, then signs a short-lived URL that lets this client PUT exactly this chunk into the S3 bucket. The service signs it itself with its own credentials; no call to S3 is needed."
+      - type: paragraph
+        children:
+          - type: text
+            text: "The uploader is not on the byte path, so it writes down what to expect: in Redis, per upload, the upload id, a bitmap of which chunks have arrived, the expected hash of each chunk and a retry count. Redis because this state is read and updated many times per upload and is only needed until the upload ends, so every key has a TTL."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Step 4: the upload manager PUTs the chunks to their signed URLs, about three at a time, so a large file uses the connection fully without one slow chunk holding up the rest."
+  - __component: sd.quiz
+    key: chunks-quiz
+    title: Quick check
+    questions:
+      - question: Why does the client upload chunks to signed URLs instead of through the uploader service?
+        optionA: Signed URLs are faster to type
+        optionB: "Gigabytes would otherwise flow through the load balancer and our servers; a signed URL lets the client PUT one chunk straight into storage, with permission that expires"
+        optionC: S3 forbids other uploads
+        optionD: To skip the quota check
+        answer: B
+        explanation: The service authorises; storage carries the bytes.
+      - question: Why does the upload state live in Redis with a TTL?
+        optionA: Redis is durable storage for files
+        optionB: "It is read and updated on every chunk and only matters until the upload ends; the durable record is written to the metadata DB at commit"
+        optionC: Postgres cannot store bitmaps
+        optionD: It is never read
+        answer: B
+        explanation: Hot, short-lived state belongs in memory; it expires if the upload is abandoned.
+  # ────────────────────────────────────────────────────────────────── 5. Deep dive: Steps 5 and 6
+  - __component: sd.section
+    key: lld-commit
+    title: "Steps 5 and 6: commit, then save and publish."
+    railLabel: Steps 5 and 6
+    intro: "The client says it is done; the server proves every chunk is intact, records the file, and tells the other devices."
+  - __component: sd.rich-text
+    key: commit-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Step 5: once every chunk is up, the client sends the commit, POST to the upload's commit endpoint. That ends the client's part."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Validation: a chunk can be corrupted or cut short on the way. For each chunk in S3 the server computes the SHA-256 of the stored bytes and compares it with the hash the client sent, which Redis holds. A match means the chunk is intact; a mismatch, or a chunk missing from the bitmap, sends the client back to re-upload that chunk, and the retry count goes up."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Step 6: when every chunk checks out, the uploader calls the metadata service to save what Redis held for the length of the upload, now for good: the file row, a new file version, and the version's chunk list with each chunk's object key and checksum. Only then does the file exist for the user. Last, it publishes a file-changed event to Kafka so the sync service can tell the other devices."
+  - __component: sd.quiz
+    key: commit-quiz
+    title: Quick check
+    questions:
+      - question: How does the server know a chunk arrived intact?
+        optionA: S3 never corrupts data
+        optionB: "It hashes the stored chunk with SHA-256 and compares it with the hash the client computed and sent when asking for the signed URL"
+        optionC: The file size matches
+        optionD: The client says so
+        answer: B
+        explanation: The client's hash was saved in Redis at step 3; the server's hash of the stored bytes must equal it.
+      - question: Why is the file saved to the metadata DB only after commit and validation?
+        optionA: To save writes
+        optionB: "Until every chunk is in and intact the file is incomplete; writing it earlier would show users a file that cannot be read"
+        optionC: The metadata DB is slow
+        optionD: Kafka requires it
+        answer: B
+        explanation: The commit is the point where the file starts to exist.
+  # ────────────────────────────────────────────────────────────────── 5. Deep dive: sync
+  - __component: sd.section
+    key: lld-sync
+    title: "Sync across devices, and the metadata tables."
+    railLabel: Sync
+    intro: "A file uploaded on the laptop has to appear on the phone and the tablet. A sync service does it two ways, push and pull, and the metadata tables make it possible."
+  - __component: sd.rich-text
+    key: sync-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Push, or fan-out: the sync service consumes file-changed events from Kafka and sends each one to the online devices that care about that file, the owner's other devices and the people it is shared with. Their apps then download the new version."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Pull, or refresh: a device that was offline missed the pushes. When it comes online, or the user refreshes, its sync engine, a new part of the client, sends the sync service the versions in its local metadata index. The sync service asks the metadata service for the latest versions and answers with every file whose version differs, which the device then downloads."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Because the event goes through Kafka after the upload, the other devices catch up a moment later: that is the eventual consistency agreed in the requirements, and the price of decoupling uploads from sync."
+  - __component: sd.db-schema
+    key: metadata-tables
+    stores:
+      - key: metadata-store
+        engine: A relational database
+        component: metadata-db
+        why: "The folder tree, versions and permissions must be consistent, and they join."
+        tables:
+          - name: folders
+            columns:
+              - { name: folder_id, type: uuid, role: primary }
+              - { name: parent_folder_id, type: uuid, note: null for the root }
+              - { name: owner_id, type: uuid }
+              - { name: name, type: text }
+              - { name: created_at, type: timestamp }
+          - name: files
+            columns:
+              - { name: file_id, type: uuid, role: primary }
+              - { name: parent_folder_id, type: uuid }
+              - { name: owner_id, type: uuid }
+              - { name: name, type: text }
+              - { name: size_bytes, type: bigint }
+              - { name: current_version_id, type: uuid }
+              - { name: is_deleted, type: bool }
+          - name: file_versions
+            columns:
+              - { name: version_id, type: uuid, role: primary }
+              - { name: file_id, type: uuid }
+              - { name: size_bytes, type: bigint }
+              - { name: created_by, type: uuid }
+              - { name: created_at, type: timestamp }
+          - name: file_version_chunks
+            columns:
+              - { name: version_id, type: uuid, role: primary }
+              - { name: chunk_index, type: int, role: primary }
+              - { name: chunk_id, type: text }
+          - name: chunks
+            columns:
+              - { name: chunk_id, type: text, role: primary, note: the content hash }
+              - { name: object_key, type: text, note: "s3://bucket/path" }
+              - { name: size_bytes, type: int }
+              - { name: checksum, type: text }
+          - name: permissions
+            columns:
+              - { name: permission_id, type: uuid, role: primary }
+              - { name: resource_type, type: text, note: file or folder }
+              - { name: resource_id, type: uuid }
+              - { name: user_id, type: uuid }
+              - { name: role, type: text }
+  - __component: sd.quiz
+    key: sync-quiz
+    title: Quick check
+    questions:
+      - question: A tablet was offline while a file changed. How does it catch up?
+        optionA: It cannot
+        optionB: "Its sync engine pulls: it sends its local versions, and the sync service answers with the files whose version in the metadata DB is newer"
+        optionC: Kafka keeps the file for it
+        optionD: The user re-uploads
+        answer: B
+        explanation: Push covers online devices; pull covers everything a device missed.
+  # ────────────────────────────────────────────────────────────────── 5. Deep dive: edits and versions
+  - __component: sd.section
+    key: lld-versions
+    title: "Edits: upload only the changed chunks."
+    railLabel: Versions
+    intro: "A small edit to a large file should not upload the whole file again."
+  - __component: sd.rich-text
+    key: versions-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "A watcher, one more part of the client, notices when a file in the synced folder is added or changed, and hands it to the upload manager. The upload runs the same steps: init, chunk and hash, signed URLs, commit."
+      - type: paragraph
+        children:
+          - type: text
+            text: "The difference: the app compares the new chunk hashes with the ones in its local metadata index, and only chunks whose hash changed are uploaded. One edited chunk of a 50 MB file means one 5 MB upload. At commit a new file version is saved whose chunk list names every chunk: the new chunk for the changed position, and the same chunk ids as before for the rest. The video describes this as the changed chunk moving to version 2; strictly, versions belong to the file, and chunks are reused by id."
+  - __component: sd.quiz
+    key: versions-quiz
+    title: Quick check
+    questions:
+      - question: One paragraph of a 50 MB file changes, inside one 5 MB chunk. What is uploaded?
+        optionA: The whole 50 MB
+        optionB: "Only the chunk whose hash changed; the new version reuses the other nine chunk ids"
+        optionC: Nothing; the server diffs it
+        optionD: A text diff
+        answer: B
+        explanation: Comparing chunk hashes with the local metadata index finds what changed.
+  # ────────────────────────────────────────────────────────────────── 5. Deep dive: download
+  - __component: sd.section
+    key: lld-download
+    title: "Download and sharing."
+    railLabel: Download
+    intro: "Reading a file is the upload's mirror: check permission in the metadata, then let the client fetch the bytes straight from storage."
+  - __component: sd.rich-text
+    key: download-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "A read or download service takes the request and asks the file metadata service two things: does the file exist, and may this user read it? The permissions table answers: a row for the file or for a folder above it, naming the user and a role such as reader or writer. Sharing a folder is writing one permission row."
+      - type: paragraph
+        children:
+          - type: text
+            text: "If allowed, the service returns signed GET URLs, and the client downloads straight from storage. Since the file is stored as chunks, the answer lists the current version's chunks with a URL each, and the app joins them; the video draws it as one signed URL."
+  - __component: sd.quiz
+    key: download-quiz
+    title: Quick check
+    questions:
+      - question: What does the download service check before handing out URLs?
+        optionA: Nothing
+        optionB: "That the file exists and the user has a permission on it, or on a folder above it, through the metadata service"
+        optionC: That the user is premium
+        optionD: The Redis upload state
+        answer: B
+        explanation: Permissions are metadata; the bytes stay behind signed URLs.
+  # ────────────────────────────────────────────────────────────────── 5. Deep dive: follow-ups
+  - __component: sd.section
+    key: lld-optimizations
+    title: "Follow-ups: validation, deduplication, post-processing."
+    railLabel: Follow-ups
+    intro: "The likely follow-up is how to make it better. Three answers: validate once at commit, deduplicate chunks, and run more jobs on the bucket."
+  - __component: sd.rich-text
+    key: validator-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Validation at scale: chunks are 5 MB, so a 20 GB file is about 4,000 of them, and millions of users upload. Re-hashing every chunk as S3 reports it would eat the uploader's capacity. So validation happens once, after commit, in a separate validator service that reads the chunks from the bucket asynchronously; that is the short processing time after an upload finishes. The upload request itself can also carry each chunk's SHA-256, which S3 checks before accepting the chunk."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Deduplication: many users upload the same files. Because every chunk has the same fixed size, identical content cuts into identical chunks with identical hashes, so storage keeps one copy and points every file at it. A 20 MB file is four 5 MB chunks; a 17 MB file is three 5 MB chunks and one of 2 MB; where their content matches chunk for chunk, the hashes match too. A deduplication service does it as an async job. One caveat: an insertion near the start of a file shifts every fixed boundary after it, so no later chunk matches; content-defined chunking, which cuts where the content says, keeps the other chunks equal."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Post-processing: more async jobs run on the bucket, a virus scan, thumbnails, and their work can be queued through Kafka."
+  - __component: sd.component-diagram
+    key: final-diagram
+    title: The final design
+    direction: LR
+    nodes:
+      - { key: client, details: [watcher, local metadata index, chunker, upload manager, sync engine] }
+      - { key: gateway }
+      - { key: user-service }
+      - { key: uploader, details: [quota, signed URLs, commit] }
+      - { key: metadata-service }
+      - { key: download-service }
+      - { key: sync-service, details: [pull, push] }
+      - { key: user-db }
+      - { key: blob-store }
+      - { key: upload-state, details: [TTL] }
+      - { key: metadata-db }
+      - { key: kafka }
+      - { key: validator }
+      - { key: dedup }
+    edges:
+      - { from: client, to: gateway }
+      - { from: client, to: blob-store, label: PUT chunks }
+      - { from: gateway, to: user-service }
+      - { from: gateway, to: uploader }
+      - { from: gateway, to: metadata-service }
+      - { from: gateway, to: download-service }
+      - { from: gateway, to: sync-service, label: refresh }
+      - { from: user-service, to: user-db }
+      - { from: uploader, to: blob-store, label: sign URLs }
+      - { from: uploader, to: upload-state }
+      - { from: uploader, to: metadata-service, label: after commit }
+      - { from: uploader, to: kafka, label: file changed }
+      - { from: metadata-service, to: metadata-db }
+      - { from: download-service, to: metadata-service, label: check permission }
+      - { from: sync-service, to: kafka }
+      - { from: sync-service, to: metadata-service }
+      - { from: validator, to: blob-store }
+      - { from: dedup, to: blob-store }
+  - __component: sd.quiz
+    key: optimizations-quiz
+    title: Quick check
+    questions:
+      - question: Why validate at commit in a separate service rather than on every chunk event?
+        optionA: Chunk events do not exist
+        optionB: "At millions of chunks, hashing each one inline consumes the uploader; one asynchronous check after commit does the same work off the request path"
+        optionC: Hashes are optional
+        optionD: To skip validation
+        answer: B
+        explanation: Same check, moved off the hot path; S3 can also check a checksum on each PUT.
+      - question: Why does deduplication depend on a fixed chunk size?
+        optionA: It does not
+        optionB: "Identical content then cuts into identical chunks with identical hashes, so one stored copy can serve every file that has it"
+        optionC: S3 needs equal objects
+        optionD: To make uploads faster
+        answer: B
+        explanation: "Equal size and equal bytes give an equal SHA-256. Insertions shift fixed boundaries, which content-defined chunking avoids."

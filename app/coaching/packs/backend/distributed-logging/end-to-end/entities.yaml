@@ -1,0 +1,45 @@
+# Distributed logging interview, core entities: "2. Core entities" under the functional list, three lines, as in the video.
+id: backend/distributed-logging/end-to-end/entities
+title: Three entities
+source:
+  hash: "6d3852f7f41b"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/distributed-logging/end-to-end/requirements
+  assumes:
+    - "Functional: ingest from many sources, streamed or in batches; validate, parse and normalize; search in a dashboard."
+  carries:
+    - "The core entities are the log event, the ingestion job and the source or agent."
+  terms:
+    - term: agent
+      means: "A small program beside the services that reads their log files and ships new lines to the platform."
+board:
+  keep: [title, prompt-desc, prompt-example, fr, fr-ingest, fr-modes, fr-normalize, fr-dashboard, nfr, nfr-scale, nfr-latency, nfr-cap, nfr-reliable]
+  elements:
+    - { id: entities, kind: region, label: 2. Core entities, at: [4, 21], size: [20, 11], dashed: true }
+    - { id: ent-event, kind: note, label: "log event, the actual log", at: [5, 23], in: entities }
+    - { id: ent-job, kind: note, label: ingestion job, at: [5, 25], in: entities }
+    - { id: ent-agent, kind: note, label: source or agent, at: [5, 27], in: entities }
+  arrows: []
+  lists:
+    - { id: entity-list, in: entities, at: [5, 23], step: 2, slots: 4, width: 18, items: [ent-event, ent-job, ent-agent] }
+beats:
+  - point: "Three core entities: the log event itself, the ingestion job for batch uploads, and the source or agent that sends the logs."
+    kind: component
+    weight: core
+    teach:
+      - "Step two, the core entities, straight from the requirements. First the log event, the actual log line."
+      - "Then the ingestion job: the batch requirement means an offline client's upload, which takes time and has a status. And the source or agent, the thing on the client's side that sends the logs to us."
+    draw: [entities, ent-event, ent-job, ent-agent]
+    check: Which requirement brings in the ingestion job?
+    answer: Batch ingestion; an offline client's upload is a job with its own status.
+asks:
+  - list: entity-list
+    beats: [1]
+    question: "What are the core entities here, the things this platform keeps track of?"
+    hints:
+      - Start with the thing that arrives millions of times an hour.
+      - Then think of the batch upload, and of who sends the logs.

@@ -1,0 +1,43 @@
+# Hotel booking interview, the problem statement: the title and the one-line description written at the top of the board, as the video does, then the five steps said once (said, not drawn).
+id: backend/hotel-booking/end-to-end/problem-statement
+title: The problem, and the five steps
+source:
+  hash: "ffe7241b7b33"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: null
+  assumes: []
+  carries:
+    - "A hotel booking system lets a guest search hotels by location, date and availability, see the rooms, and book one."
+    - "The interview runs in five steps: requirements, core entities, API, high-level design, low-level design."
+    - "A familiar problem means the interviewer expects depth on storage, search and double booking."
+  terms:
+    - term: availability
+      means: "Whether a room is free on a given date; also, as a requirement, whether the system keeps answering when machines fail."
+board:
+  keep: []
+  elements:
+    - { id: title, kind: note, label: "Design a hotel booking system, like Airbnb or Booking.com", at: [30, 0] }
+    - { id: prompt-desc, kind: note, label: "search and book rooms by location, date and availability", at: [30, 2] }
+  arrows: []
+beats:
+  - point: "A hotel booking system like Airbnb or Booking.com lets a guest search hotels by location, date and availability, see a hotel's rooms and prices, and book a room."
+    kind: rule
+    weight: core
+    teach:
+      - "Write the title: design a hotel booking system, like Airbnb, MakeMyTrip or Booking.com."
+      - "Under it, one line on what it is: an online platform where users search and book rooms by location, date and availability."
+    draw: [title, prompt-desc]
+    check: In one sentence, what does this system let a guest do?
+    answer: Search hotels by location, date and availability, see the rooms and prices, and book a room.
+  - point: "The interview runs in five steps, and because everyone knows this product, the interviewer expects depth: how data is stored, how search stays fast, and how one room is never sold twice."
+    kind: rule
+    weight: core
+    teach:
+      - "Say the plan once: requirements, core entities, API, a high-level design, then a low-level design that opens every service. Each step gets its number on the board when we reach it."
+      - "The requirements here are quick because the product is familiar. That raises the bar: the time saved goes into storage, search and double booking. Keep login and the like short; you have 45 to 50 minutes."
+    check: Why does a familiar problem raise the bar?
+    answer: The requirements take little time, so the interviewer expects depth in the low-level design, especially storage, search and double booking.

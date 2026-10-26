@@ -1,0 +1,863 @@
+# yaml-language-server: $schema=../../../../../lego/content-kit/schema/topic.schema.json
+# provenance: ai-drafted by claude-opus-5-5 on 2026-10-27
+#
+# A whole backend system design interview for a ride-sharing app like Uber, Ola, Rapido or Lyft, run step by
+# step on one whiteboard. The order and the board follow InterviewWithBunny's System Design 11: requirements,
+# core entities, API (user endpoints, then driver endpoints), a high-level design of one gateway and a column of
+# services with their databases, then a low-level design that opens the services one at a time: the fare and its
+# surge, driver matching with a ZooKeeper lock, live locations over WebSockets into Redis, and the trip's data
+# (ratings, payment, the ride tables, a Kafka trip stream and a rating aggregator).
+# Every latency figure is an illustrative round number for the exercise, not a measurement.
+# A backend system of lego-ai's own (app/articles/backend): it stands alone and links to no main-site topic.
+catalogVersion: 5
+title: Designing a ride-sharing app, end to end
+shortTitle: Ride-sharing interview
+summary: "A 45-minute backend design interview for a ride-hailing app like Uber or Ola, step by step on one board: requirements with numbers, five entities, rider and driver endpoints, the high-level design, then the fare and surge, matching a nearby driver under a ZooKeeper lock, live locations over WebSockets into Redis, and the trip's ratings, payment and records."
+group: design
+order: 11
+xp: 280
+difficulty: intermediate
+tags: [interview, geospatial, locking, websockets, caching, consistency]
+eyebrow: Design
+breadcrumb: [Ride sharing, Interview walkthrough]
+lede: "You have about forty-five minutes and one whiteboard to design an app like Uber or Ola: a rider asks for a fare, books a car, bike or SUV, gets matched with a nearby driver within a minute, both watch each other on the map, and at the end they pay and rate. This walkthrough runs the interview the way a strong candidate does: requirements with numbers, the entities, the endpoints for each of the two actors, the simplest design that meets them, then the deep dive into the hard parts, matching a driver without ever giving one driver two riders, and keeping millions of moving locations fresh."
+reviewStatus: draft
+author: rakeshr410
+provenance: ai-drafted
+sources:
+  - title: "System Design 11: Design Ride Sharing Application like UBER, OLA, Rapido, Lyft (InterviewWithBunny, YouTube)"
+    url: https://www.youtube.com/watch?v=twUz_hWw2T8
+    note: "Order and drawings. Corrected: HTTP is request-response, not one-way; WebSockets cut per-update overhead, not update count; surge weighs demand against free drivers; ephemeral znodes go when the session times out."
+  - title: ZooKeeper Recipes and Solutions, Locks (Apache ZooKeeper documentation)
+    url: https://zookeeper.apache.org/doc/current/recipes.html
+    note: "Locks built from ephemeral znodes, which disappear when the client's session ends."
+  - title: ZooKeeper overview (Apache ZooKeeper documentation)
+    url: https://zookeeper.apache.org/doc/current/zookeeperOver.html
+    note: "A replicated, hierarchical namespace of znodes, persistent and ephemeral, for configuration, naming and coordination."
+  - title: GEOSEARCH (Redis documentation)
+    url: https://redis.io/docs/latest/commands/geosearch/
+    note: "Members of a geospatial index within a radius of a point, nearest first, with an optional count."
+  - title: "RFC 6455: The WebSocket Protocol"
+    url: https://www.rfc-editor.org/rfc/rfc6455
+    note: "One upgraded HTTP connection carrying messages both ways, with small frame headers."
+  - title: Geohash (Wikipedia)
+    url: https://en.wikipedia.org/wiki/Geohash
+    note: "A location written as a short base32 string whose shared prefix means nearby cells."
+tutorBrief: >-
+  Interview walkthrough for a ride-hailing app like Uber, Ola, Rapido or Lyft: an online platform where a
+  rider requests and books rides. 45 minutes; requirements first, then entities, API, high-level design,
+  low-level design (deep dive). Functional: fare estimate from start and drop location; request a ride at the
+  estimated fare; choose a category (bike, car, SUV); drivers accept or decline and navigate to pick-up and
+  drop-off; on request the rider is matched with a nearby available driver; real-time tracking of driver and
+  rider; both rate each other after the trip; the rider pays. Non-functional: scale, millions of riders and
+  drivers; CAP, availability over consistency for the rider (eventual is fine), strong consistency for ride
+  matching so no driver is assigned two rides at once; latency, a driver assigned within 1 minute, else the
+  request fails rather than hanging. Entities: rider, driver, location, fare, ride (trip). API, user: GET
+  /v1/api/fare?pickupLat&pickupLng&dropLat&dropLng returns a list of fares, each with a requestId, vehicle type
+  and estimate; POST /v1/api/rides/request {requestId} notifies nearby drivers and returns a rideId with the
+  driver's details once one accepts; GET /v1/api/rides/history; POST /v1/api/rides/{rideId}/cancel; POST
+  /v1/api/rides/{rideId}/ratings. Driver: a WebSocket /v1/drivers/location sending lat and long; POST
+  /v1/api/ride/rides {requestId, accept or deny}; POST /v1/api/ride/{rideId}/start and /end. High-level design:
+  riders and drivers on mobile clients, one load balancer plus API gateway (authentication and authorization,
+  rate limiting, routing, round-robin distribution), ride service (fare calculation) calling a location map
+  service (Google Maps or Apple Maps) for distance and ETA, driver matching service reading the drivers database
+  and writing the ride database, notification service (FCM for Android, APNs for iOS), rating service and
+  rating database, payment service and payment database, location update service writing driver locations.
+  Low-level design: (1) fare: rate table per vehicle (bike Rs 20 per km and Rs 1 per waiting minute, car Rs 60
+  per km), base fare = distance and time from the map service times the rates; every fare request saved in a
+  ride request database; a surge calculator service reads it and returns a multiplier (1.3, 1.5, 2x) the ride
+  service applies; surge really weighs demand against free drivers in the area. (2) matching: geohash
+  proximity search over driver locations within 5 to 10 km; driver table in Postgres (driverId, name,
+  vehicleInfo, rating, mobileNum, status IDLE or DRIVING, metadata) and a location table (driverId or userId,
+  latitude, longitude, modifiedTS); two matching servers can pick the same idle driver for two riders, so lock
+  the driver before notifying: a Redis lock with a TTL works, the video uses ZooKeeper: a persistent znode
+  driver-lock, one ephemeral child per locked driver (driverId 001); a second create fails with
+  NodeExistsException; the holder deletes it on deny or timeout; if the holder dies, its session times out and
+  ZooKeeper deletes the node. (3) live location: drivers and riders send a location every 5 to 10 seconds over
+  WebSockets through a dedicated WebSocket gateway (authentication, sticky sessions) to the location update
+  service, a WebSocket server; writing millions of updates into Postgres is too much, so only active drivers'
+  locations go into a Redis cache (a geo index, GEOADD and GEOSEARCH), which the matching service queries; it
+  then walks the top K = 5 nearest drivers one at a time: lock, notify, wait up to 10 seconds, release on deny
+  or timeout, next; 5 x 10 s plus overhead fits the 1-minute target; on accept it reads the driver's details
+  and pushes pick-up and driver location to both over their WebSockets. (4) trip data: rating table in Postgres
+  (senderId, receiverId, rating, timestamp, rideId); payment service calls a third-party payment gateway and
+  writes a relational payment database (ACID); ride database has an estimated fare table (requestId, pickup,
+  drop, fare, currency, timestamp, vehicleType, userId) and a ride table (rideId = requestId, userId, driverId,
+  source, driver location, status: allocated, arriving, on ride, reached); the actual fare lives in payment,
+  so estimate and actual can be compared for refunds; locations of drivers on a ride go to a Kafka queue and a
+  trip consumer service records the route and ride status; a rating aggregator job averages the rating table
+  into the driver row so the two copies do not drift.
+components:
+  - key: rider-app
+    name: Rider and driver apps
+    tone: sand
+    kind: client
+    summary: Mobile clients for the two actors. Riders ask for fares and book; drivers stream their location and accept or decline.
+    owns: [nothing of their own]
+    talksTo: [api-gateway, ws-gateway]
+  - key: api-gateway
+    name: Load balancer and API gateway
+    tone: blue
+    kind: gateway
+    summary: Authenticates and authorizes, rate limits, routes each call to its service and spreads load round robin.
+    owns: [routes, rate limits]
+    talksTo: [ride-service, matching-service, rating-service, payment-service]
+  - key: ride-service
+    name: Ride service
+    tone: green
+    kind: service
+    summary: Calculates the fare for each vehicle type from the map's distance and time, the rate table and the surge multiplier.
+    owns: [fare quotes]
+    talksTo: [maps, rate-db, surge-service, ride-request-db]
+  - key: maps
+    name: Location map service
+    tone: gray
+    kind: external
+    summary: A third-party map such as Google Maps or Apple Maps; returns the route distance and the ETA between two points.
+    owns: [roads, traffic]
+    talksTo: []
+  - key: rate-db
+    name: Rate database
+    tone: yellow
+    kind: datastore
+    summary: The configured rate per vehicle type, per kilometre and per waiting minute.
+    owns: [rates]
+    talksTo: []
+  - key: ride-request-db
+    name: Ride request database
+    tone: yellow
+    kind: datastore
+    summary: Every fare request, kept for analytics and for the surge calculation.
+    owns: [fare requests]
+    talksTo: []
+  - key: surge-service
+    name: Surge calculator service
+    tone: purple
+    kind: worker
+    summary: Reads recent demand and returns a multiplier such as 1.3 or 1.5 that the ride service applies to the base fare.
+    owns: [multiplier per area]
+    talksTo: [ride-request-db]
+  - key: matching-service
+    name: Driver matching service
+    tone: green
+    kind: service
+    summary: Finds the nearest free drivers by proximity search, locks one at a time, notifies it and turns the request into a ride on accept.
+    owns: [the current offer per request]
+    talksTo: [location-cache, zookeeper, notification-service, drivers-db, ride-db]
+  - key: zookeeper
+    name: ZooKeeper
+    tone: purple
+    kind: external
+    summary: A replicated coordination service; an ephemeral znode per locked driver under a persistent driver-lock znode.
+    owns: [driver locks]
+    talksTo: []
+  - key: notification-service
+    name: Notification service
+    tone: blue
+    kind: service
+    summary: Pushes ride offers and confirmations to phones through FCM on Android and APNs on iOS.
+    owns: [device tokens]
+    talksTo: [rider-app]
+  - key: ws-gateway
+    name: WebSocket gateway
+    tone: blue
+    kind: gateway
+    summary: A gateway only for WebSocket connections; authenticates them and keeps each one stuck to its server.
+    owns: [open connections]
+    talksTo: [location-service]
+  - key: location-service
+    name: Location update service
+    tone: green
+    kind: service
+    summary: A WebSocket server that receives every active driver's location every few seconds and writes it to Redis.
+    owns: [live connections]
+    talksTo: [location-cache, trip-queue]
+  - key: location-cache
+    name: Redis location cache
+    tone: orange
+    kind: cache
+    summary: A geo index of active drivers' latest positions, queried by radius for matching.
+    owns: [active driver positions]
+    talksTo: []
+  - key: drivers-db
+    name: Drivers database
+    tone: yellow
+    kind: datastore
+    summary: PostgreSQL; the driver table (profile, vehicle, rating, status) and the location table.
+    owns: [driver, location]
+    talksTo: []
+  - key: ride-db
+    name: Ride database
+    tone: yellow
+    kind: datastore
+    summary: The estimated fare table and the ride table with its status.
+    owns: [estimated fare, ride]
+    talksTo: []
+  - key: rating-service
+    name: Rating service
+    tone: green
+    kind: service
+    summary: Stores each rating a rider or driver gives after a trip.
+    owns: [nothing durable]
+    talksTo: [rating-db]
+  - key: rating-db
+    name: Rating database
+    tone: yellow
+    kind: datastore
+    summary: PostgreSQL; one row per rating, sender, receiver, score, time and ride.
+    owns: [rating]
+    talksTo: []
+  - key: payment-service
+    name: Payment service
+    tone: green
+    kind: service
+    summary: Charges the rider through a third-party payment gateway and records the actual fare.
+    owns: [nothing durable]
+    talksTo: [payment-db]
+  - key: payment-db
+    name: Payment database
+    tone: yellow
+    kind: datastore
+    summary: MySQL or PostgreSQL, for ACID; payments and the actual fare.
+    owns: [payment]
+    talksTo: []
+  - key: trip-queue
+    name: Kafka trip queue
+    tone: orange
+    kind: queue
+    summary: The location updates of drivers who are on a ride.
+    owns: [trip location events]
+    talksTo: [trip-consumer]
+  - key: trip-consumer
+    name: Trip consumer service
+    tone: purple
+    kind: worker
+    summary: Reads the trip queue and records each ride's route and status, for fare checks and refunds.
+    owns: [nothing]
+    talksTo: [ride-db]
+  - key: rating-aggregator
+    name: Rating aggregator
+    tone: gray
+    kind: worker
+    summary: A periodic job that averages the rating table and writes the result into each driver's row.
+    owns: [nothing]
+    talksTo: [rating-db, drivers-db]
+content:
+  # ────────────────────────────────────────────────────────────────── Problem statement
+  - __component: sd.section
+    key: problem-statement
+    title: Understanding the problem.
+    railLabel: Problem
+    intro: "The prompt is one line: design a ride-sharing service like Uber or Ola. Say what it is in one sentence, an online platform where a user requests and books rides, then run the interview in five steps."
+  - __component: sd.rich-text
+    key: approach-why
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Everyone has used an app like this, which is exactly why it is worth slowing down. A rider gives a pick-up and a drop location and sees a fare for each kind of vehicle. They book one, and the system has to find a nearby driver who is free, offer the ride, and confirm it within a minute. During the trip both see each other move on the map; at the end the rider pays and both leave a rating."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Two actors share the system, the rider and the driver, and they want different things from it. That split runs through the whole interview: the endpoints are listed per actor, and the consistency requirement differs between them. The hard parts are finding nearby drivers among millions, never giving one driver two riders, and keeping every driver's location fresh, which is proximity search, locking and real-time updates."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Say the five steps once: requirements, core entities, API, high-level design, low-level design. Number each on the board as you reach it, top to bottom."
+  - __component: sd.quiz
+    key: approach-quiz
+    title: Quick check
+    questions:
+      - question: Which three problems make a ride-sharing app hard at scale?
+        optionA: Drawing the map, choosing colours, sending emails
+        optionB: Finding nearby free drivers quickly, never assigning one driver to two riders, and keeping live locations fresh
+        optionC: Storing user passwords
+        optionD: Calculating tax
+        answer: B
+        explanation: Proximity search, locking and real-time updates are where the deep dive goes.
+  # ────────────────────────────────────────────────────────────────── 1. Requirements
+  - __component: sd.section
+    key: requirements
+    title: Requirements.
+    railLabel: Requirements
+    intro: "Functional requirements on the left, what the app does for riders and drivers; non-functional on the right, each with a number: the scale, the CAP choice, which differs for riders and drivers, and how long a match may take."
+  - __component: sd.subsection
+    key: functional-sub
+    title: Functional requirements
+    railLabel: Functional
+  - __component: sd.checklist
+    key: functional
+    idPrefix: FR-
+    items:
+      - text: A rider gets a fare estimate from a start and a drop location.
+      - text: A rider requests a ride at the estimated fare.
+      - text: "A rider chooses a category: bike, car or SUV, each with its own fare."
+      - text: A driver accepts or declines a request, then navigates to pick-up and drop-off.
+      - text: On request, the rider is matched with a driver who is nearby and available.
+        note: The core of the system; most of the deep dive is here.
+      - text: Rider and driver track each other in near real time.
+      - text: After the trip, rider and driver rate each other.
+      - text: The rider pays the final amount through the app.
+  - __component: sd.subsection
+    key: non-functional-sub
+    title: Non-functional requirements
+    railLabel: Non-functional
+  - __component: sd.requirement-table
+    key: non-functional
+    rows:
+      - area: Scale
+        requirement: Serve a large consumer base on both sides.
+        targets: [millions of riders and drivers]
+        note: Ask for it; it decides the architecture.
+      - area: Availability, for riders
+        requirement: A rider can always look for and book a ride.
+        targets: [availability over consistency, eventual consistency is fine]
+        note: If the app is down, nobody can book.
+      - area: Consistency, for matching
+        requirement: No driver is ever assigned two rides at the same time.
+        targets: [strong consistency in ride matching]
+      - area: Latency
+        requirement: A ride request gets a driver quickly, or fails cleanly.
+        targets: [driver assigned within 1 minute]
+        note: Past a minute the request fails instead of searching forever.
+  - __component: sd.rich-text
+    key: cap-choice
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "CAP is a choice made per part of the system, not once for all of it. When the network between machines splits, a part either keeps answering or waits until its copies agree. The rider's side keeps answering: browsing fares, seeing a slightly old driver position, or a history that lags a second are all fine. The assignment of a driver to a ride must be strongly consistent, because the failure, one driver accepting two riders at the same moment, is visible and costly."
+  - __component: sd.quiz
+    key: requirements-quiz
+    title: Quick check
+    questions:
+      - question: Why does the CAP choice differ between the rider's side and ride matching?
+        optionA: Riders and drivers use different databases
+        optionB: A rider seeing slightly stale data is harmless, but a driver assigned to two rides at once is a real failure
+        optionC: CAP only applies to drivers
+        optionD: Matching is not distributed
+        answer: B
+        explanation: Availability where staleness is cheap; strong consistency where a double booking is the failure.
+      - question: What should happen if no driver is assigned within a minute?
+        optionA: Keep searching until one is found
+        optionB: The request fails cleanly, so the rider is not left waiting indefinitely
+        optionC: Assign the nearest busy driver
+        optionD: Double the fare
+        answer: B
+        explanation: The latency target bounds the search; a clean failure lets the rider try again.
+  # ────────────────────────────────────────────────────────────────── 2. Entities
+  - __component: sd.section
+    key: entities
+    title: Core entities.
+    railLabel: Entities
+    intro: "Read the functional requirements and pick out the nouns. Five come straight out of them; more may appear during the design."
+  - __component: sd.table
+    key: entities-table
+    columns:
+      - { label: Entity, style: strong }
+      - { label: What it is, style: text }
+    rows:
+      - [Rider, The user who asks for a fare and books.]
+      - [Driver, "Who accepts rides; has a vehicle, a rating and a status, idle or driving."]
+      - [Location, "A latitude and a longitude: the pick-up and drop points, and every driver's live position."]
+      - [Fare, "The estimate for one vehicle type between two points."]
+      - [Ride, "The trip itself, once a driver has accepted: who, where, and its status."]
+  - __component: sd.quiz
+    key: entities-quiz
+    title: Quick check
+    questions:
+      - question: Why is location an entity of its own and not just two fields on the ride?
+        optionA: It is not needed
+        optionB: Drivers' positions change every few seconds and are what matching searches, apart from any ride
+        optionC: For the payment
+        optionD: Because maps need it
+        answer: B
+        explanation: Pick-up and drop belong to a ride, but driver positions are a moving data set of their own.
+  # ────────────────────────────────────────────────────────────────── 3. API
+  - __component: sd.section
+    key: api
+    title: API.
+    railLabel: API
+    intro: "Two actors, so two lists: the rider's endpoints first, then the driver's. Most map one to one onto a functional requirement."
+  - __component: sd.endpoint
+    key: fare-estimate
+    method: GET
+    path: "/v1/api/fare?pickupLat=...&pickupLng=...&dropLat=...&dropLng=..."
+    summary: "Fare estimates for a trip, one per vehicle type, each with a requestId the rider books by."
+    responses:
+      - label: OK
+        status: "200"
+        body:
+          fares:
+            - { requestId: r1, vehicleType: bike, estimate: 120 }
+            - { requestId: r2, vehicleType: car, estimate: 360 }
+  - __component: sd.endpoint
+    key: ride-request
+    method: POST
+    path: /v1/api/rides/request
+    summary: "Books the chosen fare. The backend offers it to nearby drivers; once one accepts, it returns the ride and the driver's details."
+    requestBody:
+      requestId: r2
+    responses:
+      - label: Matched
+        status: "200"
+        body:
+          rideId: r2
+          driver: { name: driver 1, vehicle: car, rating: 4.8 }
+      - label: No driver within a minute
+        status: "408"
+        body:
+          error: no_driver_found
+  - __component: sd.table
+    key: endpoints-table
+    title: Every endpoint, by actor
+    columns:
+      - { label: Actor, style: strong }
+      - { label: Endpoint, style: mono-strong }
+      - { label: What it does, style: text }
+    rows:
+      - [Rider, "GET /v1/api/fare?pickupLat&pickupLng&dropLat&dropLng", "A list of fares, each with a requestId, vehicle type and estimate."]
+      - [Rider, "POST /v1/api/rides/request {requestId}", "Books; returns rideId and the driver's details once one accepts."]
+      - [Rider, "GET /v1/api/rides/history", Past rides.]
+      - [Rider, "POST /v1/api/rides/{rideId}/cancel", Cancels a booked ride.]
+      - [Rider, "POST /v1/api/rides/{rideId}/ratings", Rates the ride.]
+      - [Driver, "WebSocket /v1/drivers/location {lat, long}", "Streams the driver's location; a socket, not a REST call."]
+      - [Driver, "POST /v1/api/ride/rides {requestId, accept or deny}", Answers an offer; an accept returns the rideId.]
+      - [Driver, "POST /v1/api/ride/{rideId}/start", Starts the trip at pick-up.]
+      - [Driver, "POST /v1/api/ride/{rideId}/end", Ends the trip at the drop.]
+  - __component: sd.rich-text
+    key: api-notes
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "The fare call computes and returns data, so it is a GET with the two points as latitude and longitude. The rider then books by the requestId of the fare they chose, which ties the booking to the price they saw. The driver's location is the odd one out: it is sent every few seconds for as long as the driver is on duty, so it travels over a WebSocket rather than as repeated REST calls; why is the low-level design's question. List the main endpoints and move on; there is not time for every one in 45 minutes."
+  - __component: sd.quiz
+    key: api-quiz
+    title: Quick check
+    questions:
+      - question: Why does each fare in the estimate carry a requestId?
+        optionA: For logging only
+        optionB: The rider books by it, so the booking is tied to the vehicle type and price they were shown
+        optionC: It is the driver's ID
+        optionD: It is the payment ID
+        answer: B
+        explanation: "POST /v1/api/rides/request sends back the requestId of the chosen fare."
+      - question: Which driver endpoint is not a REST call, and why?
+        optionA: Start ride, because it is urgent
+        optionB: "The location update: it is sent every few seconds, so it rides on one open WebSocket"
+        optionC: Accept or deny, because it is a push
+        optionD: End ride
+        answer: B
+        explanation: A continuous stream fits one long-lived connection better than a new request every few seconds.
+  # ────────────────────────────────────────────────────────────────── 4. High-level design
+  - __component: sd.section
+    key: high-level-design
+    title: High-level design.
+    railLabel: High level
+    intro: "Riders and drivers on the left, one load balancer and API gateway, then a column of services, one per functional requirement, each with its database on the right."
+  - __component: sd.component-diagram
+    key: hld-diagram
+    title: The first design
+    direction: LR
+    nodes:
+      - { key: rider-app, details: [riders, drivers] }
+      - { key: api-gateway, details: [auth, rate limiting, routing, round robin] }
+      - { key: ride-service, details: [fare calculation] }
+      - { key: maps, details: [distance, ETA] }
+      - { key: matching-service, details: [finds a nearby driver] }
+      - { key: drivers-db }
+      - { key: ride-db }
+      - { key: notification-service, details: [FCM, APNs] }
+      - { key: rating-service }
+      - { key: rating-db }
+      - { key: payment-service }
+      - { key: payment-db }
+      - { key: location-service, details: [updates driver locations] }
+    edges:
+      - { from: rider-app, to: api-gateway }
+      - { from: api-gateway, to: ride-service, label: fare }
+      - { from: ride-service, to: maps, label: "distance, ETA" }
+      - { from: api-gateway, to: matching-service, label: book }
+      - { from: matching-service, to: drivers-db, label: nearby drivers }
+      - { from: matching-service, to: ride-db, label: save ride }
+      - { from: matching-service, to: notification-service, label: offer }
+      - { from: api-gateway, to: rating-service }
+      - { from: rating-service, to: rating-db }
+      - { from: api-gateway, to: payment-service }
+      - { from: payment-service, to: payment-db }
+      - { from: location-service, to: drivers-db, label: location }
+  - __component: sd.rich-text
+    key: hld-flows
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "At millions of users this is a set of services behind a load balancer and an API gateway, which authenticate and authorize, rate limit, route, and spread traffic round robin. The fare: the ride service asks a third-party map, Google Maps or Apple Maps, for the distance and the time between the two points and turns them into a fare per vehicle type. The booking: the driver matching service finds drivers near the pick-up in the drivers database and offers the ride through the notification service, FCM on Android and APNs on iOS. The driver's accept comes back through the gateway, and the request becomes a ride in the ride database; the rider is told a driver is on the way."
+      - type: paragraph
+        children:
+          - type: text
+            text: "After the trip, a rating service with its rating database and a payment service with its payment database. Last, real-time tracking needs a location update service that takes positions from drivers and riders and updates the drivers database, so matching sees where drivers are. This meets every functional requirement, but matching cannot scan millions of drivers per request, and a database cannot absorb a location from every driver every few seconds. Those are the deep dive."
+  - __component: sd.quiz
+    key: hld-quiz
+    title: Quick check
+    questions:
+      - question: How does the ride service know the distance and time of a trip?
+        optionA: It measures a straight line
+        optionB: It asks a third-party map service such as Google Maps for the route distance and the ETA
+        optionC: The driver types it in
+        optionD: From the payment service
+        answer: B
+        explanation: Roads and traffic are a map provider's job; the ride service turns distance and time into money.
+      - question: What is wrong with this design that the low-level design must fix?
+        optionA: There is no database
+        optionB: Matching would scan millions of driver rows per request, and per-second location writes would overwhelm the database
+        optionC: Ratings are missing
+        optionD: The gateway cannot route
+        answer: B
+        explanation: Both come from scale; the high-level design only proves the flows.
+  # ────────────────────────────────────────────────────────────────── 5. Low-level design: the fare
+  - __component: sd.section
+    key: lld-fare
+    title: "Low-level design: the fare, and surge."
+    railLabel: LLD, fare
+    intro: "Copy the high-level design into the low-level section and open the first service: how the ride service turns two points into a price, and how that price rises when demand does."
+  - __component: sd.rich-text
+    key: fare-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "The map service returns two numbers, the route distance and the ETA. A rate database holds configured rates per vehicle type, for example a bike at Rs 20 per km and Rs 1 per waiting minute, a car at Rs 60 per km. The ride service multiplies distance and time by each vehicle's rates and returns one base fare per type, each with its requestId."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Surge: when many people want rides from one area, the price goes up. Save every fare request in a ride request database; it is not needed to serve the request, but it is the demand signal. A surge calculator service reads it and returns a multiplier, 1.3, 1.5 or 2x, which the ride service applies to the base fare before answering. A good multiplier weighs demand against supply: many requests and few free drivers nearby push it up, many requests with plenty of free drivers should not."
+  - __component: sd.table
+    key: fare-example
+    title: A fare, worked (the video's rates, an illustrative trip)
+    columns:
+      - { label: Step, style: text }
+      - { label: Bike, style: mono }
+      - { label: Car, style: mono }
+    rows:
+      - [Rate per km, Rs 20, Rs 60]
+      - [Distance from the map, 6 km, 6 km]
+      - [Base fare, Rs 120, Rs 360]
+      - [Surge multiplier, 1.5x, 1.5x]
+      - [Quoted fare, Rs 180, Rs 540]
+  - __component: sd.quiz
+    key: fare-quiz
+    title: Quick check
+    questions:
+      - question: Why save every fare request, even ones never booked?
+        optionA: For billing
+        optionB: They are the demand signal the surge calculator reads, and useful for analytics
+        optionC: To retry them later
+        optionD: The rider needs them
+        answer: B
+        explanation: Requests between two areas rising is what surge pricing responds to.
+      - question: Demand doubles in an area that also has twice as many free drivers as usual. Should surge rise?
+        optionA: Yes, demand doubled
+        optionB: Not much; surge should weigh demand against available drivers, and supply kept up
+        optionC: Surge is fixed
+        optionD: Only for bikes
+        answer: B
+        explanation: The multiplier exists to balance riders and drivers, so it depends on both.
+  # ────────────────────────────────────────────────────────────────── 5. Low-level design: matching and the lock
+  - __component: sd.section
+    key: lld-matching
+    title: "Low-level design: driver matching, and the ZooKeeper lock."
+    railLabel: LLD, matching
+    intro: "The core service. It finds the drivers near the pick-up with a proximity search, then offers the ride, and must never let two of its servers offer one driver to two riders at once."
+  - __component: sd.rich-text
+    key: matching-search
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Matching takes the rider's pick-up and finds the free drivers within 5 or 10 km using geohash proximity search: every location is written as a short string whose shared prefix means nearby, so the search reads a few cells instead of every driver. The driver data is in PostgreSQL: a driver table (driverId, name, vehicleInfo, rating, mobileNum, status such as IDLE or DRIVING, other metadata) and a location table (driverId or userId, latitude, longitude, modifiedTS) for drivers and riders alike. For now assume the locations are fresh; the next section makes that true."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Say the search returns driver 1 to driver 5. Now the consistency problem: matching runs on many servers, and two riders at the same corner get the same five idle drivers. Server one and server two both offer driver 1 a ride, the driver accepts both, and one driver is assigned two rides, the exact failure the non-functional requirements rule out. So a server must lock a driver before offering, and hold the lock until the driver answers or the offer times out."
+  - __component: sd.db-schema
+    key: matching-tables
+    stores:
+      - key: drivers-store
+        engine: PostgreSQL
+        component: drivers-db
+        why: Driver profiles and the location table, read by matching.
+        tables:
+          - name: driver
+            columns:
+              - { name: driver_id, type: bigint, role: primary }
+              - { name: name, type: text }
+              - { name: vehicle_info, type: text }
+              - { name: rating, type: numeric }
+              - { name: mobile_num, type: text }
+              - { name: status, type: text, note: "IDLE, DRIVING" }
+          - name: location
+            columns:
+              - { name: owner_id, type: bigint, role: primary, note: driverId or userId }
+              - { name: latitude, type: double }
+              - { name: longitude, type: double }
+              - { name: modified_ts, type: timestamp }
+  - __component: sd.rich-text
+    key: zookeeper-lock
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "A Redis lock with an expiry would do. ZooKeeper, a replicated coordination service for configuration, naming and synchronization, does it with its two kinds of znode. A persistent znode stays until it is explicitly deleted; an ephemeral znode belongs to the client session that made it and is deleted when that session ends. Make one persistent znode, driver lock. To lock driver 001, a matching server creates an ephemeral child named driverId 001. If it succeeds, it holds the lock and sends the offer."
+      - type: paragraph
+        children:
+          - type: text
+            text: "If a second server tries to create the same child, ZooKeeper refuses with NodeExistsException: the driver is already being offered a ride, so that server waits, with a watch on the node, or tries another driver. When the driver declines or the offer times out, the holder deletes the node and the driver is free. If the holder crashes mid-offer, it stops sending heartbeats, its session times out and ZooKeeper deletes its ephemeral nodes itself, so no lock is left behind forever."
+  - __component: sd.quiz
+    key: matching-quiz
+    title: Quick check
+    questions:
+      - question: Two matching servers handle two riders at the same corner. What goes wrong without a lock?
+        optionA: Nothing; each server has its own drivers
+        optionB: Both get the same idle drivers and can offer one driver two rides, which they might both accept
+        optionC: The proximity search fails
+        optionD: The notification service crashes
+        answer: B
+        explanation: Same pick-up, same nearby idle drivers; only a shared lock serializes the offers.
+      - question: A server creates the ephemeral znode for driver 001, then crashes. What happens to the lock?
+        optionA: It stays forever
+        optionB: The server's session times out and ZooKeeper deletes the ephemeral node, releasing the driver
+        optionC: Another server must delete it by hand
+        optionD: The driver is banned
+        answer: B
+        explanation: Ephemeral nodes live only as long as their creator's session.
+      - question: What does a second server get when it tries to lock a driver already locked?
+        optionA: The same lock
+        optionB: A NodeExistsException, so it waits with a watch or moves to another driver
+        optionC: A timeout after a minute
+        optionD: The driver's phone number
+        answer: B
+        explanation: Creating a node that exists fails, which is what makes it a lock.
+  # ────────────────────────────────────────────────────────────────── 5. Low-level design: live location
+  - __component: sd.section
+    key: lld-location
+    title: "Low-level design: live locations, WebSockets and Redis."
+    railLabel: LLD, live location
+    intro: "Matching assumed every driver's location in the database was fresh. Make it so: a stream of positions over WebSockets, kept in Redis rather than PostgreSQL, and a matching loop that fits inside one minute."
+  - __component: sd.rich-text
+    key: websocket-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Every active driver, and the rider during a trip, sends a position every 5 to 10 seconds. HTTP is request and response: each update would be a new request with its headers, and the server could not push anything back without the client asking. A WebSocket is one connection upgraded from HTTP that carries small messages both ways for as long as it is open. Updates still flow every few seconds, so the message count is the same, but each costs a few bytes instead of a full request, and the server can push offers and the other party's position down the same socket."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Put a WebSocket gateway in front, separate from the HTTP load balancer. Modern gateways speak both, but a socket-heavy app is better served by a dedicated one: it authenticates the connection and keeps it sticky, so a driver's connection stays on the same server for the whole shift. Behind it, the location update service is the WebSocket server."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Millions of drivers every 5 seconds is hundreds of thousands of writes a second, too many for PostgreSQL rows. So the location update service writes only active drivers' positions into a Redis cache, a geo index; off-duty drivers are left out. Matching now queries Redis by radius around the pick-up, which answers in milliseconds, instead of searching the database."
+  - __component: sd.rich-text
+    key: matching-loop
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "The whole flow: the rider gets a fare from the ride service and books. Matching asks Redis for the nearest free drivers, and walks them one at a time: lock the driver in ZooKeeper, send the offer through the notification service, and wait. On accept, it reads the driver's details from the drivers database and sends both sides the pick-up point and the driver's location over their open WebSockets. On deny, release the lock and try the next driver."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Thousands of drivers may be near; take only the top K. An offer times out after 10 seconds, so in the worst case six drivers take the whole minute, and with the time to send and receive, K is 5. A driver who does not answer in 10 seconds is unlocked by deleting the node, and the next one is tried."
+  - __component: sd.table
+    key: topk-budget
+    title: Why K is 5
+    columns:
+      - { label: Item, style: text }
+      - { label: Value, style: mono }
+    rows:
+      - [Latency target, 60 s]
+      - [Offer timeout per driver, 10 s]
+      - [Drivers that fit if all time out, "6, with no time left over"]
+      - [K after network and processing time, "5, 50 s"]
+  - __component: sd.quiz
+    key: location-quiz
+    title: Quick check
+    questions:
+      - question: What does a WebSocket save over sending each location as an HTTP request?
+        optionA: The number of updates; it sends fewer
+        optionB: The per-request overhead, and it lets the server push to the phone on the same connection
+        optionC: Nothing; it is slower
+        optionD: It removes the need for a gateway
+        answer: B
+        explanation: Updates still arrive every few seconds; each is a small frame on an open connection instead of a new request.
+      - question: Why keep active drivers' positions in Redis instead of the location table?
+        optionA: Redis is free
+        optionB: Hundreds of thousands of position writes a second are too many for database rows, and Redis answers radius queries in memory
+        optionC: PostgreSQL cannot store numbers
+        optionD: To save money on maps
+        answer: B
+        explanation: Fresh positions are hot, short-lived data; a geo index in memory fits them.
+      - question: Why offer the ride to at most five drivers?
+        optionA: Five is a lucky number
+        optionB: Each offer may take up to 10 seconds, so five fit inside the one-minute target with time for the network
+        optionC: Only five drivers exist per city
+        optionD: ZooKeeper allows five locks
+        answer: B
+        explanation: The latency requirement sets K.
+  # ────────────────────────────────────────────────────────────────── 5. Low-level design: the trip's data
+  - __component: sd.section
+    key: lld-trip-data
+    title: "Low-level design: ratings, payment, and the trip's records."
+    railLabel: LLD, trip data
+    intro: "After the match: the rating and payment services with their tables, the two tables of the ride database, a Kafka stream that records each trip's route, and a job that keeps two copies of a driver's rating in step."
+  - __component: sd.rich-text
+    key: rating-payment
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Ratings from riders and drivers both go to the rating service and into a PostgreSQL rating table: sender, receiver, rating, timestamp and ride. Sender and receiver can each be a rider or a driver. Payment: the payment service calls a third-party payment gateway and, success or failure, records it in a relational database, MySQL or PostgreSQL, because money needs ACID transactions."
+      - type: paragraph
+        children:
+          - type: text
+            text: "The ride database holds two tables. When a rider books, matching first saves the accepted quote in the estimated fare table: requestId, pick-up, drop, fare, currency, timestamp, vehicle type, user. When a driver accepts, it writes the ride table: rideId, which is the requestId, user, driver, source, the driver's location and a status that moves from allocated to arriving to on ride to reached. The actual fare is in the payment database. Keeping both lets the estimate be compared with what was charged when traffic or a detour changed the price, and a refund be worked out."
+  - __component: sd.db-schema
+    key: trip-tables
+    stores:
+      - key: ride-store
+        engine: A relational database
+        component: ride-db
+        why: Quotes and rides, written once and updated by status.
+        tables:
+          - name: estimated_fare
+            columns:
+              - { name: request_id, type: text, role: primary }
+              - { name: pickup, type: point }
+              - { name: drop, type: point }
+              - { name: fare, type: numeric }
+              - { name: currency, type: text }
+              - { name: created_at, type: timestamp }
+              - { name: vehicle_type, type: text }
+              - { name: user_id, type: bigint }
+          - name: ride
+            columns:
+              - { name: ride_id, type: text, role: primary, note: the request ID }
+              - { name: user_id, type: bigint }
+              - { name: driver_id, type: bigint }
+              - { name: source, type: point }
+              - { name: driver_location, type: point }
+              - { name: status, type: text, note: "allocated, arriving, on ride, reached" }
+      - key: rating-store
+        engine: PostgreSQL
+        component: rating-db
+        why: One row per rating.
+        tables:
+          - name: rating
+            columns:
+              - { name: sender_id, type: bigint }
+              - { name: receiver_id, type: bigint }
+              - { name: rating, type: smallint }
+              - { name: created_at, type: timestamp }
+              - { name: ride_id, type: text }
+      - key: payment-store
+        engine: MySQL or PostgreSQL
+        component: payment-db
+        why: Money needs ACID transactions.
+        tables:
+          - name: payment
+            columns:
+              - { name: ride_id, type: text, role: primary }
+              - { name: actual_fare, type: numeric }
+              - { name: status, type: text }
+  - __component: sd.rich-text
+    key: trip-stream
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "To check an actual fare, you need the route the driver took. The location update service already sees every position; for drivers on a ride it also publishes them to a Kafka queue. A trip consumer service reads the queue, publish and subscribe, and periodically records the route, the driver's location and the ride's status, so a refund can be judged against the real route."
+      - type: paragraph
+        children:
+          - type: text
+            text: "One gap: the driver row has a rating and so does the rating table, two copies that can drift. Keep the rating table as the record and run a rating aggregator job that averages each driver's ratings and writes the result into the driver row. That reads every functional requirement back against the board, and the non-functional ones too: scale through services and Redis, availability for riders, a ZooKeeper lock for consistent matching, and a match or a clean failure inside a minute."
+  - __component: sd.component-diagram
+    key: final-diagram
+    title: The final design
+    direction: LR
+    nodes:
+      - { key: rider-app }
+      - { key: api-gateway }
+      - { key: ws-gateway, details: [auth, sticky sessions] }
+      - { key: ride-service }
+      - { key: maps }
+      - { key: rate-db }
+      - { key: ride-request-db }
+      - { key: surge-service }
+      - { key: matching-service }
+      - { key: zookeeper }
+      - { key: notification-service }
+      - { key: location-service }
+      - { key: location-cache }
+      - { key: drivers-db }
+      - { key: ride-db }
+      - { key: rating-service }
+      - { key: rating-db }
+      - { key: payment-service }
+      - { key: payment-db }
+      - { key: trip-queue }
+      - { key: trip-consumer }
+      - { key: rating-aggregator }
+    edges:
+      - { from: rider-app, to: api-gateway }
+      - { from: rider-app, to: ws-gateway, label: location }
+      - { from: ws-gateway, to: location-service }
+      - { from: api-gateway, to: ride-service }
+      - { from: ride-service, to: maps }
+      - { from: ride-service, to: rate-db }
+      - { from: ride-service, to: ride-request-db }
+      - { from: surge-service, to: ride-request-db }
+      - { from: ride-service, to: surge-service, label: multiplier }
+      - { from: api-gateway, to: matching-service }
+      - { from: matching-service, to: location-cache, label: nearby }
+      - { from: matching-service, to: zookeeper, label: lock }
+      - { from: matching-service, to: notification-service }
+      - { from: matching-service, to: drivers-db }
+      - { from: matching-service, to: ride-db }
+      - { from: location-service, to: location-cache }
+      - { from: location-service, to: trip-queue, label: on a ride }
+      - { from: trip-queue, to: trip-consumer }
+      - { from: trip-consumer, to: ride-db }
+      - { from: api-gateway, to: rating-service }
+      - { from: rating-service, to: rating-db }
+      - { from: api-gateway, to: payment-service }
+      - { from: payment-service, to: payment-db }
+      - { from: rating-aggregator, to: rating-db }
+      - { from: rating-aggregator, to: drivers-db }
+  - __component: sd.quiz
+    key: trip-quiz
+    title: Quick check
+    questions:
+      - question: Why keep the estimated fare when the payment database has the actual fare?
+        optionA: Duplication is free
+        optionB: Comparing the quote with the charge shows when traffic or a detour changed the price, which a refund needs
+        optionC: For the surge calculator
+        optionD: For the driver's rating
+        answer: B
+        explanation: Two numbers, estimate and actual, with the recorded route to explain the difference.
+      - question: Why does payment use a relational database?
+        optionA: It is cheaper
+        optionB: Money needs ACID transactions, so a charge is recorded exactly once and consistently
+        optionC: Payments are small
+        optionD: The gateway requires it
+        answer: B
+        explanation: Consistency comes first for money.
+      - question: The driver row and the rating table both hold ratings. How do you keep them in step?
+        optionA: Delete the rating table
+        optionB: Keep the rating table as the record and let an aggregator job write each driver's average into the driver row
+        optionC: Update both in every request
+        optionD: Ignore it
+        answer: B
+        explanation: One source of truth, one derived copy refreshed by a job.

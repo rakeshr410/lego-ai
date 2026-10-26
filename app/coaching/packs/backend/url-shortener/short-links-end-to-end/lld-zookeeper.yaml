@@ -2,7 +2,7 @@
 id: backend/url-shortener/short-links-end-to-end/lld-zookeeper
 title: "Low-level design, 3: ZooKeeper, and finishing"
 source:
-  hash: "ab5c681bfd5b"
+  hash: "1c12e981151f"
 review:
   status: draft
   provenance: ai-drafted

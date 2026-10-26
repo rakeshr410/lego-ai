@@ -1,0 +1,68 @@
+# Job scheduler interview, low-level design, the follow-ups: the video's last notes under the picture: Kafka's first-in-first-out order delays a job pushed behind a hundred queued ones (job 101), the alternatives (a Redis sorted set, Amazon SQS), and executor logs linked from the error message. SQS delays are capped at 15 minutes, corrected here.
+id: backend/job-scheduler/end-to-end/lld-follow-ups
+title: "Low-level design: follow-ups on queue order and logs"
+source:
+  hash: "0a3a77625f2f"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/job-scheduler/end-to-end/lld-edge-cases
+  assumes:
+    - "The watcher pushes the next five minutes of jobs, sorted by time, to the Kafka run topic."
+    - "Run now pushes a job straight to the run topic."
+  carries:
+    - "A Kafka partition is first in, first out, so a job pushed now waits behind jobs already queued."
+    - "A Redis sorted set scored by run time, or a delay queue, orders by time; SQS delays at most 15 minutes."
+    - "Executors ship logs to a logging service; a failed run's error message links to its log."
+  terms:
+    - term: sorted set
+      means: "A Redis set whose members stay ordered by a score, here the run time."
+    - term: delay queue
+      means: "A queue that hides a message until its delay has passed; SQS allows up to 15 minutes."
+board:
+  keep: [title, prompt-desc, prompt-use, fr, fr-create, fr-monitor, fr-cancel, fr-scope, nfr, nfr-scale, nfr-cap, nfr-once, nfr-latency, entities, ent-job, ent-schedule, ent-executor, api, api-post, api-body-1, api-body-2, api-get, api-status, api-put, api-cancel, api-run, hld, hld-clients, hld-gateway, hld-gw-note, hld-svc, hld-db, hld-exec, hld-pull, hld-update, hld-clients-gateway, hld-gateway-svc, hld-svc-db, hld-exec-db, l-heading, l-users, l-gateway, l-job-svc, l-search, l-kafka, l-consumer, l-db, s-jobs-1, s-jobs-2, s-jobs-3, s-runs-1, s-runs-2, s-runs-3, l-users-gateway, l-gateway-svc, l-gateway-search, l-search-db, l-svc-kafka, l-kafka-consumer, l-consumer-db, x-watcher, x-watcher-note, x-run-kafka, x-topic-run, x-job-consumer, x-jc-note, x-exec-1, x-exec-2, x-exec-3, x-watcher-db, x-watcher-kafka, x-jc-kafka, x-jc-exec-1, x-jc-exec-2, x-jc-exec-3, x-exec-status, f-topics, f-attempt, f-dead, f-stale, f-idem, f-retry, e-redis-cancel, e-cancel-write, e-cancel-check, e-redis-last, e-idx-jobs, e-idx-runs, e-exec-redis, e-run-now, e-watcher-redis]
+  elements:
+    - { id: q-fifo, kind: note, label: "a partition is first in, first out", at: [5, 96] }
+    - { id: q-late, kind: note, label: job 101 waits behind 100 queued jobs, at: [5, 97] }
+    - { id: q-alt, kind: note, label: "alternatives, a Redis sorted set by run time", at: [5, 98] }
+    - { id: q-sqs, kind: note, label: "or a delay queue, SQS waits at most 15 min", at: [5, 99] }
+    - { id: q-logs, kind: note, label: "executors ship logs, error message links to them", at: [40, 97] }
+  arrows: []
+beats:
+  - point: "A Kafka partition is read first in, first out, so a run-now job pushed behind a hundred jobs already queued for the next five minutes waits for all of them, though it is due first."
+    kind: failure
+    weight: core
+    teach:
+      - "A senior follow-up. The watcher pushes the next five minutes of jobs to Kafka, sorted by time. Now a run-now job arrives."
+      - "Kafka orders a partition by arrival, not by run time. A hundred jobs are queued; job 101 is read after all of them. Name this limit when you choose Kafka; it cannot be fixed inside Kafka."
+    draw: [q-fifo, q-late]
+    check: Why might a run-now job start late with this design?
+    answer: "Kafka reads a partition in arrival order, so it waits behind the jobs already queued for the next five minutes."
+  - point: "Ordering by time fixes it: a Redis sorted set scored by run time, which the consumer reads by score, or a delay queue such as Amazon SQS, whose delay is at most 15 minutes."
+    kind: decision
+    weight: core
+    teach:
+      - "Two alternatives. A Redis sorted set with the run time as the score: however late a job arrives it sits in time order, and the job consumer takes whatever is due."
+      - "Or a managed delay queue like Amazon SQS, which hides a message until its delay passes. Its delay is at most 15 minutes: enough for a five-minute window, not for next Friday. And an interviewer may prefer that you design it rather than plug it in."
+    draw: [q-alt, q-sqs]
+    check: Can Amazon SQS on its own schedule a job for next Friday?
+    answer: "No; its delay is at most 15 minutes, enough for the five-minute window but not for far-future times."
+    misconceptions:
+      - "SQS can deliver a message at any future time -> its delay caps at 15 minutes; far-future times need a scheduler in front."
+  - point: "To show why a job failed, executors ship their logs to a logging service, and the run's error message holds a link to the job's log."
+    kind: mechanism
+    weight: supporting
+    teach:
+      - "Last follow-up: a job failed, why? Every executor ships its job's output to a logging service, and the run's error message holds the link to that log, so the dashboard can show it."
+    draw: [q-logs]
+    check: Where does a user find why their job failed?
+    answer: "In the job's log in the logging service, linked from the run's error message."
+asks:
+  - ids: [q-alt, q-sqs]
+    beats: [2]
+    question: "So Kafka can't put a late, urgent job first. What would you use instead to keep jobs in run-time order?"
+    hints:
+      - Is there a structure that keeps members sorted by a number?
+      - Or a queue that can hold a message back until its time?

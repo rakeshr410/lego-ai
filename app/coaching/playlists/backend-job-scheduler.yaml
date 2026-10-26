@@ -1,0 +1,37 @@
+slug: backend-job-scheduler
+title: "The job scheduler interview"
+summary: "A distributed job scheduler like Airflow, Temporal or Celery, designed step by step on one whiteboard: requirements with numbers, entities, the API, a high-level design, then deep dives into buffered writes, the watcher and executors, failures, cancelling and running now, and the follow-ups."
+outline: "The job scheduler lessons follow the five-step order and the drawings of InterviewWithBunny's System Design 9, Design Distributed Job Scheduler (youtube.com/watch?v=hLvB2haod5w), section by section; no text is taken from it, and its factual slips are corrected in the article."
+lessons:
+  - slug: job-scheduler
+    title: "The job scheduler interview: the problem, requirements, entities and API"
+    summary: "The problem written at the top of the board, functional and non-functional requirements side by side, the three entities, and the six endpoints."
+    parts:
+      - { title: "The problem, then two lists", minutes: 9, packs: [backend/job-scheduler/end-to-end/problem-statement, backend/job-scheduler/end-to-end/requirements] }
+      - { title: "Entities, then the API", minutes: 7, packs: [backend/job-scheduler/end-to-end/entities, backend/job-scheduler/end-to-end/api] }
+  - slug: job-scheduler-design
+    title: "The job scheduler interview: high-level design, then the services"
+    summary: "Clients, gateway, job service, job database and job executor; then the low-level design splits reads from writes, buffers writes in Kafka, and lays out the two tables."
+    parts:
+      - { title: "Five boxes", minutes: 7, packs: [backend/job-scheduler/end-to-end/high-level-design] }
+      - { title: "Split the job service, buffer writes", minutes: 12, packs: [backend/job-scheduler/end-to-end/lld-services] }
+  - slug: job-scheduler-execution
+    title: "The job scheduler interview: watcher, run queue, executors"
+    summary: "A watcher that queues the next five minutes of jobs, a Kafka run queue, a job consumer that starts each job on time, and executors reporting status through Kafka."
+    parts:
+      - { title: "From the database to an executor", minutes: 12, packs: [backend/job-scheduler/end-to-end/lld-execution] }
+  - slug: job-scheduler-failures
+    title: "The job scheduler interview: retries and dead executors"
+    summary: "Retry and dead topics with an attempt count, and the heartbeat check that re-queues jobs whose executor died."
+    parts:
+      - { title: "Failed jobs, dead machines", minutes: 10, packs: [backend/job-scheduler/end-to-end/lld-failures] }
+  - slug: job-scheduler-edge-cases
+    title: "The job scheduler interview: cancel, run now, the race, indexes"
+    summary: "Cancelling a running job through Redis, the run-now path, the race between two polls, the watcher's state in Redis, and the indexes."
+    parts:
+      - { title: "Cancel, run now, and the polling race", minutes: 14, packs: [backend/job-scheduler/end-to-end/lld-edge-cases] }
+  - slug: job-scheduler-follow-ups
+    title: "The job scheduler interview: follow-ups"
+    summary: "Kafka's first-in-first-out order and the job that must run now, the sorted-set and delay-queue alternatives, and logs."
+    parts:
+      - { title: "Queue order and logs", minutes: 6, packs: [backend/job-scheduler/end-to-end/lld-follow-ups] }

@@ -1,0 +1,109 @@
+# Rate limiter interview, requirements: "1. Functional requirements" on the left and "Non-functional requirements" on the right, under the prompt, as the video lays them out; five functional lines, three non-functional ones with their numbers.
+id: backend/rate-limiter/end-to-end/requirements
+title: Two lists, functional and non-functional
+source:
+  hash: "ba89bbcb6a24"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/rate-limiter/end-to-end/problem-statement
+  assumes:
+    - "A rate limiter refuses a client's requests once they pass a limit within a time window."
+  carries:
+    - "Functional: limit requests per client by user ID, API key or IP; rules configurable at runtime; 429 over the limit; handle bursts; limits per tier."
+    - "Non-functional: 1 million requests per second; availability over consistency, rules may arrive late; under 5 ms per decision."
+  terms:
+    - term: functional requirement
+      means: What the system does.
+    - term: non-functional requirement
+      means: "A quality of the system, stated with a number: scale, availability, latency."
+    - term: burst
+      means: "Many requests from one client in a short span, such as the first seconds of a sale."
+    - term: eventual consistency
+      means: "A change, such as a new rule, reaches every copy a little later, but it gets there."
+board:
+  keep: [title, prompt-desc, prompt-example]
+  elements:
+    - { id: fr, kind: region, label: 1. Functional requirements, at: [4, 6], size: [36, 16], dashed: true }
+    - { id: fr-limit, kind: note, label: "limit requests per client, by user ID, API key or IP", at: [5, 8], in: fr }
+    - { id: fr-config, kind: note, label: rules configurable at runtime by an admin, at: [5, 10], in: fr }
+    - { id: fr-429, kind: note, label: "over the limit, answer HTTP 429 Too Many Requests", at: [5, 12], in: fr }
+    - { id: fr-burst, kind: note, label: "handle burst traffic, like a sale", at: [5, 14], in: fr }
+    - { id: fr-tier, kind: note, label: "different limits per tier, free or premium", at: [5, 16], in: fr }
+    - { id: nfr, kind: region, label: Non-functional requirements, at: [44, 6], size: [32, 16], dashed: true }
+    - { id: nfr-scale, kind: note, label: "scale, 1 million requests per second", at: [45, 8], in: nfr }
+    - { id: nfr-cap, kind: note, label: "availability over consistency, rules arrive late", at: [45, 10], in: nfr }
+    - { id: nfr-latency, kind: note, label: latency under 5 ms per decision, at: [45, 12], in: nfr }
+  arrows: []
+  lists:
+    - { id: fr-list, in: fr, at: [5, 8], step: 2, slots: 7, width: 34, items: [fr-limit, fr-config, fr-429, fr-burst, fr-tier] }
+    - { id: nfr-list, in: nfr, at: [45, 8], step: 2, slots: 7, width: 30, items: [nfr-scale, nfr-cap, nfr-latency] }
+beats:
+  - point: "The core functional requirement is to limit how many requests a client makes, keyed by user ID, API key or IP, with the rules configurable at runtime by an admin."
+    kind: requirement
+    weight: core
+    teach:
+      - "Step one, on the left: what it does. First, limit the number of requests a client makes, say 10 a minute. The client can be keyed by user ID, API key or IP address."
+      - "Second, the rules are not constants in code: an admin changes them at runtime, config driven."
+    draw: [fr, fr-limit, fr-config]
+    check: By what can a limit be keyed?
+    answer: "By user ID, API key or IP address, and the rule itself is changed by an admin at runtime."
+  - point: "Over the limit, the limiter answers HTTP 429 Too Many Requests, a meaningful response rather than a bare failure."
+    kind: requirement
+    weight: core
+    teach:
+      - "When a client is over its limit, tell it so: HTTP 429, Too Many Requests. A client that gets a generic error thinks the service is broken."
+    draw: [fr-429]
+    check: Which status code does a blocked client get?
+    answer: "429, Too Many Requests."
+  - point: "It must handle burst traffic, such as the start of a sale, and support different limits per tier, free or paid."
+    kind: requirement
+    weight: core
+    teach:
+      - "Bursts: during a sale a client may fire many requests at once, and the limiter must cope. The algorithms later differ most on exactly this line."
+      - "Tiers: a product sells a free tier, an 8 dollar tier and a 20 dollar tier, and each gets its own limits."
+    draw: [fr-burst, fr-tier]
+    check: Give an example of why limits differ by tier.
+    answer: "A free user gets fewer requests a minute than a paying one, such as free versus the 8 or 20 dollar plans."
+  - point: "Scale first: every request in the company passes the limiter, so plan for about 1 million requests per second."
+    kind: metric
+    weight: core
+    teach:
+      - "On the right, the qualities. Ask for the scale first. All traffic passes through a rate limiter, so it is high: say 1 million requests per second."
+    draw: [nfr, nfr-scale]
+    check: Why is a rate limiter's scale so high compared with the service it protects?
+    answer: "Every request into every API passes through it, so it carries all the traffic."
+  - point: "Availability over consistency: a new rule may take about a minute to reach every limiter, but the limiter must never be down, since every request depends on it."
+    kind: requirement
+    weight: core
+    teach:
+      - "CAP: when the network between machines splits, a distributed system either keeps answering or stays consistent. Here, keep answering."
+      - "If the limiter is down, every request behind it is lost. If an admin's rule change reaches all limiters a minute later, nobody is hurt. So availability, with eventual consistency for rules."
+    draw: [nfr-cap]
+    check: Why is it fine for a rule change to arrive late, but not for the limiter to be down?
+    answer: "A slightly stale rule lets a few extra or fewer requests through; a down limiter fails every request in the company."
+    misconceptions:
+      - "CAP means a system can never be both available and consistent -> the choice is forced only when the network partitions; the limiter chooses to keep answering then."
+  - point: "Latency under 5 ms per decision, because the check is added to every request."
+    kind: metric
+    weight: core
+    teach:
+      - "Last, latency: ultra low. Decide allow or block within 5 milliseconds, or the whole backend feels the lag."
+    draw: [nfr-latency]
+    check: Why must the decision take under 5 milliseconds?
+    answer: Because it sits in front of every request; its delay is added to every API call.
+asks:
+  - list: fr-list
+    beats: [1, 2, 3]
+    question: "So what should this rate limiter do? Give me the features one at a time, and I'll write them down."
+    hints:
+      - What does it limit, and how do you tell one client from another?
+      - And what does a client see when it goes over?
+  - list: nfr-list
+    beats: [4, 5, 6]
+    question: "Now the qualities. How much traffic, how reliable, how fast? A number where you can."
+    hints:
+      - Every request passes through it. What does that say about its scale and speed?
+      - And what matters more when machines fail, staying up or staying exact?

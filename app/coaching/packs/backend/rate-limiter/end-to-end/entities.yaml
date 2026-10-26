@@ -1,0 +1,45 @@
+# Rate limiter interview, core entities: "2. Core entity" under the functional list, three lines, as in the video.
+id: backend/rate-limiter/end-to-end/entities
+title: Three entities
+source:
+  hash: "beb4dd590d7e"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/rate-limiter/end-to-end/requirements
+  assumes:
+    - "Functional: limit requests per client, rules configurable at runtime, 429 over the limit, bursts, limits per tier."
+  carries:
+    - "The core entities are the rate limit rule, the client, and the request counter."
+  terms:
+    - term: request counter
+      means: "How many requests a client has made in the current window, or what it has left: the state each decision reads."
+board:
+  keep: [title, prompt-desc, prompt-example, fr, fr-limit, fr-config, fr-429, fr-burst, fr-tier, nfr, nfr-scale, nfr-cap, nfr-latency]
+  elements:
+    - { id: entities, kind: region, label: 2. Core entities, at: [4, 24], size: [22, 10], dashed: true }
+    - { id: ent-rule, kind: note, label: rate limit rule, at: [5, 26], in: entities }
+    - { id: ent-client, kind: note, label: client, at: [5, 28], in: entities }
+    - { id: ent-counter, kind: note, label: request counter, at: [5, 30], in: entities }
+  arrows: []
+  lists:
+    - { id: entity-list, in: entities, at: [5, 26], step: 2, slots: 4, width: 20, items: [ent-rule, ent-client, ent-counter] }
+beats:
+  - point: "Three core entities: the rate limit rule (the configured limit), the client it applies to, and the request counter of what that client has used."
+    kind: component
+    weight: core
+    teach:
+      - "Step two: read the functional requirements and pick out the nouns. The rules, or policy, configured per client. The clients themselves."
+      - "And the request counter: to decide, we need both the limit set for the user and how many times they have already called. Those two numbers are the whole decision."
+    draw: [entities, ent-rule, ent-client, ent-counter]
+    check: Which two numbers does every allow or block decision compare?
+    answer: "The limit in the client's rule and the client's request counter."
+asks:
+  - list: entity-list
+    beats: [1]
+    question: "What are the core entities, the things this system keeps track of?"
+    hints:
+      - Look at the requirements. What does the admin configure?
+      - And what do you need to know about a client to compare with its limit?

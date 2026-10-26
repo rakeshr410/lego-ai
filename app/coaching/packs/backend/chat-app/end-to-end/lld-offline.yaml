@@ -1,0 +1,109 @@
+# Chat app interview, low-level design, offline users: the video adds a "Redis Stream" (messages, channel) fed by every chat server, a "Message Svc" consumer writing to "Chat DB", the "ChatDB (Cassandra DB) - writeDB" columns beside it, and a "Notification Svc" to "FCM/APN". Corrected: Pub/Sub channels and streams are different Redis tools, Cassandra has no auto-increment.
+id: backend/chat-app/end-to-end/lld-offline
+title: "Low-level design: offline users and storage"
+source:
+  hash: "0bb9de22a476"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/chat-app/end-to-end/lld-websocket
+  assumes:
+    - "Chat servers hold WebSockets behind a WebSocket gateway; a Redis registry maps each user to their server, with a TTL."
+    - "Non-functional: 100 billion messages a day, under 300 ms, zero message loss."
+  carries:
+    - "Chat servers hand messages to a Redis stream; each server also listens on a channel of its own for its online users."
+    - "A message service consumes the stream into the chat DB, Cassandra, partitioned by chatId and ordered by a time-ordered messageId."
+    - "A notification service pushes offline users a new-message alert through FCM and APNs."
+  terms:
+    - term: Redis stream
+      means: "An append-only log in Redis, read by consumer groups that acknowledge each entry."
+    - term: Pub/Sub channel
+      means: "Redis delivery to whoever is listening right now; nothing is kept."
+    - term: partition key
+      means: "The Cassandra column that decides which node holds a row; here the chat id."
+board:
+  keep: [title, nfr, nfr-scale, nfr-volume, nfr-cap, nfr-latency, nfr-reliable, conn, conn-http, v-http, conn-long, v-long, conn-sse, v-sse, conn-ws, v-ws, w-head, w-user-1, w-user-4, w-lb, w-lb-note, w-user-svc, w-userdb, w-group-svc, w-groupdb, w-ws-gw, w-ws-note, w-chat-1, w-chat-2, w-chat-3, w-hs, hs-1, hs-2, hs-3, hs-4, w-send, w-registry, w-reg-1, w-reg-2, w-ttl, w-u1-lb, w-u4-lb, w-lb-user, w-user-db, w-lb-group, w-group-db, w-u1-ws, w-u4-ws, w-ws-c1, w-ws-c2, w-ws-c3, w-c3-reg, w-ws-reg, w-c3-c2]
+  elements:
+    - { id: o-stream, kind: box, label: Redis stream, at: [50, 71], size: [13, 4], tone: amber }
+    - { id: o-stream-note, kind: note, label: "messages, a channel per chat server", at: [50, 76] }
+    - { id: o-ack-note, kind: note, label: acked only once the stream has it, at: [50, 77] }
+    - { id: o-msg-svc, kind: box, label: Message service, at: [68, 65], size: [13, 3], tone: blue }
+    - { id: o-chatdb, kind: oval, label: "Chat DB, Cassandra", at: [84, 58], size: [12, 4], tone: amber }
+    - { id: o-schema-1, kind: note, label: "chatId, messageId, senderId,", at: [98, 58] }
+    - { id: o-schema-2, kind: note, label: "receiverId, message, type,", at: [98, 59] }
+    - { id: o-schema-3, kind: note, label: "timestamp, deliveryStatus", at: [98, 60] }
+    - { id: o-key, kind: note, label: "partition by chatId, order by messageId", at: [98, 62] }
+    - { id: o-notif, kind: box, label: Notification service, at: [68, 72], size: [13, 3], tone: blue }
+    - { id: o-push, kind: box, label: FCM and APNs, at: [86, 72], size: [12, 3], tone: grey }
+    - { id: o-push-note, kind: note, label: Android and iOS push, at: [86, 76] }
+  arrows:
+    - { id: o-c1-stream, from: w-chat-1, to: o-stream }
+    - { id: o-c2-stream, from: w-chat-2, to: o-stream }
+    - { id: o-c3-stream, from: w-chat-3, to: o-stream }
+    - { id: o-stream-msg, from: o-stream, to: o-msg-svc }
+    - { id: o-msg-db, from: o-msg-svc, to: o-chatdb }
+    - { id: o-stream-notif, from: o-stream, to: o-notif }
+    - { id: o-notif-push, from: o-notif, to: o-push }
+beats:
+  - point: "An offline receiver has no registry entry, so the message must be kept; with thousands arriving a second, chat servers hand messages to a Redis stream instead of writing the database themselves."
+    kind: mechanism
+    weight: core
+    teach:
+      - "User 1 messages user 4, but user 4 is offline: no entry in the registry. The message has to be stored until they come back, and thousands arrive every second, too many for each chat server to write to a database itself."
+      - "So every chat server hands messages to an event stream, Redis here, lighter and lower latency than Kafka, though Kafka keeps messages more durably. For zero loss, the sender's tick comes only once the stream holds the message."
+      - "Two Redis tools, easy to mix up: a Pub/Sub channel passes a message to whoever listens now and keeps nothing; each chat server listens on its own channel for its online users. The stream keeps entries until consumers acknowledge them; that is where storage and offline users are fed from."
+    draw: [o-stream, o-c1-stream, o-c2-stream, o-c3-stream, o-stream-note, o-ack-note]
+    check: Why do the chat servers write to a stream rather than straight to the database?
+    answer: "Thousands of messages a second arrive; the stream absorbs them and a consumer writes them at its own pace, so the chat servers stay fast."
+    misconceptions:
+      - "Redis channels keep messages until they are read -> Pub/Sub channels keep nothing; a Redis stream keeps entries until consumers acknowledge them."
+  - point: "A message service consumes the stream and writes every message to the chat database, Cassandra, chosen because the system is write-heavy: 100 billion messages a day."
+    kind: component
+    weight: core
+    teach:
+      - "Someone has to read the stream into storage: a consumer, the message service, writing to the chat database."
+      - "That database takes a hundred billion writes a day, so it must be write-optimized: Cassandra, or DynamoDB."
+    draw: [o-msg-svc, o-stream-msg, o-chatdb, o-msg-db]
+    check: Why Cassandra for the chat database?
+    answer: "The load is write-heavy, about 100 billion messages a day, and Cassandra is built for heavy writes."
+  - point: "Each row holds chatId, messageId, senderId, receiverId, the message or media URL, type, timestamp and delivery status; partition by chatId and order by a time-ordered messageId, since Cassandra has no auto-increment."
+    kind: decision
+    weight: core
+    teach:
+      - "The columns: chat id, message id, sender, receiver, the message, which is the text or a media URL, its type, the timestamp, and the delivery status."
+      - "Chat id is the conversation, user 1 with user 4; message id is one message in it. Partition by chat id so a chat's messages sit together, and order by message id. Cassandra has no auto-increment, so the message id is time-ordered, a TIMEUUID or a Snowflake id."
+    draw: [o-schema-1, o-schema-2, o-schema-3, o-key]
+    check: What is the difference between chatId and messageId, and how is the table keyed?
+    answer: "chatId is the conversation, messageId one message in it; partition by chatId, ordered by a time-ordered messageId."
+    misconceptions:
+      - "Give each message an auto-increment id -> Cassandra has none; a time-ordered id such as a TIMEUUID keeps rows unique and sorted."
+  - point: "When the receiver is offline, a notification service also reads the stream and pushes a new-message alert through FCM for Android and APNs for iOS."
+    kind: component
+    weight: core
+    teach:
+      - "An offline user still expects a notification. The stream also feeds a notification service."
+      - "It pushes through Firebase Cloud Messaging for Android and the Apple Push Notification service for iOS."
+    draw: [o-notif, o-stream-notif, o-push, o-notif-push, o-push-note]
+    check: How does user 4 learn about a message while the app is closed?
+    answer: "The notification service, fed by the stream, pushes an alert through FCM or APNs."
+asks:
+  - ids: [o-stream]
+    beats: [1]
+    question: "User 4 is offline and thousands of messages arrive every second. Where should the chat servers put messages so none are lost and they stay fast?"
+    hints:
+      - The chat servers should not each write to the database directly.
+      - Something that buffers events and lets a consumer catch up.
+  - ids: [o-chatdb]
+    beats: [2]
+    question: "Which database would you store a hundred billion messages a day in?"
+    hints:
+      - Is this load mostly reads or mostly writes?
+      - Think of databases built for heavy writes.
+  - ids: [o-notif]
+    beats: [4]
+    question: "And how should an offline user find out they have a message?"
+    hints:
+      - Their phone has no WebSocket open.
+      - Android and iOS each have a push service.

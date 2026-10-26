@@ -1,0 +1,146 @@
+# Top K leaderboard interview, deep dive 2: precomputed rankings. The video's second picture, drawn fresh under the kept requirements: the same ingestion (clients, gateway, score service, Kafka, DB consumer, score DB with its Cassandra note), Redis gone, a Flink diamond under the score DB writing an aggregated DB (a time-series DB) to its left, the ranking service reading it with a cache above; to the right the "Precomputed" notes, pro, cons, mitigation and where it fits. The video lists BigQuery as a write store and Splunk as a processor; this pack says Cassandra and Flink or Spark.
+id: backend/top-k-leaderboard/end-to-end/lld-precomputed
+title: "Deep dive, 2: precompute the rankings"
+source:
+  hash: "b4b3b718fd66"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/top-k-leaderboard/end-to-end/lld-redis-sorted-set
+  assumes:
+    - "Score events go through Kafka; a DB consumer writes the score DB."
+    - "A Redis sorted set answers top K from memory but is hard to scale globally and fragile."
+  carries:
+    - "Scores live in a write-optimized store, Cassandra; a Flink or Spark job precomputes top K per region and window into an aggregated DB."
+    - "The aggregated DB is a time-series DB such as InfluxDB (or partitioned PostgreSQL), with a cache in front."
+    - "Precomputing is durable and scales out, but rankings are as stale as the last job run; it fits when the queries are known ahead."
+  terms:
+    - term: precompute
+      means: "Compute every answer ahead of time on a schedule, so a query only reads a stored result."
+    - term: write-optimized database
+      means: "A store built for heavy append traffic, such as Cassandra, whose writes are sequential appends."
+    - term: time-series database
+      means: "A store organised by time, such as InfluxDB, fast at reading a window of time for a series."
+board:
+  keep: [title, nfr, nfr-scale, nfr-cap, nfr-latency, nfr-exact]
+  elements:
+    - { id: p2, kind: region, label: "5. Deep dive, 2. Precomputed", at: [6, 22], size: [70, 28] }
+    - { id: p-clients, kind: box, label: clients, at: [8, 33], size: [6, 3], in: p2 }
+    - { id: p-gateway, kind: box, label: API gateway, at: [18, 27], size: [7, 16], in: p2 }
+    - { id: p-score, kind: box, label: Score service, at: [29, 27], size: [10, 3], in: p2, tone: blue }
+    - { id: p-ranking, kind: box, label: Ranking service, at: [29, 40], size: [10, 3], in: p2, tone: blue }
+    - { id: p-kafka, kind: box, label: Kafka, at: [43, 27], size: [7, 3], in: p2, tone: amber }
+    - { id: p-dbc, kind: box, label: DB consumer, at: [57, 27], size: [11, 3], in: p2, tone: grey }
+    - { id: p-db, kind: oval, label: Score DB, at: [57, 34], size: [11, 4], in: p2, tone: amber }
+    - { id: p-flink, kind: diamond, label: Flink, at: [57, 41], size: [11, 4], in: p2, tone: grey }
+    - { id: p-agg, kind: oval, label: Aggregated DB, at: [42, 41], size: [11, 4], in: p2, tone: amber }
+    - { id: p-cache, kind: oval, label: Cache, at: [42, 34], size: [11, 4], in: p2, tone: green }
+    - { id: p-db-note, kind: note, label: "score DB, Cassandra, write-optimized", at: [57, 47], in: p2 }
+    - { id: p-agg-note, kind: note, label: "time series DB, like InfluxDB", at: [40, 47], in: p2 }
+    - { id: p2n, kind: region, label: "Precomputed, pros and cons", at: [80, 22], size: [25, 15], dashed: true }
+    - { id: p2n-job, kind: note, label: "a job precomputes top K, hourly or daily", at: [81, 25], in: p2n }
+    - { id: p2n-where, kind: note, label: "per region and window, into the aggregated DB", at: [81, 26], in: p2n }
+    - { id: p2n-pro, kind: note, label: "pro, durable, backed up, scales out", at: [81, 28], in: p2n }
+    - { id: p2n-stale, kind: note, label: "con, minutes stale, needs Airflow or Spark", at: [81, 29], in: p2n }
+    - { id: p2n-every, kind: note, label: "con, every dimension computed ahead", at: [81, 30], in: p2n }
+    - { id: p2n-fix, kind: note, label: "fix, shorter batches, a cache, Flink", at: [81, 32], in: p2n }
+    - { id: p2n-fits, kind: note, label: "fits when the queries are known ahead", at: [81, 34], in: p2n }
+  arrows:
+    - { id: p-clients-gateway, from: p-clients, to: p-gateway }
+    - { id: p-gateway-score, from: p-gateway, to: p-score }
+    - { id: p-gateway-ranking, from: p-gateway, to: p-ranking }
+    - { id: p-score-kafka, from: p-score, to: p-kafka }
+    - { id: p-kafka-dbc, from: p-kafka, to: p-dbc }
+    - { id: p-dbc-db, from: p-dbc, to: p-db }
+    - { id: p-db-flink, from: p-db, to: p-flink }
+    - { id: p-flink-agg, from: p-flink, to: p-agg }
+    - { id: p-ranking-agg, from: p-ranking, to: p-agg }
+    - { id: p-ranking-cache, from: p-ranking, to: p-cache }
+beats:
+  - point: "Second approach: keep the ingestion, score service to Kafka to DB consumer to score DB, and drop Redis, the part that was hard to scale and to keep."
+    kind: component
+    weight: core
+    teach:
+      - "Second way. Copy the picture again. The way data comes in does not change: score service, Kafka, DB consumer, score database."
+      - "But Redis goes. Its problems were scaling across the globe and keeping the data safe, so this time we answer from data we computed ahead."
+    draw: [p2, p-clients, p-gateway, p-clients-gateway, p-score, p-gateway-score, p-ranking, p-gateway-ranking, p-kafka, p-score-kafka, p-dbc, p-kafka-dbc, p-db, p-dbc-db]
+    check: What stays from the first approach, and what goes?
+    answer: "The ingestion through Kafka and the DB consumer stays; the Redis consumer and sorted set go."
+  - point: "The score DB takes a million writes a second, so choose a write-optimized store: Cassandra (Spanner works too); BigQuery is a warehouse for batch scans, not for single writes."
+    kind: decision
+    weight: core
+    teach:
+      - "Which database for the scores? It takes a million writes a second, so it must be write-optimized. Cassandra is built for that: its writes are appends. Spanner works too."
+      - "BigQuery comes up, but it is an analytics warehouse: good for scanning the data in a batch, not as the store a million single scores land in."
+    draw: [p-db-note]
+    check: Why Cassandra for the score DB?
+    answer: "It is write-optimized, built for heavy append traffic like a million score events a second."
+    misconceptions:
+      - "BigQuery can be the write store -> it is an analytics warehouse for batch queries, not for a million small writes a second."
+  - point: "A processing job, Apache Flink or a Spark job run by Airflow or cron, reads the scores and precomputes the top K for every region and window into an aggregated DB."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Under the score database, a processing job: Apache Flink, or Spark on a schedule from Airflow or cron. It reads the scores and computes the top K for every board, region and time window, hourly or daily."
+      - "It writes the results into a separate aggregated database. Everything a client may ask for is already there."
+    draw: [p-flink, p-db-flink, p-agg, p-flink-agg, p2n, p2n-job, p2n-where]
+    check: What does the processing job write, and where?
+    answer: "The top K for every board, region and window, into the aggregated database."
+    misconceptions:
+      - "Splunk can do the precompute -> Splunk searches logs; the job is a stream or batch processor such as Flink or Spark."
+  - point: "The ranking service reads only the aggregated DB; a time-series DB such as InfluxDB fits, since every query is a window and a region (PostgreSQL works with partitioning and indexes)."
+    kind: decision
+    weight: core
+    teach:
+      - "The ranking service now queries the aggregated database, always by window and region. That shape suits a time-series database such as InfluxDB."
+      - "PostgreSQL would work too, but you would partition and index it by country, region and window yourself."
+    draw: [p-ranking-agg, p-agg-note]
+    check: Why does a time-series database suit the aggregated data?
+    answer: "Every query asks for one region over one time window, which is how a time-series database organises and reads data."
+  - point: "The flaw: rankings are as old as the last job run, minutes or more, the job needs Airflow, Spark or cron, and every dimension is computed whether asked or not. Durable and scalable, though."
+    kind: failure
+    weight: core
+    teach:
+      - "Write the pros and cons. Pro: it is stored in a database, durable and backed up, and scales out horizontally."
+      - "Con: the data is not real time. Scores land, then the job runs every few minutes or hours, so the top K lags. It also needs a scheduler and computes every dimension in advance."
+    draw: [p2n-pro, p2n-stale, p2n-every]
+    check: What does a user see between two runs of the job?
+    answer: "The rankings from the last run: new scores do not move them until the next run, minutes or hours later."
+  - point: "Mitigate with shorter batches, Flink for faster processing, and a cache in front of the aggregated DB so popular lists are not read from the database each time."
+    kind: mechanism
+    weight: core
+    teach:
+      - "To soften it: run shorter batches, use Flink to process faster, and put a cache in front of the aggregated database."
+      - "The ranking service reads the cache first, so the most asked-for lists come from memory."
+    draw: [p-cache, p-ranking-cache, p2n-fix]
+    check: What does the cache in front of the aggregated DB save?
+    answer: "Repeated reads of the same popular precomputed lists from the database."
+  - point: "Precomputing fits when the queries are known ahead: which windows and regions users will look at, and when a short delay is acceptable."
+    kind: decision
+    weight: supporting
+    teach:
+      - "Where it fits: when you know the queries ahead, which dimensions users will view, and the product does not need real-time rankings."
+    draw: [p2n-fits]
+    check: For which kind of product is precomputing a good fit?
+    answer: "One whose queries are known in advance and which can tolerate rankings a few minutes old, such as trending lists."
+asks:
+  - ids: [p-db-note]
+    beats: [2]
+    question: "The score database takes a million writes a second. Which database would you choose for it, and why?"
+    hints:
+      - Think of a store built for heavy writes.
+      - Its writes are appends, and it spreads over many nodes.
+  - ids: [p-flink, p-agg]
+    beats: [3]
+    question: "We want the answers ready before anyone asks. What would compute them, and where would they go?"
+    hints:
+      - Something that processes the scores on a schedule or as a stream.
+      - The results need a store of their own for the ranking service.
+  - ids: [p-cache]
+    beats: [6]
+    question: "The same popular lists are read again and again from the aggregated database. How would you speed that up?"
+    hints:
+      - Something in memory.
+      - In front of the aggregated database.

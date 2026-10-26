@@ -1,0 +1,118 @@
+# Social media interview, high-level design: "4. High-level design" under the requirements, as in the video: clients on the left, a tall API gateway and load balancer, a column of five services (user, content, feed, follower, engagement), and their stores on the right; the feed service reads the follower DB and the post DB.
+id: backend/social-media-feed/end-to-end/high-level-design
+title: Five services behind a gateway
+source:
+  hash: "f42f8d3f476f"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: backend/social-media-feed/end-to-end/api
+  assumes:
+    - "Functional: sign up and log in, create posts, follow, like and comment, see a feed."
+    - "500M daily active users, so the backend is distributed."
+  carries:
+    - "Clients reach an API gateway and load balancer (authentication, routing, rate limiting, round robin) in front of five services."
+    - "User service and user DB; content service writing text to a post DB and media to S3; follower service and follower DB; engagement service with comment and like DBs."
+    - "The feed service reads the user's followees from the follower DB, then their posts from the post DB, and merges them at read time."
+  terms:
+    - term: API gateway
+      means: "The single entry point that authenticates, rate limits and routes each request to its service."
+    - term: blob storage
+      means: "Storage for large files such as images and videos (S3), referenced by URL."
+board:
+  keep: [title, prompt-desc, fr, fr-login, fr-post, fr-follow, fr-engage, fr-feed, nfr, nfr-scale, nfr-cap, nfr-latency]
+  elements:
+    - { id: hld, kind: region, label: 4. High-level design, at: [2, 22], size: [66, 30] }
+    - { id: h-clients, kind: box, label: "users, mobile or web", at: [4, 33], size: [9, 4], in: hld }
+    - { id: h-gateway, kind: box, label: API gateway and load balancer, at: [17, 25], size: [10, 24], in: hld }
+    - { id: h-gw-note, kind: note, label: "auth, routing, rate limiting, round robin", at: [12, 50], in: hld }
+    - { id: h-user, kind: box, label: User service, at: [33, 25], size: [13, 3], in: hld, tone: blue }
+    - { id: h-user-db, kind: oval, label: User DB, at: [52, 25], size: [12, 3], in: hld, tone: amber }
+    - { id: h-content, kind: box, label: Content service, at: [33, 30], size: [13, 3], in: hld, tone: blue }
+    - { id: h-post-db, kind: oval, label: Post DB, at: [52, 29], size: [12, 3], in: hld, tone: amber }
+    - { id: h-s3, kind: oval, label: S3 bucket, at: [52, 33], size: [10, 3], in: hld, tone: amber }
+    - { id: h-feed, kind: box, label: Feed service, at: [33, 35], size: [13, 3], in: hld, tone: blue }
+    - { id: h-follower, kind: box, label: Follower service, at: [33, 40], size: [13, 3], in: hld, tone: blue }
+    - { id: h-follower-db, kind: oval, label: Follower DB, at: [52, 40], size: [12, 3], in: hld, tone: amber }
+    - { id: h-engage, kind: box, label: Engagement service, at: [33, 45], size: [13, 3], in: hld, tone: blue }
+    - { id: h-comment-db, kind: oval, label: Comment DB, at: [52, 45], size: [12, 3], in: hld, tone: amber }
+    - { id: h-like-db, kind: oval, label: Like DB, at: [52, 49], size: [12, 3], in: hld, tone: amber }
+  arrows:
+    - { id: h-clients-gw, from: h-clients, to: h-gateway }
+    - { id: h-gw-user, from: h-gateway, to: h-user }
+    - { id: h-user-userdb, from: h-user, to: h-user-db }
+    - { id: h-gw-content, from: h-gateway, to: h-content }
+    - { id: h-content-postdb, from: h-content, to: h-post-db, label: text }
+    - { id: h-content-s3, from: h-content, to: h-s3, label: media }
+    - { id: h-gw-feed, from: h-gateway, to: h-feed }
+    - { id: h-gw-follower, from: h-gateway, to: h-follower }
+    - { id: h-follower-db-arrow, from: h-follower, to: h-follower-db }
+    - { id: h-feed-followerdb, from: h-feed, to: h-follower-db, label: followees }
+    - { id: h-feed-postdb, from: h-feed, to: h-post-db, label: their posts }
+    - { id: h-gw-engage, from: h-gateway, to: h-engage }
+    - { id: h-engage-comment, from: h-engage, to: h-comment-db }
+    - { id: h-engage-like, from: h-engage, to: h-like-db }
+beats:
+  - point: "At 500 million daily users the backend is many services, so clients reach one API gateway and load balancer that authenticates, rate limits and routes, round robin."
+    kind: component
+    weight: core
+    teach:
+      - "Step four, the high-level design. On the left the users, mobile apps or browsers."
+      - "With 500 million daily users this is a distributed, service-based backend, so everything enters through an API gateway and load balancer: the gateway authenticates and authorizes, rate limits and routes by path; the load balancer spreads each service's traffic round robin."
+    draw: [hld, h-clients, h-gateway, h-clients-gw, h-gw-note]
+    check: What does the gateway do before a request reaches a service?
+    answer: "Authenticates and authorizes it, rate limits it, and routes it to the right service, spread round robin."
+  - point: "The user service handles onboarding and keeps accounts in a user DB."
+    kind: component
+    weight: core
+    teach:
+      - "First requirement, onboarding: a user service. The gateway routes register and login to it, and it saves the user in a user DB."
+      - "How it stores them, the schema and the database, is for the low-level design."
+    draw: [h-user, h-gw-user, h-user-db, h-user-userdb]
+    check: Which service and store handle sign-up?
+    answer: The user service, saving to the user DB.
+  - point: "The content service stores a post's text and metadata in a post DB and its image or video in S3, since large files belong in blob storage."
+    kind: component
+    weight: core
+    teach:
+      - "Second, posting: a content service handles every kind of content. Text and metadata go to a post DB."
+      - "An image or a video is a large file, so it goes to blob storage, an S3 bucket, and the post keeps its URL. Two arrows from the content service."
+    draw: [h-content, h-gw-content, h-post-db, h-content-postdb, h-s3, h-content-s3]
+    check: Why not keep the video in the post database?
+    answer: Large media belongs in cheap blob storage like S3; the post row keeps only its URL.
+  - point: "The follower service keeps a follower DB; the feed service reads the user's followees from it, then their posts from the post DB, and merges them."
+    kind: flow
+    weight: core
+    teach:
+      - "Third, the feed service, the most important. When the user opens the app, it needs who they follow, so a follower service with its follower DB."
+      - "The feed service reads the followees from the follower DB, then their posts from the post DB, merges them and returns them. That is the idea; at this scale it is far from this simple, as the low-level design shows."
+    draw: [h-feed, h-gw-feed, h-follower, h-gw-follower, h-follower-db, h-follower-db-arrow, h-feed-followerdb, h-feed-postdb]
+    check: Walk me through building a feed in this first design.
+    answer: The feed service reads the user's followees from the follower DB, then their posts from the post DB, and merges them.
+  - point: "One engagement service records likes and comments in a like DB and a comment DB; in production they would likely be two services."
+    kind: component
+    weight: supporting
+    teach:
+      - "Last, likes and comments: one engagement service, writing to a comment DB and a like DB."
+      - "In a real system they would likely be separate services. Every functional requirement now has its box."
+    draw: [h-engage, h-gw-engage, h-comment-db, h-engage-comment, h-like-db, h-engage-like]
+    check: Which stores does the engagement service write to?
+    answer: The comment DB and the like DB.
+asks:
+  - ids: [h-gateway]
+    beats: [1]
+    question: "Five hundred million users, many services. What sits between the clients and the services?"
+    hints:
+      - Something has to check who is calling and send each request to the right place.
+      - And spread the load across many servers.
+  - ids: [h-user, h-content, h-feed, h-follower, h-engage]
+    beats: [2, 3, 4, 5]
+    question: "Now the services. Looking at the five requirements, what services would you draw behind the gateway?"
+    hints:
+      - Roughly one service per requirement.
+      - Who handles posting, who handles who follows whom, who builds the feed?
+task:
+  prompt: "Draw the high-level design: clients, the API gateway and load balancer, the user, content, feed, follower and engagement services with their stores, and the feed service reading the follower DB and the post DB."
+  expects: [1, 2, 3, 4, 5]
