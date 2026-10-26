@@ -33,6 +33,9 @@ class FakeWeb:
     kind: str = "interview"
     self_drive: float | None = None
     draw_ops: list[dict[str, Any]] | None = None
+    # What the reply says after its drawing, as deltas.
+    after_draw: list[str] = field(default_factory=list)
+    draw_prelude: bool = False
 
     def state(self, say: str = "", resumed: bool = False) -> dict[str, Any]:
         return {
@@ -89,7 +92,11 @@ class FakeWeb:
             for c in chunks:
                 lines.append(f"event: delta\ndata: {json.dumps({'text': c})}\n\n")
             if self.draw_ops:
-                lines.append(f"event: draw\ndata: {json.dumps({'ops': self.draw_ops, 'anchor': {'words': 3}})}\n\n")
+                lines.append(
+                    f"event: draw\ndata: {json.dumps({'ops': self.draw_ops, 'anchor': {'words': 0, 'prelude': True} if self.draw_prelude else {'words': 3}})}\n\n"
+                )
+            for c in self.after_draw:
+                lines.append(f"event: delta\ndata: {json.dumps({'text': c})}\n\n")
             lines.append(
                 f"event: done\ndata: {json.dumps({'turn': {'role': 'interviewer', 'text': self.reply}, 'state': self.state()})}\n\n"
             )

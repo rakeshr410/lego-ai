@@ -1,0 +1,146 @@
+# A normalized client store: tables keyed by id, relations as ids, selectors, writes that copy only the changed path, and subscriptions to a slice.
+id: state-management/normalized-client-store/how-it-works
+title: A normalized client store
+source:
+  hash: a5b995a9add1
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: state-management/kinds-of-state/how-it-works
+  assumes:
+    - A small shared store owns state that components far apart in the tree read or change.
+    - Derived state is computed in render or a selector and never stored.
+  carries:
+    - Each entity type is a table, byId for lookups and allIds for order; a screen's list is its own array of ids.
+    - Replies are split on arrival, each record upserted into its table by id.
+    - Relations are stored as ids, with a join table for many to many and selectors for anything derived.
+    - Views read through selectors; joins that build new arrays are memoised.
+    - An update copies only the objects on the path to the change, so a reference check tells what changed.
+    - A component re-renders only when the slice it selects is a different reference.
+  terms:
+    - term: normalized store
+      means: Server records kept once each, in tables keyed by id, with relations and lists held as ids.
+    - term: byId and allIds
+      means: A table's two parts, a map from id to the one record and an array that keeps the order.
+    - term: upsert
+      means: Add a record if its id is new, merge it into the existing one if it is known.
+    - term: selector
+      means: A function from the store to the value one view needs.
+    - term: structural sharing
+      means: A new state that reuses every object not on the path to the change.
+board:
+  keep: [placement, q-computed, q-server, q-url, q-form, q-shared, home-component, home-derived, home-cache, home-url, home-form, home-store, yes-computed, yes-server, yes-url, yes-form, yes-shared, no-shared]
+  elements:
+    - { id: tables, kind: region, label: Store tables, at: [2, 47], size: [40, 28] }
+    - { id: cart-reply, kind: region, label: "cart reply, nested", at: [4, 50], size: [14, 9], in: tables, tone: grey }
+    - { id: reply-line, kind: region, label: "cart line", at: [5, 52], size: [12, 6], in: cart-reply }
+    - { id: reply-product, kind: box, label: Monstera, at: [6, 54], size: [10, 2], in: reply-line }
+    - { id: products-byid, kind: oval, label: products.byId, at: [26, 50], size: [14, 3], in: tables, tone: amber }
+    - { id: cartlines-byid, kind: oval, label: cartLines.byId, at: [26, 60], size: [14, 3], in: tables, tone: amber }
+    - { id: products-allids, kind: box, label: products.allIds, at: [4, 61], size: [14, 2], in: tables, tone: amber }
+    - { id: line-keeps-id, kind: note, label: "line keeps productId p-mon20", at: [4, 64], in: tables }
+    - { id: wishlist-ids, kind: box, label: wishlist.productIds, at: [26, 66], size: [14, 3], in: tables, tone: amber }
+    - { id: collection-items, kind: box, label: "collectionItems, a join", at: [26, 70], size: [14, 3], in: tables, tone: amber }
+    - { id: selectors, kind: region, label: Selectors, at: [44, 47], size: [17, 28] }
+    - { id: sel-product, kind: box, label: "selectProduct, by id", at: [45, 50], size: [12, 3], in: selectors, tone: green }
+    - { id: sel-total, kind: box, label: selectCartTotalCents, at: [45, 55], size: [12, 3], in: selectors, tone: green }
+    - { id: sel-count, kind: box, label: selectCartCount, at: [45, 60], size: [12, 3], in: selectors, tone: green }
+    - { id: sel-wish, kind: box, label: selectWishlistProducts, at: [45, 66], size: [12, 3], in: selectors, tone: amber }
+    - { id: memo-join, kind: note, label: joins need createSelector, at: [45, 70], in: selectors }
+    - { id: per-arg-cache, kind: note, label: "one cache entry per id: 48 cards", at: [44, 72], in: selectors }
+    - { id: copy-path, kind: region, label: Copy the changed path, at: [62, 42], size: [58, 19] }
+    - { id: new-root, kind: box, label: "state, new root", at: [64, 45], size: [11, 3], in: copy-path, tone: red }
+    - { id: new-products, kind: box, label: "products, new", at: [78, 45], size: [11, 3], in: copy-path, tone: red }
+    - { id: new-byid, kind: box, label: "byId, new", at: [92, 45], size: [11, 3], in: copy-path, tone: red }
+    - { id: new-record, kind: box, label: "Monstera record, new", at: [108, 45], size: [10, 3], in: copy-path, tone: red }
+    - { id: same-lines, kind: box, label: "cartLines, same", at: [64, 53], size: [11, 3], in: copy-path, tone: grey }
+    - { id: same-records, kind: box, label: "47 records, same", at: [92, 53], size: [11, 3], in: copy-path, tone: grey }
+    - { id: ref-check, kind: note, label: "changed? one reference check", at: [64, 58], in: copy-path }
+    - { id: in-place, kind: note, label: "edit in place: no new references", at: [82, 58], in: copy-path }
+    - { id: subscriptions, kind: region, label: "One price drop, who re-renders", at: [62, 63], size: [56, 17] }
+    - { id: runs-every-action, kind: note, label: every action runs every selector, at: [64, 65], in: subscriptions }
+    - { id: re-render-rule, kind: note, label: re-render only on a new reference, at: [88, 65], in: subscriptions }
+    - { id: whole-store, kind: box, label: "select whole store: 51 re-render", at: [64, 67], size: [18, 3], in: subscriptions, tone: red }
+    - { id: per-id, kind: box, label: "select per id: 3 re-render", at: [64, 71], size: [18, 3], in: subscriptions, tone: green }
+    - { id: three-renders, kind: region, label: the 3 that re-render, at: [88, 68], size: [30, 7], in: subscriptions, tone: green }
+    - { id: render-card, kind: box, label: Monstera card, at: [89, 71], size: [9, 2], in: three-renders }
+    - { id: render-wish, kind: box, label: wishlist, at: [99, 71], size: [8, 2], in: three-renders }
+    - { id: render-drawer, kind: box, label: cart drawer, at: [108, 71], size: [9, 2], in: three-renders }
+    - { id: fresh-array, kind: box, label: "new array each call: every action", at: [64, 76], size: [18, 3], in: subscriptions, tone: red }
+  arrows:
+    - { id: split, from: cart-reply, to: products-byid, label: upsert by id }
+    - { id: line-product, from: cartlines-byid, to: products-byid, label: productId }
+    - { id: reads-product, from: products-byid, to: sel-product, label: lookup }
+    - { id: counts-lines, from: cartlines-byid, to: sel-count, label: count }
+    - { id: joins-wish, from: wishlist-ids, to: sel-wish, label: join }
+    - { id: root-products, from: new-root, to: new-products }
+    - { id: products-byid-path, from: new-products, to: new-byid }
+    - { id: byid-record, from: new-byid, to: new-record, label: price }
+    - { id: root-shares, from: new-root, to: same-lines, label: shared, dashed: true }
+    - { id: byid-shares, from: new-byid, to: same-records, label: shared, dashed: true }
+    - { id: per-id-renders, from: per-id, to: three-renders }
+beats:
+  - point: Each entity type becomes a table, byId for a one-read lookup and allIds for order, and each reply is taken apart on arrival so every record is upserted into its table by id.
+    kind: mechanism
+    weight: core
+    teach:
+      - byId maps an id to the one record for it, so finding a product is a single property read instead of a search. allIds keeps an order, because an object is a poor place for one, integer-like keys get reordered and re-sorting means rebuilding it. A screen's own list, the catalogue by price or the wishlist in saved order, is a small array of ids into the table.
+      - The work happens where data enters. Mossgrove's cart reply carries the Monstera inside its line; the mapping step upserts the Monstera into products.byId, the same table the catalogue filled, and the line keeps only productId p-mon20.
+    draw: [tables, cart-reply, reply-line, reply-product, products-byid, split, cartlines-byid, line-product, line-keeps-id, products-allids]
+    check: The cart reply arrives with the Monstera nested inside its line. What does the store keep after the mapping step?
+    answer: The Monstera is upserted into products.byId, merged if the catalogue already had it, and the cart line keeps only productId p-mon20 and its quantity; the line's id joins cartLines.allIds.
+    misconceptions:
+      - "Keep the order in the byId object's keys -> integer-like keys are reordered numerically and re-sorting rebuilds the object; keep order in an id array."
+  - point: Relations are stored as ids on the side that owns them, many to many in a join table, and anything derived is computed by a selector rather than stored.
+    kind: rule
+    weight: core
+    teach:
+      - Many to one sits on the many side, each cart line holds a productId and the product does not list its lines. One to many is an ordered id array owned by the parent, the wishlist's productIds, because the order is the wishlist's.
+      - A plant in several collections, Pet-safe and Low light, is many to many, so a join table holds collectionId and productId pairs and anything about the pair. A product's lines in the cart are derived, a selector computes them; storing them on the product would be a second copy of one fact.
+    draw: [wishlist-ids, collection-items]
+    check: A plant can be in several collections, such as Pet-safe and Low light. How is that relation stored?
+    answer: In a join table of collectionId and productId pairs, which can also hold anything about the pair itself.
+    misconceptions:
+      - "Store each product's cart lines on the product -> that is a second copy of the same fact; a selector derives it from cartLines."
+  - point: Views read the store only through selectors, and a selector that builds a new array or object is memoised so it returns the same reference while its inputs are unchanged.
+    kind: mechanism
+    weight: core
+    teach:
+      - A selector maps the store to what one view needs, the product with this id, the wishlist as records, the cart total. Views never touch the tables, so the layout can change under them, and derived values are computed in one place.
+      - A lookup or a sum that returns a number gives the same value when nothing changed and needs no memo. A join that maps the wishlist's ids to records builds a new array every call, so wrap it in createSelector, which reruns the join only when an input is a different reference.
+      - Reselect 5 keeps one cache entry per argument set, so one selectProduct shared by 48 cards, each with its own id, does not thrash.
+    draw: [selectors, sel-product, reads-product, sel-wish, joins-wish, sel-total, sel-count, counts-lines, memo-join, per-arg-cache]
+    check: Which of these needs a memoised selector, selectCartCount, which returns a number, or selectWishlistProducts, which maps ids to product records? Why?
+    answer: selectWishlistProducts. It builds a new array on every call, so without memoising a reference check sees a change every time; a number compares by value and needs no memo.
+    misconceptions:
+      - "Memoise every selector -> a lookup or a number already returns the same value when nothing changed; memoise the joins that build new arrays or objects."
+  - point: An update never edits the store in place; it copies only the objects on the path from the root to the change and shares the rest, so a single === check tells whether anything changed.
+    kind: mechanism
+    weight: core
+    teach:
+      - The Monstera's price drops. The new state copies the root, the products table, its byId map and the Monstera's record, four new objects. The cart lines, the wishlist, allIds and the other 47 records are the same objects, referenced from the new root. The byId copy is shallow, one pointer per product.
+      - That turns did this change into is this the same reference. If the Snake plant's record is the object it was, nothing in it changed, and its card can skip rendering.
+      - Editing in place breaks the promise, the data changes but no reference does, so every check concludes nothing happened and no view updates. Immer, inside Redux Toolkit, lets you assign to a draft and copies the path for you.
+    draw: [copy-path, new-root, new-products, root-products, new-byid, products-byid-path, new-record, byid-record, same-lines, root-shares, same-records, byid-shares, ref-check, in-place]
+    check: The Monstera's price drops from 2400 cents. Which objects in the store are new after the update, and which are reused?
+    answer: Four are new, the root, products, products.byId and the Monstera's record; everything else, cartLines, the wishlist, products.allIds and the other 47 records, is the same object as before.
+    misconceptions:
+      - "Just set the new price on the existing record -> the reference stays the same, so every === check says nothing changed and no view updates."
+      - "Object.freeze protects the whole store -> on its own it freezes only the top level; Immer freezes what it produces."
+  - point: After every action each mounted selector runs and its component re-renders only if the result is a different reference, so what a component selects decides how often it renders.
+    kind: metric
+    weight: core
+    teach:
+      - With useSelector every selector runs after every dispatched action, and the component re-renders only when the result is not === to last time; useSyncExternalStore compares with Object.is the same way.
+      - Select the whole state and the root is new after any update, so on Mossgrove's catalogue one price drop re-renders all 51 mounted components. Select per id and only the Monstera's card, the wishlist and the cart drawer re-render, 3, however many cards are on the page.
+      - Select a value rebuilt on every call and the component renders after every action, even one that changed nothing. Selectors run on every action, so they must stay cheap.
+    draw: [subscriptions, runs-every-action, re-render-rule, whole-store, per-id, three-renders, render-card, render-wish, render-drawer, per-id-renders, fresh-array]
+    check: On a catalogue with 48 product cards, a wishlist panel, the cart drawer and the badge, the Monstera's price drops. How many components re-render with whole-store subscriptions, and with per-id selectors?
+    answer: 51 with whole-store subscriptions, because the root is new; 3 with per-id selectors, the Monstera's card, the wishlist panel and the cart drawer.
+    misconceptions:
+      - "A component re-renders only when its data really changed -> it re-renders when its selected result is a different reference, so a selector that rebuilds an array re-renders it after every action."
+task:
+  prompt: Draw Mossgrove's store as tables after the cart reply is mapped, then show which objects are new when the Monstera's price drops and which views re-render with per-id selectors.
+  expects: [1, 4, 5]

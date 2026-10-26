@@ -1,0 +1,149 @@
+# Persisting and syncing: the query string as a small public store, push or replace, a versioned envelope in storage read back on boot, and the storage event between tabs.
+id: state-management/persisting-and-syncing-state/how-it-works
+title: URL, storage and tabs
+source:
+  hash: 166554a76435
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: state-management/persisting-and-syncing-state/key-idea
+  assumes:
+    - The home for persisted state is chosen by who must see it again, a link recipient, this device later, or another tab right now.
+    - State anyone with the address should see goes in the URL, which is public and limited in length.
+    - State for this person on this device goes in storage, which outlives the code that wrote it.
+    - Tabs share storage but not memory.
+  carries:
+    - The query string is a store with two pure functions, parse and serialize, writing one canonical form.
+    - The URL is parsed as untrusted input and a cleaned link is rewritten with replaceState.
+    - pushState adds a history entry, replaceState rewrites the current one, and popstate fires only on history moves.
+    - Storage holds the least that rebuilds the state, in a versioned envelope that is migrated and validated on boot.
+    - A write to localStorage fires a storage event in other same-origin tabs, which read storage again through the same loader.
+  terms:
+    - term: canonical form
+      means: The one string a set of filters serializes to, defaults left out and keys sorted.
+    - term: pushState and replaceState
+      means: History API calls that change the address without loading a document, adding an entry or rewriting the current one.
+    - term: envelope
+      means: The stored value wrapped with a version number and a timestamp, so later code can migrate it.
+    - term: rehydration
+      means: Reading persisted state back into the store after the page boots.
+    - term: storage event
+      means: The event other same-origin tabs receive when one tab changes localStorage; the writer gets none.
+board:
+  keep: [who-sees, tab-memory, filters-example, cart-example, who-link, home-query, who-device, home-device, who-tab, home-signal, link-gets, device-gets, tab-gets, homes, profile, one-tab, row-memory, row-url, row-session, row-local, row-idb, row-server]
+  elements:
+    - { id: url-store, kind: region, label: The URL as a store, at: [2, 38], size: [56, 21] }
+    - { id: query-string, kind: box, label: "query string: light=low, max=40", at: [4, 41], size: [24, 3], in: url-store, tone: amber }
+    - { id: filters-object, kind: box, label: Filters object, at: [38, 41], size: [16, 3], in: url-store, tone: blue }
+    - { id: canonical, kind: note, label: "canonical: defaults left out, keys sorted", at: [4, 45], in: url-store }
+    - { id: untrusted, kind: box, label: "untrusted link, 64 characters", at: [4, 47], size: [22, 3], in: url-store, tone: red }
+    - { id: link-64-33, kind: box, label: "canonical link, 33 characters", at: [34, 47], size: [20, 3], in: url-store, tone: green }
+    - { id: push-state, kind: box, label: "pushState: Back returns here", at: [4, 52], size: [24, 3], in: url-store, tone: blue }
+    - { id: replace-state, kind: box, label: "replaceState: no new entry", at: [30, 52], size: [24, 3], in: url-store, tone: blue }
+    - { id: popstate, kind: note, label: "popstate: only on Back or Forward, then parse again", at: [4, 56], in: url-store }
+    - { id: storage-boot, kind: region, label: Storage and reading back, at: [60, 38], size: [58, 23] }
+    - { id: local-storage, kind: oval, label: localStorage, at: [62, 41], size: [16, 3], in: storage-boot, tone: amber }
+    - { id: envelope, kind: box, label: "envelope v2: sku, pot, qty", at: [84, 41], size: [22, 3], in: storage-boot, tone: amber }
+    - { id: strings-sync, kind: note, label: "strings only, synchronous, about 5 MiB", at: [62, 45], in: storage-boot }
+    - { id: never-store, kind: note, label: "never price, stock or a token", at: [84, 45], in: storage-boot }
+    - { id: read-after, kind: box, label: read after hydration, at: [62, 48], size: [14, 3], in: storage-boot, tone: blue }
+    - { id: migrate, kind: box, label: migrate to v2, at: [82, 48], size: [14, 3], in: storage-boot, tone: blue }
+    - { id: cart-ready, kind: box, label: cart ready, at: [101, 48], size: [14, 3], in: storage-boot, tone: green }
+    - { id: too-new, kind: box, label: "newer build: never write", at: [62, 56], size: [14, 3], in: storage-boot, tone: red }
+    - { id: unreadable, kind: box, label: "unreadable: empty cart", at: [82, 56], size: [14, 3], in: storage-boot, tone: red }
+    - { id: tabs, kind: region, label: "Two tabs, one storage", at: [2, 63], size: [68, 10] }
+    - { id: tab-a, kind: box, label: "Tab A: writer, no event", at: [4, 66], size: [16, 3], in: tabs, tone: blue }
+    - { id: shared-storage, kind: oval, label: shared localStorage, at: [26, 66], size: [18, 3], in: tabs, tone: amber }
+    - { id: tab-b, kind: box, label: "Tab B: product page", at: [52, 66], size: [16, 3], in: tabs, tone: blue }
+    - { id: broadcast, kind: note, label: "BroadcastChannel: news not stored", at: [4, 70], in: tabs }
+    - { id: no-lock, kind: note, label: "no lock: Web Locks for read, change, write", at: [24, 70], in: tabs }
+    - { id: doorbell, kind: note, label: "the event is a doorbell: read again", at: [52, 70], in: tabs }
+  arrows:
+    - { id: codec, from: query-string, to: filters-object, label: "parse, serialize", both: true }
+    - { id: cleaned, from: untrusted, to: link-64-33, label: replaceState }
+    - { id: holds, from: local-storage, to: envelope, label: holds }
+    - { id: older, from: read-after, to: migrate, label: from v1 }
+    - { id: valid, from: migrate, to: cart-ready, label: valid }
+    - { id: step-fails, from: migrate, to: unreadable, label: fails }
+    - { id: newer, from: read-after, to: too-new, label: v3 }
+    - { id: set-item, from: tab-a, to: shared-storage, label: setItem }
+    - { id: storage-event, from: shared-storage, to: tab-b, label: storage event }
+beats:
+  - point: The query string is a small store owned by two pure functions, one that serializes the filters to a single canonical string and one that parses any string back into valid filters.
+    kind: mechanism
+    weight: core
+    teach:
+      - Components never read location.search; they read the parsed Filters object, as they would any store.
+      - Serialize to one form. Leave out values equal to the default, sort=featured and page=1, write multi-select filters as repeated keys, light=low and light=medium, and sort the keys.
+      - Then two shoppers who pick the same filters in a different order get the same string, so links compare equal, cache keys stay stable and analytics can count them.
+    draw: [url-store, query-string, filters-object, codec, canonical]
+    check: Two shoppers tick the same Mossgrove filters in a different order. Why should their URLs come out identical, and what makes them so?
+    answer: A single canonical form, defaults left out, multi-select values as repeated keys in a fixed order and the keys sorted, gives the same string, so links compare, cache keys are stable and analytics count one view.
+    misconceptions:
+      - "Components can read location.search directly -> they read the parsed object, so only the codec knows the URL format."
+  - point: A URL is untrusted input, so the parser keeps only values it knows, clamps numbers and falls back to defaults, and rewrites a cleaned link in place with replaceState.
+    kind: rule
+    weight: core
+    teach:
+      - A link can come from a hand edit, an old email or someone probing the site. The parser drops what it does not recognise instead of failing the page.
+      - A friend opens a 64-character link with sort=featured, page=1 and light=dim. The first two equal the defaults and dim is not a light level Mossgrove uses, so all three go, and the canonical link is 33 characters.
+      - Because the cleaned form differs from what arrived, the page swaps it in with replaceState, which fixes the address without adding a Back step.
+    draw: [untrusted, link-64-33, cleaned]
+    check: A shared link carries light=dim, which Mossgrove does not know, plus page=1. What does the parser do, and how does the address bar change?
+    answer: It drops light=dim as unknown and page=1 as a default, keeps the rest, and rewrites the address to the canonical form with replaceState, so no new history entry appears.
+    misconceptions:
+      - "An unknown value in the URL is an error page -> the parser drops it and falls back to defaults, then rewrites the link in place."
+  - point: pushState adds a history entry so Back returns to the previous filters, replaceState rewrites the current one, and neither fires popstate, which arrives only when the person moves through history.
+    kind: rule
+    weight: core
+    teach:
+      - Ticking Pet-safe, changing the sort or going to page 3 pushes, so Back returns to what came before. Fixing a bad link replaces, so the bad form never had its own entry.
+      - Typing 4 then 0 into Max price, debounced at 300 ms, pushes once for the first change and replaces for the rest, so one Back undoes the whole edit, not just the last keystroke.
+      - Neither call loads a document or fires popstate. popstate comes only on Back or Forward, and that is when the page parses the URL again.
+    draw: [push-state, replace-state, popstate]
+    check: The shopper types 40 into Max price. Which History API calls does Mossgrove make, and where does one press of Back go?
+    answer: pushState for the first change and replaceState for the debounced keystrokes after it, so Back returns to the filters from before the price edit, not to max=4.
+    misconceptions:
+      - "pushState fires popstate -> popstate fires only when the person moves through history; the page parses the URL again then."
+  - point: Storage keeps the least that rebuilds the state, as strings in localStorage, and never the server's facts, view details or secrets.
+    kind: rule
+    weight: core
+    teach:
+      - localStorage takes and returns strings, synchronously, on the main thread, about 5 MiB per origin. Everything passes through JSON, so a Date comes back as a string and a Map as an empty object. Fine for a guest cart of a few hundred bytes; larger or structured data goes to IndexedDB, which is asynchronous and clones objects.
+      - Mossgrove stores each line's SKU, pot size and quantity. Never the price or stock, those are the server's facts and are re-priced on load; never whether the drawer was open; never a session or access token, because every script on the origin can read Web Storage.
+    draw: [storage-boot, local-storage, envelope, holds, strings-sync, never-store]
+    check: Mossgrove saves the guest cart in localStorage. Which fields does it store for each line, and why not the price?
+    answer: The SKU, the pot size and the quantity, the least that rebuilds the cart. The price and stock belong to the server and may have changed, so the cart re-prices on load.
+    misconceptions:
+      - "localStorage keeps a Date or a Map as it was -> it holds strings; after JSON a Date returns as a string and a Map as an empty object."
+      - "Keep the access token in localStorage for convenience -> any script on the origin can read it, so one injected script can take it."
+  - point: The stored value sits in a versioned envelope that is read back after hydration, migrated step by step, validated, and set aside if unreadable, while data from a newer build is never written over.
+    kind: mechanism
+    weight: core
+    teach:
+      - Stored data outlives its code. A shopper last here in March returns to a June build that keeps lines differently. On boot the app reads the envelope, runs each migration from the stored version up to the current, checks the shape, and only then hands it to the store.
+      - A March cart of a Snake plant and two ferns, one quantity per SKU, migrates to two lines in the 12 cm pot and the badge shows 3. Invalid JSON is copied aside for the bug report and replaced by an empty cart rather than a broken page.
+      - A v3 cart written by a tab on a newer build is shown but never written back, since saving v2 over it would destroy it. And the server HTML has no storage, so the badge starts empty and fills after hydration, which keeps the two renders matching.
+    draw: [read-after, migrate, older, cart-ready, valid, unreadable, step-fails, too-new, newer]
+    check: A tab running yesterday's build reads a cart that a newer build saved as v3. What should it do, and why?
+    answer: Show the cart but never write it, because saving its older v2 shape would destroy what the newer build stored; a reload brings the new build, whose own reader handles v3.
+    misconceptions:
+      - "Read localStorage during the server render -> the server has no storage; ship an empty badge and read storage after hydration."
+  - point: When one tab writes localStorage, every other same-origin tab gets a storage event and reads storage again through the same loader, while the writer gets none.
+    kind: mechanism
+    weight: core
+    teach:
+      - Two Mossgrove tabs share one localStorage but each has its own CartStore. Tab A removes the two ferns and writes the cart; tab B receives a storage event naming the key and the old and new strings. Tab A gets nothing, it already knows.
+      - Tab B treats the event as a doorbell, storage changed, read it again, and runs the same loader as on boot, so migration and validation apply. Both badges drop from 3 to 1. sessionStorage events stay inside one tab.
+      - BroadcastChannel suits news that is not stored, such as a signed-out notice. Nothing locks a key between a read and a write, so apply each change to a fresh read, and use Web Locks when two tabs can act at once.
+    draw: [tabs, tab-a, shared-storage, set-item, tab-b, storage-event, doorbell, broadcast, no-lock]
+    check: Tab A removes two ferns and saves the cart to localStorage. Which tabs receive a storage event, and what does tab B do with it?
+    answer: Every other same-origin tab, not tab A, which wrote it. Tab B reads the cart from storage again through the same loader, migrating and validating it, and its badge drops to 1.
+    misconceptions:
+      - "The tab that writes also gets the storage event -> only the other same-origin tabs do; the writer already knows."
+      - "Use the event's newValue as the new cart directly -> treat it as a signal and reread through the loader, so migration and validation still apply."
+task:
+  prompt: Draw Mossgrove's guest cart from a write in tab A through localStorage to tab B, and the steps a tab runs to read a stored cart back on boot, including a March v1 cart.
+  expects: [5, 6]

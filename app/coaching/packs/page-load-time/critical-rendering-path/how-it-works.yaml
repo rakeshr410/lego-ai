@@ -1,0 +1,143 @@
+# The critical rendering path: what lands on it, the three numbers that describe it, why depth in round trips wins, the 14 KB first flight, and FCP.
+id: page-load-time/critical-rendering-path/how-it-works
+title: The critical rendering path
+source:
+  hash: 14adbdd424dc
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: null
+  assumes:
+    - The browser parses HTML into the DOM and CSS into styles, then lays out and paints.
+  carries:
+    - The critical rendering path is the blocking stylesheets and parser-blocking scripts, plus the HTML up to the body, that the first paint waits for.
+    - "A critical path is described by three numbers: critical resources, critical bytes, and path length in round trips."
+    - Depth usually wins, because each round trip on a phone costs 100 to 200 ms and small files are dominated by round trips, not size.
+    - A file found only inside another file (an @import, an injected script) adds a link to the chain, and the preload scanner cannot see it.
+    - The first round trip of a new connection carries about 14 KB, so a small inlined critical CSS rides with the HTML and a large one does not.
+    - First Contentful Paint marks the end of the critical rendering path.
+  terms:
+    - term: critical rendering path
+      means: The files and round trips the first paint must wait for, from the HTML to the blocking CSS and scripts.
+    - term: round trip
+      means: A request going out and its first byte coming back; 100 to 200 ms on a phone network.
+    - term: preload scanner
+      means: The part of the browser that reads ahead in the raw HTML to find files to request early.
+    - term: first flight
+      means: What a fresh TCP connection may send before waiting for acknowledgements, about ten segments or 14 KB.
+    - term: FCP
+      means: First Contentful Paint, the moment the first text or image is drawn.
+board:
+  keep: []
+  elements:
+    - { id: on-path, kind: region, label: What the first paint waits for, at: [1, 1], size: [61, 15] }
+    - { id: p-html, kind: box, label: HTML up to the body, at: [3, 4], size: [10, 3], in: on-path, tone: blue }
+    - { id: head-css, kind: box, label: stylesheet in the head, at: [18, 4], size: [10, 3], in: on-path, tone: red }
+    - { id: classic-script, kind: box, label: script without async/defer, at: [33, 4], size: [12, 3], in: on-path, tone: red }
+    - { id: first-paint, kind: box, label: first paint, at: [50, 4], size: [9, 3], in: on-path, tone: grey }
+    - { id: off-script, kind: box, label: "defer, async or module", at: [18, 9], size: [12, 3], in: on-path, tone: green }
+    - { id: off-media, kind: box, label: images and font files, at: [33, 9], size: [12, 3], in: on-path, tone: green }
+    - { id: fcp-note, kind: note, label: "FCP ends the path, good under 1.8 s", at: [43, 13], in: on-path }
+    - { id: three-numbers, kind: region, label: Three numbers (Ferrymark before), at: [63, 1], size: [30, 16] }
+    - { id: n-resources, kind: box, label: "critical resources: 7", at: [65, 4], size: [26, 3], in: three-numbers, tone: blue }
+    - { id: n-bytes, kind: box, label: "critical bytes: 290 KB", at: [65, 8], size: [26, 3], in: three-numbers, tone: blue }
+    - { id: n-depth, kind: box, label: "path length: HTML, new origin, 120 KB", at: [65, 12], size: [26, 3], in: three-numbers, tone: red }
+    - { id: depth-demo, kind: region, label: "One 3 KB sheet, 150 ms round trip", at: [95, 1], size: [24, 18] }
+    - { id: d-same, kind: box, label: "same origin: 1 trip, about 160 ms", at: [97, 4], size: [20, 3], in: depth-demo, tone: green }
+    - { id: d-import, kind: box, label: "behind @import: 2 trips, about 320 ms", at: [97, 8], size: [20, 3], in: depth-demo, tone: amber }
+    - { id: d-new, kind: box, label: "new origin: 4 trips, about 610 ms", at: [97, 12], size: [20, 3], in: depth-demo, tone: red }
+    - { id: setup-note, kind: note, label: "DNS, TCP and TLS: 3 trips first", at: [97, 16], in: depth-demo }
+    - { id: chains, kind: region, label: How a chain grows, at: [1, 21], size: [52, 11] }
+    - { id: c-html, kind: box, label: HTML, at: [3, 25], size: [10, 3], in: chains, tone: blue }
+    - { id: c-site, kind: box, label: site.css, at: [19, 25], size: [10, 3], in: chains, tone: blue }
+    - { id: c-imported, kind: box, label: imported sheet, at: [35, 25], size: [14, 3], in: chains, tone: red }
+    - { id: chain-fix, kind: note, label: "fix: name every critical file in the HTML", at: [3, 29], in: chains }
+    - { id: scanner-blind, kind: note, label: the preload scanner cannot see an @import, at: [31, 29], in: chains }
+    - { id: first-flight, kind: region, label: Ferrymark's HTML in the first flight, at: [55, 21], size: [64, 16] }
+    - { id: flight-frame, kind: region, label: "first round trip, about 14 KB", at: [57, 24], size: [43, 8], in: first-flight, dashed: true }
+    - { id: f-head, kind: box, label: head 2 KB, at: [59, 27], size: [9, 3], in: flight-frame, tone: grey }
+    - { id: f-css, kind: box, label: critical CSS 6 KB, at: [70, 27], size: [12, 3], in: flight-frame, tone: green }
+    - { id: f-above, kind: box, label: "header, form, hero 5 KB", at: [84, 27], size: [14, 3], in: flight-frame, tone: blue }
+    - { id: f-below, kind: box, label: "departures, footer 4 KB", at: [107, 27], size: [11, 3], in: first-flight, tone: grey }
+    - { id: inline-rule, kind: note, label: "inline 6 KB: rides along; 60 KB: pushes markup later", at: [57, 34], in: first-flight }
+  arrows:
+    - { id: p-finds, from: p-html, to: head-css, label: finds }
+    - { id: css-blocks, from: head-css, to: classic-script, label: blocks }
+    - { id: script-blocks, from: classic-script, to: first-paint, label: blocks }
+    - { id: names, from: c-html, to: c-site, label: names }
+    - { id: imports, from: c-site, to: c-imported, label: "@import" }
+    - { id: next-trip, from: flight-frame, to: f-below, label: next trip, dashed: true }
+beats:
+  - point: The critical rendering path is what the first paint must wait for, blocking stylesheets in the head and scripts without async or defer, plus the HTML the browser reads to reach the body.
+    kind: rule
+    weight: core
+    teach:
+      - Recap the rules in one breath. A stylesheet in the head whose media matches the screen holds back rendering. A classic script with neither async nor defer stops the parser, and also waits for any stylesheet still loading above it.
+      - defer, async and type=module take a script off the path; images, deferred scripts and font files do not block rendering.
+      - What is left, plus the HTML up to the body, is the critical rendering path. Knowing the rules says what is on it, not what to fix first.
+    draw: [on-path, p-html, head-css, p-finds, classic-script, css-blocks, first-paint, script-blocks, off-script, off-media]
+    check: Which of these hold back Ferrymark's first paint, a stylesheet in the head, a deferred script, a hero image?
+    answer: Only the stylesheet in the head (when its media matches); the deferred script and the image do not block rendering.
+    misconceptions:
+      - "Images block the first paint -> images do not block rendering; the page paints without them."
+      - "async and defer run in the same order -> deferred scripts and modules run after parsing in document order; async ones run as each arrives, in any order."
+  - point: "Three numbers describe a critical path: how many files it holds, how many compressed bytes they weigh, and how many round trips stand one after another on its deepest chain."
+    kind: metric
+    weight: core
+    teach:
+      - Critical resources counts the files the first paint waits for, critical bytes their compressed size, and critical path length the round trips one after another on the deepest chain.
+      - Ferrymark starts at seven critical files and 290 KB, and its deepest chain is the HTML, then a stylesheet on a new origin costing three round trips to connect, then 120 KB.
+      - Each number has its own levers, removing files from the path, shrinking them, or cutting links from the chain.
+    draw: [three-numbers, n-resources, n-bytes, n-depth]
+    check: What are the three numbers that describe a critical rendering path?
+    answer: Critical resources (how many files block the first paint), critical bytes (their compressed size), and path length (round trips in sequence on the deepest chain).
+  - point: Depth is counted in round trips, not files or bytes, and a round trip on a phone costs 100 to 200 ms, so for small files the round trips set the cost.
+    kind: mechanism
+    weight: core
+    teach:
+      - Take one 3 KB stylesheet and a 150 ms round trip; its transfer time is negligible.
+      - On Ferrymark's own origin, connection already open, it is usable after one round trip. Behind an @import it takes two, because the second request waits for the first file to be parsed.
+      - On an origin the browser has not met, DNS, TCP and TLS come first, three more round trips, so about four in all with TLS 1.3.
+    draw: [depth-demo, d-same, d-import, d-new, setup-note]
+    check: A 3 KB stylesheet moves from a font service onto Ferrymark's own origin, whose connection is open. With a 150 ms round trip and TLS 1.3, roughly how much sooner is it usable?
+    answer: About 450 ms, the three round trips for DNS, TCP and TLS that it no longer pays; the tiny transfer barely matters.
+    misconceptions:
+      - "A 3 KB file is cheap wherever it lives -> on a new origin it pays three round trips of connection set-up before its request even leaves."
+  - point: A chain grows every time a file can only be found inside another file, and the first paint pays for every link on the deepest chain, in order.
+    kind: mechanism
+    weight: core
+    teach:
+      - A sheet named by @import in site.css is requested only once site.css has arrived and been parsed, and the preload scanner reading the raw HTML never sees it.
+      - The same happens with a script that injects another script, a redirect on a critical file, or markup that client JavaScript renders before anything can paint.
+      - The shorter alternative is the same each time, name the file in the HTML, link the final URL, merge at build time, or self-host it.
+    draw: [chains, c-html, c-site, c-imported, names, imports, scanner-blind, chain-fix]
+    check: Why does an @import inside site.css lengthen the critical path?
+    answer: The imported sheet can only be requested after site.css has arrived and been parsed, and the preload scanner cannot see it, so the chain gains at least one round trip.
+    misconceptions:
+      - "@import only costs a second download in parallel -> it starts only after the first sheet is parsed, so it adds a round trip in sequence."
+  - point: A fresh connection's first round trip carries only about 14 KB, so a few KB of inlined first-screen CSS ride with the HTML for free while a large inline pushes the first screen's own markup into later round trips.
+    kind: rule
+    weight: core
+    teach:
+      - A new TCP connection may send about ten segments before waiting for acknowledgements, a little over 14 KB. What fits arrives one round trip after the request; the rest waits at least one more.
+      - After the fix, Ferrymark's HTML is 17 KB compressed. The head, 6 KB of inlined critical CSS and the header, search form and hero fit in the first flight; the departures list below the fold arrives a round trip later, where nobody sees it.
+      - Treat 14 KB as a direction, not a cliff; headers and framing eat some of it. Inlining 60 KB instead of 6 makes the HTML itself the slow chain, and inlined bytes are not cached for the next page.
+    draw: [first-flight, flight-frame, f-head, f-css, f-above, f-below, next-trip, inline-rule]
+    check: Ferrymark inlines 60 KB of CSS instead of 6 KB. What happens to the first paint?
+    answer: Probably no better or slower, because the HTML grows far past the first flight, so the first screen's markup arrives in later round trips, and the inlined CSS is not cached for the next page.
+    misconceptions:
+      - "Inlining all the CSS is always fastest -> only a small first-screen part rides in the first flight; a large inline delays the markup and is never cached."
+  - point: First Contentful Paint marks the end of the critical rendering path, and a short path is a precondition for a good LCP, because the largest element cannot paint before the first paint.
+    kind: metric
+    weight: supporting
+    teach:
+      - FCP, the first text or image drawn, ends the path almost by definition, and it is the metric that moves when the path shortens; good is 1.8 s or less at the 75th percentile.
+      - It is a supporting metric, not a Core Web Vital, but LCP waits for it, so shortening the path helps LCP too. INP and CLS are about later work.
+    draw: [fcp-note]
+    check: Which metric moves most directly when Ferrymark shortens its critical path?
+    answer: FCP, and LCP with it when the largest element was waiting for the first paint.
+task:
+  prompt: Draw Ferrymark's deepest chain, the HTML, site.css and a sheet it imports, and write how many round trips the 3 KB imported sheet costs on the same origin, behind the @import, and on a new origin.
+  expects: [3, 4]

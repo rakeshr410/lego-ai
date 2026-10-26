@@ -1,4 +1,4 @@
-// The voice room's call (docs/interview/README.md, "Voice"): the Pipecat browser client over Daily's
+// The voice room's call (docs/README.md, "Voice"): the Pipecat browser client over Daily's
 // WebRTC transport, reduced to what the room shows. The room gets a state, captions (the
 // candidate's words as they are transcribed, the interviewer's as they are spoken) and who is
 // speaking; it gives a join (the Daily room and the candidate's token the web minted), mute and
@@ -15,6 +15,8 @@ export type VoiceCallEvents = {
   onSpeaking: (who: 'you' | 'interviewer' | null) => void;
   /** A message from the pipeline over the call (a coach's drawing: `{kind: 'draw', ops}`; the session's state). */
   onMessage?: (data: unknown) => void;
+  /** The interviewer's (or the coach's) words, as they are heard. */
+  onWords?: (text: string) => void;
 };
 
 /** What the room uses of the Pipecat client. */
@@ -57,6 +59,8 @@ export const pipecatClient: ClientFactory = async (callbacks) => {
 export class VoiceCall {
   private client: VoiceClient | null = null;
   private hungUp = false;
+  /** Which client's callbacks still count: a rejoin's new client silences the one it replaces. */
+  private generation = 0;
   private spoken = '';
   /** The interviewer's audio: a hidden element the remote track is attached to (the transport plays nothing itself). */
   private audio: HTMLAudioElement | null = null;
@@ -68,15 +72,22 @@ export class VoiceCall {
 
   /** Joins the room; resolves once the pipeline says it is ready (or rejects: the room shows why). */
   async connect(join: { url: string; token: string }): Promise<void> {
+    // A client left over from a dropped or failed join may still hold a seat in the two-seat room, and
+    // the new one would be turned away ("Meeting is full"): it leaves first, and its callbacks go quiet.
+    const previous = this.client;
+    this.client = null;
+    const generation = ++this.generation;
+    if (previous) await previous.disconnect().catch(() => {});
     this.hungUp = false;
     this.spoken = '';
     this.events.onState('connecting');
-    const client = await this.factory(this.callbacks());
+    const client = await this.factory(this.callbacks(generation));
     this.client = client;
     try {
       await client.connect({ url: join.url, token: join.token });
     } catch (err) {
       this.client = null;
+      void client.disconnect().catch(() => {});
       this.events.onState('error', err instanceof Error ? err.message : String(err));
       throw err;
     }
@@ -87,6 +98,7 @@ export class VoiceCall {
     const client = this.client;
     this.hungUp = true;
     this.client = null;
+    this.generation += 1;
     this.detachAudio();
     if (client) await client.disconnect().catch(() => {});
     this.events.onSpeaking(null);
@@ -124,8 +136,8 @@ export class VoiceCall {
     return this.client ? !this.client.isMicEnabled : false;
   }
 
-  private callbacks(): VoiceCallbacks {
-    const live = () => !this.hungUp && this.client !== null;
+  private callbacks(generation: number): VoiceCallbacks {
+    const live = () => !this.hungUp && this.client !== null && this.generation === generation;
     return {
       onBotReady: () => {
         if (live()) this.events.onState('live');
@@ -158,6 +170,7 @@ export class VoiceCall {
       onBotTtsText: (data) => {
         if (!live()) return;
         this.spoken = `${this.spoken} ${data.text}`.replace(/\s+/g, ' ').trim();
+        this.events.onWords?.(data.text);
         this.events.onCaption({ who: 'interviewer', text: this.spoken, final: false });
       },
       onBotStartedSpeaking: () => {

@@ -4,9 +4,9 @@ import { getStore, type Store } from '../store';
 // Interview sessions in the shared store (Redis in production), with the reader's index of them
 // and the monthly session counter. A session is one JSON value, changed only by compare-and-set,
 // so two web instances (or a double-clicked button) can't overwrite each other's turns. It expires
-// INTERVIEW_RETENTION_DAYS after it started (docs/interview/privacy.md): nothing is kept longer.
+// INTERVIEW_RETENTION_DAYS after it started (docs/privacy.md): nothing is kept longer.
 //
-// This is the prototype's store. The design (docs/interview/README.md) moves sessions to the
+// This is the prototype's store. The design (docs/README.md) moves sessions to the
 // interview service's own database; everything goes through this module so that move is local.
 
 import type { DirectorMeta, DirectorState } from './director';
@@ -42,6 +42,12 @@ export type TurnMeta = {
   draw?: import('./draw').DrawOp[];
   /** Why operations of this reply's drawing were dropped (draw.ts); the next turn shows them to the model. */
   drawDropped?: string[];
+  /**
+   * A coach's reply as the model reads it back: its drawing elements where it wrote them, and the plan's ids the
+   * service placed for it where their names come up (draw.ts `readBack`). Without them the model sees its own
+   * turns as plain words and stops drawing after the first.
+   */
+  said?: string;
   /** The coach's decision on a learner turn or a continue (coach.ts), rendered into the prompt as <coach>. */
   coach?: import('./coach').CoachMeta;
   /** A continue: the coach's next move without a learner message (an event turn). */
@@ -113,13 +119,17 @@ export type Session = {
   id: string;
   readerId: string;
   system: string;
-  /** A drill (docs/interview/README.md, "Drills"): the topic's, or one section's, short plan; absent for the system's whole interview. */
+  /** A drill (docs/README.md, "Drills"): the topic's, or one section's, short plan; absent for the system's whole interview. */
   scope?: { topic: string; section: string | null };
   /** Text (the default) or voice (design section 6): a voice session is spoken through the voice service and graded like a text one. */
   mode?: 'text' | 'voice';
   voice?: VoiceState;
-  /** A mock interview (the default) or a coach lesson (docs/interview/coach-mode.md): the coach drives, teaches and checks. */
+  /** A mock interview (the default) or a coach lesson (docs/coach-mode.md): the coach drives, teaches and checks. */
   kind?: 'interview' | 'coach';
+  /** What the coach calls the learner ("So Rakesh, tell me…"), as they gave it at the start (learnerName). */
+  learnerName?: string;
+  /** A playlist's lesson (docs/coaching.md; `system` is the playlist), and what the learner's earlier lessons left, as the coach is told it. */
+  course?: { lesson: string; recall: string[] };
   /** The coach's state (coach sessions). */
   coach?: import('./coach').CoachState;
   /** A whole voice session past the month's quota, paid for by a purchased top-up (no monthly minutes reserved). */

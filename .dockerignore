@@ -1,0 +1,21 @@
+# Images build from the repository root (docker build -f app/Dockerfile ... / -f voice/Dockerfile .).
+.git
+.github
+.claude
+docs
+**/node_modules
+**/.env
+**/.env.*
+!**/.env.example
+**/.DS_Store
+**/*.log
+app/dist
+app/.astro
+app/.content
+app/public/excalidraw
+app/test-results
+app/playwright-report
+voice/.venv
+**/__pycache__
+**/.pytest_cache
+**/.ruff_cache

@@ -12,7 +12,9 @@ from __future__ import annotations
 
 import asyncio
 import random
+import re
 import time
+import uuid
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -27,6 +29,7 @@ from pipecat.frames.frames import (
     LLMFullResponseStartFrame,
     LLMTextFrame,
     TTSSpeakFrame,
+    UserStartedSpeakingFrame,
 )
 from pipecat.processors.frame_processor import FrameDirection
 from pipecat.services.llm_service import LLMService
@@ -34,6 +37,21 @@ from pipecat.services.settings import LLMSettings
 
 from app.web_client import State, WebClient, WebError
 from bot import speech
+from bot.conductor import (
+    PEN_TEXT,
+    pause_after,
+    PauseFrame,
+    PenMarkFrame,
+    SegmentEndFrame,
+    SegmentStartFrame,
+    pen_items,
+)
+
+# A word in a segment of speech, and what a segment may not open with (a drawing's sentence ends after it).
+_WORD = re.compile(r"\w")
+_LEAD = re.compile(r"^[\s.,;:!?…—–-]+")
+# The space after a sentence's end, or after a colon: where a lesson's reply may pause (conductor.pause_after).
+_BREAK = re.compile(r"(?<=[.!?:])\s+")
 
 
 class GatewayLLMService(LLMService):
@@ -48,7 +66,9 @@ class GatewayLLMService(LLMService):
         spoken_text: Callable[[], str],
         filler_after_secs: float = 1.2,
         rng: random.Random | None = None,
-        on_draw: Callable[[list[Any], Any], Awaitable[None]] | None = None,
+        on_draw: Callable[..., Awaitable[None]] | None = None,
+        pace_drawings: bool = False,
+        playing: Callable[[], bool] | None = None,
         **kwargs,
     ):
         # The model, prompt and sampling live on the web: nothing here is a setting.
@@ -75,13 +95,26 @@ class GatewayLLMService(LLMService):
         self._on_state = on_state
         self._on_stale = on_stale
         self._spoken_text = spoken_text
+        # Whether the voice is still saying the last reply (its text may all be in long before its audio ends).
+        self._playing = playing
+        self._heard_sent = False  # the words heard of the current reply went to the web
+        self._heard_task: asyncio.Task | None = None
         self._filler_after = filler_after_secs
         self._rng = rng or random.Random()
+        # The board gets each drawing at once; with pace_drawings (a lesson) the voice then says each label as
+        # the pen writes it (bot/conductor.py), and the drawing carries the reference its cues name.
         self._on_draw = on_draw
+        self._pace = pace_drawings
+        self._paced = 0
+        self._pace_id = uuid.uuid4().hex[:6]  # a rejoin's pipeline names its drawings apart from the last one's
         # Turns go to the web one at a time, in sequence (a reply read to its end after an interruption).
         self._lock = asyncio.Lock()
         self._interrupted = False
         self._in_reply = False
+        self._segment_said = False  # the current segment of speech has words (_turn, _draw)
+        self._segment_lead = ""  # its opening, held until a word arrives
+        self._ended = 0  # the words so far end at a break: the pause a lesson makes if a space follows (ms)
+        self._piece = ""  # the words since the last pause, to size the next one
         self._turn_task: asyncio.Task | None = None
         self._stream: asyncio.Task | None = None  # the web call of the reply in flight
         self.turns = 0
@@ -99,12 +132,23 @@ class GatewayLLMService(LLMService):
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
-        if isinstance(frame, InterruptionFrame):
+        if isinstance(frame, UserStartedSpeakingFrame):
+            # When the learner starts talking, and whether the voice was talking then (a cut-in that did not stop
+            # the voice shows here without an interruption after it).
+            logger.info("voice learner speaking {} reply={} playing={}", self._sid, self._in_reply, self._is_playing())
+            await self.push_frame(frame, direction)
+        elif isinstance(frame, InterruptionFrame):
+            logger.info("voice cut-in {} reply={} playing={}", self._sid, self._in_reply, self._is_playing())
             if self._in_reply:
                 self._interrupted = True
                 # The candidate cut in: the web keeps what has streamed and frees the session for the next turn.
                 if self._stream and not self._stream.done():
                     self._stream.cancel()
+            elif self._is_playing() and not self._heard_sent:
+                # The reply's text was all in but the voice was still saying it: the web is told what was heard,
+                # so the lesson knows the move was cut short (before the learner's turn is sent).
+                self._heard_sent = True
+                self._heard_task = self.create_task(self._send_heard(), name="heard")
             await self.push_frame(frame, direction)
         elif isinstance(frame, LLMContextFrame):
             if frame.speculation:
@@ -121,7 +165,7 @@ class GatewayLLMService(LLMService):
             await self.push_frame(frame, direction)
 
     async def continue_lesson(self) -> None:
-        """A coach lesson's next move (docs/interview/coach-mode.md): a turn with no words from the learner,
+        """A coach lesson's next move (docs/coach-mode.md): a turn with no words from the learner,
         asked for by the idle clock's self-drive, or when the learner joins a lesson that has not opened."""
         self._turn_task = self.create_task(self._turn(None), name="continue")
 
@@ -143,11 +187,19 @@ class GatewayLLMService(LLMService):
         a candidate turn (the sequence stands) and gets no filler (nobody asked anything)."""
         spoken = text is not None
         kind = "speech" if spoken else "continue"
+        if self._heard_task is not None:
+            await self._heard_task
+            self._heard_task = None
         async with self._lock:
             if self.state.closed:
                 return
             self._interrupted = False
+            self._heard_sent = False
             self._in_reply = True
+            self._segment_said = False
+            self._segment_lead = ""
+            self._ended = 0
+            self._piece = ""
             seq = self.state.seq + 1 if spoken else self.state.seq
             started = time.monotonic()
             first = asyncio.Event()
@@ -162,7 +214,7 @@ class GatewayLLMService(LLMService):
                         await self.stop_ttfb_metrics()
                     if self._interrupted:
                         return  # the voice stopped; the web still gets the whole reply
-                    await self.push_frame(LLMTextFrame(delta))
+                    await self._speak(delta)
 
                 state = await self._stream_turn(seq, text or "", on_delta, kind)
                 if spoken:
@@ -223,20 +275,29 @@ class GatewayLLMService(LLMService):
                 self._in_reply = False
                 await self.push_frame(LLMFullResponseEndFrame())
             if self._interrupted:
-                spoken = self._spoken_text()
-                if spoken:
-                    try:
-                        await self._web.played(self._sid, self.state.epoch, spoken)
-                    except Exception as err:  # noqa: BLE001
-                        logger.warning("voice played {}: {}", self._sid, err)
+                self._heard_sent = True
+                await self._send_heard()
             await self._on_state(self.state)
+
+    def _is_playing(self) -> bool:
+        return self._playing is not None and self._playing()
+
+    async def _send_heard(self) -> None:
+        """Tells the web which words of the cut reply were heard."""
+        spoken = self._spoken_text()
+        if not spoken:
+            return
+        try:
+            await self._web.played(self._sid, self.state.epoch, spoken)
+        except Exception as err:  # noqa: BLE001
+            logger.warning("voice played {}: {}", self._sid, err)
 
     async def _stream_turn(self, seq: int, text: str, on_delta, kind: str = "speech") -> State | None:
         """The web call for a turn, as a task so a cut-in can drop it: None when it was dropped. A turn
         the web refuses as busy (the previous reply's cut-off still being saved) is sent again shortly."""
         for attempt in range(3):
             self._stream = asyncio.ensure_future(
-                self._web.turn(self._sid, self.state.epoch, seq, text, on_delta, kind=kind, on_draw=self._on_draw)
+                self._web.turn(self._sid, self.state.epoch, seq, text, on_delta, kind=kind, on_draw=self._draw)
             )
             try:
                 return await self._stream
@@ -252,6 +313,77 @@ class GatewayLLMService(LLMService):
             finally:
                 self._stream = None
         raise AssertionError("unreachable")
+
+    async def _speak(self, text: str) -> None:
+        """The reply's words to the voice. A lesson's reply pauses after each sentence, and after a short setup
+        ending in a colon: each is a segment of its own, with silence after it sized by conductor.pause_after."""
+        if not self._pace:
+            await self._say(text)
+            return
+        if self._ended and text[:1].isspace():
+            await self._pause(self._ended)
+            text = text.lstrip()
+        for k, piece in enumerate(_BREAK.split(text)):
+            if k:
+                ms = pause_after(self._piece)
+                if ms:
+                    await self._pause(ms)
+                else:
+                    piece = " " + piece  # a long clause runs on past its colon
+            await self._say(piece)
+            self._piece += piece
+        self._ended = pause_after(self._piece) if text and text[-1] in ".!?:" else 0
+
+    async def _say(self, text: str) -> None:
+        if not self._segment_said:
+            # A segment's opening is held until it has a word: what follows a drawing may be only a space or the
+            # "." of the drawing's sentence, and the speech service fails a context it is given nothing to say for.
+            self._segment_lead += text
+            if not _WORD.search(self._segment_lead):
+                return
+            text = _LEAD.sub("", self._segment_lead)
+            self._segment_lead = ""
+            self._segment_said = True
+        await self.push_frame(LLMTextFrame(text))
+
+    async def _pause(self, ms: int) -> None:
+        self._piece = ""
+        if not self._segment_said:
+            return  # nothing said since the last pause or drawing
+        await self.push_frame(SegmentEndFrame())
+        await self.push_frame(PauseFrame(ms=ms))
+        await self.push_frame(SegmentStartFrame())
+        self._segment_said = False
+        self._segment_lead = ""
+
+    async def _draw(self, ops: list[Any], anchor: Any = None) -> None:
+        """A drawing from the reply, where it stands in the words. Paced: the words before it are spoken as a
+        segment, then each operation's label between its pen marks, then the reply goes on (bot/conductor.py).
+        Not paced (an interview, a reply the learner cut into): drawn by the pen at its own pace. The board a lesson
+        opens with (drawn in earlier lessons) is put on the board at once, without the pen."""
+        if self._on_draw is None:
+            return
+        prelude = isinstance(anchor, dict) and bool(anchor.get("prelude"))
+        if prelude:
+            await self._on_draw(ops, None, True)  # on the board at once: it was drawn in earlier lessons
+            return
+        if not self._pace or self._interrupted or not self._in_reply:
+            await self._on_draw(ops, None)
+            return
+        self._paced += 1
+        ref = f"{self._pace_id}.{self._paced}"
+        await self._on_draw(ops, ref)
+        await self.push_frame(SegmentEndFrame())
+        for item in pen_items(ops):
+            await self.push_frame(PenMarkFrame(ref=ref, item=item, phase="before"))
+            if item.speech:
+                await self.push_frame(TTSSpeakFrame(item.speech, append_to_context=False, text_type=PEN_TEXT))
+            await self.push_frame(PenMarkFrame(ref=ref, item=item, phase="after"))
+        await self.push_frame(SegmentStartFrame())
+        self._segment_said = False
+        self._segment_lead = ""
+        self._ended = 0
+        self._piece = ""
 
     async def _filler(self, first: asyncio.Event) -> None:
         if self._filler_after <= 0:

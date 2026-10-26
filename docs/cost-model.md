@@ -2,7 +2,7 @@
 
 What one mock interview costs, what a month of them costs at three adoption levels, and how each
 control in the code follows from that (P3-11, GAP3-3). The design is in [README.md](README.md);
-Ask's own model is in [../capacity-model.md](../capacity-model.md), whose traffic assumptions (20,000
+Ask's own model is in ../capacity-model.md (lego: docs/capacity-model.md), whose traffic assumptions (20,000
 monthly active users) this reuses.
 
 **All figures are estimates** from list prices and measured prompt sizes, not from billing. Replace
@@ -39,7 +39,7 @@ turns) and writes only the newest turn. Turn n (from 0) reads about 3,500 + 260n
 | Feedback output | 1.5k: **$0.038** | 4k: **$0.100** | **$0.038** |
 | **Session** | **about $0.18** | **about $0.78** | **about $0.38** |
 
-For scale: an Ask question costs about $0.030 at launch ([capacity model](../capacity-model.md)), so
+For scale: an Ask question costs about $0.030 at launch (capacity model (lego: docs/capacity-model.md)), so
 a typical interview costs about six questions and the heaviest one the caps allow about 26. That
 is far below GAP3-3's "1-2 orders of magnitude" worry because the turns run on the cheaper model
 with the prefix cached and only the feedback uses the premium one. The first reply on a system

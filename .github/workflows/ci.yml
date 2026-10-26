@@ -1,0 +1,84 @@
+name: CI
+
+# The app (typecheck, unit tests, a build with the interview on and its browser-bundle check) and
+# the voice service (ruff, pytest). Both read lego (the main site) beside this checkout: its
+# content-kit and content/, as in development.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  app:
+    name: App (typecheck, tests, build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: lego-ai/app
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: lego-ai
+      # lego is private: LEGO_CHECKOUT_TOKEN reads it (a fine-grained token, contents read-only).
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ vars.LEGO_REPOSITORY || 'rakeshr410/lego' }}
+          token: ${{ secrets.LEGO_CHECKOUT_TOKEN }}
+          path: lego
+          sparse-checkout: |
+            content
+            content-kit
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            lego-ai/app/package-lock.json
+            lego/content-kit/package-lock.json
+      - name: Install
+        run: |
+          npm --prefix ../../lego/content-kit ci --no-audit --no-fund
+          npm ci --no-audit --no-fund
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Unit tests
+        run: npm test
+      - name: Build with the interview, whiteboard and voice on, and check the browser bundle
+        env:
+          PUBLIC_ORIGIN: https://arrowbox.example
+          PUBLIC_INTERVIEW_ENABLED: 'true'
+          PUBLIC_INTERVIEW_BOARD_ENABLED: 'true'
+          PUBLIC_INTERVIEW_VOICE_ENABLED: 'true'
+        run: |
+          npm run build
+          npm run check:dist
+
+  voice:
+    name: Voice service (ruff, pytest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: voice
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.13.5'
+          enable-cache: true
+          cache-dependency-glob: voice/pyproject.toml
+      - name: Install
+        run: |
+          uv venv --python 3.12 .venv
+          uv pip install --python .venv/bin/python -e '.[dev]'
+      - name: Lint and format
+        run: |
+          .venv/bin/ruff check .
+          .venv/bin/ruff format --check .
+      - name: Tests
+        run: .venv/bin/python -m pytest -q

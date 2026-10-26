@@ -1,0 +1,119 @@
+# News feed data model: the page response split into entities by id and one id list per tab, plus the two client-only pieces, the like intent and the scroll snapshot.
+id: facebook/news-feed/data-model
+title: Entities by id, lists of ids
+source:
+  hash: 71e3d0b629a2
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: facebook/news-feed/high-level-design
+  assumes:
+    - "Data flows one way: Feed Service fetches, Feed Store normalises and holds state, FeedList renders ids."
+    - Top and Recent are two separate feeds, each with its own cursor and position.
+    - New post ids wait in the store's pending ids until the pill is pressed.
+    - PostCard sends like intents to the store, which restores the confirmed state if the request fails.
+    - A normalized store keeps each entity once, by id, and lists refer to entities by id.
+  carries:
+    - The page response carries ranked posts with media inline, a users map and next_cursor; Feed Service normalises it.
+    - Posts, users and media are stored once by id; media width, height and placeholder are known before the image loads.
+    - Each tab has one Feed, its ordered ids, next_cursor, status, pending ids (at most 50) and error.
+    - A LikeIntent is a client-only overlay; the card shows its desired state if one exists, otherwise the post's confirmed state, and rollback deletes it.
+    - A ScrollSnapshot saves the top visible post's id and offset, not a pixel scroll position.
+  terms:
+    - term: entity
+      means: One server record (a post, a user, a media item) stored once in the store, by id.
+    - term: Feed
+      means: One tab's ordered list of post ids with its cursor, status, pending ids and error.
+    - term: LikeIntent
+      means: Client-only overlay per post, the desired liked state and whether a request is in flight.
+    - term: ScrollSnapshot
+      means: The anchor post's id and the offset within it, plus the first ids and the cursor, saved to restore a position.
+board:
+  keep: [feed-scope, scope-client, scope-server, scope-out, assume-pages, assume-device, functional, fr-first, fr-more, fr-pill, fr-like, fr-tabs, fr-back, fr-offline, non-functional, nfr-load, nfr-input, nfr-scroll, nfr-stable, nfr-access, browser, feed-page, feed-list, post-card, new-posts-pill, feed-store, live-updates, feed-service, server, store-to-page, store-service, service-server, load-more, server-stream, add-pending, like-toggled]
+  elements:
+    - { id: response, kind: region, label: GET /api/feed response, at: [1, 45], size: [14, 17] }
+    - { id: page-response, kind: box, label: "posts, media inside", at: [2, 48], size: [12, 2], in: response, tone: amber }
+    - { id: response-fields, kind: box, label: users by id, at: [2, 51], size: [12, 2], in: response, tone: amber }
+    - { id: response-cursor, kind: box, label: next cursor, at: [2, 54], size: [12, 2], in: response, tone: amber }
+    - { id: service-normalises, kind: note, label: Feed Service splits it, at: [2, 57], in: response }
+    - { id: entities, kind: region, label: "Store: entities by id", at: [20, 45], size: [30, 9] }
+    - { id: post-entity, kind: box, label: Post, at: [22, 48], size: [8, 3], in: entities, tone: amber }
+    - { id: user-entity, kind: box, label: User, at: [31, 48], size: [8, 3], in: entities, tone: amber }
+    - { id: media-entity, kind: box, label: Media, at: [40, 48], size: [8, 3], in: entities, tone: amber }
+    - { id: post-confirmed, kind: note, label: "Post: confirmed like count", at: [22, 52], in: entities }
+    - { id: media-size, kind: note, label: "Media: width, height, colour", at: [36, 52], in: entities }
+    - { id: lists, kind: region, label: "Store: one Feed per tab", at: [20, 56], size: [30, 8] }
+    - { id: feed-top, kind: box, label: "Feed: top", at: [22, 59], size: [10, 3], in: lists, tone: amber }
+    - { id: list-fields, kind: note, label: "ids, next cursor, status", at: [34, 59], in: lists }
+    - { id: list-pending, kind: note, label: "pending ids, error", at: [34, 61], in: lists }
+    - { id: client-only, kind: region, label: Client only, at: [20, 65], size: [30, 12] }
+    - { id: like-intent, kind: box, label: LikeIntent, at: [37, 68], size: [11, 3], in: client-only, tone: amber }
+    - { id: scroll-snapshot, kind: box, label: ScrollSnapshot, at: [24, 71], size: [12, 3], in: client-only, tone: amber }
+    - { id: intent-rule, kind: note, label: intent shown over Post, at: [37, 72], in: client-only }
+    - { id: rollback-rule, kind: note, label: "rollback: delete it", at: [39, 74], in: client-only, tone: green }
+    - { id: snapshot-fields, kind: note, label: anchor post id and offset, at: [24, 75], in: client-only }
+  arrows:
+    - { id: normalise, from: response, to: entities, label: by id }
+    - { id: to-lists, from: response, to: feed-top, label: ranked ids }
+    - { id: saved, from: feed-top, to: scroll-snapshot, label: saved on leave }
+beats:
+  - point: A page of the feed arrives as ranked posts with their media inline, a map of users and a next cursor, and Feed Service normalises it before it reaches the store.
+    kind: mechanism
+    weight: core
+    teach:
+      - Start from what the server sends for GET /api/feed, posts in ranked order, each with its media inside it, the users who wrote them keyed by id, and next_cursor, absent at the end.
+      - That is server data as sent. Feed Service splits it up before the store keeps it, which is the next step.
+    draw: [response, page-response, response-fields, response-cursor, service-normalises]
+    check: What three things does a feed page response carry?
+    answer: The ranked posts (with media inline), a map of users by id, and the next cursor, which is missing or null at the end.
+  - point: Posts, users and media are stored once each, by id, so one update reaches every place a post appears and dropping duplicates is a set lookup.
+    kind: rule
+    weight: core
+    teach:
+      - Split the response into three entity tables, Post, User and Media, each keyed by id. A post keeps media_ids instead of the media itself.
+      - The same post can show up in Top, in Recent and in a new-posts fetch. Stored once, a like updates it everywhere, and checking for a duplicate is just asking whether the id is already there.
+      - The Post holds the confirmed like_count and viewer_has_liked from the server. Media carries width, height and a placeholder colour, known before any image bytes arrive.
+    draw: [entities, post-entity, user-entity, media-entity, normalise, post-confirmed, media-size]
+    check: Why are posts stored by id rather than inside each tab's list?
+    answer: A post can appear in both tabs and in new-post fetches; one record means a like updates it everywhere, and duplicates are dropped with an id lookup.
+    misconceptions:
+      - "Storing by id is about saving space -> it is about one record per post, so updates reach every place and dedupe is easy."
+  - point: Each tab has one Feed, an ordered list of post ids with its own next cursor, status, pending ids and error, so the list holds ids, never posts.
+    kind: component
+    weight: core
+    teach:
+      - A Feed exists per tab, top and recent. Its ids are the order to show, next_cursor says where the next page starts, and status is one of idle, loading, loading-more, error or end.
+      - pending_ids are the new posts waiting behind the pill, capped at 50. error holds the last failure for the footer.
+    draw: [lists, feed-top, to-lists, list-fields, list-pending]
+    check: What does the Feed for the Recent tab hold, and what does it not hold?
+    answer: Its ordered post ids, next cursor, status, pending ids and error; it holds no post data, which lives in the entity tables.
+    misconceptions:
+      - "Both tabs share one list and one cursor -> each tab has its own Feed with its own ids and cursor."
+  - point: The like intent lives only on the client and overlays the post's confirmed state; a card shows the intent's desired state if one exists, otherwise the confirmed one, so rolling back just deletes the intent.
+    kind: rule
+    weight: core
+    teach:
+      - LikeIntent holds a post id, the state the reader wants, and whether a request is in flight. The server never sees it.
+      - What the card shows is derived. If there is an intent, show its desired state; if not, show the post's confirmed like_count and viewer_has_liked.
+      - The intent copies nothing from the post, so undoing a failed like is deleting the intent. When a request succeeds, the confirmed fields are updated from the response and the intent goes.
+    draw: [client-only, like-intent, intent-rule, rollback-rule]
+    check: Which part of the like state never comes from the server, and how is a failed like undone?
+    answer: The LikeIntent (desired and in flight); a failed like is undone by deleting it, which leaves the confirmed state showing.
+    misconceptions:
+      - "The optimistic count is written into the post -> it sits in a separate intent, so the confirmed state is never overwritten until the server answers."
+  - point: To restore the reading position the client saves the top visible post's id and the offset within it, not a pixel scroll value.
+    kind: mechanism
+    weight: core
+    teach:
+      - ScrollSnapshot is the other client-only piece. It records the feed, the anchor post id, the offset inside that post, the first 200 ids, the cursor and when it was saved.
+      - Heights may differ when the reader comes back, fonts load, the window is resized, cards are not yet measured. A post id plus an offset still lands on the right content when pixel totals have changed.
+    draw: [scroll-snapshot, saved, snapshot-fields]
+    check: What does the design save in order to restore the reading position, and why not window.scrollY?
+    answer: The id of the top visible post and the offset within it; pixel totals can change on return, while an anchor post still finds the same content.
+    misconceptions:
+      - "Saving scrollY is enough -> heights can differ on return, so a pixel offset can land on different content."
+task:
+  prompt: Draw the store as it holds the feed, the Post, User and Media entities by id, a Feed per tab with its fields, and the client-only LikeIntent and ScrollSnapshot, and write what a card shows for a post with an intent.
+  expects: [2, 3, 4]

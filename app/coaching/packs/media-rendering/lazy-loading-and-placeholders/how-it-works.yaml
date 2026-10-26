@@ -1,0 +1,142 @@
+# Lazy loading and placeholders: the loading attribute and why the hero stays eager, fetchpriority on the hero, an IntersectionObserver with a lead distance, and the slot a placeholder holds.
+id: media-rendering/lazy-loading-and-placeholders/how-it-works
+title: Lazy loading and placeholders
+source:
+  hash: a8786d37b46a
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: media-rendering/image-formats-and-delivery/how-it-works
+  assumes:
+    - fetchpriority changes a request's rank, not when it is found.
+    - A decoded image costs about 4 bytes per pixel whatever its file format, and img.decode() waits until it can paint.
+  carries:
+    - loading=lazy holds an image's request until it is near the viewport, at a distance the browser chooses.
+    - A lazy image cannot be requested until CSS and layout have run, so the hero, the LCP image, stays eager.
+    - Eager is not early; the hero also wants fetchpriority high.
+    - An IntersectionObserver with a rootMargin lets the page choose the distance, which should be scroll speed times fetch time.
+    - A placeholder starts with a reserved box from width and height, so swapping in the photo is a repaint, not a layout.
+  terms:
+    - term: lazy loading
+      means: Holding an image or iframe request until the element is close to the viewport.
+    - term: lazy load scroll margin
+      means: How far outside the viewport a lazy element starts loading; the browser chooses it.
+    - term: rootMargin
+      means: An IntersectionObserver option that grows the root's box like a CSS margin, the page's own prefetch distance.
+    - term: lead distance
+      means: How far ahead a request must start, scroll speed times the time to fetch and decode one photo.
+    - term: placeholder
+      means: What fills an image's reserved box until the photo is ready, from a grey shape to a blurred miniature.
+board:
+  keep: [formats, fmt-avif, fmt-webp, fmt-jpeg, fmt-png, fmt-svg, fmt-gif, lossy, px-block, s-444, s-420, picking, src-avif, src-webp, img-jpeg, accept, server-picks, vary, image-cdn, cdn-url, edge-cache, transformer, master, pixels, file-avif, file-png, bitmap, full-colour, shared-colour, skip-avif, fall-to-img, sent-with, answers-with, get-url, on-miss, fetch-master, decode-avif, decode-png]
+  elements:
+    - { id: recipe-page, kind: region, label: One recipe page, at: [1, 39], size: [50, 25] }
+    - { id: viewport-frame, kind: region, label: viewport, at: [3, 41], size: [26, 6], in: recipe-page, dashed: true }
+    - { id: hero-img, kind: box, label: "hero: eager, fetchpriority high", at: [5, 43], size: [22, 3], in: recipe-page, tone: green }
+    - { id: margin-frame, kind: region, label: lazy margin, at: [3, 48], size: [26, 6], in: recipe-page, dashed: true }
+    - { id: steps-near, kind: box, label: "steps 1 and 2: lazy, requested", at: [5, 50], size: [22, 3], in: recipe-page, tone: blue }
+    - { id: steps-far, kind: box, label: "steps 3 to 10: wait for scroll", at: [5, 55], size: [22, 3], in: recipe-page, tone: grey }
+    - { id: map-iframe, kind: box, label: "map iframe: lazy too", at: [5, 59], size: [22, 3], in: recipe-page, tone: grey }
+    - { id: js-off-note, kind: note, label: "scripts off or printing: all eager", at: [31, 43], in: recipe-page }
+    - { id: margin-note, kind: note, label: "Chromium: 1,250 px on 4G, 2,500 on 3G", at: [31, 50], in: recipe-page }
+    - { id: bg-note, kind: note, label: "CSS backgrounds: no loading attribute", at: [31, 60], in: recipe-page }
+    - { id: observer, kind: region, label: Observer and lead distance, at: [55, 35], size: [58, 10] }
+    - { id: tile, kind: box, label: tile with data-src, at: [57, 38], size: [13, 3], in: observer, tone: blue }
+    - { id: grown-root, kind: box, label: viewport plus rootMargin, at: [77, 38], size: [14, 3], in: observer, tone: blue }
+    - { id: set-src, kind: box, label: "set src, unobserve", at: [97, 38], size: [14, 3], in: observer, tone: green }
+    - { id: lead-sum, kind: note, label: "lead: 3,000 px/s for 0.6 s is 1,800 px", at: [57, 42], in: observer }
+    - { id: request-starts, kind: region, label: When the request starts, at: [55, 48], size: [58, 16] }
+    - { id: scanner-finds, kind: box, label: scanner finds the img, at: [57, 52], size: [12, 3], in: request-starts, tone: blue }
+    - { id: css-layout, kind: box, label: CSS and layout done, at: [76, 52], size: [14, 3], in: request-starts, tone: red }
+    - { id: lazy-get, kind: box, label: "lazy GET, in margin", at: [97, 52], size: [14, 3], in: request-starts, tone: amber }
+    - { id: eager-get, kind: box, label: "eager GET, at once", at: [57, 59], size: [12, 3], in: request-starts, tone: green }
+    - { id: lazy-hero-note, kind: note, label: "lazy hero: late, though it is in view", at: [76, 59], in: request-starts }
+    - { id: slot, kind: region, label: What holds the slot, at: [1, 67], size: [66, 13] }
+    - { id: slot-reserved, kind: box, label: box from width and height, at: [3, 70], size: [12, 3], in: slot, tone: amber }
+    - { id: slot-preview, kind: box, label: blurred preview, at: [21, 70], size: [10, 3], in: slot, tone: amber }
+    - { id: slot-requested, kind: box, label: photo requested, at: [38, 70], size: [10, 3], in: slot, tone: blue }
+    - { id: slot-shown, kind: box, label: photo shown, at: [54, 70], size: [10, 3], in: slot, tone: green }
+    - { id: slot-failed, kind: box, label: "failed: keeps its size", at: [38, 75], size: [10, 3], in: slot, tone: red }
+    - { id: bytes-note, kind: note, label: "skeleton 0 bytes, colour 7, BlurHash 20 to 30", at: [3, 76], in: slot }
+    - { id: repaint-note, kind: note, label: "same box: the swap is a repaint", at: [50, 76], in: slot }
+  arrows:
+    - { id: waits-for, from: scanner-finds, to: css-layout, label: lazy waits }
+    - { id: lazy-path, from: css-layout, to: lazy-get, label: near view }
+    - { id: eager-path, from: scanner-finds, to: eager-get, label: eager }
+    - { id: enters, from: tile, to: grown-root, label: intersects }
+    - { id: callback, from: grown-root, to: set-src, label: callback }
+    - { id: preview-ready, from: slot-reserved, to: slot-preview, label: ready }
+    - { id: enters-margin, from: slot-preview, to: slot-requested, label: in margin }
+    - { id: decoded, from: slot-requested, to: slot-shown, label: decoded }
+    - { id: rejects, from: slot-requested, to: slot-failed, label: error }
+beats:
+  - point: loading=lazy holds an image's request until the element is close to the viewport, at a distance each browser chooses, while eager, the default, fetches as soon as the image is found.
+    kind: mechanism
+    weight: core
+    teach:
+      - On a Saltbox recipe the hero is at the top and ten step photos run far below it. A missing or misspelled loading value means eager, fetched the moment the browser finds it; lazy waits until the image nears the viewport.
+      - How near is left to the browser. Chromium uses 1,250 px below the viewport on 4G and 2,500 px on 3G or slower; Firefox and Safari pick their own.
+      - So once layout has run, steps one and two, inside the margin, are requested; steps three to ten wait until the reader scrolls them into the margin.
+    draw: [recipe-page, viewport-frame, hero-img, margin-frame, steps-near, steps-far, margin-note]
+    check: Who decides how far from the viewport a lazy image starts loading?
+    answer: The browser; the standard leaves the distance implementation-defined, and Chromium uses 1,250 px on 4G and 2,500 px on slower connections.
+  - point: A lazy image cannot be requested when the preload scanner finds it, only once CSS has arrived and layout has placed it, so the hero, the LCP image, must never be lazy.
+    kind: rule
+    weight: core
+    teach:
+      - An eager img can be requested the moment the preload scanner sees it in the HTML, before any CSS. A lazy one cannot, because its distance from the viewport is only known after layout, and layout waits for the stylesheets.
+      - That lost head start costs nothing for step seven and a lot for the hero. A lazy hero sitting in the first viewport still waits for CSS and layout.
+      - Lazy is for images below the fold; the hero stays eager.
+    draw: [request-starts, scanner-finds, css-layout, waits-for, eager-get, eager-path, lazy-get, lazy-path, lazy-hero-note]
+    check: Why does a lazy img in the first viewport load later than an eager one?
+    answer: The browser needs CSS and layout before it knows the lazy image is near the viewport, so its request cannot start at discovery as an eager one's can.
+    misconceptions:
+      - "Lazy-load every image, the hero too -> a lazy hero waits for CSS and layout; lazy is for images below the fold, never the LCP image."
+      - "An image already in view loads at once even when lazy -> it still waits for layout before it is requested."
+  - point: Eager is not the same as early, so the hero also gets fetchpriority high to start at high priority the moment it is found instead of waiting for layout to raise it.
+    kind: rule
+    weight: core
+    teach:
+      - Chrome starts ordinary images low and raises the ones layout shows in view; the first five large images start at medium.
+      - fetchpriority high on the hero skips that guess. It is a hint, and it does nothing for an image the browser cannot see in the HTML.
+    check: Saltbox's hero is a plain eager img. What does adding fetchpriority high change?
+    answer: It starts at high priority from discovery instead of low or medium, without waiting for layout to raise it.
+  - point: Native lazy loading has edges, with scripts off or when printing every image loads, CSS background images are not covered, and iframes can be lazy too.
+    kind: rule
+    weight: supporting
+    teach:
+      - With JavaScript disabled lazy is ignored, because deferring requests could let a page track scrolling. Printing fetches every lazy image so the printout is complete.
+      - A background image in a stylesheet has no loading attribute; deferring it needs an observer that adds a class. An embedded map far down the page can be lazy, like an image.
+    draw: [js-off-note, bg-note, map-iframe]
+    check: What happens to loading=lazy when JavaScript is disabled, and why?
+    answer: It is ignored and the images load eagerly, because otherwise the timing of image requests could reveal the reader's scroll position.
+  - point: When the browser's margin is not the right one, an IntersectionObserver with a rootMargin lets the page choose, and the distance should be the reader's scroll speed times the time to fetch and decode a photo.
+    kind: mechanism
+    weight: core
+    teach:
+      - Saltbox's feed tiles render with the real URL in data-src. An IntersectionObserver whose rootMargin grows the viewport downward calls back when a tile enters the grown box; the code sets src and unobserves the tile.
+      - The browser computes intersections during its own rendering work and calls back later as a task, so a hundred tiles need no scroll listeners and no forced layouts.
+      - Read rootMargin as lead distance. A 3,000 px per second fling and a 600 ms fetch need 1,800 px; a 200 px margin shows blank tiles on any real fling.
+    draw: [observer, tile, grown-root, enters, set-src, callback, lead-sum]
+    check: A reader flings at 3,000 px per second and a photo takes about 500 ms to fetch and decode. Roughly what rootMargin keeps the tiles from showing only placeholders?
+    answer: About 1,500 px, speed times fetch time, 3,000 × 0.5.
+    misconceptions:
+      - "A 200 px margin is plenty -> a real fling covers thousands of pixels a second, so 200 px leaves blank tiles."
+  - point: A placeholder starts with a reserved box from the photo's width and height, so the photo swaps in as a repaint, not a layout, and what fills the box is bytes traded against fidelity.
+    kind: mechanism
+    weight: core
+    teach:
+      - The img needs width and height attributes or a CSS aspect-ratio; for reader uploads the API must send each photo's width and height with its URL, or nothing can be reserved.
+      - Fill it with a skeleton for no bytes, a dominant colour for about seven, a BlurHash for 20 to 30, or a tiny inline preview for a few hundred.
+      - Set src, wait for img.decode(), then fade the photo in over the blur. Since Chrome 112 a blurry, low-information preview is not counted as the LCP element, so the real photo still has to arrive.
+    draw: [slot, slot-reserved, slot-preview, preview-ready, slot-requested, enters-margin, slot-shown, decoded, slot-failed, rejects, bytes-note, repaint-note]
+    check: A blurred preview later sharpens into the photo. What keeps that swap from shifting the layout?
+    answer: Both fill the same box, reserved in advance from the photo's width and height or aspect ratio, so the swap is only a repaint.
+    misconceptions:
+      - "A blurred preview improves LCP -> a low-entropy preview is not counted as the LCP element; the real photo still has to arrive."
+      - "The fade-in hides the shift -> only a reserved box of the right shape prevents it."
+task:
+  prompt: Draw the recipe page with its hero and step photos, mark which load eager and which lazy and why the hero stays eager, and write the rootMargin a 3,000 px per second fling needs when a photo takes 0.6 s.
+  expects: [1, 2, 5]

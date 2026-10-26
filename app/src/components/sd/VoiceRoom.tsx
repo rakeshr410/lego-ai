@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import t from '../../i18n/messages/interview';
 import type { DrawOp } from '../../lib/server/interview/draw';
+import type { PenCueMessage } from '../../lib/board/pen/cues';
 import type { SessionView, VoiceJoin } from '../../pages/api/interview/index';
 import { VoiceCall, type Caption } from '../../lib/voice-call';
 
-// The voice part of a voice session (docs/interview/README.md, "Voice"; design section 6), in the
+// The voice part of a voice session (docs/README.md, "Voice"; design section 6), in the
 // room where the answer box would be. It joins the session's Daily room with the token the web
 // minted (a fresh one from POST [id]/voice when it has none), shows the line's state, who is
 // speaking and live captions, and offers mute and "switch to typing". The pipeline, not this
@@ -29,8 +30,12 @@ type Props = {
   onHideTranscript?: () => void;
   /** A mock interview (the default) or a coach lesson: who the bot is called. */
   kind?: 'interview' | 'coach';
-  /** A drawing the pipeline sends over the call (a coach's, as it speaks): for the room's board. */
-  onDraw?: (ops: DrawOp[]) => void;
+  /** A drawing the pipeline sends over the call (a coach's, as it speaks): for the room's board; `pace` names it in the voice's cues. */
+  onDraw?: (ops: DrawOp[], pace?: string, instant?: boolean) => void;
+  /** A voice cue for the board's pen (voice/bot/conductor.py); a `release` too when the call stops being live. */
+  onPen?: (cue: PenCueMessage) => void;
+  /** The voice started or stopped talking, and its words as they are heard (the pen hovers over what they name). */
+  onVoice?: (e: { speaking: boolean } | { words: string }) => void;
   /** The call layout's syllabus rail (a lesson), under the speakers. */
   rail?: ReactNode;
 };
@@ -72,11 +77,15 @@ async function voiceAction(id: string, action: 'join' | 'leave') {
   return { ok: res.ok, status: res.status, data };
 }
 
-export default function VoiceRoom({ sessionId, join: initialJoin, session, onSession, onLeft, layout = 'panel', showTranscript = true, onHideTranscript, kind = 'interview', onDraw, rail = null }: Props) {
+export default function VoiceRoom({ sessionId, join: initialJoin, session, onSession, onLeft, layout = 'panel', showTranscript = true, onHideTranscript, kind = 'interview', onDraw, onPen, onVoice, rail = null }: Props) {
   const who = t(kind === 'coach' ? 'voice.coach' : 'voice.interviewer');
   const onDrawRef = useRef(onDraw);
+  const onPenRef = useRef(onPen);
+  const onVoiceRef = useRef(onVoice);
   useEffect(() => {
     onDrawRef.current = onDraw;
+    onPenRef.current = onPen;
+    onVoiceRef.current = onVoice;
   });
   const [status, setStatus] = useState<Status>('joining');
   const [detail, setDetail] = useState('');
@@ -90,6 +99,8 @@ export default function VoiceRoom({ sessionId, join: initialJoin, session, onSes
   const aliveRef = useRef(true);
   const statusRef = useRef<Status>('joining');
   const set = useCallback((s: Status) => {
+    // A call that stops being live sends no more cues: the pen draws what it waits on at its own pace.
+    if (statusRef.current === 'live' && s !== 'live') onPenRef.current?.({ at: 'release' });
     statusRef.current = s;
     setStatus(s);
   }, []);
@@ -98,16 +109,22 @@ export default function VoiceRoom({ sessionId, join: initialJoin, session, onSes
   // (which they reach through connectRef) so the compiler sees no use before declaration.
   const connectRef = useRef<((fresh: boolean) => Promise<void>) | null>(null);
   const connectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const rejoinTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scheduleRejoin = () => {
     if (connectTimer.current) clearTimeout(connectTimer.current);
     connectTimer.current = null;
+    // One failure is reported twice (the call's error state and connect's catch): one rejoin for both.
+    if (rejoinTimer.current) return;
     attemptsRef.current += 1;
     if (attemptsRef.current > REJOIN_ATTEMPTS) {
       set('lost');
       return;
     }
     set('reconnecting');
-    setTimeout(() => void connectRef.current?.(true), REJOIN_BASE_MS * attemptsRef.current);
+    rejoinTimer.current = setTimeout(() => {
+      rejoinTimer.current = null;
+      void connectRef.current?.(true);
+    }, REJOIN_BASE_MS * attemptsRef.current);
   };
 
   function onCallState(state: 'connecting' | 'live' | 'ended' | 'error', why?: string) {
@@ -129,8 +146,14 @@ export default function VoiceRoom({ sessionId, join: initialJoin, session, onSes
   }
 
   function onMessage(data: unknown) {
-    const m = data as { kind?: unknown; ops?: unknown } | null;
-    if (m?.kind === 'draw' && Array.isArray(m.ops)) onDrawRef.current?.(m.ops as DrawOp[]);
+    const m = data as { kind?: unknown; ops?: unknown; pace?: unknown; instant?: unknown; at?: unknown } | null;
+    if (m?.kind === 'draw' && Array.isArray(m.ops)) onDrawRef.current?.(m.ops as DrawOp[], typeof m.pace === 'string' ? m.pace : undefined, m.instant === true);
+    else if (m?.kind === 'pen' && (m.at === 'shape' || m.at === 'write' || m.at === 'release')) onPenRef.current?.(m as PenCueMessage);
+  }
+
+  function onSpeakingChange(who: 'you' | 'interviewer' | null) {
+    setSpeaking(who);
+    onVoiceRef.current?.({ speaking: who === 'interviewer' });
   }
 
   function onCaption(c: Caption) {
@@ -157,7 +180,7 @@ export default function VoiceRoom({ sessionId, join: initialJoin, session, onSes
           if (r.data.session) onSession(r.data.session);
         }
         if (attemptsRef.current === 0) set('connecting');
-        const call = callRef.current ?? new VoiceCall({ onState: onCallState, onCaption, onSpeaking: setSpeaking, onMessage });
+        const call = callRef.current ?? new VoiceCall({ onState: onCallState, onCaption, onSpeaking: onSpeakingChange, onMessage, onWords: (words) => onVoiceRef.current?.({ words }) });
         callRef.current = call;
         await call.connect(joinRef.current);
         call.setMuted(muted);
@@ -189,6 +212,8 @@ export default function VoiceRoom({ sessionId, join: initialJoin, session, onSes
       aliveRef.current = false;
       if (connectTimer.current) clearTimeout(connectTimer.current);
       connectTimer.current = null;
+      if (rejoinTimer.current) clearTimeout(rejoinTimer.current);
+      rejoinTimer.current = null;
       void callRef.current?.disconnect();
       callRef.current = null;
     };
@@ -234,6 +259,8 @@ export default function VoiceRoom({ sessionId, join: initialJoin, session, onSes
   };
 
   const retry = () => {
+    if (rejoinTimer.current) clearTimeout(rejoinTimer.current);
+    rejoinTimer.current = null;
     attemptsRef.current = 0;
     setDetail('');
     void connect(true);

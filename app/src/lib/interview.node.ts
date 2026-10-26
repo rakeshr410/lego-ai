@@ -9,7 +9,7 @@ import { FLAGS, getSystems, getTopics } from './sd';
 // a plan for its landing page and room. The private fields (briefs, follow-ups, signals, red flags,
 // the grader's brief) never leave the server: pages get only what toInterviewPage copies.
 //
-// Drills (docs/interview/README.md, "Drills"): on a track with `interviewDrills`, each topic and each
+// Drills (docs/README.md, "Drills"): on a track with `interviewDrills`, each topic and each
 // of its sections is a short interview of its own. A system's page lists them; a concept system (no
 // whole-product plan) has a page of drills only. A drill's own projection is served by
 // /api/interview?topic=…, not prerendered: the system's page is the one HTML for every scope.
@@ -47,6 +47,17 @@ export type InterviewPage = {
   checklist: string[];
   /** The system's drills, topics in order and each topic's sections after it; empty on a drill's own page and on tracks without drills. */
   drills: InterviewDrill[];
+  /** A coaching playlist's lesson (docs/coaching.md): `system` is then the playlist, and the page is the lesson's own. */
+  course?: { playlist: string; lesson: string; hub: string; href: string };
+};
+
+/** A coaching playlist's page: its lessons in order. */
+export type PlaylistPage = {
+  slug: string;
+  title: string;
+  summary: string;
+  outline: string;
+  lessons: { slug: string; title: string; summary: string; minutes: number; parts: string[]; href: string }[];
 };
 
 const publishedStatus = (status: SnapshotInterview['reviewStatus']) => !FLAGS.reviewedOnly || status === 'reviewed';
@@ -183,4 +194,52 @@ export function toInterviewPage(entry: Pick<SnapshotInterview, 'plan' | 'derived
     checklist: p.checklist ?? [],
     drills: [],
   };
+}
+
+// Coaching playlists (docs/coaching.md): /coach/<playlist> lists its lessons, /coach/<playlist>/<lesson>
+// is a lesson's landing page and room, the coach's own, built from the lesson's plan like a drill's.
+
+/** Every playlist's page; none while the interview flag is off. */
+export async function getPlaylistPages(): Promise<PlaylistPage[]> {
+  if (!FLAGS.interview) return [];
+  const { playlists } = await import('./server/coaching/lessons');
+  return playlists().map((pl) => ({
+    slug: pl.slug,
+    title: pl.title,
+    summary: pl.summary,
+    outline: pl.outline,
+    lessons: pl.lessons.map((l) => ({
+      slug: l.slug,
+      title: l.title,
+      summary: l.summary,
+      minutes: l.parts.reduce((n, p) => n + p.minutes, 0),
+      parts: l.parts.map((p) => p.title),
+      href: `/coach/${pl.slug}/${l.slug}`,
+    })),
+  }));
+}
+
+/** A lesson's page, or null when the lesson (or one of its sections) is not in this build. */
+export async function lessonPage(playlist: string, lesson: string): Promise<InterviewPage | null> {
+  if (!FLAGS.interview) return null;
+  const { lessonPlan } = await import('./server/coaching/lessons');
+  const plan = lessonPlan(playlist, lesson);
+  if (!plan?.lesson) return null;
+  const topics = await getTopics();
+  const systems = new Set(plan.lesson.sections.map((s) => s.system));
+  // A lesson's sections come from several systems; a topic slug is looked up among them.
+  const topicOf: TopicOf = (slug) => topics.find((t) => t.slug === slug && systems.has(t.system.slug));
+  const hub = `/coach/${playlist}`;
+  return {
+    ...toInterviewPage({ plan: plan.plan, derived: true }, { slug: plan.system.slug, name: plan.system.name, icon: null }, topicOf),
+    readFirst: [],
+    course: { playlist, lesson, hub, href: `${hub}/${lesson}` },
+  };
+}
+
+/** Every lesson's page, for the prerendered routes. */
+export async function getLessonPages(): Promise<InterviewPage[]> {
+  const pages = await getPlaylistPages();
+  const out = await Promise.all(pages.flatMap((pl) => pl.lessons.map((l) => lessonPage(pl.slug, l.slug))));
+  return out.filter((p): p is InterviewPage => !!p);
 }

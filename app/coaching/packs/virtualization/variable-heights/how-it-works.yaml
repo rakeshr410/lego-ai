@@ -1,0 +1,139 @@
+# Rows whose height is only known once rendered: the estimate, measuring with ResizeObserver, the offset table and its binary search, and correcting scrollTop.
+id: virtualization/variable-heights/how-it-works
+title: Unknown and changing heights
+source:
+  hash: 019413c8ae6e
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: null
+  assumes:
+    - A windowed list keeps only the rows in view plus an overscan in the DOM, with a spacer that gives the scrollbar the full list's height.
+    - Reading a size right after changing the DOM forces the browser to lay out early.
+  carries:
+    - Every unmeasured row needs an estimated height; summed, the estimates set the scrollbar and where a jump lands.
+    - A ResizeObserver reports each rendered row's border-box height after layout and before paint, at no extra layout cost.
+    - Measured heights are stored by entry id, not index, and kept when a row unmounts.
+    - An offset table of running totals answers which entry sits at a pixel by binary search, about log2(n) probes.
+    - When rows above an anchor entry change height, the list adds the change to scrollTop before paint.
+  terms:
+    - term: estimate
+      means: The height a row is given before it has ever been rendered and measured.
+    - term: offset table
+      means: An array where offsets[i] is the top of entry i, the running total of every height before it.
+    - term: anchor
+      means: The entry the reader is looking at, normally the first whose top is in view, kept still while heights change.
+    - term: ResizeObserver
+      means: A browser observer that reports an element's size after the frame's layout and before paint.
+board:
+  keep: []
+  elements:
+    - { id: estimate, kind: region, label: Where the first height comes from, at: [2, 2], size: [39, 23] }
+    - { id: est-list, kind: region, label: "spacer: sum of heights", at: [4, 5], size: [14, 16], in: estimate, dashed: true }
+    - { id: measured-a, kind: box, label: measured 20 px, at: [6, 7], size: [10, 2], in: est-list, tone: blue }
+    - { id: measured-b, kind: box, label: measured 60 px, at: [6, 10], size: [10, 4], in: est-list, tone: blue }
+    - { id: guessed-a, kind: box, label: guessed 20 px, at: [6, 15], size: [10, 2], in: est-list, tone: grey, dashed: true }
+    - { id: guessed-b, kind: box, label: not drawn yet, at: [6, 18], size: [10, 2], in: est-list, tone: grey, dashed: true }
+    - { id: est-sum, kind: note, label: thumb and jumps read these sums, at: [4, 22], in: estimate }
+    - { id: est-constant, kind: box, label: "one constant: 20 px", at: [21, 5], size: [18, 3], in: estimate }
+    - { id: est-mean, kind: box, label: running mean of measured rows, at: [21, 9], size: [18, 3], in: estimate }
+    - { id: est-per-row, kind: box, label: "per row: newlines times line height", at: [21, 13], size: [18, 3], in: estimate, tone: green }
+    - { id: est-server, kind: box, label: sizes sent by the server, at: [21, 17], size: [18, 3], in: estimate, tone: amber }
+    - { id: measuring, kind: region, label: Measuring after layout, at: [2, 27], size: [40, 11] }
+    - { id: ro-timing, kind: note, label: "ResizeObserver: after layout, before paint", at: [4, 29], in: measuring }
+    - { id: rendered-row, kind: box, label: rendered row, at: [4, 31], size: [12, 3], in: measuring, tone: blue }
+    - { id: heights-by-id, kind: oval, label: heights by entry id, at: [24, 31], size: [16, 3], in: measuring, tone: amber }
+    - { id: keep-height, kind: note, label: "unmounted: unobserve, keep the height", at: [4, 35], in: measuring }
+    - { id: offsets, kind: region, label: Offset table, at: [43, 2], size: [37, 34] }
+    - { id: offsets-array, kind: oval, label: "offsets: top of each entry", at: [50, 30], size: [18, 4], in: offsets, tone: amber }
+    - { id: offsets-rule, kind: note, label: "next offset: this one plus its height", at: [45, 5], in: offsets }
+    - { id: probes, kind: note, label: "250,000 entries: about 18 probes", at: [45, 26], in: offsets }
+    - { id: entry-5, kind: box, label: entry 5 at 360, at: [45, 7], size: [14, 4], in: offsets }
+    - { id: entry-6, kind: box, label: entry 6 at 460, at: [45, 12], size: [14, 2], in: offsets }
+    - { id: viewport-490, kind: region, label: "viewport, top at 490", at: [44, 15], size: [16, 9], in: offsets, dashed: true }
+    - { id: entry-7, kind: box, label: entry 7 at 480, at: [45, 17], size: [14, 2], in: viewport-490, tone: green }
+    - { id: entry-8, kind: box, label: entry 8 at 500, at: [45, 20], size: [14, 2], in: viewport-490 }
+    - { id: scrolltop-490, kind: box, label: scrollTop 490, at: [68, 17], size: [10, 2], in: offsets, tone: blue }
+    - { id: correcting, kind: region, label: Correcting scrollTop, at: [82, 2], size: [38, 32] }
+    - { id: anchor-120, kind: box, label: "anchor: entry 120", at: [86, 27], size: [14, 2], in: correcting, tone: green }
+    - { id: rows-above, kind: region, label: "rows above: 228 px taller", at: [84, 5], size: [18, 14], in: correcting, tone: red, dashed: true }
+    - { id: e-116, kind: box, label: entry 116, at: [86, 7], size: [14, 2], in: rows-above }
+    - { id: trace-117, kind: box, label: "117: 280 px, guessed 28", at: [86, 10], size: [14, 4], in: rows-above, tone: red }
+    - { id: e-118, kind: box, label: "entries 118, 119", at: [86, 15], size: [14, 2], in: rows-above }
+    - { id: add-delta, kind: box, label: "scrollTop + 228, in the callback", at: [105, 5], size: [13, 3], in: correcting, tone: green }
+    - { id: below-anchor, kind: note, label: "grows below the anchor: no change", at: [84, 31], in: correcting }
+    - { id: one-frame-late, kind: box, label: "next frame: content shakes", at: [105, 10], size: [13, 3], in: correcting, tone: red }
+    - { id: browser-suppressed, kind: box, label: "browser anchoring: off here", at: [105, 15], size: [13, 3], in: correcting, tone: grey }
+    - { id: grid-rows, kind: note, label: "grid: a row is as tall as its tallest cell", at: [2, 40] }
+    - { id: masonry, kind: note, label: "masonry: one offset table per column", at: [26, 40] }
+  arrows:
+    - { id: observes, from: rendered-row, to: heights-by-id, label: real height }
+    - { id: sums, from: heights-by-id, to: offsets-array, label: running total }
+    - { id: search, from: scrolltop-490, to: entry-7, label: binary search }
+    - { id: pushes, from: rows-above, to: anchor-120, label: pushes down }
+beats:
+  - point: Every row the list has not yet rendered still needs an estimated height, because the scrollbar and the landing spot of any jump are sums of those numbers.
+    kind: mechanism
+    weight: core
+    teach:
+      - The spacer's height and every offset past the measured rows are sums of heights, so a row Logscope has never drawn still needs a number. Summed over the whole list it sizes and places the scrollbar thumb; summed up to one index it decides where a jump to that index lands.
+      - Walk the ladder of guesses. One constant, 20 px for Logscope's commonest row, costs nothing but the thumb drifts as rows get measured. A running mean of the measured heights gets close but nudges the thumb with every update.
+      - Best is a guess per row from its own data, newlines times the line height, with wrapping worked out from one character width measured once in the monospace font. Where the server knows sizes, as with media, it can send them, at the cost of payload bytes.
+    draw: [estimate, est-list, measured-a, measured-b, guessed-a, guessed-b, est-sum, est-constant, est-mean, est-per-row, est-server]
+    check: Logscope guesses 20 px for every row it has not measured. What two things does that guess decide before anything is measured?
+    answer: The scrollbar, since the spacer is the sum of every height, and where a jump to an index lands, since that entry's offset is the sum of the heights before it.
+    misconceptions:
+      - "The estimate only matters until a row is drawn -> it sets the scrollbar and every offset past the measured rows, so a poor one makes the thumb drift and jumps land in the wrong place."
+  - point: A ResizeObserver collects each rendered row's real height after the browser's layout and before paint, and the height is stored under the entry's id and kept after the row unmounts.
+    kind: mechanism
+    weight: core
+    teach:
+      - The tempting way is to mount the new rows and read each one's height straight away. In a script that just changed the DOM, each read forces a layout, and row after row repeats it.
+      - Instead observe each row as it mounts. After the frame's layout and before paint, the observer reports every row whose size changed, plus each row the first time it is seen. The numbers come from the layout already done, so measuring is free. Read the border-box height so padding and borders count.
+      - File the height under the entry's id, not its position, because positions move when entries are inserted or filtered. When a row unmounts, stop observing it but keep its height, so scrolling back reuses the measurement.
+    draw: [measuring, rendered-row, heights-by-id, observes, ro-timing, keep-height]
+    check: Why does Logscope store a measured height under the entry's id instead of its index?
+    answer: Indexes shift when entries are inserted, removed or filtered, so a height filed by index would end up describing another entry; an id stays with the entry it was measured on.
+    misconceptions:
+      - "Read each new row's height right after mounting it -> that read forces layout in the middle of the script, row by row; a ResizeObserver hands over sizes from the layout the browser already did."
+      - "Drop a row's height when it unmounts -> keep it, so scrolling back uses the real height instead of the guess."
+  - point: An offset table of running totals places any entry with one array read and finds the entry at a scroll position by binary search, about log2(n) probes.
+    kind: mechanism
+    weight: core
+    teach:
+      - Keep a second array beside the heights. offsets[0] is 0 and each next offset is the previous one plus that entry's height, so offsets[i] is where entry i starts. The spacer is the last offset plus the last height.
+      - Where does entry 182,640 go? One read. Which entry is at the top of the viewport? The largest i whose offset is at or below scrollTop. Offsets only grow, so halve the candidates on each probe, about 18 probes for 250,000 entries.
+      - Work the article's small case. Entries 5 to 8 start at 360, 460, 480 and 500. At scrollTop 490 the search settles on entry 7, which spans 480 to 500, with 10 px of it scrolled out of view. Then walk forward adding heights to fill the viewport, and add the overscan.
+      - When one height changes, everything after it is stale. Lowering a valid-up-to mark and rebuilding on the next read past it suits most lists, because changes and reads cluster near the viewport.
+    draw: [offsets, offsets-array, sums, offsets-rule, probes, entry-5, entry-6, viewport-490, entry-7, entry-8, scrolltop-490, search]
+    check: Entries 5 to 8 start at 360, 460, 480 and 500 px. Which entry is first visible at scrollTop 490, how is it found, and about how many probes would 250,000 entries need?
+    answer: Entry 7, the largest entry whose offset is at or below 490; a binary search over the offsets finds it, about log2(250,000), roughly 18 probes.
+    misconceptions:
+      - "Find the top row by walking down the list adding heights -> offsets only increase, so a binary search finds it in about log2(n) probes instead of touching every entry."
+  - point: When rows above the anchor are measured at a different height than guessed, the list adds the total change to scrollTop inside the ResizeObserver callback, so the frame that reaches the screen shows the anchor where it was.
+    kind: rule
+    weight: core
+    teach:
+      - The reader has just jumped to entry 120, and entries 116 to 119 sit above it at 28 px guesses. Measured, three come back 8 px shorter, and entry 117 is a stack trace of 280 px. Net, +228 px above the anchor, so entry 120 now starts 228 px lower while scrollTop has not moved, and they are staring into the trace.
+      - Add up the changes of every measured row before the anchor and add that to scrollTop in the same callback. It is still before paint; the browser lays out again and the painted frame has entry 120 in place. A row that grows at or below the anchor grows downward, away from the reader, and needs nothing.
+      - Do not defer it to the next animation frame, that paints one frame of shifted content and shakes on a fast fling. And do not count on the browser's own scroll anchoring, it backs off when rows are moved by top or transform, which is how a virtualizer places them.
+    draw: [correcting, anchor-120, rows-above, e-116, trace-117, e-118, pushes, add-delta, below-anchor, one-frame-late, browser-suppressed]
+    check: Entry 122, below the reader's anchor, is measured 72 px taller than its estimate. What should the list do to scrollTop?
+    answer: Nothing. A row below the anchor grows downward, so the anchor does not move; only changes above the anchor are added to scrollTop.
+    misconceptions:
+      - "Fix the shift on the next animation frame -> that paints one frame of shifted content first; correct inside the ResizeObserver callback, before paint."
+      - "The browser's scroll anchoring will keep the reader in place -> its adjustment is suppressed when top or transform changes on the anchor's path, which is how virtual rows are positioned."
+  - point: A grid whose rows line up is virtualised with one row per item, as tall as its tallest cell, while masonry needs one offset table per column and heights known before render.
+    kind: rule
+    weight: supporting
+    teach:
+      - Treat each row of cells as one item whose height is its tallest cell and keep one table of row offsets; a second table of widths windows the columns too, as a big spreadsheet does.
+      - Masonry has no single table, each column stacks its own items, and placement is only cheap and stable when sizes are known before render, which is why image feeds send width and height with each item.
+    draw: [grid-rows, masonry]
+    check: Why does a masonry feed want each item's size before it renders?
+    answer: Each column keeps its own offset table and an item's position depends on the column it was placed in, so placement is only cheap and stable when heights are known up front.
+task:
+  prompt: Draw an offset table for entries 5 to 8 starting at 360, 460, 480 and 500 px, mark the entry at scrollTop 490, then show rows above the anchor growing by 228 px and what the list does to scrollTop.
+  expects: [3, 4]

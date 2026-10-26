@@ -3,7 +3,7 @@
 - **Status:** Accepted, 2026-10-23
 - **Extends:** [ADR 0003](0003-section-driven-interviews.md) (the derived plan gains a board
   reference; the ledger gains board entries)
-- **Design:** [docs/interview/README.md](../interview/README.md), "Whiteboard"; the AI interviewer
+- **Design:** [docs/README.md](../README.md), "Whiteboard"; the AI interviewer
   design note (Arrowbox, 22 October 2026), section 7
 - **Code:** `web/src/lib/board/serialise.ts`, `web/src/lib/server/interview/board.ts`,
   `board-match.ts`, `content-kit/src/interview-derive.ts` (`boardReference`),

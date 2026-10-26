@@ -1,0 +1,152 @@
+# How code splitting works: import() as the split point, the chunks a bundler writes, React's lazy, the request chain a nested chunk creates, head starts, and names that survive a deploy.
+id: javascript-performance/code-splitting/how-it-works
+title: Code splitting and loading on demand
+source:
+  hash: bfbe15b3cb12
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: javascript-performance/bundle-cost/how-it-works
+  assumes:
+    - Compression shrinks only the transfer; the engine parses the unpacked text, so minifying and shipping less are what cut parse work.
+    - The code cache lets a third visit skip compiling, but it is tied to one URL, and executing the startup code is paid every visit.
+    - Tree shaking needs static ES module imports and code that does nothing on import, or says which parts do.
+  carries:
+    - import() is an expression that returns a promise of the module; the bundler turns each literal import() into its own chunk.
+    - A module is evaluated once per page; later import() calls reuse it without a request.
+    - Modules needed on both sides of a split go into the entry chunk or a shared chunk.
+    - A chunk whose dependencies are discovered only after it is parsed adds a round trip; bundlers flatten that, nested lazy imports they cannot.
+    - Prefetching or modulepreloading on a signal of intent moves the fetch, and with modulepreload the compile, ahead of the tap.
+    - Content-hashed chunk names cached for a year mean a release re-fetches only the chunks that changed.
+  terms:
+    - term: split point
+      means: An import() call with a literal path; the bundler starts a new chunk there.
+    - term: chunk
+      means: One JavaScript file the bundler writes, named after a hash of its content, such as insights-81c2.js.
+    - term: entry chunk
+      means: The chunk the HTML loads at startup, holding what the first screen needs.
+    - term: request chain
+      means: Files discovered one after another, each only once the previous one is parsed, so their round trips add up in series.
+board:
+  keep: [bytes, brotli, gzip, parsed, minify-rule, unminified, engine, eng-bg, eng-main, bg-thread, main-thread, preparse, first-call, inline-rule, eager-hint, visits, cold, warm, hot, exec-floor, new-url, flagship, flagship-cpu, budget-phone, budget-cpu, shaking, shake-drop, shake-keep, esm, cjs, side-effects, pure, shake-needs, unpacked-br, unpacked-gz, bytecode, called, second-visit, third-visit]
+  elements:
+    - { id: graph, kind: region, label: Tallybook's chunks, at: [60, 2], size: [58, 29] }
+    - { id: entry-chunk, kind: region, label: "entry chunk, index-3f9a.js", at: [62, 5], size: [54, 6], in: graph, tone: blue }
+    - { id: m-main, kind: box, label: "main.js, the router", at: [64, 7], size: [20, 3], in: entry-chunk, tone: blue }
+    - { id: m-list, kind: box, label: TransactionList, at: [90, 7], size: [24, 3], in: entry-chunk, tone: blue }
+    - { id: insights-chunk, kind: box, label: insights-81c2.js + charts, at: [62, 17], size: [16, 3], in: graph, tone: blue }
+    - { id: budgets-chunk, kind: box, label: budgets-5d07.js, at: [80, 17], size: [16, 3], in: graph, tone: blue }
+    - { id: importer-chunk, kind: box, label: importer-2be8.js, at: [98, 17], size: [18, 3], in: graph, tone: blue }
+    - { id: dates-chunk, kind: box, label: "dates-c410.js, shared", at: [70, 25], size: [18, 3], in: graph, tone: amber }
+    - { id: static-rule, kind: note, label: "static import: same chunk; import(): new chunk", at: [62, 29], in: graph }
+    - { id: import-once, kind: note, label: import() returns a promise; the module runs once, at: [86, 29], in: graph }
+    - { id: open-insights, kind: region, label: "Opening Insights, tap at 0 ms", at: [60, 33], size: [58, 24] }
+    - { id: lazy-insights, kind: box, label: lazy Insights page, at: [62, 36], size: [16, 8], in: open-insights, tone: blue }
+    - { id: suspense, kind: box, label: "Suspense: skeleton while loading", at: [90, 36], size: [26, 3], in: open-insights }
+    - { id: error-boundary, kind: box, label: "error boundary: chunk failed", at: [90, 41], size: [26, 3], in: open-insights, tone: red }
+    - { id: tap-fetch, kind: box, label: "insights-81c2.js, 240 ms", at: [62, 46], size: [16, 3], in: open-insights, tone: blue }
+    - { id: late-dates, kind: box, label: dates-c410.js found late, at: [86, 46], size: [14, 3], in: open-insights, tone: red }
+    - { id: chain-760, kind: box, label: paint at 760 ms, at: [104, 46], size: [12, 3], in: open-insights, tone: red }
+    - { id: flat-both, kind: box, label: "both chunks together, 250 ms", at: [62, 51], size: [18, 3], in: open-insights, tone: blue }
+    - { id: flat-510, kind: box, label: paint at 510 ms, at: [86, 51], size: [12, 3], in: open-insights, tone: green }
+    - { id: nested-lazy, kind: note, label: "lazy inside lazy: two round trips in series", at: [62, 55], in: open-insights }
+    - { id: head-start, kind: region, label: Starting before the tap, at: [60, 59], size: [58, 9] }
+    - { id: hover, kind: box, label: pointer rests on the tab, at: [62, 62], size: [14, 3], in: head-start }
+    - { id: prefetch, kind: box, label: prefetch into the HTTP cache, at: [84, 62], size: [14, 3], in: head-start, tone: green }
+    - { id: tap-260, kind: box, label: tap to paint 260 ms, at: [102, 62], size: [14, 3], in: head-start, tone: green }
+    - { id: prefetch-260, kind: note, label: "modulepreload also compiles: 210 ms", at: [62, 66], in: head-start }
+    - { id: signals, kind: note, label: "phone: pointerdown or the tap", at: [81, 66], in: head-start }
+    - { id: save-data, kind: note, label: skip idle prefetch on Save-Data, at: [98, 66], in: head-start }
+    - { id: names, kind: region, label: Names across deploys, at: [60, 70], size: [58, 10] }
+    - { id: hashed, kind: box, label: "content-hashed, cached a year", at: [62, 73], size: [16, 3], in: names, tone: green }
+    - { id: one-changes, kind: box, label: only changed chunks renamed, at: [85, 73], size: [16, 3], in: names, tone: green }
+    - { id: vendor, kind: box, label: vendor chunk + own runtime file, at: [105, 73], size: [12, 3], in: names, tone: blue }
+    - { id: deploy-404, kind: note, label: "old chunk 404 after a deploy: reload once", at: [62, 77], in: names }
+  arrows:
+    - { id: to-insights, from: m-main, to: insights-chunk, label: import() }
+    - { id: to-budgets, from: m-main, to: budgets-chunk, label: import() }
+    - { id: insights-dates, from: insights-chunk, to: dates-chunk, label: static }
+    - { id: budgets-dates, from: budgets-chunk, to: dates-chunk, label: static }
+    - { id: to-importer, from: m-list, to: importer-chunk, label: on click }
+    - { id: while-loading, from: lazy-insights, to: suspense, label: while loading }
+    - { id: load-fails, from: lazy-insights, to: error-boundary, label: load fails }
+    - { id: after-parse, from: tap-fetch, to: late-dates, label: after parse }
+    - { id: chain-paint, from: late-dates, to: chain-760 }
+    - { id: flat-render, from: flat-both, to: flat-510, label: render }
+    - { id: hover-starts, from: hover, to: prefetch, label: 300 ms early }
+    - { id: tap-paints, from: prefetch, to: tap-260, label: tap }
+    - { id: release, from: hashed, to: one-changes, label: a release }
+beats:
+  - point: A split point is one expression, import(path), which returns a promise of the module's exports, runs the module once per page however often it is called, and becomes its own chunk where a static import would join its importer's.
+    kind: mechanism
+    weight: core
+    teach:
+      - Start from Tallybook's Import statement feature. With a static import the statement parser is part of the startup graph whether or not anyone imports a statement today.
+      - Swap it for import() inside the handler. It is an expression, so it can sit in a function or an if. It returns a promise that fulfils with the module's exports once the module and its dependencies are fetched and run, and rejects if any of that fails.
+      - A module is evaluated once per page, so the second call gets the same object with no new request, which makes import() safe in a click handler.
+    draw: [graph, static-rule, import-once]
+    check: The Import statement button calls import('../importer/parse.js') every time it is clicked. What happens on the second click?
+    answer: The promise resolves to the same module object as the first time, with no new download or evaluation; the module runs once per page.
+    misconceptions:
+      - "import() throws if the chunk fails to load -> the call never throws; the returned promise rejects, so handle it with catch or try around await."
+  - point: The bundler turns each literal import() into a chunk holding that module and everything only it reaches, and puts modules needed on both sides of a cut in the entry chunk or a shared chunk.
+    kind: mechanism
+    weight: core
+    teach:
+      - Draw Tallybook's graph. main.js and TransactionList, the first screen, stay in the entry chunk the HTML loads.
+      - The Insights page and the chart library only it uses become insights-81c2.js; the budget planner becomes budgets-5d07.js; the statement parser becomes importer-2be8.js, fetched on Import statement.
+      - The date-range utilities are imported by both Insights and budgets, so they go into one shared chunk, dates-c410.js, which each side loads instead of a copy in both.
+    draw: [entry-chunk, m-main, m-list, insights-chunk, to-insights, budgets-chunk, to-budgets, dates-chunk, insights-dates, budgets-dates, importer-chunk, to-importer]
+    check: Insights and the budget planner both statically import the date-range utilities. Where does the bundler put them, and why not in each route's chunk?
+    answer: In a shared chunk, dates-c410.js, that both routes load; otherwise the same code would be copied into both chunks and downloaded twice.
+  - point: React's lazy wraps an import() of a component, shows the nearest Suspense fallback while the chunk loads, and needs an error boundary, because a failed load is thrown to it.
+    kind: rule
+    weight: core
+    teach:
+      - lazy takes a function returning the import() promise of a module whose default export is a component. Declare it at module top level; declared inside a component each render makes a new type and throws away the state under it.
+      - While the chunk is in flight the component suspends and the nearest Suspense boundary shows its fallback, so where you put the boundary decides how much screen turns into a skeleton.
+      - If the load fails React throws to the nearest error boundary, so a lazy route without one turns a dropped connection into a blank app. React also caches the rejected promise, so a Retry must make a fresh lazy component or reload.
+    draw: [open-insights, lazy-insights, suspense, while-loading, error-boundary, load-fails]
+    check: A lazy Insights route has a Suspense boundary but no error boundary, and its chunk fails to load in a tunnel. What does user 1 see, and why?
+    answer: A blank app; the rejected import is thrown to the nearest error boundary, and without one nothing catches it.
+    misconceptions:
+      - "Suspense handles a failed chunk -> Suspense only shows the fallback while loading; a failure goes to an error boundary."
+  - point: A chunk whose dependency is discovered only after it is downloaded and parsed adds a round trip in series, which bundlers flatten by fetching a split point's files together, but nested lazy imports form a chain only the code can fix.
+    kind: failure
+    weight: core
+    teach:
+      - User 1 taps Insights. insights-81c2.js takes about 240 ms to arrive, and only when it is parsed does the browser learn it needs the shared dates chunk. That second fetch puts the paint at 760 ms.
+      - Bundlers know the whole graph at build time, so they rewrite the import to request the chunk and its shared chunk together. Both arrive at about 250 ms and the paint is at 510 ms.
+      - A lazy chart panel inside the lazy Insights page is a chain no bundler can flatten, two round trips and two skeletons in turn. Import it statically, or start both import() calls at the same moment.
+    draw: [tap-fetch, late-dates, after-parse, chain-760, chain-paint, flat-both, flat-510, flat-render, nested-lazy]
+    check: Why does Insights paint at 760 ms when its chunk is found late, but at 510 ms when the bundler flattens the chain?
+    answer: Late discovery means the dates chunk is requested only after insights-81c2.js is downloaded and parsed, a second round trip in series; flattened, both are requested at the tap and arrive together.
+    misconceptions:
+      - "More, smaller chunks are always faster -> each level of chunks discovered one after another adds a full round trip."
+  - point: A signal of intent before the tap can fetch the chunk ahead of time, prefetch into the HTTP cache or modulepreload, which also compiles it, so the tap pays only for running and rendering.
+    kind: decision
+    weight: core
+    teach:
+      - User 1's pointer rests on the Insights tab 300 ms before they tap. A prefetch then puts both files in the HTTP cache, and tap to paint drops to 260 ms. modulepreload also parses and compiles them without running, so it is 210 ms.
+      - Pick the signal by device. Hover and focus on a laptop; on a phone pointerdown or the tap itself, which is why the importer starts its fetch as the file picker opens; visibility for something further down; idle time for the routes most users visit next.
+      - Speculative fetches cost bytes. Skip idle prefetch when the user asks to save data or the connection is slow, and keep it to the one or two likeliest chunks.
+    draw: [head-start, hover, prefetch, hover-starts, tap-260, tap-paints, prefetch-260, signals, save-data]
+    check: What does modulepreload on hover buy that a plain prefetch does not, and what head start is left on a phone that has no hover?
+    answer: modulepreload also parses and compiles the modules before the tap (210 ms versus 260 ms tap to paint); on a phone the earliest signal is pointerdown or the tap itself.
+    misconceptions:
+      - "Prefetching runs the module early -> a prefetch only downloads into the HTTP cache; the import() still parses, compiles and runs it."
+  - point: Chunk files are named after a hash of their content and cached for a year, so a release should change only the names of the chunks whose code changed.
+    kind: rule
+    weight: supporting
+    teach:
+      - A changed file gets a new name instead of a new body, so the CDN can tell browsers to keep each chunk for a year. A release that touches only the transaction list should cost user 1 one new chunk.
+      - Keep names steady with a vendor chunk for third-party code, the runtime's map of chunk names in its own small file, and deterministic module ids.
+      - A tab opened before a deploy may ask for a chunk the deploy removed. A 404 there is not worth retrying; reload once onto the new HTML.
+    draw: [names, hashed, one-changes, release, vendor, deploy-404]
+    check: Why does the bundler's runtime map of chunk names go in its own small file?
+    answer: That map changes whenever any chunk's name does; inside the entry chunk it would change the entry chunk's hash on every release.
+task:
+  prompt: Draw Tallybook's module graph as chunk files, then the tap on Insights with the shared chunk found late, and show what flattening and a prefetch on hover each do to tap-to-paint.
+  expects: [2, 4, 5]

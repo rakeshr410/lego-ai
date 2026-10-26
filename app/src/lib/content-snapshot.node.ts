@@ -1,18 +1,19 @@
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve, sep } from 'node:path';
-import { CATALOG_VERSION, derivePlans, deriveSectionPlan, encodeBreadcrumb, formatIssues, formatLint, resolveTopicRef, strapiSchemas, toCmsBlock, toCmsComponents, toCmsTools, type InterviewRecord, type ProseFile, type SystemEntry } from '@arrowbox/content-kit';
+import { CATALOG_VERSION, derivePlans, deriveSectionPlan, encodeBreadcrumb, errorsOf, formatIssues, formatLint, lintTopic, resolveTopicRef, strapiSchemas, toCmsBlock, toCmsComponents, toCmsTools, validateTopic, type InterviewRecord, type ProseFile, type SystemEntry, type TopicFile } from '@arrowbox/content-kit';
 import { ALIASES_FILE, datesWarning, deriveMeta, FILES, lintContent, TAGS_FILE, type DerivedMeta, type TopicRecord } from '@arrowbox/content-kit/node';
 import { PRICING_FILE } from '@arrowbox/content-kit/pricing';
 import { REVIEWS_FILE } from '@arrowbox/content-kit/reviews';
 import type { AstroIntegration, AstroIntegrationLogger } from 'astro';
+import { parse as parseYaml } from 'yaml';
 import type { ContentSnapshot, SnapshotDrill, SnapshotInterview, SnapshotPicker, SnapshotTopic } from './content-snapshot';
 // With their extensions: scripts/content-snapshot.ts runs this module under Node itself.
 import { FREE_PREFIX } from './gated.ts';
 import { freeCut } from './free-tier.ts';
 
-// Builds web/.content/snapshot.json from content/ (Node only: the astro config, the CLI in
-// scripts/content-snapshot.ts and tests use it). The catalog files (systems, problem classes, UI
+// Builds app/.content/snapshot.json from lego's content/ (Node only: the astro config and tests
+// use it). The catalog files (systems, problem classes, UI
 // copy) must be valid or nothing is built; a topic file that fails validation or has a lint error
 // (npm run content:lint) is left out and reported, so one bad topic never stops the others from
 // shipping. readMinutes, lastUpdated and contentVersion are derived here (content-kit derive.ts).
@@ -127,7 +128,7 @@ function toInterview(system: SystemEntry, topics: readonly TopicRecord[], overri
 }
 
 /**
- * A system's practice drills (docs/interview/README.md, "Drills"): each topic with content as a
+ * A system's practice drills (docs/README.md, "Drills"): each topic with content as a
  * short interview of its own, and each of that topic's sections as a one-stage drill. Derived from
  * the same input as the system plan, so a drill's items are the ones the whole interview asks on
  * that section. A drill follows its topic's review status.
@@ -158,10 +159,63 @@ const catalogFiles = new Set<string>([...Object.values(FILES), ALIASES_FILE, TAG
 type BuildOptions = {
   /** Told about things worth a look that don't stop the build (dates from a shallow clone, or none). */
   warn?: (message: string) => void;
+  /** lego-ai's own articles (app/articles), added to the main site's topics (readOwnArticles). */
+  articlesDir?: string;
 };
 
+/**
+ * lego-ai's own articles: topic files in the main site's format under app/articles/<system>/<slug>.yaml,
+ * for an existing system of content/. They are written for the coaching playlists (docs/coaching.md)
+ * and live only in this app's snapshot: the main site does not list or serve them, and they are left
+ * out of the systems' interview plans and drills. Each is validated and linted as content/'s topics
+ * are; one with an error is skipped and reported.
+ */
+export function readOwnArticles(dir: string, systems: readonly SystemEntry[], taken: ReadonlySet<string>): { topics: TopicRecord[]; problems: Map<string, string[]> } {
+  const topics: TopicRecord[] = [];
+  const problems = new Map<string, string[]>();
+  if (!existsSync(dir)) return { topics, problems };
+  const skip = (file: string, message: string) => problems.set(file, [...(problems.get(file) ?? []), message]);
+  for (const system of readdirSync(dir).sort()) {
+    const full = join(dir, system);
+    if (system.startsWith('.') || !statSync(full).isDirectory()) continue;
+    const entry = systems.find((s) => s.slug === system);
+    for (const name of readdirSync(full).sort()) {
+      if (!name.endsWith('.yaml')) continue;
+      const slug = name.slice(0, -'.yaml'.length);
+      const file = `articles/${system}/${name}`;
+      if (!entry) {
+        skip(file, `${file}: no system "${system}" in the main site's content/systems.yaml`);
+        continue;
+      }
+      if (taken.has(`${system}/${slug}`)) {
+        skip(file, `${file}: content/ already has a topic ${system}/${slug}`);
+        continue;
+      }
+      let value: unknown;
+      try {
+        value = parseYaml(readFileSync(join(full, name), 'utf8'));
+      } catch (err) {
+        skip(file, `${file}: ${err instanceof Error ? err.message.split('\n')[0] : String(err)}`);
+        continue;
+      }
+      const r = validateTopic(value);
+      if (!r.ok) {
+        skip(file, `${file}:\n${formatIssues(r.issues.map((i) => ({ ...i, file })))}`);
+        continue;
+      }
+      const errors = errorsOf(lintTopic(r.data, { groups: entry.groups }));
+      if (errors.length) {
+        skip(file, formatLint(errors.map((i) => ({ ...i, file }))));
+        continue;
+      }
+      topics.push({ system, slug, file, data: r.data as TopicFile });
+    }
+  }
+  return { topics, problems };
+}
+
 /** Reads, validates and lints content/ and returns the snapshot. Throws when a catalog file is invalid. */
-export function buildSnapshot(contentDir: string, { warn }: BuildOptions = {}): ContentSnapshot {
+export function buildSnapshot(contentDir: string, { warn, articlesDir }: BuildOptions = {}): ContentSnapshot {
   if (!existsSync(contentDir)) throw new Error(`No content directory at ${contentDir} (set CONTENT_DIR)`);
   const { catalog, issues } = lintContent(contentDir);
   const fatal = issues.filter((i) => i.rule === 'schema' && catalogFiles.has(i.file ?? ''));
@@ -186,6 +240,15 @@ export function buildSnapshot(contentDir: string, { warn }: BuildOptions = {}): 
     } catch (err) {
       skip(t.file, `${t.file}: ${err instanceof Error ? err.message.split('\n')[0] : String(err)}`);
     }
+  }
+
+  // lego-ai's own articles (app/articles), after content/'s topics; not in the interview plans or drills below.
+  if (articlesDir) {
+    const own = readOwnArticles(articlesDir, catalog.systems, new Set(catalog.topics.map((t) => `${t.system}/${t.slug}`)));
+    for (const [file, list] of own.problems) problems.set(file, list);
+    // Files are named from the app directory (articles/<system>/<topic>.yaml).
+    const ownMeta = deriveMeta(dirname(articlesDir), own.topics).meta;
+    for (const t of own.topics) topics.push(toTopic(t, ownMeta.get(t.file)));
   }
 
   // A problem class that names no track is the library's (the system picker's, design 6a).
@@ -351,11 +414,15 @@ export function freeTierProblems(s: ContentSnapshot, reviewedOnly: boolean): str
   return out;
 }
 
-/** Default locations: content/ next to web/, the snapshot in web/.content/. */
-export function snapshotPaths(webDir: string) {
+/**
+ * Default locations: the main site's content/ (a checkout of lego beside lego-ai, so
+ * ../../lego/content from app/; CONTENT_DIR overrides it), the snapshot in app/.content/.
+ */
+export function snapshotPaths(appDir: string) {
   return {
-    contentDir: resolve(process.env.CONTENT_DIR ?? join(webDir, '..', 'content')),
-    outFile: join(webDir, '.content', 'snapshot.json'),
+    contentDir: resolve(process.env.CONTENT_DIR ?? join(appDir, '..', '..', 'lego', 'content')),
+    articlesDir: join(appDir, 'articles'),
+    outFile: join(appDir, '.content', 'snapshot.json'),
   };
 }
 
@@ -364,9 +431,9 @@ export function snapshotPaths(webDir: string) {
  * in dev whenever a file under content/ changes. A build fails when the catalog files are invalid;
  * the dev server keeps its last good snapshot and says why.
  */
-export function contentSnapshot({ contentDir, outFile }: { contentDir: string; outFile: string }): AstroIntegration {
+export function contentSnapshot({ contentDir, outFile, articlesDir }: { contentDir: string; outFile: string; articlesDir?: string }): AstroIntegration {
   const generate = (logger: AstroIntegrationLogger) => {
-    const { snapshot, written } = writeSnapshot(contentDir, outFile, { warn: (m) => logger.warn(m) });
+    const { snapshot, written } = writeSnapshot(contentDir, outFile, { warn: (m) => logger.warn(m), articlesDir });
     logger.info(describeSnapshot(snapshot));
     for (const s of snapshot.skipped) logger.warn(`Skipped ${s.file}:\n${s.problems.join('\n')}`);
     const reviewedOnly = process.env.PUBLIC_REVIEWED_ONLY === 'true';
@@ -392,9 +459,10 @@ export function contentSnapshot({ contentDir, outFile }: { contentDir: string; o
       },
       'astro:server:setup': ({ server, logger }) => {
         server.watcher.add(contentDir);
+        if (articlesDir) server.watcher.add(articlesDir);
         let timer: ReturnType<typeof setTimeout> | undefined;
         const onChange = (file: string) => {
-          if (!file.startsWith(contentDir + sep)) return;
+          if (!file.startsWith(contentDir + sep) && !(articlesDir && file.startsWith(articlesDir + sep))) return;
           clearTimeout(timer);
           timer = setTimeout(() => {
             try {

@@ -100,7 +100,7 @@ export default messages({
   'consent.starting': 'Starting…',
   'consent.back': 'Back',
 
-  // Voice (docs/interview/README.md "Voice"; privacy.md): the start card's consent and limits,
+  // Voice (docs/README.md "Voice"; privacy.md): the start card's consent and limits,
   // and the voice part of the room (VoiceRoom.tsx).
   'start.voice': 'Start AI interview',
   'voice.pro': 'Voice interviews are part of <link>Pro</link>.',
@@ -187,7 +187,7 @@ export default messages({
   'error.action': 'That didn’t work. Try again in a moment.',
   'error.delete': 'The session couldn’t be deleted. Try again.',
 
-  // The whiteboard (InterviewBoard.tsx, BoardOutline.tsx; docs/interview/README.md "Whiteboard").
+  // The whiteboard (InterviewBoard.tsx, BoardOutline.tsx; docs/README.md "Whiteboard").
   'board.title': 'Whiteboard',
   'board.hint': 'Draw the design here; the interviewer reads what you draw as you talk. You can describe it in words instead.',
   'board.view': 'Board view',
@@ -265,7 +265,7 @@ export default messages({
   'rating.3': 'Solid',
   'rating.4': 'Strong',
 
-  // Coach mode (docs/interview/coach-mode.md)
+  // Coach mode (docs/coach-mode.md)
   'coach.crumb': 'Coach lesson',
   'coach.kicker': 'Coach lesson',
   'coach.kicker.drill': 'Coach lesson · drill',
@@ -284,6 +284,8 @@ export default messages({
   'coach.start.voice': 'Start voice lesson',
   'coach.usage': 'Uses 1 of your {limit} coach lessons this month · {remaining} left.',
   'coach.consent.ai': 'The coach is an AI. Your messages are sent to Anthropic, our AI provider, to write its replies.',
+  'coach.name.label': 'What should the coach call you?',
+  'coach.name.hint': 'Optional. The coach uses it when it asks you something.',
   'coach.consent.voice.ai': 'The coach is an AI. Your speech is transcribed and its words are spoken by our speech providers (Deepgram and Cartesia); the words go to Anthropic, our AI provider, to write what it says.',
   'coach.consent.uses': 'This uses one of your {limit} coach lessons this month.',
   'coach.unavailable.used': 'You’ve used this month’s {limit} coach lessons. More on {day}.',
@@ -329,12 +331,24 @@ export default messages({
   'coach.summary.title': 'What you covered',
   'coach.summary.length': '{minutes}-minute lesson',
   'coach.summary.understood': { one: '# idea understood', other: '# ideas understood' },
+  'coach.summary.explained': { one: '# explained, not yet answered', other: '# explained, not yet answered' },
   'coach.summary.shaky': { one: '# to revisit', other: '# to revisit' },
   'coach.summary.left': { one: '# not reached', other: '# not reached' },
   'coach.summary.bySection': 'By section',
   'coach.summary.interview': 'Take the mock interview',
   'coach.summary.interview.note': 'The same material, with an interviewer who asks instead of teaches, and written feedback at the end.',
+  'coach.summary.nextLesson': 'Next lesson: {title}',
+  'coach.summary.nextLesson.note': 'The next lesson builds on this one, and the coach remembers what you found shaky.',
+  'coach.summary.playlist': 'Back to {title}',
   'coach.summary.again': 'Take the lesson again',
+  'playlist.meta.description': '{count} whiteboard lessons with an AI coach: {title}.',
+  'playlist.kicker': 'Coach playlist',
+  'playlist.lessons': 'Lessons',
+  'playlist.lessons.note': 'Take them in order: each one builds on the board and the ideas of the one before.',
+  'playlist.lesson.minutes': '{minutes} min',
+  'playlist.outline': 'How this playlist was made',
+  'lesson.meta.title': '{lesson} · {playlist}',
+  'lesson.meta.description': 'A {minutes}-minute whiteboard lesson with an AI coach: {title}.',
   'coach.summary.caveat': 'The statuses come from an AI’s reading of your answers. They can be wrong.',
   'coach.error.continue': 'The coach couldn’t go on just now. Press Continue to try again.',
 });

@@ -1,0 +1,90 @@
+# News feed interview, live updates: how tweets posted while the reader scrolls reach the client. Short polling, long polling and a WebSocket compared with server-sent events, then the stream endpoint and its flow to the pill.
+id: twitter/news-feed-end-to-end/live-updates
+title: New tweets, live
+source:
+  hash: "f4b2771a676d"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: twitter/news-feed-end-to-end/api
+  assumes:
+    - "Pages come from GET /api/tweets with a cursor; the store holds pending ids for the pill."
+    - "New tweets are announced within about 10 s behind a pill and never inserted under the reader."
+  carries:
+    - "Server-sent events for new-tweet notices, plain GETs for pages: one-way, efficient, and the browser reconnects by itself."
+    - "GET /api/tweets/stream sends new_tweets events with ids; they go to pending ids and the pill; Last-Event-ID replays what was missed."
+  terms:
+    - term: server-sent events
+      means: One long HTTP response the server streams events down; one-way, and the browser reconnects by itself.
+    - term: Last-Event-ID
+      means: The header the browser sends on reconnect so the server can replay events that were missed.
+board:
+  keep: [title, mock-up, phone, mock-header, tweet-one, author-row, tweet-text, image-box, action-row, tweet-two, more-below, requirements, fr-heading, fr-newest, fr-endless, fr-images, fr-new, fr-end, nfr-heading, nfr-devices, nfr-network, nfr-load, nfr-js, nfr-cpu, nfr-tasks, nfr-inp, nfr-stable, nfr-offline, components, c-feed-screen, c-feed-list, c-tweet-card, c-author, c-text, c-image, c-actions, c-store, c-client, c-live, c-cache, screen-holds-list, list-holds-card, list-reads-store, store-calls-client, state, naive, need-tweet, need-author, need-counts, naive-note, feed-store, js-open, js-tweet, js-tweet-refs, js-users, js-images, js-replies, js-feed, js-meta, js-pending, order-note, normalize, storage, strip, idb, window, pages-before, page-reader, pages-after, pages-unloaded, cache-storage, cache-note, session-storage, session-note, local-storage, local-note, component-state, component-note, offload, api, endpoint, limit-note, endpoint-next, page, res-open, res-tweet-more, res-users, res-images, res-cursor, size-note, cursor-note, offset-bad, rest-note]
+  elements:
+    - { id: live, kind: region, label: "Live updates", at: [60, 60], size: [59, 24] }
+    - { id: opt-short, kind: box, label: short polling, at: [61, 63], size: [12, 2], in: live, tone: red }
+    - { id: opt-short-note, kind: note, label: "mostly empty, wakes radio", at: [61, 66], in: live }
+    - { id: opt-long, kind: box, label: long polling, at: [75, 63], size: [12, 2], in: live, tone: red }
+    - { id: opt-long-note, kind: note, label: "a request per message", at: [75, 66], in: live }
+    - { id: opt-ws, kind: box, label: WebSocket, at: [89, 63], size: [12, 2], in: live, tone: red }
+    - { id: opt-ws-note, kind: note, label: "two-way, not needed", at: [89, 66], in: live }
+    - { id: opt-sse, kind: box, label: server-sent events, at: [103, 63], size: [14, 2], in: live, tone: green }
+    - { id: opt-sse-note, kind: note, label: "one-way, reconnects", at: [103, 66], in: live }
+    - { id: stream-endpoint, kind: note, label: "GET /api/tweets/stream", at: [61, 69], in: live, tone: blue }
+    - { id: stream, kind: box, label: server sends two ids, at: [61, 72], size: [13, 3], in: live, tone: blue }
+    - { id: event-source, kind: box, label: "EventSource, reconnects", at: [83, 72], size: [12, 3], in: live, tone: blue }
+    - { id: pill, kind: box, label: "pending ids, pill shows 2", at: [101, 72], size: [16, 3], in: live, tone: amber }
+    - { id: sse-note, kind: note, label: "after a drop, Last-Event-ID replays what was missed", at: [61, 78], in: live }
+    - { id: http2-note, kind: note, label: "over HTTP/2 the stream shares one connection", at: [61, 80], in: live }
+  arrows:
+    - { id: new-ids, from: stream, to: event-source, label: "new tweets" }
+    - { id: to-pending, from: event-source, to: pill, label: pending }
+beats:
+  - point: "Pages are plain GETs; new tweets posted while the reader scrolls need a channel of their own. Short polling is mostly empty requests that wake the phone's radio, and long polling costs a new request per message."
+    kind: decision
+    weight: core
+    teach:
+      - "New tweets need their own channel. Lay out the options. Short polling: a request every few seconds, mostly empty, and each one wakes the phone's radio."
+      - "Long polling: the server holds the request until there is news, but every message costs a new request."
+    draw: [live, opt-short, opt-short-note, opt-long, opt-long-note]
+    check: Why is short polling a poor fit on a phone?
+    answer: Most polls find nothing, and each wakes the cellular radio, costing battery and data.
+  - point: "A WebSocket is two-way, but the feed never sends on this channel and it needs stateful infrastructure; server-sent events are one-way over plain HTTP and the browser reconnects by itself, so they fit."
+    kind: decision
+    weight: core
+    teach:
+      - "A WebSocket is fast and two-way, but the feed never sends anything back, and it needs sticky connections and its own reconnect logic."
+      - "Server-sent events are one-way over plain HTTP, and the browser reconnects by itself. That is the fit."
+    draw: [opt-ws, opt-ws-note, opt-sse, opt-sse-note]
+    check: Why server-sent events rather than a WebSocket for new tweets?
+    answer: The channel is one-way, and SSE gives reconnection and replay over plain HTTP without stateful socket infrastructure.
+  - point: "The stream endpoint, GET /api/tweets/stream, sends a new_tweets event with ids, not payloads; the store adds them to pending ids, the pill shows the count and the list does not move."
+    kind: flow
+    weight: core
+    teach:
+      - "Write the endpoint: GET slash api slash tweets slash stream. When two tweets are posted, the server sends their ids, not the tweets."
+      - "EventSource hands them to the store, they go into pending ids, and the pill says 2 new tweets. The list stays where it is until the reader presses it."
+    draw: [stream-endpoint, stream, event-source, new-ids, pill, to-pending]
+    check: A new_tweets event with two ids arrives while the reader is mid-feed. What changes on screen?
+    answer: The pill shows 2 new tweets; the ids wait in pending ids and the list stays where it is.
+  - point: "If the connection drops, the browser reconnects and sends Last-Event-ID so missed events are replayed; over HTTP/2 the stream is one among many on a single connection."
+    kind: mechanism
+    weight: supporting
+    teach:
+      - "If the connection drops, the browser reconnects by itself and sends Last-Event-ID, so nothing is missed."
+      - "Over HTTP/2 the stream shares one connection with everything else, so it never starves the page."
+    draw: [sse-note, http2-note]
+    check: How does the client avoid missing new tweets after a dropped connection?
+    answer: The browser reconnects and sends Last-Event-ID, and the server replays the events after it.
+asks:
+  - ids: [opt-short, opt-long, opt-ws, opt-sse]
+    beats: [1, 2]
+    question: "Tweets get posted while the reader scrolls. What ways do you know for the client to hear about them? Name each one."
+    hints:
+      - The client could keep asking the server.
+      - Or the server could keep a connection open and push.
+task:
+  prompt: "Compare the four ways to get new tweets, then draw the stream endpoint and its flow to the pill."
+  expects: [2, 3]

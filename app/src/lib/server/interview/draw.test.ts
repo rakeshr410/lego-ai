@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { BoardGraph } from '../../board/serialise';
-import { countWords, drawParser, drawToolBody, drawToolResult, holdDraw, parseDraw } from './draw';
+import { asideFor } from '../coaching/aside';
+import type { Layout } from '../coaching/layout';
+import { countWords, drawParser, drawToolBody, drawToolResult, fillPlanned, holdDraw, onBoard, parseDraw, readBack } from './draw';
 
 // The interviewer's and the coach's drawing (draw.ts): the <draw> elements come off the reply
 // wherever they stand, their operations are checked against the board the model saw, what cannot
@@ -159,3 +161,173 @@ describe('the draw tool (phase 4)', () => {
     expect(drawToolBody({ ops: 'no' })).toBe('');
   });
 });
+
+describe('a lesson move the model drew too little for', () => {
+  const layout: Layout = new Map([
+    ['tree', { type: 'element', id: 'tree', kind: 'region', label: 'Render tree', at: [0, 0], size: [30, 12] }],
+    ['html', { type: 'element', id: 'html', kind: 'box', label: 'html', at: [2, 2] }],
+    ['body', { type: 'element', id: 'body', kind: 'box', label: 'body', at: [2, 7] }],
+    ['html-body', { type: 'arrow', id: 'html-body', from: 'html', to: 'body', label: 'child' }],
+  ] as const) as unknown as Layout;
+  const opts = { layout, edit: true, maxOps: 8 };
+
+  it('places what the plan has for the move and the reply left out, after it', () => {
+    const reply = parseDraw('The page is a tree. <draw><place ids="tree,html"/></draw> Its root holds the body.', graph, true, opts);
+    const filled = fillPlanned(['tree', 'html', 'body', 'html-body'], reply.ops, graph, opts);
+    expect(filled.ids).toEqual(['body', 'html-body']);
+    expect(filled.ops).toEqual([
+      { op: 'box', label: 'body', at: { x: 40, y: 140 }, size: { w: 160, h: 60 } },
+      { op: 'arrow', from: 'html', to: 'body', label: 'child' },
+    ]);
+  });
+
+  it('places nothing already on the board: a region is a frame there, and a label may wrap over lines', () => {
+    const board = {
+      nodes: [{ id: 'n1', eid: 'e1', label: 'Twitter\nheader', shape: 'box' as const, frame: 'F1', x: 0, y: 0, w: 10, h: 10, author: 'coach' as const }],
+      frames: [{ id: 'F1', eid: 'e2', label: 'Render tree', kind: 'frame' as const, members: ['n1'] }],
+      edges: [],
+      freehand: { count: 0, clusters: [] },
+      layout: { direction: 'left-to-right' as const, rows: [] },
+    };
+    const wrapped = new Map([...layout, ['header', { type: 'element', id: 'header', kind: 'box', label: 'Twitter header', at: [2, 9] }]]) as unknown as Layout;
+    const r = parseDraw('<draw><place ids="tree,header,body"/></draw>', board, true, { ...opts, layout: wrapped });
+    expect(r.ops.map((o) => ('label' in o ? o.label : o.op))).toEqual(['body']);
+  });
+
+  it('places an arrow between boxes an earlier reply drew, and nothing an earlier reply placed', () => {
+    const before = parseDraw('<draw><place ids="tree,html,body"/></draw>', null, true, opts).ops;
+    const filled = fillPlanned(['html-body'], [], null, opts, before);
+    expect(filled.ops.map((o) => o.op)).toEqual(['arrow']);
+    expect(fillPlanned(['body', 'html-body'], [], null, opts, [...before, ...filled.ops]).ops).toEqual([]);
+  });
+
+  it('reads the reply back with what was placed for it, where its name comes up', () => {
+    const reply = 'The page is a tree. <draw><place ids="tree,html"/></draw> Its root holds the body. That is all.';
+    expect(readBack(reply, ['body', 'html-body'], layout)).toBe(
+      'The page is a tree. <draw><place ids="tree,html"/></draw> Its root holds the body. <draw><place ids="body,html-body"/></draw> That is all.',
+    );
+    expect(readBack('Nothing named here', ['tree'], layout)).toBe('Nothing named here <draw><place ids="tree"/></draw>');
+    expect(readBack(reply, [], layout)).toBe(reply);
+  });
+
+  it('reads a <place> written outside <draw> as a drawing, and never says it', () => {
+    const r = parseDraw('First the tree. <place ids="tree,html"/> Then more.', graph, true, opts);
+    expect(r.text).toBe('First the tree. Then more.');
+    expect(r.ops.map((o) => o.op)).toEqual(['region', 'box']);
+    const said: string[] = [];
+    const bodies: string[] = [];
+    const sink = holdDraw((d) => said.push(d), (b) => bodies.push(b));
+    for (const d of ['First the tree. <pl', 'ace ids="tree', ',html"/> Then <placeholder> more.']) sink.onText(d);
+    sink.flush();
+    expect(said.join('')).toBe('First the tree.  Then <placeholder> more.');
+    // Any drawing element written bare is read as one: a learner's point noted outside <draw> is never said.
+    const noted: string[] = [];
+    const held: string[] = [];
+    const notes = holdDraw((d) => noted.push(d), (b) => held.push(b));
+    for (const d of ['Noted. <no', 'te text="dark mode" covers=""/> What <b>else</b>?']) notes.onText(d);
+    notes.flush();
+    expect(noted.join('')).toBe('Noted.  What <b>else</b>?');
+    expect(held).toEqual(['<note text="dark mode" covers=""/>']);
+    expect(parseDraw('Noted. <note text="dark mode"/> What else?', null, true, { edit: true }).text).toBe('Noted. What else?');
+    expect(bodies).toEqual(['<place ids="tree,html"/>']);
+  });
+
+  it('adds nothing when the reply drew it all, or the boxes are on the board already', () => {
+    const all = parseDraw('<draw><place ids="tree,html,body,html-body"/></draw>', graph, true, opts);
+    expect(fillPlanned(['tree', 'html', 'body', 'html-body'], all.ops, graph, opts).ops).toEqual([]);
+    const board: BoardGraph = { ...graph, nodes: [...graph.nodes, { id: 'n3', eid: 'c', label: 'Render tree', shape: 'box', frame: null, x: 0, y: 0, w: 1, h: 1 }] };
+    expect(fillPlanned(['tree'], [], board, opts).ops).toEqual([]);
+    expect(fillPlanned(['tree'], [], graph, {}).ops).toEqual([]);
+  });
+
+  it('puts the coach’s own drawing in the side notes, right of the plan, level with the part placed last', () => {
+    const before = parseDraw('<draw><place ids="tree,html"/></draw>', null, true, opts).ops;
+    // The plan's right edge is the tree's (30 cells), the lane 4 cells past it; the html box was placed last, at row 2.
+    const aside = asideFor(layout, before);
+    expect(aside).toEqual({ x: 680, y: 40 });
+    const r = parseDraw(
+      '<draw><note text="Why a cursor?"/><box label="Page 2"/><box label="Page 3"/><arrow from="Page 2" to="Page 3" label="next"/><box label="Cursor"/><note text="it does not move" near="Cursor"/></draw>',
+      null,
+      true,
+      { ...opts, aside },
+    );
+    expect(r.ops).toEqual([
+      { op: 'note', text: 'Why a cursor?', at: { x: 680, y: 40 } },
+      { op: 'box', label: 'Page 2', at: { x: 680, y: 80 }, size: { w: 160, h: 60 } },
+      { op: 'box', label: 'Page 3', at: { x: 1000, y: 80 }, size: { w: 160, h: 60 } },
+      { op: 'arrow', from: 'Page 2', to: 'Page 3', label: 'next' },
+      { op: 'box', label: 'Cursor', at: { x: 680, y: 200 }, size: { w: 160, h: 60 } },
+      { op: 'note', text: 'it does not move', at: { x: 680, y: 320 } },
+    ]);
+    // The next sketch starts under this one.
+    expect(asideFor(layout, [...before, ...r.ops])).toEqual({ x: 680, y: 380 });
+  });
+
+  it('places none of the plan in a reply that answers aside, but still opens the board', () => {
+    const r = parseDraw('<draw><place ids="body"/><box label="Sketch"/></draw>', null, true, { ...opts, prelude: '<place ids="tree,html"/>', noPlace: true, aside: asideFor(layout, []) });
+    expect(r.ops.map((o) => ('label' in o ? o.label : o.op))).toEqual(['Render tree', 'html', 'Sketch']);
+    expect(r.dropped[0]).toMatch(/^<place>: this reply answers aside/);
+  });
+
+  describe('a numbered list', () => {
+    const list = { id: 'fr', x: 100, y: 200, step: 40, slots: 4, chars: 40, items: [{ id: 'a', label: 'newest first' }, { id: 'b', label: 'endless' }] };
+    const listed = new Map([
+      ...layout,
+      ['a', { type: 'element', id: 'a', kind: 'note', label: 'newest first', at: [5, 10], slot: { list: 'fr', n: 1 } }],
+      ['b', { type: 'element', id: 'b', kind: 'note', label: 'endless', at: [5, 12], slot: { list: 'fr', n: 2 } }],
+    ]) as unknown as Layout;
+    const at = (n: number) => ({ x: 100, y: 200 + n * 40 });
+
+    it('numbers the plan’s lines in their order where nothing else does', () => {
+      expect(parseDraw('<draw><place ids="b"/></draw>', null, true, { layout: listed, edit: true }).ops).toEqual([{ op: 'note', text: '2. endless', at: { x: 100, y: 240 }, list: 'fr', covers: 'b' }]);
+    });
+
+    it('writes the learner’s points as they come, then places the plan’s lines left after them, each once', () => {
+      const lists = { plans: [{ ...list, slots: 3 }], earlier: [], capture: 'fr' };
+      const said = parseDraw('<draw><note text="2. never shows a tweet twice" covers="b"/><note text="dark mode for night reading"/><note text="again" covers="b"/></draw>', null, true, { layout: listed, edit: true, lists });
+      expect(said.ops).toEqual([
+        { op: 'note', text: '1. never shows a tweet twice', at: at(0), list: 'fr', learner: true, covers: 'b' },
+        { op: 'note', text: '2. dark mode for night reading', at: at(1), list: 'fr', learner: true },
+        // One slot is left for the open plan line, so a third point (its line already given) cannot take it.
+        { op: 'note', text: 'again' },
+      ]);
+      const later = { plans: [{ ...list, slots: 3 }], earlier: said.ops };
+      const fill = parseDraw('<draw><place ids="b,a"/></draw>', null, true, { layout: listed, edit: true, lists: later });
+      expect(fill.ops).toEqual([{ op: 'note', text: '3. newest first', at: at(2), list: 'fr', covers: 'a' }]);
+      // The service's safety net places what the reply left out after it, never twice.
+      expect(fillPlanned(['a', 'b'], [], null, { layout: listed, edit: true, lists: later }, said.ops).ops).toEqual(fill.ops);
+      expect(fillPlanned(['a', 'b'], fill.ops, null, { layout: listed, edit: true, lists: later }, said.ops).ops).toEqual([]);
+    });
+
+    it('sends a point past the list’s room to the side notes, and keeps a long one to the line', () => {
+      const lists = { plans: [{ ...list, slots: 2, chars: 24 }], earlier: [], capture: 'fr' };
+      const r = parseDraw('<draw><note text="it should keep working when the network is slow" covers="a"/><note text="an extra"/></draw>', null, true, { layout: listed, edit: true, lists, aside: { x: 900, y: 20 } });
+      expect(r.ops).toEqual([
+        { op: 'note', text: '1. it should keep', at: at(0), list: 'fr', learner: true, covers: 'a' },
+        { op: 'note', text: 'an extra', at: { x: 900, y: 20 } },
+      ]);
+    });
+  });
+
+  describe('the plan’s parts the learner names', () => {
+    const at = (x: number, y: number) => ({ x: x * 20, y: y * 20 });
+    it('places each part named where the plan puts it, as theirs, once, and a point beyond the plan in the side notes', () => {
+      const r = parseDraw('<draw><note text="the root element" covers="html"/><note text="html again" covers="html"/><note text="the body and the arrow" covers="body, html-body"/><note text="a doctype"/></draw>', null, true, {
+        layout,
+        edit: true,
+        noPlace: true,
+        parts: ['html', 'body'],
+        aside: { x: 900, y: 20 },
+      });
+      expect(r.ops).toEqual([
+        expect.objectContaining({ op: 'box', label: 'html', at: at(2, 2), covers: 'html', learner: true }),
+        // Already given, and an arrow is never the learner's: neither is drawn; a note covering nothing open is an extra.
+        { op: 'note', text: 'html again', at: { x: 900, y: 20 }, learner: true },
+        expect.objectContaining({ op: 'box', label: 'body', at: at(2, 7), covers: 'body', learner: true }),
+        { op: 'note', text: 'a doctype', at: { x: 900, y: 60 }, learner: true },
+      ]);
+      expect(onBoard(layout, ['tree', 'html', 'body', 'html-body'], r.ops)).toEqual(new Set(['html', 'body']));
+    });
+  });
+});
+

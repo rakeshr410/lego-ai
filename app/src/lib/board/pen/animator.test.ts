@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { Pen, typedWidth, type PenElement, type PenHost } from './animator';
-import { REST_MS, SYNC_MOVE_MS, SYNC_SHAPE_MS } from './timing';
+import { labelsAfterBoxes, Pen, typedWidth, type PenElement, type PenHost } from './animator';
+import { HOVER_REST_MS, REST_MS, SYNC_MOVE_MS, SYNC_SHAPE_MS } from './timing';
+import { VoiceCues } from './cues';
 
 // The animated pen (animator.ts; coach-mode.md, phase 5): a box grows and its label is typed, marks land in
 // order, an abort drops what is left, an erase takes the element and its bindings off, and a hidden tab lands
@@ -152,6 +153,22 @@ describe('Pen', () => {
     expect(h.scene.map((e) => e.id)).toEqual(['e']);
   });
 
+  it('puts the board a lesson opens with on at once, with no pen', async () => {
+    const h = host();
+    const cursor: unknown[] = [];
+    const pen = new Pen(h, (c) => cursor.push(c));
+    const done = pen.drawElements([...box('a', 'Mock-up'), ...box('b', 'Requirements', 200)], undefined, { keepView: true, instant: true });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(await done).toBe(true);
+    expect(h.scene.map((e) => [e.id, e.width, e.text])).toEqual([
+      ['a', 100, undefined],
+      ['a-t', 80, 'Mock-up'],
+      ['b', 100, undefined],
+      ['b-t', 80, 'Requirements'],
+    ]);
+    expect(cursor).toEqual([]);
+  });
+
   it('lands everything at once while the tab is hidden', async () => {
     vi.stubGlobal('document', { hidden: true });
     try {
@@ -167,9 +184,103 @@ describe('Pen', () => {
     }
   });
 
+  it("on a voice's cues, draws the outline in the pause and writes each word while it is said", async () => {
+    const h = host();
+    const pen = new Pen(h, () => {});
+    let write: (cue: { words: [number, number][] }) => void = () => {};
+    const sync = {
+      beforeShape: async () => ({ ms: 600 }),
+      beforeLabel: () => new Promise<{ words: [number, number][] }>((r) => (write = r)),
+    };
+    const done = pen.drawElements(box('a', 'Border box'), sync);
+    // The pen is placed (120 ms), waits 120 ms, then the outline takes what the pause leaves after the move.
+    await vi.advanceTimersByTimeAsync(240 + 600 + 50);
+    expect(h.scene.find((e) => e.id === 'a')!.width).toBe(100);
+    expect(h.scene.find((e) => e.id === 'a-t')).toBeUndefined(); // nothing written before the voice says it
+    write({ words: [[100, 400], [500, 800]] });
+    const text = () => h.scene.find((e) => e.id === 'a-t')?.text ?? '';
+    await vi.advanceTimersByTimeAsync(90);
+    expect(text()).toBe('');
+    await vi.advanceTimersByTimeAsync(160); // halfway through "Border"
+    expect(text().length).toBeGreaterThan(1);
+    expect(text().length).toBeLessThan(6);
+    await vi.advanceTimersByTimeAsync(200); // the gap between the words
+    expect(text()).toBe('Border');
+    await vi.advanceTimersByTimeAsync(400);
+    expect(text()).toBe('Border box');
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(await done).toBe(true);
+  });
+
+  it('keeps each label right after its box, as Excalidraw requires', () => {
+    const scene = [
+      { id: 't1', containerId: 'b1' },
+      { id: 'n' },
+      { id: 'b1' },
+      { id: 'b2' },
+      { id: 't2', containerId: 'b2' },
+      { id: 'orphan', containerId: 'gone' },
+    ];
+    expect(labelsAfterBoxes(scene).map((e) => e.id)).toEqual(['n', 'b1', 't1', 'b2', 't2', 'orphan']);
+  });
+
   it('follows the words it writes, not the box they sit in', () => {
     expect(typedWidth({ id: 't', type: 'text', x: 0, y: 0, width: 340, height: 20, text: 'sixteen chars...', fontSize: 16 })).toBeCloseTo(16 * 16 * 0.6);
     expect(typedWidth({ id: 't', type: 'text', x: 0, y: 0, width: 50, height: 20, text: 'sixteen chars...', fontSize: 16 })).toBe(50);
     expect(typedWidth({ id: 't', type: 'text', x: 0, y: 0, width: 340, height: 20, text: 'fixed', fontSize: 16, autoResize: false })).toBe(340);
   });
+
+  it('hovers under the words the voice talks about, drawing nothing, and leaves when the voice stops', async () => {
+    const h = host();
+    h.scene = box('a', 'Gateway');
+    const cursor: ({ x: number; y: number; drawing: boolean } | null)[] = [];
+    const pen = new Pen(h, (c) => cursor.push(c));
+    pen.hover(h.scene[1]);
+    await vi.advanceTimersByTimeAsync(2000);
+    const at = cursor.filter(Boolean) as { x: number; y: number; drawing: boolean }[];
+    expect(at.length).toBeGreaterThan(5);
+    expect(at.every((c) => !c.drawing)).toBe(true);
+    // Under the label (y 15 + 20, in the viewport's doubled scale), drifting left to right along it.
+    expect(at.at(-1)!.y).toBeGreaterThanOrEqual((15 + 20) * 2);
+    expect(at.at(-1)!.x).toBeGreaterThan(at[0].x);
+    expect(h.commits).toEqual([]);
+    // The voice goes on: the pen stays; it stops: the pen leaves.
+    pen.stay();
+    await vi.advanceTimersByTimeAsync(HOVER_REST_MS - 100);
+    expect(cursor.at(-1)).not.toBeNull();
+    pen.rest();
+    await vi.advanceTimersByTimeAsync(REST_MS + 10);
+    expect(cursor.at(-1)).toBeNull();
+  });
+
+  it('does not hover while a mark is being drawn, and a mark coming takes the pen back', async () => {
+    const h = host();
+    h.scene = box('a', 'Gateway');
+    const cursor: unknown[] = [];
+    const pen = new Pen(h, (c) => cursor.push(c));
+    const done = pen.drawElements(box('b', 'Store', 200));
+    pen.hover(h.scene[1]);
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(await done).toBe(true);
+    // Every cursor position came from the drawing of b (x 200 on, doubled in the viewport), none from a's label.
+    expect((cursor.filter(Boolean) as { x: number }[]).every((c) => c.x >= 400)).toBe(true);
+  });
+
+  it('leaves a mark undrawn when the voice was cut off before it reached it', async () => {
+    const h = host();
+    const cues = new VoiceCues();
+    const pen = new Pen(h, () => {});
+    const first = pen.drawElements(box('a', 'Gateway'), cues.sync('r', 0), { keepView: true });
+    const second = pen.drawElements(box('b', 'Store', 200), cues.sync('r', 1), { keepView: true });
+    cues.receive({ at: 'shape', ref: 'r', i: 0, ms: 400 });
+    await vi.advanceTimersByTimeAsync(200);
+    cues.receive({ at: 'release' });
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(await first).toBe(true);
+    expect(await second).toBe(true);
+    const ids = new Set(h.scene.map((e) => e.id));
+    expect([...ids].some((id) => id.startsWith('a'))).toBe(true);
+    expect([...ids].some((id) => id.startsWith('b'))).toBe(false);
+  });
 });
+

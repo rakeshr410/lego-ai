@@ -1,0 +1,163 @@
+# How a WebSocket works: the HTTP upgrade, frames and masking, a small message protocol with ids and sequence numbers, a heartbeat, close codes and the reconnect loop.
+id: client-server-protocols/websockets/how-it-works
+title: WebSockets
+source:
+  hash: f3e6d33b1e2a
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: client-server-protocols/polling-and-server-sent-events/how-it-works
+  assumes:
+    - "Server-sent events: one GET whose text/event-stream response stays open, one way, server to client."
+    - Every event carries an increasing id, and a request that names the last id it saw cannot miss events published in between.
+  carries:
+    - A WebSocket starts as an HTTP/1.1 GET with Upgrade, and after 101 Switching Protocols the same TCP connection carries frames both ways.
+    - Browser-to-server frames are masked with 4 random bytes to protect old proxies; it is not encryption, wss:// is.
+    - The socket is a pipe; the app adds a protocol with client ids to match replies and server sequence numbers to order and catch up.
+    - The page cannot see protocol pings, so liveness needs an application heartbeat with a deadline.
+    - Reconnect with capped exponential backoff and full jitter, stop on codes that say retrying cannot help, and catch up before sending.
+  terms:
+    - term: upgrade
+      means: The HTTP/1.1 request with Upgrade websocket that, answered by 101, switches the same connection to WebSocket frames.
+    - term: frame
+      means: The WebSocket unit on the wire; its opcode says text, binary, close, ping or pong.
+    - term: masking
+      means: XORing every browser-sent frame with 4 fresh random bytes so a script cannot choose how its bytes look on the wire.
+    - term: sequence number (seq)
+      means: The number the server stamps on every event of a lot, in the order it decided them; the only order the client trusts.
+    - term: full jitter
+      means: Waiting a random time between zero and the current backoff cap, so clients that failed together come back spread out.
+board:
+  keep: [short-poll, sp-page, sp-server, poll-get, sp-price, sp-bid, poll-late, long-poll, lp-page, lp-server, wait-get, held, lp-bid, bid-answer, lp-render, gap, cursor, log-answer, sse, sse-page, sse-server, event-source, sse-response, sse-event, sse-fired, sse-drop, reconnect, replay-log, poll-ask, poll-next, server-waits, bid-lands, lost-1043, the-fix, one-get, keeps-writing, drop-retry, after-id]
+  elements:
+    - { id: upgrade, kind: region, label: "Upgrade, then frames", at: [2, 34], size: [37, 28] }
+    - { id: ws-page, kind: box, label: bidder's browser, at: [4, 37], size: [11, 2], in: upgrade, tone: grey }
+    - { id: ws-server, kind: box, label: room server, at: [26, 37], size: [11, 2], in: upgrade, tone: grey }
+    - { id: ws-get, kind: box, label: "GET /ws, Upgrade: websocket", at: [4, 40], size: [11, 3], in: upgrade, tone: blue }
+    - { id: ws-101, kind: box, label: 101 Switching Protocols, at: [26, 40], size: [11, 3], in: upgrade, tone: blue }
+    - { id: accept-check, kind: note, label: "Accept: a check, not security", at: [4, 44], in: upgrade }
+    - { id: cookie-auth, kind: note, label: the cookie carries the credential, at: [20, 44], in: upgrade }
+    - { id: ws-frames, kind: box, label: "bid frames, any time", at: [4, 46], size: [11, 3], in: upgrade, tone: green }
+    - { id: ws-push, kind: box, label: "price frames, any time", at: [26, 46], size: [11, 3], in: upgrade, tone: green }
+    - { id: opcodes, kind: note, label: "opcode: 1 text, 2 binary, 8 to 10 control", at: [4, 50], in: upgrade }
+    - { id: bid-header, kind: region, label: "one bid frame, 47 bytes", at: [4, 52], size: [34, 6], in: upgrade }
+    - { id: fr-head, kind: box, label: "flags and length, 2 bytes", at: [5, 54], size: [10, 3], in: bid-header, tone: grey }
+    - { id: masking, kind: box, label: "mask key, 4 random bytes", at: [16, 54], size: [10, 3], in: bid-header, tone: amber }
+    - { id: fr-payload, kind: box, label: "masked JSON, 41 bytes", at: [27, 54], size: [10, 3], in: bid-header, tone: blue }
+    - { id: not-encryption, kind: note, label: "masking is not encryption; TLS is", at: [4, 59], in: upgrade }
+    - { id: envelope, kind: region, label: "Gavelry's messages, gavelry.v2", at: [41, 34], size: [37, 23] }
+    - { id: env-page, kind: box, label: bidding page, at: [43, 37], size: [11, 2], in: envelope, tone: grey }
+    - { id: env-server, kind: box, label: lot 812 room, at: [65, 37], size: [11, 2], in: envelope, tone: grey }
+    - { id: join-msg, kind: box, label: joins lot 812, at: [43, 40], size: [11, 3], in: envelope, tone: blue }
+    - { id: resync-msg, kind: box, label: resync 4181 to 4186, at: [65, 40], size: [11, 3], in: envelope, tone: amber }
+    - { id: bid-msg, kind: box, label: "bid, id c-17", at: [43, 45], size: [11, 3], in: envelope, tone: blue }
+    - { id: ack-msg, kind: box, label: "ack c-17, seq 4187", at: [65, 45], size: [11, 3], in: envelope, tone: amber }
+    - { id: price-msg, kind: box, label: "price, seq 4187", at: [65, 50], size: [11, 3], in: envelope, tone: amber }
+    - { id: env-others, kind: box, label: every page in the lot, at: [43, 50], size: [11, 3], in: envelope, tone: blue }
+    - { id: id-vs-seq, kind: note, label: "id matches replies; seq orders", at: [43, 54], in: envelope }
+    - { id: seq-rule, kind: note, label: drop seq at or below the last, at: [59, 54], in: envelope }
+    - { id: liveness, kind: region, label: Dead lines and coming back, at: [80, 34], size: [38, 37] }
+    - { id: lv-page, kind: box, label: page, at: [82, 37], size: [11, 2], in: liveness, tone: grey }
+    - { id: lv-server, kind: box, label: edge server, at: [104, 37], size: [11, 2], in: liveness, tone: grey }
+    - { id: app-ping, kind: box, label: ping every 25 s, at: [82, 40], size: [11, 3], in: liveness, tone: green }
+    - { id: lv-gone, kind: box, label: never hears it, at: [104, 40], size: [11, 3], in: liveness, tone: grey }
+    - { id: no-pong, kind: box, label: "no pong in 10 s: dead", at: [82, 45], size: [11, 3], in: liveness, tone: red }
+    - { id: no-api-ping, kind: note, label: page cannot send ping frames, at: [96, 46], in: liveness }
+    - { id: worst-35, kind: note, label: "silent drop to Reconnecting: 35 s at worst", at: [82, 49], in: liveness }
+    - { id: lv-expired, kind: box, label: "accepts, then closes", at: [104, 51], size: [11, 3], in: liveness, tone: grey }
+    - { id: close-4401, kind: box, label: "4401: stop, sign in", at: [82, 51], size: [11, 3], in: liveness, tone: red }
+    - { id: close-1006, kind: box, label: "1006: no close frame", at: [82, 56], size: [11, 3], in: liveness }
+    - { id: script-codes, kind: note, label: scripts close with 1000 or 3000 to 4999, at: [96, 57], in: liveness }
+    - { id: backoff, kind: box, label: "random wait, doubling to 30 s", at: [82, 64], size: [11, 3], in: liveness, tone: amber }
+    - { id: catch-up, kind: box, label: "resync, then the outbox", at: [104, 64], size: [11, 3], in: liveness, tone: green }
+    - { id: reset-live, kind: note, label: reset attempts only once Live, at: [82, 68], in: liveness }
+  arrows:
+    - { id: key-sent, from: ws-get, to: ws-101, label: Sec-WebSocket-Key }
+    - { id: from-here, from: ws-frames, to: ws-push, label: same connection, both: true }
+    - { id: answered-by, from: join-msg, to: resync-msg, label: since 4180 }
+    - { id: same-id, from: bid-msg, to: ack-msg, label: amount 2500 }
+    - { id: broadcast, from: price-msg, to: env-others, label: broadcast }
+    - { id: silent-drop, from: app-ping, to: lv-gone, label: lost in tunnel, dashed: true }
+    - { id: close-code, from: lv-expired, to: close-4401, label: close frame 4401 }
+    - { id: retry-1006, from: close-1006, to: backoff, label: retry }
+    - { id: reconnects, from: backoff, to: catch-up, label: "join, last seq" }
+beats:
+  - point: A WebSocket starts as a plain HTTP/1.1 GET asking to upgrade; the server answers 101 Switching Protocols, and from then on the same TCP connection carries WebSocket frames either way at any time.
+    kind: flow
+    weight: core
+    teach:
+      - Unlike the event stream, this pipe runs both ways. The bidder's browser sends GET /ws with Upgrade websocket, Connection Upgrade, a random Sec-WebSocket-Key and always its Origin. It is ordinary HTTP so it passes the same ports, proxies and TLS terminators.
+      - The room server answers 101 Switching Protocols with Sec-WebSocket-Accept, the key plus a fixed GUID hashed with SHA-1. That proves it understood a WebSocket upgrade; anyone can compute it, so it is not security.
+      - The constructor takes only a URL and subprotocols, so script cannot add an Authorization header. Authentication rides on what the upgrade already carries, the session cookie.
+    draw: [upgrade, ws-page, ws-server, ws-get, ws-101, key-sent, accept-check, cookie-auth, ws-frames, ws-push, from-here]
+    check: What does the browser send to open Gavelry's socket, what comes back, and what does the connection carry afterwards?
+    answer: An HTTP/1.1 GET with Upgrade websocket and a Sec-WebSocket-Key (plus Origin and the cookie); a 101 Switching Protocols with Sec-WebSocket-Accept; afterwards WebSocket frames in both directions on the same TCP connection.
+    misconceptions:
+      - "The connection upgrades from HTTP to TCP -> it was TCP all along; the HTTP request switches that same connection to the WebSocket protocol."
+      - "Sec-WebSocket-Accept authenticates the server -> it only shows the server understood the upgrade; anyone can compute it."
+  - point: Every message travels in frames whose opcode says text, binary, close, ping or pong, and frames from the browser are masked with 4 random bytes to protect old proxies, which is not encryption.
+    kind: mechanism
+    weight: core
+    teach:
+      - Opcode 1 is text and must be valid UTF-8, 2 is binary, and 8, 9 and 10 are close, ping and pong. A 47-byte bid fits the 7-bit length, so its header is just 6 bytes, 2 of flags and length and 4 of mask key.
+      - Masking exists because a page chooses its bytes. Without it a hostile page could craft bytes an old transparent proxy would misread as an HTTP request and cache. XOR with fresh random bytes makes the wire bytes unpredictable. Server frames are never masked.
+      - Privacy comes from wss://, TLS, not from masking.
+    draw: [opcodes, bid-header, fr-head, masking, fr-payload, not-encryption]
+    check: Why does the browser mask every frame it sends, and does that keep a bid private?
+    answer: So a script cannot control how its bytes appear on the wire and trick an old proxy into caching them as an HTTP request; it is not encryption, only wss:// keeps bids private.
+    misconceptions:
+      - "Masking encrypts the frames -> it only scrambles them with a key sent in the same frame; TLS (wss://) is what encrypts."
+  - point: The socket is only a pipe, so Gavelry puts a small protocol on top, where a client id matches each reply to its request and a server sequence number is the only order the client trusts and the way it catches up.
+    kind: mechanism
+    weight: core
+    teach:
+      - Messages are JSON text frames with a type. The page joins lot 812 saying the last seq it saw, 4180, and gets a resync with 4181 to 4186.
+      - "The bid carries a client id, c-17, invented by the browser. The ack carries the same id, so the pending row is found, and a resend after a reconnect is recognisable."
+      - The seq, 4187, is stamped by the server on every lot event in the order it decided them. The client keeps the highest seq applied, ignores anything at or below it, and spots a gap when one skips ahead.
+      - The protocol is named through Sec-WebSocket-Protocol; a page offers gavelry.v2 and gavelry.v1 and the server picks the newest it speaks.
+    draw: [envelope, env-page, env-server, join-msg, resync-msg, answered-by, bid-msg, ack-msg, same-id, price-msg, env-others, broadcast, id-vs-seq, seq-rule]
+    check: A bid goes up as c-17 and comes back acknowledged with seq 4187. What is each number for?
+    answer: c-17 is the client's id, used to match the ack to the pending bid and to recognise a resend; 4187 is the server's sequence number, the order of events in the lot and the point to catch up from.
+    misconceptions:
+      - "Messages arrive in order, so no sequence numbers are needed -> after a reconnect the client must know where it stopped and spot gaps; only the server's seq says that."
+  - point: TCP will not report a silently dead connection and the page cannot use protocol pings, so the client sends its own ping every 25 s and treats 10 s without an answer as dead.
+    kind: failure
+    weight: core
+    teach:
+      - In a tunnel the mobile network drops the flow and neither side gets a close frame. An idle TCP connection sends nothing, so a vanished peer looks the same as a quiet one; the socket still says OPEN.
+      - Without a heartbeat the bidder presses Bid, send() returns normally, and the bid sits pending while TCP retransmits into the void for many minutes.
+      - The browser answers a server's ping on its own, but the page can neither send a ping nor see a pong. So Gavelry's heartbeat is a ping and pong message pair, every 25 s, under the edge's 60 s idle limit, with a 10 s deadline. Any incoming frame resets it, and the worst case to Reconnecting is 35 s.
+    draw: [liveness, lv-page, lv-server, app-ping, lv-gone, silent-drop, no-pong, worst-35, no-api-ping]
+    check: The train enters a tunnel and the connection dies silently. Why does readyState still say OPEN, and how does Gavelry's page find out?
+    answer: Nothing is sent on an idle TCP connection, so nothing fails and no close frame arrives; the page's application ping gets no pong within 10 s, so it declares the socket dead and reconnects.
+    misconceptions:
+      - "send() failing will tell you the line is dead -> send() returns normally and TCP keeps retrying for many minutes."
+      - "The page can rely on WebSocket ping frames -> the browser answers them itself, but the page can neither send them nor see them."
+  - point: A clean close is a close frame with a code from each side; anything else reaches the page as 1006 with no details, so a server that wants the client to stop retrying accepts the upgrade and then closes with a private code such as 4401.
+    kind: rule
+    weight: core
+    teach:
+      - A drop, a dead heartbeat or a refused handshake all show up as close 1006, wasClean false. The browser hides the reason on purpose so pages cannot use WebSocket to probe the visitor's local network.
+      - So if the server refused the upgrade over an expired session, the page could not tell it from a tunnel. Gavelry's server accepts the upgrade and closes with 4401, which the client knows means stop retrying and refresh the session.
+      - Scripts may close with 1000 or 3000 to 4999 only; 4000 to 4999 is for private agreements like this one.
+    draw: [lv-expired, close-4401, close-code, close-1006, script-codes]
+    check: Why does Gavelry's server accept the upgrade and then close with 4401, instead of refusing the upgrade when a session has expired?
+    answer: A refused upgrade reaches the page as a vague 1006, the same as a network drop, so the client would keep retrying; 4401 is a private code that tells it to stop and fix the credential.
+  - point: Reconnecting means waiting a random time up to a capped, doubling limit, stopping on codes where retrying cannot help, and sending the last seq on join so the missed events are applied before anything queued is sent.
+    kind: flow
+    weight: core
+    teach:
+      - The wait is random between zero and min(30 s, 1 s times 2 to the attempt), with a 5 s base after a restart (1012) or overload (1013) close. A failing client waits longer each time, and three thousand bidders who dropped together come back spread out.
+      - Reset the attempt count only when the socket reaches Live, not on the raw open, or a server that accepts and immediately closes is hammered at the base delay. Stop on 1008, 4401 and 4409.
+      - Catch up before you speak. join carries the last seq, the server answers with the missing events or a snapshot, and only then does the outbox of queued bids go out, so no bid is judged against a price the bidder has not seen.
+    draw: [backoff, retry-1006, catch-up, reconnects, reset-live]
+    check: The bidder's laptop wakes after twenty minutes and a bid is waiting in the outbox. In what order does the client reconnect, catch up and send?
+    answer: It backs off a random delay, opens a new socket, sends join with its last seq, applies the resync in seq order, and only then flushes the outbox with the bid.
+    misconceptions:
+      - "Retry immediately, or on a fixed delay -> thousands of clients would return at once; use a random delay under a growing cap."
+      - "Send queued bids as soon as the socket opens -> first apply the resync, or a bid is judged against a price the bidder has not seen."
+task:
+  prompt: Draw Gavelry's socket from the upgrade to its first acknowledged bid, then a silent drop, and show how the client notices, waits and catches up before it resends.
+  expects: [1, 3, 4, 6]

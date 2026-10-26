@@ -1,4 +1,4 @@
-// The kappa study (design section 8; docs/interview/README.md "Rollout"): before numeric ratings are
+// The kappa study (design section 8; docs/README.md "Rollout"): before numeric ratings are
 // shown, the grader's section ratings must agree with two human raters on at least 20 sessions at a
 // quadratic-weighted Cohen's kappa of 0.6 or more, against each rater. Ratings are 0-4 (sessions.ts
 // Rating). Input: rows of (session, key, rater, rating), the grader's from

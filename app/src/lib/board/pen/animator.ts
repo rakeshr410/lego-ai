@@ -1,12 +1,13 @@
-import { ARROW_MS, CHAR_MS, CHAR_W, FRAME_MS, MOVE_MS, PAUSE_MS, REST_MS, SHAPE_MS, SYNC_CHAR_MS, SYNC_MOVE_MS, SYNC_SHAPE_MS, TEXT_MAX_MS } from './timing';
+import { ARROW_MS, CHAR_MS, CHAR_W, FRAME_MS, HOVER_MOVE_MS, HOVER_PX_MS, HOVER_REST_MS, MOVE_MS, PAUSE_MS, REST_MS, SHAPE_MS, SYNC_CHAR_MS, SYNC_MOVE_MS, SYNC_SHAPE_MS, TEXT_MAX_MS } from './timing';
 
-// The animated pen (docs/interview/coach-mode.md, phase 5): drawing-board's `src/pen/animator.ts` (2026),
+// The animated pen (docs/coach-mode.md, phase 5): drawing-board's `src/pen/animator.ts` (2026),
 // vendored and cut to what the room draws. A box grows from its corner and its label is typed; an arrow
 // extends from its tail; a note is written out; a highlight pulses; an erased element shrinks or is untyped.
 // The pen holds a queue, so drawings land one after another in order, and a cursor listener gets the pen's
 // position for the overlay. Everything the pen knows of the canvas goes through a `PenHost`
 // (ExcalidrawCanvas.tsx `penHost`), so this module imports nothing of the library and runs under Node.
-// Not vendored: freehand strokes and walks (the room has no ink of that kind), the hover, the camera.
+// Not vendored: freehand strokes and walks (the room has no ink of that kind), the camera. The hover is the
+// room's own: while the voice talks about what is on the board, the pen rests over it (pointer.ts).
 
 /** An element as the pen sees it: the library's shape, loosely typed. */
 export type PenElement = {
@@ -52,11 +53,19 @@ export interface PenHost {
   reveal?(els: readonly PenElement[]): Promise<void>;
 }
 
-/** The pen waits on these before a mark: a voice reaching the words, or nothing (`NO_SYNC`). */
+/**
+ * The time a voice gives a mark (cues.ts): `ms` to move to it and draw its outline, or `words`, a [start, end]
+ * window in ms from now for each written word of its label, so each word is written while it is said.
+ */
+export type PenCue = { ms?: number; words?: readonly (readonly [number, number])[] };
+
+/** The pen waits on these before a mark: a voice reaching it (with its time, when the voice gives one), or nothing (`NO_SYNC`). */
 export interface PenSync {
-  beforeShape(cue: string | undefined, signal: AbortSignal): Promise<void>;
-  beforeLabel(cue: string, signal: AbortSignal): Promise<void>;
-  beforeArrow?(cue: string, signal: AbortSignal): Promise<void>;
+  beforeShape(cue: string | undefined, signal: AbortSignal): Promise<void | PenCue | undefined>;
+  beforeLabel(cue: string, signal: AbortSignal): Promise<void | PenCue | undefined>;
+  beforeArrow?(cue: string, signal: AbortSignal): Promise<void | PenCue | undefined>;
+  /** True once the voice stopped before it reached this mark (the learner cut in): the pen leaves it undrawn. */
+  dropped?(): boolean;
 }
 
 export const NO_SYNC: PenSync = {
@@ -70,6 +79,8 @@ export type PenStop = 'aborted' | 'failed';
 export interface DrawOpts {
   /** Keep the view where it is, panning only as far as the ink needs. */
   keepView?: boolean;
+  /** Put the elements on the board at once, without the pen (the board a lesson opens with, already drawn before). */
+  instant?: boolean;
   /** Told once, only when the batch did not finish. */
   onStop?: (stop: PenStop) => void;
 }
@@ -102,6 +113,24 @@ export const typedWidth = (el: TextEl): number => {
   return Math.max(4, Math.min(el.width, chars * (el.fontSize ?? 16) * CHAR_W));
 };
 
+/**
+ * The scene with each label right after the box it sits in, as Excalidraw requires of bound text (its development
+ * build refuses a scene that breaks this, and a board saved that way would not load). The pen puts what it touches
+ * last, so a box that pulses after its label is written would otherwise end up after it.
+ */
+export function labelsAfterBoxes<T extends { id: string; containerId?: string | null }>(elements: readonly T[]): T[] {
+  const ids = new Set(elements.map((e) => e.id));
+  const labels = new Map<string, T[]>();
+  for (const e of elements) if (e.containerId && ids.has(e.containerId)) labels.set(e.containerId, [...(labels.get(e.containerId) ?? []), e]);
+  if (!labels.size) return [...elements];
+  const out: T[] = [];
+  for (const e of elements) {
+    if (e.containerId && ids.has(e.containerId)) continue;
+    out.push(e, ...(labels.get(e.id) ?? []));
+  }
+  return out;
+}
+
 export class Pen {
   private readonly host: PenHost;
   private readonly onCursor: CursorListener;
@@ -114,6 +143,7 @@ export class Pen {
   private abortSignal!: Promise<typeof ABORTED>;
   private fireAbort: () => void = () => {};
   private aborter = new AbortController();
+  private hovering = 0;
 
   constructor(host: PenHost, onCursor: CursorListener, onError: ErrorSink = consoleSink) {
     this.host = host;
@@ -156,6 +186,7 @@ export class Pen {
     this.aborter.abort();
     this.armAbort();
     fire();
+    this.hovering++;
     this.onCursor(null);
     this.pen.placed = false;
   }
@@ -181,6 +212,7 @@ export class Pen {
   async drawElements(input: Input<readonly PenElement[]>, sync: PenSync | undefined = NO_SYNC, opts?: DrawOpts): Promise<boolean> {
     const done = await this.enqueue(
       async () => {
+        if (sync?.dropped?.()) return true;
         const elements = resolve(input);
         if (!elements.length) return true;
         const api = this.host;
@@ -189,6 +221,16 @@ export class Pen {
         const shapes = elements.filter(isShape);
         const arrows = elements.filter(isLinear);
         const freeText = elements.filter((e): e is TextEl => isText(e) && !e.containerId);
+        if (opts?.instant) {
+          // Each label right after its shape or arrow, as Excalidraw requires.
+          for (const e of [...frames, ...shapes, ...arrows]) {
+            this.upsert(e, true);
+            const label = textFor(e.id);
+            if (label) this.upsert(label, true);
+          }
+          for (const t of freeText) this.upsert(t, true);
+          return true;
+        }
         if (!opts?.keepView) await this.race(api.fit([...api.getElements(), ...elements], elements));
         else if (api.reveal) await this.race(api.reveal(elements));
         if (!hidden()) await this.wait(120);
@@ -196,10 +238,11 @@ export class Pen {
         for (const s of shapes) await this.growShape(s, textFor(s.id), false, sync);
         for (const a of arrows) {
           const label = textFor(a.id);
-          if (!hidden() && sync?.beforeArrow) await this.race(sync.beforeArrow(label?.originalText ?? label?.text ?? '', this.signal));
-          await this.extendArrow(a, label);
+          const lead = !hidden() && sync?.beforeArrow ? await this.race(sync.beforeArrow(label?.originalText ?? label?.text ?? '', this.signal)) : undefined;
+          if (sync?.dropped?.()) continue;
+          await this.extendArrow(a, label, lead || undefined, sync);
         }
-        for (const t of freeText) await this.typeText(t, true, sync ? SYNC_CHAR_MS : CHAR_MS);
+        for (const t of freeText) await this.writeText(t, sync);
         this.restLater();
         return true;
       },
@@ -207,6 +250,13 @@ export class Pen {
       opts?.onStop,
     );
     return done === true;
+  }
+
+  /** Waits, in the queue, for a voice to reach a mark that is not drawn by `drawElements` (a highlight, an erase). */
+  waitFor(sync: PenSync): Promise<void> {
+    return this.enqueue(async () => {
+      if (!hidden()) await this.race(sync.beforeShape(undefined, this.signal));
+    }, 'pen.wait');
   }
 
   /** Points at an element and pulses its outline. */
@@ -219,6 +269,45 @@ export class Pen {
       await this.pulse(el, pulses);
       this.restLater();
     }, 'pen.highlight');
+  }
+
+  /**
+   * Hovers over an element while the voice talks about it, the way a hand hovers as it explains: the pen moves
+   * to just under its words and drifts along them, drawing nothing. Never while a mark is being drawn (a mark
+   * coming takes the pen back), and the pen stays on the board while the voice goes on (`stay`).
+   */
+  hover(el: PenElement): void {
+    if (this.isBusy() || hidden()) return;
+    const turn = ++this.hovering;
+    const width = isText(el) ? typedWidth(el) : el.width;
+    const y = el.y + el.height + 6;
+    const from = el.x + Math.min(10, width * 0.1);
+    const to = el.x + width * 0.85;
+    const still = () => turn === this.hovering && !this.isBusy();
+    void (async () => {
+      const start = { ...this.pen };
+      const glide = async (ms: number, at: (t: number) => Point) => {
+        const t0 = performance.now();
+        for (;;) {
+          if (!still()) return false;
+          const t = Math.min(1, (performance.now() - t0) / ms);
+          const p = at(easeOut(t));
+          this.penAt(p.x, p.y, false);
+          if (t >= 1) return true;
+          await sleep(FRAME_MS);
+        }
+      };
+      if (start.placed && !(await glide(HOVER_MOVE_MS, (t) => ({ x: start.x + (from - start.x) * t, y: start.y + (y - start.y) * t }))))
+        return;
+      if (!start.placed) this.penAt(from, y, false);
+      if (!(await glide(Math.max(600, (to - from) * HOVER_PX_MS), (t) => ({ x: from + (to - from) * t, y: y + Math.sin(t * Math.PI) * 3 })))) return;
+      if (still()) this.restLater(HOVER_REST_MS);
+    })();
+  }
+
+  /** The voice is still talking: the pen, if it is on the board and not drawing, stays there a while longer. */
+  stay(): void {
+    if (this.pen.placed && !this.isBusy()) this.restLater(HOVER_REST_MS);
   }
 
   /** Erases these: text is untyped, arrows retract, shapes shrink; what was bound to them lets go. */
@@ -271,9 +360,13 @@ export class Pen {
   private async growShape(el: PenElement, label: TextEl | undefined, frame: boolean, sync?: PenSync) {
     const labelText = label ? label.originalText || label.text : undefined;
     const synced = !!sync && !hidden();
-    if (synced) await this.race(sync.beforeShape(labelText, this.signal));
-    await this.moveTo(el.x, el.y, synced ? SYNC_MOVE_MS : MOVE_MS);
-    await this.animate(synced ? SYNC_SHAPE_MS : SHAPE_MS, (t) => {
+    const lead = synced ? (await this.race(sync.beforeShape(labelText, this.signal))) || undefined : undefined;
+    if (sync?.dropped?.()) return;
+    // A voice's pause before the label: the move and the outline share it, the outline most of it.
+    const moveMs = lead?.ms ? Math.min(SYNC_MOVE_MS, lead.ms * 0.3) : synced ? SYNC_MOVE_MS : MOVE_MS;
+    const shapeMs = lead?.ms ? Math.max(FRAME_MS, lead.ms - moveMs) : synced ? SYNC_SHAPE_MS : SHAPE_MS;
+    await this.moveTo(el.x, el.y, moveMs);
+    await this.animate(shapeMs, (t) => {
       const w = Math.max(2, el.width * t);
       const h = Math.max(2, el.height * t);
       this.upsert({ ...el, width: w, height: h, boundElements: null }, false);
@@ -283,11 +376,12 @@ export class Pen {
     if (label && !frame) {
       if (synced && labelText) {
         this.penAt(el.x + el.width / 2, el.y + el.height / 2, false);
-        await this.race(sync.beforeLabel(labelText, this.signal));
-        await Promise.all([this.typeText(label, false, SYNC_CHAR_MS), this.pulse(el, 2, 230)]);
+        const write = (await this.race(sync.beforeLabel(labelText, this.signal))) || undefined;
+        await Promise.all([write?.words ? this.typeTimed(label, write.words) : this.typeText(label, false, SYNC_CHAR_MS), this.pulse(el, 2, 230)]);
       } else await this.typeText(label, false);
     }
-    if (!hidden()) await this.wait(PAUSE_MS);
+    // Timed by a voice, the pause after the label is the voice's.
+    if (!hidden() && !lead) await this.wait(PAUSE_MS);
   }
 
   private async pulse(el: PenElement, n: number, onMs = 260) {
@@ -308,18 +402,36 @@ export class Pen {
     );
   }
 
-  private async extendArrow(el: PenElement, label: TextEl | undefined) {
+  private async extendArrow(el: PenElement, label: TextEl | undefined, lead?: PenCue, sync?: PenSync) {
     const pts = this.pointsOf(el);
-    await this.moveTo(el.x, el.y, MOVE_MS);
-    await this.animate(ARROW_MS, (t) => {
+    const moveMs = lead?.ms ? Math.min(SYNC_MOVE_MS, lead.ms * 0.3) : MOVE_MS;
+    await this.moveTo(el.x, el.y, moveMs);
+    await this.animate(lead?.ms ? Math.max(FRAME_MS, lead.ms - moveMs) : ARROW_MS, (t) => {
       const scaled = pts.map(([px, py]) => [px * t, py * t] as const);
       const tip = scaled[scaled.length - 1];
       this.upsert({ ...el, points: scaled, startBinding: null, endBinding: null, boundElements: null }, false);
       this.penAt(el.x + tip[0], el.y + tip[1], true);
     });
     this.upsert(el, true);
-    if (label) await this.typeText(label, false);
-    if (!hidden()) await this.wait(PAUSE_MS);
+    if (label) {
+      const text = label.originalText || label.text;
+      const write = lead && sync && !hidden() ? (await this.race(sync.beforeLabel(text, this.signal))) || undefined : undefined;
+      if (write?.words) await this.typeTimed(label, write.words);
+      else await this.typeText(label, false);
+    }
+    if (!hidden() && !lead) await this.wait(PAUSE_MS);
+  }
+
+  /** A note: the pen goes to it and writes it, in the voice's time when it gives one. */
+  private async writeText(el: TextEl, sync: PenSync | undefined) {
+    const text = el.originalText || el.text;
+    const lead = sync && !hidden() ? (await this.race(sync.beforeShape(text, this.signal))) || undefined : undefined;
+    if (sync?.dropped?.()) return;
+    if (!lead) return this.typeText(el, true, sync ? SYNC_CHAR_MS : CHAR_MS);
+    await this.moveTo(el.x, el.y, lead.ms ?? SYNC_MOVE_MS);
+    const write = (await this.race(sync!.beforeLabel(text, this.signal))) || undefined;
+    if (write?.words) await this.typeTimed(el, write.words);
+    else await this.typeText(el, false, SYNC_CHAR_MS);
   }
 
   private async retractArrow(el: PenElement) {
@@ -358,15 +470,58 @@ export class Pen {
     const perChar = Math.min(charMs, TEXT_MAX_MS / n);
     const grown = typedWidth(el);
     for (let i = 1; i <= n && !hidden(); i++) {
-      const sub = full.slice(0, i);
-      const w = Math.max(4, (grown * i) / n);
-      const x = el.textAlign === 'center' ? cx - w / 2 : el.x;
-      this.upsert({ ...el, text: sub, originalText: sub, width: w, x }, false);
-      this.penAt(x + w, el.y + el.height * 0.8, true);
+      this.showTyped(el, i, grown, cx);
       const jitter = 0.65 + Math.random() * 0.7;
       await this.wait(perChar * jitter + (full[i - 1] === ' ' ? perChar * 0.8 : 0));
     }
     this.upsert(el, true);
+  }
+
+  /**
+   * Writes each word inside its window (ms from now, one per word of the text: when the voice says it). A
+   * word's characters are spread evenly over its window; the space and any mark before a word go with it. With
+   * windows that do not match the words, the text is spread over all of them by its characters.
+   */
+  private async typeTimed(el: TextEl, windows: readonly (readonly [number, number])[]) {
+    const full = el.originalText || el.text;
+    const n = full.length;
+    if (!n || hidden()) return this.upsert(el, true);
+    const start = performance.now();
+    const grown = typedWidth(el);
+    const cx = el.x + el.width / 2;
+    const words = [...full.matchAll(/\S+/g)].map((m) => (m.index ?? 0) + m[0].length);
+    const plan: { end: number; from: number; to: number }[] =
+      words.length === windows.length && words.length
+        ? words.map((end, k) => ({ end, from: windows[k][0], to: windows[k][1] }))
+        : [{ end: n, from: windows[0]?.[0] ?? 0, to: windows.at(-1)?.[1] ?? n * SYNC_CHAR_MS }];
+    let typed = 0;
+    for (const { end, from, to } of plan) {
+      const chars = end - typed;
+      if (chars <= 0) continue;
+      const lead = start + from - performance.now();
+      if (lead > 0) await this.wait(lead);
+      for (let c = 1; c <= chars; c++) {
+        this.showTyped(el, typed + c, grown, cx);
+        // Where the pen should be by the end of this character, against the clock, so a slow frame is caught up.
+        const due = start + from + ((to - from) * c) / chars - performance.now();
+        if (due > 0) await this.wait(due);
+      }
+      typed = end;
+    }
+    this.upsert(el, true);
+  }
+
+  /**
+   * The text's first `i` characters on the board, the pen at their end. They are written left to right from where
+   * the whole text will start, as a hand writes, so a centred label does not grow from its middle and slide.
+   */
+  private showTyped(el: TextEl, i: number, grown: number, cx: number) {
+    const full = el.originalText || el.text;
+    const sub = full.slice(0, i);
+    const w = Math.max(4, (grown * i) / full.length);
+    const x = el.textAlign === 'center' ? cx - grown / 2 : el.x;
+    this.upsert({ ...el, text: sub, originalText: sub, width: w, x }, false);
+    this.penAt(x + w, el.y + el.height * 0.8, true);
   }
 
   private async untype(el: TextEl) {
@@ -442,11 +597,18 @@ export class Pen {
     this.onCursor({ x, y, drawing });
   }
 
-  private restLater() {
+  private restLater(ms = REST_MS) {
     if (this.idleTimer) clearTimeout(this.idleTimer);
     this.idleTimer = setTimeout(() => {
+      if (this.isBusy()) return;
+      this.hovering++;
       this.onCursor(null);
       this.pen.placed = false;
-    }, REST_MS);
+    }, ms);
+  }
+
+  /** The voice stopped: the pen leaves the board at its usual pace. */
+  rest(): void {
+    if (this.pen.placed && !this.isBusy()) this.restLater();
   }
 }

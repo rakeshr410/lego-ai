@@ -28,7 +28,7 @@
  *   REDIS_URL=rediss://... node scripts/interview-switch.mjs topups <readerDocumentId> add 2
  *   REDIS_URL=rediss://... node scripts/interview-switch.mjs topups <readerDocumentId> remove 1
  *
- * `topups` shows or changes a reader's purchased voice sessions (docs/interview/README.md, "Voice
+ * `topups` shows or changes a reader's purchased voice sessions (docs/README.md, "Voice
  * quota rule"): a whole voice session past the month's quota spends one. The reader is named by the
  * CMS document id the web uses as its reader id. This is the grant path until a purchase flow
  * exists; the balance never goes below zero.

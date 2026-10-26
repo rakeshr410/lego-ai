@@ -22,7 +22,7 @@ export const FLAGS = {
    */
   agentLabs: import.meta.env.PUBLIC_AGENT_LABS_ENABLED === 'true',
   /**
-   * Early access (docs/interview/README.md "Rollout"): the systems with a mock interview, as slugs
+   * Early access (docs/README.md "Rollout"): the systems with a mock interview, as slugs
    * (PUBLIC_INTERVIEW_SYSTEMS, comma-separated). Empty: every system with a published plan. A page,
    * an entry point and a plan exist only for the listed systems (interviewSystemOpen below).
    */

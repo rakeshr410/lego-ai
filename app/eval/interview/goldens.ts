@@ -78,7 +78,7 @@ export type Golden = {
   id: string;
   kind: 'strong' | 'weak' | 'mixed' | 'stuck-recovers' | 'confidently-wrong' | 'hinted' | 'asked' | 'injection' | 'declined' | 'last-stage' | 'mid-sentence-advance' | 'section-unreached' | 'board-only' | 'board-and-words' | 'concept-strong' | 'concept-weak';
   system: string;
-  /** A drill's golden (docs/interview/README.md, "Drills"): the topic's plan, or one section's; absent on the system's plan. */
+  /** A drill's golden (docs/README.md, "Drills"): the topic's plan, or one section's; absent on the system's plan. */
   topic?: string;
   section?: string;
   /** The stage index the turns are in. */
@@ -320,7 +320,7 @@ export const GOLDENS: Golden[] = [
     sectionRatings: [0, 1],
     ends: true,
   },
-  // A concept drill (docs/interview/README.md, "Drills"): the first stage of the what-is-an-agent
+  // A concept drill (docs/README.md, "Drills"): the first stage of the what-is-an-agent
   // topic "Agents vs workflows" (its key idea, three core items: who picks the next step, how many
   // model calls, whether the cost is known in advance). The same policy as a design stage: a strong
   // answer covers the items and the stage advances; a vague one earns partials and a follow-up.

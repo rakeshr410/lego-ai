@@ -67,11 +67,16 @@ changes the retention period.
 
 - **Retention:** a session expires `INTERVIEW_RETENTION_DAYS` after it started (a store TTL set on
   every write). Nothing about it outlives that: the reader's index of sessions drops expired ones.
+- **Coaching progress** (docs/coaching.md, "The learner's thread"): for a playlist's lessons, the
+  reader's standing per lesson (finished or not, the lesson's points that held or stayed shaky, the
+  questions the coach parked), kept for the same `INTERVIEW_RETENTION_DAYS` from its last update.
+  It holds the points' own words and the reader's parked questions, never transcripts.
 - **Delete one session:** "Delete this session now" in the room (`DELETE /api/interview/<id>`).
-- **Delete the account:** `/api/account` deletion also deletes every interview session
-  (`deleteReaderContent` in `web/src/lib/server/account.ts`).
+- **Delete the account:** `/api/account` deletion also deletes every interview session and the
+  coaching progress (`deleteReaderContent` in `web/src/lib/server/account.ts`).
 - **Export:** the account export (`/api/account/export`) includes an `interviews` array (sessions
-  with transcripts, feedback and consent) when the reader has any.
+  with transcripts, feedback and consent) when the reader has any, and a `coaching` object (the
+  progress per playlist).
 - **Logs** carry the session id, stage, token counts and cost, and a hash of the reader id, never
   the messages.
 - **Backups:** Redis is not backed up for interview data; when sessions move to the interview

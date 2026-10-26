@@ -73,7 +73,7 @@ async def test_a_lessons_state_and_continue_turn(web, fake_web):
     after = await web.turn(
         "a" * 24, 1, 0, "", got.append, kind="continue", on_draw=lambda ops, anchor: drawn.append((ops, anchor))
     )
-    # The drawing comes with its anchor: the words of the reply before it (bot/pacer.py times it to the voice).
+    # The drawing comes with its anchor: where it stands in the reply's words.
     assert "".join(got) == fake_web.reply and drawn == [(fake_web.draw_ops, {"words": 3})]
     assert after.seq == 0 and fake_web.calls[-1][2] == {"epoch": 1, "seq": 0, "text": "", "kind": "continue"}
     # An interview's state has no self-drive.

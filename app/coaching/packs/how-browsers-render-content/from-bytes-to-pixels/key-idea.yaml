@@ -1,0 +1,131 @@
+# The rendering pipeline's idea: a chain of conversions from bytes to a frame, who runs each stage, and which stages a change reruns.
+id: how-browsers-render-content/from-bytes-to-pixels/key-idea
+title: The pipeline at a glance
+source:
+  hash: "3b7be6a8c1e5"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: null
+  assumes: []
+  carries:
+    - "Rendering is a chain of stages: parse, style, layout tree, layout, paint, raster, composite."
+    - Each stage turns one data structure into the next, from bytes to DOM and CSSOM to styles, boxes, geometry, drawing commands, tiles and a frame.
+    - Paint records drawing commands; raster turns them into pixels; compositing stacks the rasterized layers into the frame.
+    - Parsing, style, layout and paint run on the main thread; raster and compositing run on other threads.
+    - The browser keeps every stage's output, so a change reruns only the stages whose inputs it changed.
+  terms:
+    - term: DOM
+      means: The tree of nodes the HTML parser builds from the markup.
+    - term: CSSOM
+      means: The stylesheet parsed into rules, each a selector and its declarations; on its own it says nothing about any element.
+    - term: computed style
+      means: The value every property ends up with for one element, after matching, the cascade and inheritance.
+    - term: layout tree
+      means: The tree of boxes layout works on, built from the DOM and the computed styles.
+    - term: display list
+      means: Paint's output, drawing commands in the order they must run.
+    - term: raster
+      means: Running drawing commands to get pixels, tile by tile.
+    - term: composite
+      means: Stacking the rasterized layers, with their offsets and opacities, into the frame sent to the screen.
+board:
+  keep: []
+  elements:
+    - { id: pipeline, kind: region, label: "The pipeline, first load", at: [2, 1], size: [69, 18] }
+    - { id: bytes, kind: box, label: Bytes, at: [4, 4], size: [11, 3], in: pipeline, tone: amber }
+    - { id: dom-cssom, kind: box, label: DOM and CSSOM, at: [22, 4], size: [11, 3], in: pipeline, tone: blue }
+    - { id: computed-styles, kind: box, label: Computed styles, at: [40, 4], size: [11, 3], in: pipeline, tone: blue }
+    - { id: layout-tree, kind: box, label: Layout tree, at: [58, 4], size: [11, 3], in: pipeline, tone: blue }
+    - { id: geometry, kind: box, label: Geometry, at: [58, 13], size: [11, 3], in: pipeline, tone: blue }
+    - { id: display-lists, kind: box, label: Display lists, at: [40, 13], size: [11, 3], in: pipeline, tone: blue }
+    - { id: tiles, kind: box, label: Tiles of pixels, at: [22, 13], size: [11, 3], in: pipeline, tone: blue }
+    - { id: frame, kind: box, label: Frame on screen, at: [4, 13], size: [11, 3], in: pipeline, tone: green }
+    - { id: copperpot, kind: region, label: "Copperpot's casserole page", at: [73, 21], size: [21, 9] }
+    - { id: html-bytes, kind: note, label: "96 KB of HTML, about 1,200 elements", at: [75, 24], in: copperpot }
+    - { id: css-bytes, kind: note, label: "48 KB of CSS, about 1,900 rules", at: [75, 26], in: copperpot }
+    - { id: style-out, kind: note, label: a value for every property, at: [75, 28], in: copperpot }
+    - { id: threads, kind: region, label: Who runs each stage, at: [96, 21], size: [22, 15] }
+    - { id: main-stages, kind: box, label: "main thread: parse to paint", at: [98, 24], size: [18, 2], in: threads }
+    - { id: raster-stage, kind: box, label: "raster threads: pixels", at: [98, 27], size: [18, 2], in: threads }
+    - { id: composite-stage, kind: box, label: "compositor and GPU: frame", at: [98, 30], size: [18, 2], in: threads }
+    - { id: frame-clock, kind: note, label: "60 Hz: a frame every 16.7 ms", at: [98, 33], in: threads }
+    - { id: reruns, kind: region, label: What a change reruns, at: [73, 1], size: [38, 18] }
+    - { id: recolour, kind: box, label: "border colour: paint onward", at: [75, 4], size: [34, 3], in: reruns }
+    - { id: slide, kind: box, label: "slide with transform: no repaint", at: [75, 8], size: [34, 3], in: reruns, tone: green }
+    - { id: rotate, kind: box, label: "rotate the phone: layout onward", at: [75, 12], size: [34, 3], in: reruns, tone: red }
+    - { id: untouched, kind: note, label: DOM and CSSOM untouched, at: [75, 16], in: reruns }
+  arrows:
+    - { id: a-parse, from: bytes, to: dom-cssom, label: parse }
+    - { id: a-style, from: dom-cssom, to: computed-styles, label: style }
+    - { id: a-boxes, from: computed-styles, to: layout-tree, label: keep boxes }
+    - { id: a-layout, from: layout-tree, to: geometry, label: layout }
+    - { id: a-paint, from: geometry, to: display-lists, label: paint }
+    - { id: a-raster, from: display-lists, to: tiles, label: raster }
+    - { id: a-composite, from: tiles, to: frame, label: composite }
+beats:
+  - point: Rendering is not one step but a chain of stages, each turning one data structure into the next; the first ones build the DOM and CSSOM, pick the winning rules per element, and keep the elements that produce boxes.
+    kind: mechanism
+    weight: core
+    teach:
+      - Open Copperpot's page for the Enamel casserole on a phone. What arrives is text, 96 KB of markup and then a 48 KB stylesheet; what the screen needs is a colour for every pixel. Nothing goes straight from one to the other.
+      - Walk the top row. Parsing the markup answers what the document contains, the DOM, about 1,200 elements here. Parsing the stylesheet answers which rules exist, the CSSOM, about 1,900 rules. Style answers which rules win for each element, so every element ends up with a value for every property.
+      - The layout tree answers which elements actually make boxes. It is built from the DOM and the styles, and it is what layout will work on.
+    draw: [pipeline, bytes, dom-cssom, computed-styles, layout-tree, a-parse, a-style, a-boxes, copperpot, html-bytes, css-bytes, style-out]
+    check: What do the DOM, the CSSOM and the computed styles each tell the browser?
+    answer: The DOM says what the document contains; the CSSOM says which style rules exist; the computed styles say, for each element, the value each property ends up with once the winning rules are chosen.
+    misconceptions:
+      - "The CSSOM already says how each element looks -> on its own it is only rules; style joins it with the DOM to give each element its values."
+  - point: Layout turns boxes into sizes and positions, paint records drawing commands in paint order, raster runs those commands to get pixels, and compositing stacks the rasterized layers into the frame.
+    kind: mechanism
+    weight: core
+    teach:
+      - Carry on along the bottom row, reading right to left. Layout answers where each box goes and how big it is; its output is geometry.
+      - Paint does not make pixels. It records a list of commands, fill this rectangle, draw this run of text, draw this image, in the order they must be drawn.
+      - Raster is the stage that runs those commands and produces pixels, in tiles. Compositing then stacks the rasterized layers into the frame you see.
+    draw: [geometry, display-lists, tiles, frame, a-layout, a-paint, a-raster, a-composite]
+    check: What does the paint stage produce, and which stage turns it into pixels?
+    answer: Paint produces display lists, drawing commands in the order they must run; raster executes them into pixels, and compositing assembles the layers into a frame.
+    misconceptions:
+      - "Paint fills in the pixels -> paint only records drawing commands; raster turns them into pixels."
+      - "The GPU does all the painting -> recording the commands happens on the main thread; the GPU helps with raster and compositing, not with deciding what to draw."
+  - point: The stages from the DOM to the display lists run on the renderer's main thread, alongside your JavaScript, while raster and compositing run on other threads.
+    kind: component
+    weight: core
+    teach:
+      - Sort the stations by who runs them. Building the DOM, style, the layout tree, layout and paint all happen on the main thread, the same thread your scripts use.
+      - Raster runs on raster threads and compositing on the compositor and the GPU. That split is why a page can still scroll in some cases while the main thread is busy.
+      - Put the clock beside it. At 60 Hz a new frame is due every 16.7 ms, so anything the main thread does competes with these stages for that time.
+    draw: [threads, main-stages, raster-stage, composite-stage, frame-clock]
+    check: Which stages share the main thread with your JavaScript, and which run elsewhere?
+    answer: Parsing, style, building the layout tree, layout and paint run on the main thread; raster runs on raster threads and compositing on the compositor and GPU.
+    misconceptions:
+      - "Rendering runs beside JavaScript, so a long script cannot delay it -> style, layout and paint share the main thread and wait while a script runs."
+  - point: Because every stage keeps its output, a change only reruns the stages whose inputs it changed; recolouring a border skips layout, and sliding something with a transform does not even repaint.
+    kind: rule
+    weight: core
+    teach:
+      - The browser does not throw its work away after the first frame. Each stage keeps what it built, so the next change starts from there.
+      - A new border colour moves nothing, so the geometry is still right. Layout is skipped; paint and the stages after it run again.
+      - Sliding a photo with a transform does not change what is drawn, only where the drawn layer goes, so it does not need a repaint at all. Knowing which stage a change wakes up is the most useful thing in this topic.
+    draw: [reruns, recolour, slide]
+    check: A button's border changes colour. Which stages run again, and why can layout be skipped?
+    answer: Paint and the stages after it, raster and composite; the colour does not change any size or position, so the geometry layout produced is still valid.
+    misconceptions:
+      - "Any visual change makes the browser render the page from scratch -> it reruns only the stages whose inputs changed and reuses the rest."
+  - point: A change that alters sizes, such as rotating the phone, reruns layout and everything after it, while the DOM and CSSOM stay as they were.
+    kind: rule
+    weight: core
+    teach:
+      - A shopper turns the phone sideways and the viewport goes from 393 to 852 pixels wide. Widths that depend on the viewport change, so every box needs a new size and position.
+      - That reruns layout, then paint, raster and compositing. The markup and the stylesheet did not change, so parsing does not run again; a media query that starts or stops matching would restyle first.
+    draw: [rotate, untouched]
+    check: A Copperpot customer rotates the phone. Which stages run again, and which do not?
+    answer: Layout and everything after it, paint, raster, composite, with style first if a media query flips; the DOM and CSSOM are untouched, so parsing does not rerun.
+    misconceptions:
+      - "Rotating just scales the old frame -> the boxes get new sizes, so layout runs and the page is repainted."
+task:
+  prompt: Draw the pipeline from bytes to a frame on the screen, write the stage's name on each arrow, and mark which stages run again when a border changes colour.
+  expects: [1, 2, 4]

@@ -1,0 +1,146 @@
+# How the DOM works: node types and the two APIs, attributes against properties, live and static lists, the calls that change the tree, building many rows, and MutationObserver.
+id: dom-and-virtual-dom/the-dom-as-a-live-tree/how-it-works
+title: Finding and changing nodes
+source:
+  hash: 0c494bedd2ea
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: dom-and-virtual-dom/the-dom-as-a-live-tree/key-idea
+  assumes:
+    - The HTML string is parsed once into a tree of objects; from then on that tree is the page.
+    - The tree holds Element nodes and Text nodes, including the whitespace between tags; children lists elements, childNodes every node.
+    - Writes are deferred to the next rendering opportunity, but a geometry read brings style and layout up to date at once.
+  carries:
+    - Every node shares the Node tree API; the element-only API (children, firstElementChild, querySelector) skips text and comment nodes.
+    - For form controls the attribute is the starting value and the property is the live state.
+    - getElementsBy* and children return live collections; querySelectorAll returns a static snapshot of the matching nodes.
+    - A node is in one place; appending an attached node moves it, and a move drops focus and restarts animations.
+    - innerHTML and replaceChildren replace the objects themselves; old references point at detached nodes.
+    - Doing every write first and every read after keeps a batch of inserts to one layout.
+  terms:
+    - term: Element
+      means: A node for a tag; the only node type with attributes and a tag name.
+    - term: attribute
+      means: A string from the markup stored on the element.
+    - term: property
+      means: A field on the element's JavaScript object; for form controls, the live state.
+    - term: live collection
+      means: A list that re-reads the tree each time you look at it, so it changes as the tree changes.
+    - term: static NodeList
+      means: The snapshot querySelectorAll returns, fixed at the moment of the call.
+    - term: detached node
+      means: A valid node object no chain of parents connects to the document; isConnected is false and nothing on screen is drawn from it.
+board:
+  keep: [three-forms, html-source, dom-objects, pixels, parse-once, drawn, oat-tree, list-node, li-node, ws-text, tick-input, name-input, stepper, remove-btn, output-node, text-two, child-count, list-li, li-ws, li-tick, li-name, li-stepper, li-remove, stepper-output, output-text, write-read, write-op, next-frame, read-op, layout-now, batch-note, write-defer, read-forces]
+  elements:
+    - { id: node-api, kind: region, label: Node and Element, at: [62, 1], size: [56, 9] }
+    - { id: node-calls, kind: box, label: "Node: childNodes, firstChild", at: [64, 4], size: [25, 3], in: node-api, tone: blue }
+    - { id: element-calls, kind: box, label: "Element: children, querySelector", at: [91, 4], size: [25, 3], in: node-api, tone: blue }
+    - { id: node-types, kind: note, label: "node types: 1 element, 3 text, 8 comment, 9 document", at: [64, 8], in: node-api }
+    - { id: attr-prop, kind: region, label: Attribute and property, at: [62, 12], size: [54, 10] }
+    - { id: value-attr, kind: box, label: "value attribute: the default", at: [64, 15], size: [22, 3], in: attr-prop, tone: grey }
+    - { id: value-prop, kind: box, label: "value property: what is typed", at: [92, 15], size: [22, 3], in: attr-prop, tone: amber }
+    - { id: set-attr-note, kind: note, label: "setAttribute after typing: box unchanged", at: [64, 19], in: attr-prop }
+    - { id: lists, kind: region, label: Live and static lists, at: [62, 24], size: [57, 12] }
+    - { id: live-list, kind: box, label: "getElementsByClassName: live", at: [64, 27], size: [24, 3], in: lists, tone: red }
+    - { id: static-list, kind: box, label: "querySelectorAll: snapshot", at: [93, 27], size: [24, 3], in: lists, tone: green }
+    - { id: live-bug, kind: note, label: "live loop: Eggs and Limes survive", at: [64, 31], in: lists }
+    - { id: snapshot-fix, kind: note, label: "snapshot: all four go", at: [93, 31], in: lists }
+    - { id: also-live, kind: note, label: "children and childNodes are live too", at: [64, 33], in: lists }
+    - { id: mutations, kind: region, label: Changing the tree, at: [62, 38], size: [56, 15] }
+    - { id: append-move, kind: box, label: "append a connected node: move", at: [64, 41], size: [22, 3], in: mutations, tone: red }
+    - { id: move-before, kind: box, label: "moveBefore: focus kept", at: [94, 41], size: [22, 3], in: mutations, tone: green }
+    - { id: inner-html, kind: box, label: "innerHTML: all-new objects", at: [64, 46], size: [22, 3], in: mutations, tone: red }
+    - { id: text-content, kind: box, label: "textContent: one Text node", at: [94, 46], size: [22, 3], in: mutations, tone: green }
+    - { id: stale-refs, kind: note, label: "old references: detached nodes", at: [64, 50], in: mutations }
+    - { id: batching, kind: region, label: 200 new rows, at: [62, 55], size: [56, 14] }
+    - { id: interleaved, kind: box, label: "append and read, 200 times", at: [64, 58], size: [22, 3], in: batching, tone: red }
+    - { id: grouped, kind: box, label: "append all, then read", at: [94, 58], size: [22, 3], in: batching, tone: green }
+    - { id: layouts-200, kind: note, label: 200 layouts, at: [64, 62], in: batching }
+    - { id: layouts-1, kind: note, label: one layout, at: [94, 62], in: batching }
+    - { id: fragment-note, kind: note, label: "fragment: a container, not the speed-up", at: [64, 64], in: batching }
+    - { id: observer-note, kind: note, label: "MutationObserver: one batch per microtask", at: [64, 66], in: batching }
+  arrows:
+    - { id: seeds, from: value-attr, to: value-prop, label: starts }
+    - { id: live-vs-static, from: live-list, to: static-list, label: fix }
+    - { id: keep-state, from: append-move, to: move-before, label: if supported }
+    - { id: cheaper, from: inner-html, to: text-content, label: for text }
+    - { id: regroup, from: interleaved, to: grouped, label: regroup }
+beats:
+  - point: Every node shares one tree API, while the element-only API, children, firstElementChild and querySelector, skips the whitespace text nodes and comments that trip code up.
+    kind: component
+    weight: core
+    teach:
+      - "Document, Element, Text, Comment and DocumentFragment are all Nodes, so they share parentNode, childNodes, firstChild, nextSibling, appendChild and insertBefore."
+      - Elements add what most code uses, children, firstElementChild, querySelector, closest, classList and dataset. Point back at the whitespace text node on the row; the element-only calls step over it, and over comment markers some frameworks leave.
+      - A node also knows whether it is on the page. A row created but not appended, or removed and kept, is a valid object you can edit, and nothing on screen changes, because nothing is drawn from it.
+    draw: [node-api, node-calls, element-calls, node-types]
+    check: The row's firstChild turns out to be a Text node, not the checkbox. Which call gets you the checkbox, and why?
+    answer: firstElementChild (or children[0]), because the element-only API skips the whitespace Text node that firstChild returns.
+    misconceptions:
+      - "Editing a removed row still changes the screen -> it is a valid object, but detached; nothing on screen is drawn from it."
+  - point: For form controls the attribute is only the starting value and the property is the live state, so writing the attribute after someone has typed changes the default, not the box.
+    kind: rule
+    weight: core
+    teach:
+      - Most attributes and properties mirror each other, class and classList, data-id and dataset.id, so the difference never shows.
+      - "Form controls are the exception. value=\"Oat milk\" is the default; input.value is what is in the box now, including what user 1 typed. checked works the same way."
+      - Code that renders by writing attributes, or by re-parsing markup, looks right on a fresh page and then quietly stops matching what the person sees.
+    draw: [attr-prop, value-attr, value-prop, seeds, set-attr-note]
+    check: "User 1 typed \"Oat milk (barista)\" into a field whose markup says value=\"Oat milk\". The renderer then calls setAttribute('value', 'Oat milk'). What does the box show?"
+    answer: Oat milk (barista); once user 1 has typed, the attribute only sets the default and the value property holds the live text.
+    misconceptions:
+      - "The attribute and the property are the same thing -> for form controls the attribute is the default; the property is the current state."
+  - point: getElementsBy* and children hand back live collections that change as the tree changes, while querySelectorAll returns a static NodeList fixed at the call, so loops that remove nodes need the snapshot.
+    kind: failure
+    weight: core
+    teach:
+      - Basketry's first Clear ticked button looped over getElementsByClassName('ticked') and removed each row. Five rows, Bread, Eggs, Rice, Soap and Limes, four of them ticked.
+      - Walk it. Removing Bread at index 0 shrinks the live collection at once, so Eggs becomes index 0 and the loop moves on to index 1, Soap. Eggs and Limes are never visited and stay on the list.
+      - "querySelectorAll('.ticked'), or Array.from on the live collection, fixes the list before the loop starts, and all four go."
+    draw: [lists, live-list, static-list, live-bug, live-vs-static, snapshot-fix, also-live]
+    check: Which lookup gives you a list that will not change while you remove rows from the page, and why does the live one skip rows?
+    answer: querySelectorAll, whose NodeList is a snapshot taken at the call. A live collection shrinks as each match is removed, so the next match slides into the index just visited and the loop steps past it.
+    misconceptions:
+      - "querySelectorAll returns copies of the elements -> it returns the real nodes; only the list itself is fixed."
+      - "childNodes is a static list because it is a NodeList -> childNodes is live; only querySelectorAll's NodeList is static."
+  - point: A node can be in only one place, so appending one that is already in the tree moves it, and a move is a removal plus an insertion that drops focus; calls that replace children replace the objects themselves.
+    kind: rule
+    weight: core
+    teach:
+      - User 2 drags a row up while user 1 is typing in it. insertBefore takes the row out and puts it back, so the browser treats it as having left the page and the caret disappears. moveBefore keeps focus and running animations, but Safari has not shipped it, so code needs a fallback.
+      - innerHTML or replaceChildren swap in new objects even when they look identical. Listeners, a half-typed name, and every variable that pointed at the old rows now belong to detached nodes.
+      - For plain text, textContent replaces the children with one Text node and parses nothing, the cheapest way to set text.
+    draw: [mutations, append-move, move-before, keep-state, inner-html, text-content, cheaper, stale-refs]
+    check: A script keeps a reference to the Oat milk row, then the list is rebuilt with innerHTML. Why do later updates through that reference change nothing on screen?
+    answer: innerHTML replaced every row with new objects; the reference still points at the old row, which is now detached, so nothing on screen is drawn from it.
+    misconceptions:
+      - "Appending a node that is already on the page copies it -> a node has one place; appending it again moves it."
+      - "innerHTML only changes what is shown -> it discards the old nodes, their listeners and their state."
+  - point: The browser does not render between writes anyway, so building many rows is cheap when every write comes first and every read after; interleaving a size read with each append forces one layout per row.
+    kind: mechanism
+    weight: core
+    teach:
+      - On first load Basketry appends 200 rows and records each height. Appending a row and reading its offsetHeight in the same loop dirties the tree, then forces layout to answer, 200 times.
+      - Append all the rows in one call, then read. The first read lays out once and the rest reuse it.
+      - A DocumentFragment is a handy container, appending it moves all its children in one call and leaves it empty, but its speed benefit is overstated. The saving comes from grouping, not from the fragment.
+    draw: [batching, interleaved, grouped, regroup, layouts-200, layouts-1, fragment-note]
+    check: Why does appending 200 rows and reading each one's offsetHeight inside the same loop run layout 200 times, and how do you get it down to one?
+    answer: Each append dirties the tree and the next offsetHeight read must lay out to answer it. Append every row first, then read; the first read lays out once and the others reuse that layout.
+    misconceptions:
+      - "DocumentFragment is what makes bulk inserts fast -> it is a convenient container; the saving comes from not interleaving reads with the writes."
+  - point: A MutationObserver reports changes to a node or its subtree in batches, delivered in a microtask after the current script and before the browser renders.
+    kind: mechanism
+    weight: supporting
+    teach:
+      - Sometimes you need to know the tree changed, for nodes a widget inserted or to count what one update touched. A MutationObserver watches added and removed children, attributes and text.
+      - It never interrupts the code making the changes. Records collect while the script runs and arrive together in one callback before the next render. Basketry's development build uses one to warn when an update touches more nodes than its budget.
+    draw: [observer-note]
+    check: When does a MutationObserver's callback run relative to the script that made the changes?
+    answer: After that script finishes, in one microtask carrying all the records together, and before the browser renders.
+task:
+  prompt: Draw Basketry's Clear ticked loop over a live collection of Bread, Eggs, Rice, Soap and Limes, show which ticked rows survive, then draw the version that uses a snapshot.
+  expects: [3]

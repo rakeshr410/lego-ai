@@ -1,0 +1,91 @@
+# News feed interview, API: the tweets endpoint written as requests (first page, then with a cursor), one page of its response written as JSON, why a cursor and not an offset, and REST over GraphQL. New tweets arriving live are the next pack.
+id: twitter/news-feed-end-to-end/api
+title: One endpoint and a cursor
+source:
+  hash: "109714c797d1"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: twitter/news-feed-end-to-end/storage
+  assumes:
+    - "The Feed Store keeps tweets, users and images by id, and the order in feed ids with a cursor."
+    - Feed Client is the only caller of the tweets endpoint.
+    - "Initial JavaScript is budgeted at no more than 100 KB."
+  carries:
+    - "GET /api/tweets?limit=10, then with &cursor=c1; the limit fills about two screens, 6 on a phone and 10 on desktop; the session cookie identifies the reader."
+    - "A page returns tweets, users and images by id, and nextCursor, null at the end; ten tweets are about 3 KB with Brotli."
+    - "Cursor, not offset: new tweets at the top shift offsets and repeat tweets; a cursor anchored on the last tweet seen does not move."
+    - REST fits this client better than GraphQL (one shape, read-heavy, HTTP caching, no client cache library in the bundle).
+  terms:
+    - term: cursor
+      means: An opaque token from the server (the last tweet's created time and id, encoded) that says where the next page starts.
+    - term: limit
+      means: How many tweets a page holds, set from the viewport to fill about two screens.
+board:
+  keep: [title, mock-up, phone, mock-header, tweet-one, author-row, tweet-text, image-box, action-row, tweet-two, more-below, requirements, fr-heading, fr-newest, fr-endless, fr-images, fr-new, fr-end, nfr-heading, nfr-devices, nfr-network, nfr-load, nfr-js, nfr-cpu, nfr-tasks, nfr-inp, nfr-stable, nfr-offline, components, c-feed-screen, c-feed-list, c-tweet-card, c-author, c-text, c-image, c-actions, c-store, c-client, c-live, c-cache, screen-holds-list, list-holds-card, list-reads-store, store-calls-client, state, naive, need-tweet, need-author, need-counts, naive-note, feed-store, js-open, js-tweet, js-tweet-refs, js-users, js-images, js-replies, js-feed, js-meta, js-pending, order-note, normalize, storage, strip, idb, window, pages-before, page-reader, pages-after, pages-unloaded, cache-storage, cache-note, session-storage, session-note, local-storage, local-note, component-state, component-note, offload]
+  elements:
+    - { id: api, kind: region, label: API, at: [60, 34], size: [59, 21] }
+    - { id: endpoint, kind: note, label: "GET /api/tweets?limit=10", at: [61, 37], in: api, tone: blue }
+    - { id: limit-note, kind: note, label: "limit fills two screens, 6 on a phone, 10 on desktop", at: [61, 38], in: api }
+    - { id: endpoint-next, kind: note, label: "GET /api/tweets?limit=10&cursor=c1", at: [61, 40], in: api, tone: blue }
+    - { id: page, kind: region, label: "Response, one page", at: [61, 42], size: [25, 11], in: api, tone: amber }
+    - { id: res-open, kind: note, label: "{ tweets: [ { id, text, time, authorId,", at: [62, 44], in: page }
+    - { id: res-tweet-more, kind: note, label: "imageIds, replies, retweets, likes } ],", at: [65, 45], in: page }
+    - { id: res-users, kind: note, label: "users: { u1: { id, name, handle, avatar } },", at: [63, 46], in: page }
+    - { id: res-images, kind: note, label: "images: { i1: { id, url, width, height } },", at: [63, 47], in: page }
+    - { id: res-cursor, kind: note, label: "nextCursor: c2 }  null at the end", at: [63, 48], in: page }
+    - { id: size-note, kind: note, label: "ten tweets, about 3 KB compressed", at: [62, 50], in: page }
+    - { id: cursor-note, kind: note, label: "cursor: after the last tweet seen", at: [97, 37], in: api, tone: green }
+    - { id: offset-bad, kind: note, label: "not offset: new tweets repeat", at: [97, 39], in: api, tone: red }
+    - { id: rest-note, kind: note, label: "REST over GraphQL, keeps the bundle small", at: [97, 42], in: api }
+  arrows: []
+beats:
+  - point: "The feed needs one endpoint, GET /api/tweets with a limit; the limit follows the viewport, about two screens, 6 tweets on a phone and 10 on a desktop, and the session cookie identifies the reader, never a token in the URL."
+    kind: component
+    weight: core
+    teach:
+      - "Everything the feed shows is a read of what one endpoint returns. Write the request: GET slash api slash tweets, with a limit. The first page has no cursor and starts from now."
+      - "The limit fills about two screens, 6 on a phone, 10 on a desktop. The session cookie says who is reading; a token never goes in the URL."
+    draw: [api, endpoint, limit-note]
+    check: Why does the limit depend on the viewport?
+    answer: So one request fills about two screens on any device.
+  - point: "A page holds the tweets newest first, the users and images they refer to keyed by id, ready for the store, and the next cursor, null at the end."
+    kind: component
+    weight: core
+    teach:
+      - "Write the response as JSON, a key at a time: tweets, each with its own fields and its author and images by id; users by id; images by id with url, width and height."
+      - "Then nextCursor, where the next page starts, null at the end of the feed. Ten tweets are about 3 KB compressed."
+    draw: [page, res-open, res-tweet-more, res-users, res-images, res-cursor, size-note]
+    check: What tells the client it has reached the end of the feed?
+    answer: nextCursor comes back null.
+  - point: "The next page sends the cursor: GET /api/tweets?limit=10&cursor=c1. A cursor, not an offset: five new tweets at the top would push five old ones into the next offset page and the reader would see them twice, while a cursor anchored on the last tweet seen does not move."
+    kind: decision
+    weight: core
+    teach:
+      - "Write the next request: the same endpoint with cursor c1, from the last response. The cursor marks the last tweet seen."
+      - "With an offset, five tweets posted while the reader is on page 2 shift everything down five places, so page 3 starts with five tweets already seen. The cursor does not move."
+    draw: [endpoint-next, cursor-note, offset-bad]
+    check: Five new tweets are posted while the reader is on page 2. With offset pagination, what happens on page 3?
+    answer: The five oldest tweets of page 2 shift into page 3, so the reader sees them twice; a cursor would not move.
+    misconceptions:
+      - "Offsets are stable because pages are fixed -> new tweets at the top shift every later position."
+  - point: "REST fits this client better than GraphQL: one screen and one read-only shape, HTTP caching, and no client cache library eating into the JavaScript budget; GraphQL pays off with many screens asking for different shapes."
+    kind: decision
+    weight: supporting
+    teach:
+      - "One screen, one shape, read only: REST with HTTP caching. GraphQL would bring a client library and its own cache into a budget of 100 KB; it pays off when many screens need different shapes."
+    draw: [rest-note]
+    check: Name two reasons REST fits Twitter's feed better than GraphQL.
+    answer: Any two of one read-only shape, HTTP caching, and no GraphQL client library in a small JavaScript budget.
+asks:
+  - ids: [endpoint, res-open, res-tweet-more, res-users, res-images, res-cursor]
+    beats: [1, 2]
+    question: "What would the request for the feed look like, and what would one page of the response hold? I'll write it down as you go."
+    hints:
+      - One endpoint is enough. What's its path, and what says how many tweets to send?
+      - The response fills the store you just wrote. What does the store need from it?
+task:
+  prompt: "Write the tweets endpoint as requests, first page then with a cursor, and one page of its response as JSON."
+  expects: [1, 2, 3]

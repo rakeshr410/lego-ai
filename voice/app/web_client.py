@@ -45,7 +45,7 @@ class State:
     exchanges_left: int
     audio_opt_in: bool
     idle_rungs: list[int]
-    # A mock interview or a coach lesson (docs/interview/coach-mode.md).
+    # A mock interview or a coach lesson (docs/coach-mode.md).
     kind: str = "interview"
     # A lesson's self-drive: seconds of silence after the coach's last word before the pipeline asks for
     # the next move (a `continue` turn). None: the interviewer waits for the candidate; a closed session.

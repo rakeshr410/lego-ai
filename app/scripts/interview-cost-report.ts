@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * The early-access cost re-measurement (docs/interview/cost-model.md "Re-measuring"; the phase 3
+ * The early-access cost re-measurement (docs/cost-model.md "Re-measuring"; the phase 3
  * gate: cost per finished session within 20% of the model). Reads every mock interview session
  * from the shared store and prints sessions and spend by day and mode against the model, plus the
  * gate. With --ratings <file> it also writes the grader's section ratings as CSV

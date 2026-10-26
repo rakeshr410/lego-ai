@@ -1,0 +1,112 @@
+# The client is the system: the frontend design draws the tab in detail and the server as one box with a contract.
+id: what-is-frontend-system-design/the-client-is-the-system/key-idea
+title: The client is the system
+source:
+  hash: b5b984d15d89
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: null
+  assumes: []
+  carries:
+    - A frontend design details everything inside the browser tab and draws the server as one box known by its contract.
+    - "The server's contract covers its endpoints, its JSON shapes, how fast it usually answers and how it fails."
+    - "Inside the tab the parts are views, a client store and a data-access layer that talks to the server."
+    - "Waiting, failure, offline and keyboard or screen-reader use are frontend questions from the start."
+    - "Bytes shipped, devices and networks take the place of a backend's capacity estimate."
+  terms:
+    - term: contract
+      means: "What the server promises the client: endpoints, JSON shapes, usual speed and ways of failing."
+    - term: client store
+      means: The part of the page that holds its copy of the data, such as the trip and its places.
+    - term: data-access layer
+      means: The part of the page that loads and saves through the server's endpoints.
+board:
+  keep: []
+  elements:
+    - { id: server-side, kind: region, label: Server side, at: [64, 2], size: [56, 20], tone: grey }
+    - { id: api-server, kind: box, label: Server API, at: [68, 8], size: [10, 8], in: server-side, tone: grey }
+    - { id: server-internals, kind: region, label: Black box to the frontend, at: [82, 5], size: [36, 13], in: server-side, tone: grey, dashed: true }
+    - { id: trips-svc, kind: box, label: Trips service, at: [84, 8], size: [13, 3], in: server-internals, tone: grey }
+    - { id: places-svc, kind: box, label: Places search, at: [84, 13], size: [13, 3], in: server-internals, tone: grey }
+    - { id: trips-db, kind: oval, label: Trips database, at: [102, 8], size: [14, 3], in: server-internals, tone: grey }
+    - { id: places-index, kind: oval, label: Places index, at: [102, 13], size: [14, 3], in: server-internals, tone: grey }
+    - { id: contract-note, kind: note, label: "contract: endpoints, JSON shapes, speed, failures", at: [66, 19], in: server-side }
+    - { id: design-for-note, kind: note, label: "designed for, never redesigned", at: [94, 19], in: server-side }
+    - { id: browser-tab, kind: region, label: Browser tab, at: [2, 2], size: [60, 17], tone: blue }
+    - { id: wait-note, kind: note, label: "User 2: what shows while waiting, or on failure", at: [4, 4], in: browser-tab }
+    - { id: trip-board-view, kind: box, label: Trip board view, at: [4, 6], size: [14, 3], in: browser-tab, tone: blue }
+    - { id: search-box, kind: box, label: Search box, at: [4, 11], size: [14, 3], in: browser-tab, tone: blue }
+    - { id: client-store, kind: oval, label: Client store, at: [24, 7], size: [14, 5], in: browser-tab, tone: amber }
+    - { id: data-access, kind: box, label: Data access layer, at: [46, 8], size: [14, 3], in: browser-tab, tone: blue }
+    - { id: owner-note, kind: note, label: "who owns places, and day 3 folded", at: [24, 13], in: browser-tab }
+    - { id: a11y-note, kind: note, label: "User 1: keyboard and screen reader", at: [4, 16], in: browser-tab }
+    - { id: bytes-note, kind: note, label: "bytes shipped, devices, networks", at: [42, 13], in: browser-tab }
+  arrows:
+    - { id: to-trips, from: api-server, to: trips-svc }
+    - { id: to-search, from: api-server, to: places-svc }
+    - { id: trips-to-db, from: trips-svc, to: trips-db }
+    - { id: search-to-index, from: places-svc, to: places-index }
+    - { id: intents, from: trip-board-view, to: client-store, label: intents }
+    - { id: query, from: search-box, to: client-store, label: query }
+    - { id: load-save, from: client-store, to: data-access, label: load / save }
+    - { id: https-json, from: data-access, to: api-server, label: HTTPS + JSON }
+beats:
+  - point: A backend design and a frontend design of the same feature put the black box in opposite places; the backend one details services and storage and treats the browser as one client.
+    kind: mechanism
+    weight: core
+    teach:
+      - "Set up Pathnook: user 1 and user 2 plan four days in Lisbon on a shared trip board, and user 2 drops Miradouro da Graça onto day 2. It should show on user 2's screen at once and on user 1's soon after."
+      - Draw the backend view of that feature first, on the right. Its detail goes into the trips service, places search, the database and the index, how writes are ordered and how a region failure is survived. The whole browser is one box sending requests.
+      - Neither drawing is the smaller one. They simply choose opposite sides to leave closed.
+    draw: [server-side, api-server, server-internals, trips-svc, places-svc, trips-db, places-index, to-trips, to-search, trips-to-db, search-to-index]
+    check: In a backend design of Pathnook's trip board, how much of the browser gets drawn?
+    answer: One box, a client that sends requests; how it draws the board is not that design's question.
+  - point: The frontend design draws the tab in detail, views, a client store and a data-access layer, and collapses everything behind the API into one box.
+    kind: component
+    weight: core
+    teach:
+      - Now draw the frontend view on the left. The trip board view and the search box send what the user meant, intents and queries, to a client store; a data-access layer loads and saves over HTTPS with JSON.
+      - The services, the database and the index on the right are no longer drawn in detail. For this design they sit inside the dashed black box; all the browser sees is the server's API at its edge.
+    draw: [browser-tab, trip-board-view, search-box, client-store, data-access, intents, query, load-save, https-json]
+    check: Name the parts the frontend drawing of the trip board puts inside the tab.
+    answer: The views (trip board, search box), a client store holding the data, and a data-access layer that talks to the server.
+    misconceptions:
+      - "A frontend design is just the UI -> it covers the store, the data access and everything up to the API edge, everything from the first byte of a response to the last pixel."
+  - point: "The server stays on the frontend drawing as a contract, its endpoints, JSON shapes, usual speed and ways of failing, and you must design for all of it though you cannot change what is inside."
+    kind: rule
+    weight: core
+    teach:
+      - Write the contract next to the black box. It is handed to you; you do not redesign what is behind it.
+      - Its speed and its failures are part of that agreement, because they are exactly what the client has to plan for.
+    draw: [contract-note, design-for-note]
+    check: In a frontend design of the trip board, how is the trips service modelled?
+    answer: As one box known by its contract, which includes how fast it answers and how it fails, not as services and storage drawn in detail.
+    misconceptions:
+      - "The frontend never talks to the backend, so it leaves the server out -> the server stays on the drawing, as one box with its contract."
+      - "Only the endpoints and JSON shapes matter -> the usual speed and the ways it fails are part of the contract too, because the client has to design for them."
+  - point: "The frontend design asks its own questions: what the user sees while waiting or after a failure, which part owns which state, and whether keyboard and screen-reader users can do the same thing."
+    kind: requirement
+    weight: core
+    teach:
+      - List the questions that only the frontend asks. What does user 2 see in the half second before the server answers, and what if it never does?
+      - Who owns the list of places, and who owns the fact that day 3 is folded shut?
+      - Can user 1, who uses a keyboard and a screen reader, add a place as user 2 did with a mouse? That is a requirement of the views, decided in the client, not a test to run at the end.
+    draw: [wait-note, owner-note, a11y-note]
+    check: Which belongs to the frontend design, how two writes to the same trip are stored durably, or what user 2 sees between tapping Add and the server's reply?
+    answer: What user 2 sees while waiting; the wait and the screen that shows it happen in the tab. Durable storage of writes is behind the API.
+    misconceptions:
+      - "Accessibility is a testing concern -> it is a property of what the views render and how focus moves, so it is designed in the client from the start."
+  - point: Where a backend design estimates capacity, a frontend design weighs the bytes it ships and the devices and networks the board must work on.
+    kind: metric
+    weight: supporting
+    teach:
+      - A backend counts requests per second and stored bytes for millions of trips. The frontend's numbers are different, how much it sends to the browser and the phones and connections it must still work on.
+    draw: [bytes-note]
+    check: What takes the place of capacity estimation in a frontend design?
+    answer: The bytes shipped to the browser and the devices and networks the page must work on.
+task:
+  prompt: "Draw the frontend view of Pathnook's trip board: the parts inside the browser tab with arrows labelled by what crosses them, the server as one box, and beside it what its contract includes."
+  expects: [2, 3]

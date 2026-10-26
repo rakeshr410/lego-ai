@@ -1,9 +1,9 @@
 # Coach mode: the AI drives the session (proposal)
 
 - **Status:** Proposal, 2026-10-24. Phases 1-3 and 5 shipped and phase 4 decided 2026-10-25 (see "Phases").
-- **Builds on:** [README.md](README.md) (the interview program), [ADR 0003](../adr/0003-section-driven-interviews.md)
-  (the web tier owns the session; plans derive from the sections), [ADR 0004](../adr/0004-interview-whiteboard.md)
-  (the board is text to the model), [ADR 0005](../adr/0005-interview-voice.md) (a Pipecat service owns the audio, only)
+- **Builds on:** [README.md](README.md) (the interview program), [ADR 0003](adr/0003-section-driven-interviews.md)
+  (the web tier owns the session; plans derive from the sections), [ADR 0004](adr/0004-interview-whiteboard.md)
+  (the board is text to the model), [ADR 0005](adr/0005-interview-voice.md) (a Pipecat service owns the audio, only)
 - **Earlier work surveyed:** `~/martin` (a Gemini Live voice agent with a turn-taking "floor"), `~/drawing-board`
   (an animated pen over Excalidraw), `~/armoury` (34 model tools, 12 of them board tools)
 
@@ -50,6 +50,10 @@ cost model shifts to TTS characters because the coach talks most of the time (co
 A decision table run per turn and per idle rung, with its own state on the session
 (`Session.coach`). It walks `stage.sections` and each section's `stageItems()` in order and keeps a status
 per item: `queued | explained | checked | understood | shaky | parked`.
+An item is understood only on evidence: an answer the coach confirmed or the evaluator tagged covered, or the
+item drawn on the learner's own board. An item taught without a check stays explained, and a check the learner
+let pass without a word (a continue, the voice's idle) is shaky; the next move then gives the answer itself
+without praising anyone ("the learner gave no answer"). A silent lesson ends with nothing understood.
 
 Moves: `teach(item)` · `draw(item)` · `check(item)` (one question from `item.probe`) · `reteach(item)` (once,
 differently, when the evaluator's signal says partial or wrong) · `answer_doubt` (then return to the item) ·
@@ -234,6 +238,82 @@ None of the three runs under Python, and none should: the drawing stays in the b
      it stands then. `ExcalidrawCanvas.tsx` grew `penHost` (the scene, a committed frame recorded or skipped,
      board-to-viewport points, the view brought to the ink) and `buildBox/buildArrow/buildNote` beside the
      `add*` functions the outline uses. The beat queue of phase 3 (`pen.ts`) is gone.
+   - **A cut-in is answered, then the lesson goes back.** The voice reports the words heard whenever the learner
+     speaks over a reply that is still playing, not only while its text is streaming (`GatewayLLMService`
+     `playing`, from `UsageObserver.playing`), before it sends their turn. The next decision gets `cutIn`: a
+     teaching move cut short is taken back (its item queued again, not drawn, `resume` set); what the learner
+     said is answered and nothing more ("okay so" or "wait" over the coach gives them the floor: "Yes, go
+     ahead?", never a nod); and the next move goes back to the item ("Okay, now let's go back to the mock-up"),
+     picking up where the voice stopped and drawing what is not on the board. A cut check stands: what is said
+     over it is taken as the answer.
+     The words heard are matched to the reply word by word (`voice.ts` `heardPart`: the voice reports them without
+     the reply's punctuation), and a cut reply is read back to the coach as heard, without the drawings it never
+     finished (`meta.said` dropped; `fillPlanned` does not count a cut reply's drawings as placed). The voice
+     logs when the learner starts talking and each cut-in (`voice learner speaking`, `voice cut-in`).
+   - **The opening board is on at once.** A lesson that continues an earlier one's board (its first pack keeps
+     their ids) gets that board as a prelude. The room puts it on at once, without the pen (`instant`: the draw
+     message from the voice, the SSE draw's `anchor.prelude`, `DrawOpts.instant`), so the coach's first words
+     are not spoken over a long redraw of what the learner has already seen drawn.
+   - **A brief before the first drawing.** On a lesson that opens on an earlier lesson's board, the intro move
+     says, in two or three sentences, what is being designed, what the parts already on the board show and what
+     this lesson adds, and draws nothing until it teaches (`openingBrief` in service.ts).
+   - **"id" is said as letters.** The voice's text filter `SayAsLetters` (bot/vendors.py) turns "id", "ids" and
+     "authorId" into "ID" for the speech only, so it is not read as a word.
+   - **No questions for now.** `INTERVIEW_COACH_QUESTIONS` (off by default) gates everything a lesson asks of the
+     learner: the check after an item (row 9, and so the reteach after it) and the draw task at a stage's end
+     (row 12). Off, a lesson teaches straight through, and the question filter strips any question the model
+     writes into a teaching move. Turn it on when the questions come back.
+   - **The next move waits for the learner.** The voice's self-drive (1.5 s after the coach falls silent) never
+     fires while the learner talks: a cut-in stops the voice without arming it, and when they stop, it waits
+     `AFTER_LEARNER_SECS` (3 s) more, and skips the move if a reply is already being made (`IdleGate`,
+     `run.py`). Before, the move fired during the learner's cut-in and was spoken before their answer.
+   - **A pause after each sentence, sized to it.** A lesson's reply is spoken a sentence at a time, each followed
+     by silence so the learner can take it in (`pause_after` in the conductor, `GatewayLLMService._speak`): 800 ms
+     after a statement, 1.2 s after a question, and a 450 ms beat after a short setup ending in a colon ("Picture
+     this:"; four words or fewer, a longer clause runs on past its colon). The coach writes for the ear
+     (`COACH_SPOKEN_STYLE`): varied sentence lengths, setups, the key word last, and questions it answers itself
+     at once, which the question filter keeps when more of the reply follows and the question is not put to the
+     learner ("So why not an offset? Because ..."); "Does that make sense?" is still dropped.
+   - **Nothing drawn twice.** A placed region already on the board (a frame there) or a box whose label wraps
+     is not placed again (`drawParser`), so the voice does not read its label again; and a draw task whose
+     parts the coach has drawn already is skipped (`decideCoach` row 12), since the learner would be asked to
+     draw what is on the board.
+   - **Doubts are sketched in the side notes.** A question inside the syllabus (row 5) may draw
+     (`aside` on the decision, `draw="aside"` on the coach element): the coach's own boxes, arrows and notes,
+     with a heading note naming the question. In a lesson every box or note of the coach's own, on any move,
+     goes in a lane 4 cells right of everything the plan can place (`asideFor`, `asidePlacer` in
+     coaching/aside.ts), so it never takes a spot a later part needs: each sketch starts under the last one and
+     no higher than the part placed last, boxes two to a row with room for an arrow's words, notes on lines of
+     their own. An answer places none of the plan (`noPlace`); it points at a part with a highlight.
+   - **The learner gives a list first.** A part a pack marks with an `ask` (its requirements, say) is the
+     learner's before it is the coach's (`input.asks`, from `INTERVIEW_COACH_ASKS`, on by default, and apart
+     from `INTERVIEW_COACH_QUESTIONS`). The coach puts up the part's frame and asks for the list (row 14,
+     `ask`); each thing the learner says is written on the list as their own line, tidied, numbered in the
+     order written and green (row 15, `capture`: `<note covers="plan line">`, or no `covers` for a point the
+     plan lacks); a silence gets one of the pack's hints (row 16, `nudge`). "That's all", or a silence past the
+     hints, closes the list: a beat whose lines were all given counts as understood, the others are taught,
+     only the lines the learner left out (`place` on the decision), the first of them opening with how many
+     the learner named; a learner who named every line is credited (row 17, `credit`). The coach never judges,
+     corrects or adds to a point while the learner gives it. A point past the list's room (its slots less the
+     plan lines still open) goes to the side notes. These moves wait as a check does (`waiting: 'answer'`), so
+     no wait time changed. A part that is drawn rather than listed (the mock-up, components, a JSON shape, the
+     options for live updates, performance techniques) is asked for by its plan elements (`ids` on the ask):
+     a point the learner makes that matches one places that element where the plan puts it, in the plan's
+     words and the learner's green (`<note covers="id">`, drawn by `parts` in draw.ts), so arrows and layout
+     still fit; a point the plan lacks goes to the side notes in green. The fill then draws what they left out
+     and the beats' other drawing (arrows, notes on why). A lesson may open on an ask (the opening sentence,
+     then the question). Parts with nothing to give (the prompt, normalization, cursor versus offset, the
+     recap) stay coach-led.
+   - **A cut-in stops the pen.** When the learner talks over the coach, the voice drops its queued audio and
+     tells the room to `release`: the pen finishes the mark the voice had reached and leaves the rest of the
+     drawing undrawn (`VoiceCues` `dropped`), since the voice never said it. The board is saved as drawn, so the
+     coach sees those parts as not yet on the board and draws them when it comes back to them.
+   - **The pen points while it talks.** Between marks the pen hovers over what the voice is explaining, as
+     a hand does: when the coach starts talking it comes to the last thing written, and when its words name
+     something on the board (two words of a label in a row, or a whole one-word label: `pen/pointer.ts`, fed by
+     the call's `bot-tts-text` words) it moves under that writing and drifts along it (`Pen.hover`). It never
+     hovers while a mark is being drawn, stays while the voice goes on and leaves when it stops. A voice that
+     times sentences, not words, has its sentence's words heard at about three a second (`HEARD_WORD_MS`).
    - **Not done, and why.** The ink waits for the words, not the words for the ink (drawing-board's walks had the
      speech wait): the coach's reply is one model call read by TTS, so the speech cannot pause for a slow
      drawing; the synced tempo is quick enough that a two-element drawing is on the board before the next

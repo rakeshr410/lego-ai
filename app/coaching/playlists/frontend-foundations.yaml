@@ -1,0 +1,165 @@
+# Frontend system design from the browser up, on the whiteboard (docs/coaching.md). Each lesson is one
+# coach session; its parts teach one article section each, from the packs under coaching/packs.
+slug: frontend-foundations
+title: Frontend system design, on the whiteboard
+summary: Twenty-five whiteboard lessons with the coach, from how the browser turns elements into boxes and pixels, through the DOM and its observers, long lists, client state and connectivity, protocols and loading performance, to designing the Twitter news feed end to end.
+outline: The order follows the way a frontend system design course is usually taught, browser fundamentals first, then the techniques built on them, then performance, then a full design. Every lesson teaches from Arrowbox's own articles, and each pack is checked against its section.
+lessons:
+  - slug: approach
+    title: What a frontend design covers
+    summary: Where the frontend's half of a design starts, the two kinds of question you can be asked, and what a strong answer shows on the board.
+    parts:
+      - { title: "The client is the system", minutes: 6, packs: [what-is-frontend-system-design/the-client-is-the-system/key-idea] }
+      - { title: "Applications and components", minutes: 5, packs: [what-is-frontend-system-design/two-kinds-of-questions/key-idea] }
+      - { title: "What a strong answer shows", minutes: 6, packs: [what-is-frontend-system-design/what-strong-answers-show/how-it-works] }
+  - slug: box-model
+    title: The box model and normal flow
+    summary: Every element as four nested rectangles, where a box's size comes from, how blocks stack and lines wrap, and why margins merge.
+    parts:
+      - { title: "Four rectangles per element", minutes: 6, packs: [formatting-contexts-and-css-positioning/box-model-and-normal-flow/key-idea] }
+      - { title: "How boxes are made, sized and spaced", minutes: 9, packs: [formatting-contexts-and-css-positioning/box-model-and-normal-flow/how-it-works] }
+  - slug: formatting-contexts
+    title: Formatting contexts
+    summary: The rooms layout happens in, block, inline, flex and grid, what starts a new one, and what it seals off from the outside.
+    parts:
+      - { title: "Layout happens in rooms", minutes: 6, packs: [formatting-contexts-and-css-positioning/formatting-contexts/key-idea] }
+      - { title: "What starts a context and what it contains", minutes: 8, packs: [formatting-contexts-and-css-positioning/formatting-contexts/how-it-works] }
+  - slug: positioning-and-stacking
+    title: Positioning and stacking
+    summary: Static, relative, absolute, fixed and sticky, the containing block each one measures against, and how stacking contexts decide what paints on top.
+    parts:
+      - { title: "Positioning and containing blocks", minutes: 8, packs: [formatting-contexts-and-css-positioning/positioning-and-containing-blocks/how-it-works] }
+      - { title: "Stacking contexts and the top layer", minutes: 8, packs: [formatting-contexts-and-css-positioning/stacking-contexts-and-the-top-layer/how-it-works] }
+  - slug: bytes-to-pixels
+    title: From bytes to pixels
+    summary: The rendering pipeline, from HTML and CSS to the DOM, the styles, layout, paint and compositing, and which steps a change makes the browser run again.
+    parts:
+      - { title: "The pipeline at a glance", minutes: 6, packs: [how-browsers-render-content/from-bytes-to-pixels/key-idea] }
+      - { title: "Each stage and what it produces", minutes: 9, packs: [how-browsers-render-content/from-bytes-to-pixels/how-it-works] }
+  - slug: layers-and-compositing
+    title: Layers and compositing
+    summary: How the page is split into layers the compositor moves without the main thread, and animating a layout change on that cheap path with FLIP.
+    parts:
+      - { title: "Layers and the compositor", minutes: 8, packs: [how-browsers-render-content/layers-and-compositing/how-it-works] }
+      - { title: "Animating layout changes with FLIP", minutes: 7, packs: [rendering-performance/compositor-animations/how-it-works] }
+  - slug: layout-thrashing
+    title: Forced layout and layout thrashing
+    summary: Why reading a size right after a write makes the browser lay out early, how a loop of them thrashes, and how to batch reads and writes.
+    parts:
+      - { title: "When layout runs early", minutes: 6, packs: [rendering-performance/layout-thrashing/key-idea] }
+      - { title: "Batching reads and writes", minutes: 8, packs: [rendering-performance/layout-thrashing/how-it-works] }
+  - slug: dom
+    title: The DOM as a live tree
+    summary: The DOM's nodes and how scripts find and change them, live and static collections, and building many nodes in one insertion.
+    parts:
+      - { title: "A live tree", minutes: 6, packs: [dom-and-virtual-dom/the-dom-as-a-live-tree/key-idea] }
+      - { title: "Finding and changing nodes", minutes: 8, packs: [dom-and-virtual-dom/the-dom-as-a-live-tree/how-it-works] }
+  - slug: observers
+    title: "Observers: watching without polling"
+    summary: Letting the browser tell you when the tree, a size or visibility changes, instead of polling or measuring in handlers, with MutationObserver and ResizeObserver worked through.
+    parts:
+      - { title: "Let the browser tell you", minutes: 8, packs: [dom-and-virtual-dom/observers/key-idea] }
+      - { title: "Watching the tree", minutes: 10, packs: [dom-and-virtual-dom/observers/mutation-observer] }
+      - { title: "Watching sizes", minutes: 12, packs: [dom-and-virtual-dom/observers/resize-observer] }
+      - { title: "Choosing and sharing observers", minutes: 8, packs: [dom-and-virtual-dom/observers/in-practice] }
+  - slug: infinite-scroll
+    title: How infinite scroll loads
+    summary: A sentinel near the end of the list, an IntersectionObserver that sees it coming, and the page requests that follow, without waiting for the reader to hit the bottom.
+    parts:
+      - { title: "Loading before the end", minutes: 6, packs: [infinite-scroll-vs-pagination/infinite-scroll-mechanics/key-idea] }
+      - { title: "Sentinels, observers and pages", minutes: 8, packs: [infinite-scroll-vs-pagination/infinite-scroll-mechanics/how-it-works] }
+  - slug: windowing
+    title: Windowing a long list
+    summary: Keep a few dozen rows in the DOM however long the list is, with a spacer for the scrollbar, recycled rows and an overscan.
+    parts:
+      - { title: "The DOM holds the view, not the data", minutes: 6, packs: [virtualization/windowing/key-idea] }
+      - { title: "Window arithmetic and recycling", minutes: 9, packs: [virtualization/windowing/how-it-works] }
+  - slug: variable-heights
+    title: Unknown heights, anchoring and accessibility
+    summary: Measuring rows whose height is only known once rendered, keeping the reader's place as heights change, and what a windowed list owes a screen reader.
+    parts:
+      - { title: "Unknown and changing heights", minutes: 8, packs: [virtualization/variable-heights/how-it-works] }
+      - { title: "Anchoring, jumping and accessibility", minutes: 8, packs: [virtualization/anchoring-and-accessibility/how-it-works] }
+  - slug: client-state
+    title: Client state
+    summary: The kinds of state a frontend holds and where each lives, and shaping a store of server data so every read is a lookup.
+    parts:
+      - { title: "Kinds of state and where they live", minutes: 7, packs: [state-management/kinds-of-state/how-it-works] }
+      - { title: "A normalized client store", minutes: 8, packs: [state-management/normalized-client-store/how-it-works] }
+  - slug: persisting-state
+    title: Persisting state
+    summary: What belongs in the URL, in storage and in memory, the storage APIs and their limits, and keeping tabs in step.
+    parts:
+      - { title: "State that outlives the page", minutes: 6, packs: [state-management/persisting-and-syncing-state/key-idea] }
+      - { title: "URL, storage and tabs", minutes: 8, packs: [state-management/persisting-and-syncing-state/how-it-works] }
+  - slug: network-connectivity
+    title: Knowing the connection
+    summary: Connectivity as state, from online through slow and flaky to offline and cut off, and how a page finds out which one it is in.
+    parts:
+      - { title: "Connectivity is state", minutes: 6, packs: [state-management/network-connectivity/key-idea] }
+      - { title: "Knowing the state", minutes: 9, packs: [state-management/network-connectivity/how-it-works] }
+  - slug: network-reacting
+    title: When the network drops and comes back
+    summary: Timeouts, retries with backoff, an outbox that replays writes safely, pausing live updates and catching up, slow links, and the offline screen.
+    parts:
+      - { title: "Retries and queued writes", minutes: 9, packs: [state-management/network-connectivity/retries-and-queued-writes] }
+      - { title: "Live updates, battery and slow links", minutes: 9, packs: [state-management/network-connectivity/live-updates-and-slow-links] }
+      - { title: "The offline screen in practice", minutes: 7, packs: [state-management/network-connectivity/in-practice] }
+  - slug: http-versions
+    title: HTTP/1.1, HTTP/2 and HTTP/3
+    summary: What changes for the browser across the three versions, the handshakes, connections, multiplexing, and where head-of-line blocking lives.
+    parts:
+      - { title: "Three versions, one browser", minutes: 6, packs: [client-server-protocols/http-versions/key-idea] }
+      - { title: "Connections, streams and blocking", minutes: 8, packs: [client-server-protocols/http-versions/how-it-works] }
+  - slug: realtime
+    title: Polling, server-sent events and WebSockets
+    summary: The ways a page hears about changes, polling, long polling, server-sent events and WebSockets, how each works and what each costs.
+    parts:
+      - { title: "Polling and server-sent events", minutes: 8, packs: [client-server-protocols/polling-and-server-sent-events/how-it-works] }
+      - { title: "WebSockets", minutes: 8, packs: [client-server-protocols/websockets/how-it-works] }
+  - slug: javascript-cost
+    title: What JavaScript costs, and loading less of it
+    summary: Where a byte of JavaScript spends its time after download, and splitting the bundle so a page loads only what it runs.
+    parts:
+      - { title: "What a byte of JavaScript costs", minutes: 7, packs: [javascript-performance/bundle-cost/how-it-works] }
+      - { title: "Code splitting and loading on demand", minutes: 8, packs: [javascript-performance/code-splitting/how-it-works] }
+  - slug: critical-path
+    title: The critical rendering path
+    summary: What stands between the first byte and the first paint, and the hints, priorities and font settings that shorten it.
+    parts:
+      - { title: "The critical rendering path", minutes: 8, packs: [page-load-time/critical-rendering-path/how-it-works] }
+      - { title: "Resource hints, priorities and fonts", minutes: 8, packs: [page-load-time/loading-priorities/how-it-works] }
+  - slug: images
+    title: Images on the page
+    summary: Choosing formats and compression, serving them from an image CDN, and lazy loading with placeholders that keep the layout still.
+    parts:
+      - { title: "Formats, compression and image CDNs", minutes: 8, packs: [media-rendering/image-formats-and-delivery/how-it-works] }
+      - { title: "Lazy loading and placeholders", minutes: 7, packs: [media-rendering/lazy-loading-and-placeholders/how-it-works] }
+  - slug: offline
+    title: Caching with a service worker
+    summary: A script between the page and the network that answers requests from a cache, and the strategies that decide what is fresh and what works offline.
+    parts:
+      - { title: "A proxy in the browser", minutes: 6, packs: [network-performance/service-worker-caching/key-idea] }
+      - { title: "Strategies, updates and offline", minutes: 9, packs: [network-performance/service-worker-caching/how-it-works] }
+  - slug: news-feed
+    title: "The Twitter feed interview: scope and mock-up"
+    summary: A frontend design interview run on one whiteboard, as you would run it on the day. The prompt, the feed drawn as a mock-up, the requirements written with their numbers, then the components the feed is made of.
+    parts:
+      - { title: "The prompt, then the feed", minutes: 6, packs: [twitter/news-feed-end-to-end/approach, twitter/news-feed-end-to-end/mock-up] }
+      - { title: "Two short lists, each with a number", minutes: 7, packs: [twitter/news-feed-end-to-end/requirements] }
+      - { title: "Then the components", minutes: 6, packs: [twitter/news-feed-end-to-end/components] }
+  - slug: news-feed-state-and-api
+    title: "The Twitter feed interview: state and API"
+    summary: The same board, continued. The state derived from the components and normalized, where it is stored, one endpoint with a cursor, then how new tweets arrive live.
+    parts:
+      - { title: "Derive the state, then normalize it", minutes: 6, packs: [twitter/news-feed-end-to-end/application-state] }
+      - { title: "Where the state is kept", minutes: 4, packs: [twitter/news-feed-end-to-end/storage] }
+      - { title: "One endpoint and a cursor", minutes: 5, packs: [twitter/news-feed-end-to-end/api] }
+      - { title: "New tweets, live", minutes: 5, packs: [twitter/news-feed-end-to-end/live-updates] }
+  - slug: news-feed-performance
+    title: "The Twitter feed interview: performance"
+    summary: The board's last band. Network, rendering and JavaScript optimizations for a feed on a phone, then the recap of the whole design.
+    parts:
+      - { title: "Fewer bytes, fewer trips", minutes: 8, packs: [twitter/news-feed-end-to-end/network-performance] }
+      - { title: "A constant number of nodes", minutes: 9, packs: [twitter/news-feed-end-to-end/rendering-performance] }
+      - { title: "Keep the UI thread free, then recap", minutes: 7, packs: [twitter/news-feed-end-to-end/javascript-performance] }

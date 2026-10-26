@@ -1,0 +1,110 @@
+# In practice: the Today screen through each state, queue or warn or disable per action, the banner and stale-marker rules, testing without a crowded market, failure modes, and the interview answer.
+id: state-management/network-connectivity/in-practice
+title: The offline screen in practice
+source:
+  hash: "dcb24b8e9b7d"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: state-management/network-connectivity/live-updates-and-slow-links
+  assumes:
+    - "The monitor's statuses (online, slow, checking, offline) and lastOkAt, and that Offline is shown only after Checking confirms it."
+    - Writes allowed offline go to a durable outbox with idempotency keys, show 'Not sent yet', and can be refused on replay.
+    - OrderFeed pauses when offline and catches up from its cursor before the outbox replays.
+  carries:
+    - "Through a morning the screen goes from no banner, to a quiet Slow label, to an offline banner with dated rows and 'not sent' markers, to syncing, to a refused replay kept on screen."
+    - "Each action is decided offline: queue it, queue it with a warning about what has not changed yet, or disable it with a reason."
+    - "The banner is a role=status message that never takes focus or blocks the list; data older than 2 minutes, or any data while offline, carries its time."
+    - "Test the hang, not just Offline: a route that accepts and never answers reproduces the crowded hall; aborting the reply proves the idempotency key."
+    - The usual failures are trusting navigator.onLine, no timeouts, retries without jitter, writes kept in memory, replay without keys, and resuming without catching up.
+  terms:
+    - term: stale marker
+      means: "The time shown on data the app could not refresh ('updated 11:04'), computed from lastOkAt."
+    - term: status region
+      means: "An element with role=status: a screen reader announces its change once, politely, without moving focus."
+board:
+  keep: [outage, lbl-cell, cell-4g, cell-dead, cell-back, lbl-feed, feed-polls, feed-paused, lbl-mon, mon-online, mon-checking, mon-offline, mon-back, feed-catchup, lbl-outbox, box-sale1, box-sale2, box-sent, lbl-screen, scr-none, scr-banner, scr-sync, then-replay, outbox-flow, sale-tap, outbox-store, req-layer, api, saved-first, in-order, one-by-one, rollback, row-218, conflict, rolled-back, nell-decides, replayed, to-rollback, shown-to-her]
+  elements:
+    - { id: today-screen, kind: region, label: "Today screen, offline", at: [72, 59], size: [46, 21] }
+    - { id: tabs, kind: box, label: "Orders, Sales, Chat", at: [74, 61], size: [14, 2], in: today-screen, tone: grey }
+    - { id: status-pill, kind: box, label: "status: Offline", at: [102, 61], size: [14, 2], in: today-screen, tone: red }
+    - { id: banner, kind: box, label: "Offline since 11:05. 2 sales will send when you're back", at: [74, 64], size: [42, 3], in: today-screen, tone: amber }
+    - { id: row-216, kind: box, label: "216, user 3: collect 11:00, updated 11:04", at: [74, 68], size: [42, 2], in: today-screen }
+    - { id: row-218b, kind: box, label: "218 Tom: collected, not sent yet", at: [74, 71], size: [42, 2], in: today-screen, tone: amber }
+    - { id: refund-btn, kind: box, label: "Refund: needs a connection", at: [74, 74], size: [13, 3], in: today-screen, tone: grey, dashed: true }
+    - { id: sale-btn, kind: box, label: "Record sale: works offline", at: [89, 74], size: [13, 3], in: today-screen, tone: green }
+    - { id: soldout-btn, kind: box, label: "Sold out: queued, with a warning", at: [104, 74], size: [13, 3], in: today-screen, tone: amber }
+    - { id: status-rule, kind: note, label: "banner: role status, never takes focus", at: [74, 78], in: today-screen }
+    - { id: testing, kind: region, label: Testing without a market, at: [2, 73], size: [66, 7] }
+    - { id: t-devtools, kind: box, label: "DevTools Offline: easy case only", at: [4, 75], size: [14, 3], in: testing, tone: grey }
+    - { id: t-hang, kind: box, label: a route that never answers, at: [20, 75], size: [14, 3], in: testing, tone: green }
+    - { id: t-abort, kind: box, label: "abort the reply: no double sale", at: [36, 75], size: [14, 3], in: testing, tone: green }
+    - { id: t-phone, kind: box, label: a real phone in a lift, at: [52, 75], size: [14, 3], in: testing, tone: blue }
+  arrows: []
+beats:
+  - point: "Through a Saturday morning the Today screen shows each state differently: no banner online, a quiet label when slow, a banner with dated rows and 'not sent' markers when offline, dimmed rows while syncing, and a refused replay kept on screen."
+    kind: flow
+    weight: core
+    teach:
+      - "Draw the phone screen in its offline state and walk the morning. Online: no banner, new pre-orders slide in within 20 s. Slow: a quiet 'Slow connection' label, not a banner, because everything still works."
+      - "Offline: two polls failed and the probe got no answer. The banner says since when and how many sales will send; each order says when it was updated; order 218 says collected, not sent yet."
+      - "In the café the banner says it can't reach Stallhand and hints at signing in to public Wi-Fi. Back online, rows dim rather than blanking while OrderFeed catches up, then the outbox replays; a refused replay becomes a toast and a row marked not saved."
+    draw: [today-screen, tabs, status-pill, banner, row-216, row-218b]
+    check: Why does the Slow state get a quiet label rather than the banner the Offline state gets?
+    answer: "Everything still works when slow, only more slowly, so the screen should inform without alarming; the banner is for when requests are not getting through and actions behave differently."
+    misconceptions:
+      - "Blank the list to skeletons while refreshing -> keep the rows, dimmed and dated, so user 1 can keep working."
+  - point: "Every action gets a decision for offline: queue it (cash sale, collected, chat), queue it with a warning when the world has not changed yet (sold out), or disable it with a reason when the server must answer now (card refund)."
+    kind: decision
+    weight: core
+    teach:
+      - "Draw the three buttons. A cash sale already happened; it queues and its row says 'Not sent yet'. Marking collected and chat messages queue too, and collected may be refused on replay."
+      - "Marking a cheese sold out queues with a warning: until it reaches the server the online shop keeps selling it, so user 1 might tell user 2 to pause online orders."
+      - "A card refund is disabled with 'Refunds need a connection': the payment provider must answer now, and a queued refund could land hours later. Past orders they never opened show 'Not available offline'."
+    draw: [refund-btn, sale-btn, soldout-btn]
+    check: "Why is 'Mark sold out' queued with a warning rather than queued silently?"
+    answer: "Because until the write reaches the server the online shop keeps selling the cheese; saying what has not changed yet lets user 1 act on it."
+    misconceptions:
+      - "Queue everything offline -> anything that needs a live answer, like a card refund, must be disabled with a reason."
+      - "Hide unavailable buttons -> disabled buttons stay in place and say why, or people think the feature vanished."
+  - point: "The banner is a status message, role=status, that never takes focus or blocks the list and appears only after Checking confirms Offline; data older than 2 minutes, or any while offline, carries its time from lastOkAt."
+    kind: rule
+    weight: core
+    teach:
+      - "A screen reader announces a status region once, politely, and focus stays where it was, because user 1 can keep working offline. A two-second blip never reaches the screen, since the banner waits for Checking."
+      - "Stale markers ('updated 11:04') come from lastOkAt. And the app must be able to start offline at all, which means its code and last data come from a service worker."
+    draw: [status-rule]
+    check: Where should the offline banner live, and why not in a dialog?
+    answer: "In a role=status region that is announced once and never takes focus or blocks the list; a dialog would interrupt work that can carry on offline."
+  - point: "Test the hang, not just Offline: DevTools Offline flips navigator.onLine, the easy case; a route that accepts and never answers reproduces the crowded hall, aborting the reply proves the idempotency key, and only a real phone shows handovers and portals."
+    kind: rule
+    weight: core
+    teach:
+      - "Draw the four test tools. DevTools Offline and switching Wi-Fi off both set onLine false and fire offline, which the market hall never does. Throttling presets add delay but never drop a request."
+      - "A stub or Playwright route() that accepts the request and never answers is the real hall: onLine true, requests hang until the timeout. A route that forwards the POST and aborts the response proves there is no double sale. Playwright's setOffline gives repeatable runs in CI."
+      - A real phone in a lift, airplane mode, or a move from Wi-Fi to cellular covers handover, captive portals and battery, which no emulator does.
+    draw: [testing, t-devtools, t-hang, t-abort, t-phone]
+    check: Which test reproduces the market-hall outage most faithfully, and why not DevTools Offline?
+    answer: "A stub or route() that accepts requests and never answers, with navigator.onLine left true; DevTools Offline flips onLine and fires the event, the easy case the real outage never gives."
+    misconceptions:
+      - "DevTools Offline tests offline handling -> it only tests the case where the browser knows; the hang is the hard case."
+  - point: "Connectivity handling usually fails in six ways: trusting navigator.onLine, no timeout on fetch, retries without jitter, writes kept only in memory, replay without idempotency keys, and resuming the poll without catching up."
+    kind: failure
+    weight: core
+    teach:
+      - "Point at the board for each. Trusting onLine: no banner in the hall or the café. No timeout: a spinner for minutes. No jitter: every phone retries at once when the cell recovers."
+      - "Writes in memory vanish with a discarded tab and show up as tills that do not balance. Replay without keys turns a lost reply into a double sale. Resuming without catching up hides orders placed during the outage, until a customer turns up for one."
+    check: "Stallhand's stall sees duplicate cash sales seconds apart with identical lines. Which failure is that, and what fixes it?"
+    answer: "Replay without idempotency keys: a lost reply led to a retry recorded as a second sale. Fix it with one client-made key per write, reused on every attempt, and server-side dedupe."
+  - point: "In an interview, name the states and one owner, say how you know (onLine false is reliable, true is not; requests and a probe decide), then timeouts and jittered retries, the outbox with keys or a disabled action, pause and catch up, battery, and the UI and its tests."
+    kind: requirement
+    weight: supporting
+    teach:
+      - "Give the answer as a short tour of the board: states and Checking, detection, timeouts and backoff, queue or disable each write, pause and resync with a cursor, poll frequency as a battery cost and Save-Data, then the banner, stale markers, 'not sent' rows and testing the hang."
+    check: An interviewer asks what your app does on a bad network. What are the first two things you say?
+    answer: "That connectivity is state with several values, online, slow, offline and connected but cut off, owned in one place; and that it is learned from real requests and a probe, since navigator.onLine true is unreliable."
+task:
+  prompt: "Draw Stallhand's Today screen while offline: the banner, two dated orders, one with a 'not sent' marker, and three action buttons that show queue, queue with a warning, and disabled with a reason."
+  expects: [1, 2, 3]

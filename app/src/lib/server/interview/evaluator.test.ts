@@ -7,11 +7,13 @@ import { stageItems } from './director';
 import { aggregate, candidateTurns, evaluatorRequest, quoteMatches, toEntry, type Ledger, type LedgerEntry, jsonObjectIn } from './evaluator';
 import type { Plan } from './plans';
 import type { Turn } from './sessions';
+import { snapshotPaths } from '../../content-snapshot.node';
 
 // The evaluator's rules (design section 8): quotes are the candidate's own words or the tag is
 // dropped; questions and declines are never evidence; the aggregator lets later evidence win.
 
-const contentDir = fileURLToPath(new URL('../../../../../content', import.meta.url));
+// lego's content/ (CONTENT_DIR overrides it), where the build reads it too.
+const contentDir = snapshotPaths(fileURLToPath(new URL('../../../../', import.meta.url))).contentDir;
 const { catalog } = loadContent(contentDir);
 const system = catalog.systems.find((s) => s.slug === 'customer-support-agent')!;
 const derived: DerivedPlan = derivePlans({ system, topics: catalog.topics.filter((t) => t.system === system.slug).map((t) => ({ slug: t.slug, file: t.file, data: t.data })), override: null }).system!;

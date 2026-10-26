@@ -1,0 +1,150 @@
+# How layout thrashing works: layout as a debt paid once per frame, which reads force it early, what one forced layout costs, and putting reads and writes where they cost nothing extra.
+id: rendering-performance/layout-thrashing/how-it-works
+title: Batching reads and writes
+source:
+  hash: "8204486774e4"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: rendering-performance/layout-thrashing/key-idea
+  assumes:
+    - Layout is lazy; a write only marks what changed, and the browser normally lays out once, before the next frame.
+    - A geometry read such as getBoundingClientRect after a write forces style and layout right then, inside the script.
+    - A loop that alternates writes and geometry reads forces one layout per item; that is layout thrashing.
+    - The fix is to reorder the same work, every read first, then the writes.
+  carries:
+    - In a frame's rendering update, requestAnimationFrame callbacks run, then style and layout settle every pending mark at once, then paint.
+    - Size, offset and scroll reads, getBoundingClientRect, layout-dependent getComputedStyle and innerText force layout when marks are pending; plain DOM state and observer entries never do.
+    - A layout's cost grows with how far the change can spread and with the size of the document; a forcing loop multiplies both.
+    - Inside one task, do every read before the first write; a shared scheduler can run all queued reads, then all queued writes, once per frame.
+    - Read in the event handler and write in a requestAnimationFrame callback.
+    - ResizeObserver reports sizes from the frame's own layout, after layout and before paint, so nothing is forced.
+  terms:
+    - term: rendering update
+      means: The browser's per-frame step that runs rAF callbacks, then style and layout, then paint.
+    - term: requestAnimationFrame
+      means: A callback the browser runs in the rendering update, just before style and layout.
+    - term: layout containment
+      means: "contain: layout on an element, so a change inside it cannot move anything outside."
+    - term: ResizeObserver
+      means: An API that calls you with the elements whose size changed, after the frame's layout and before paint.
+board:
+  keep: [lazy, write-class, dirty-marks, frame-layout, writes-cheap, colour-key, marks, settled-by, forced, gap-added, rect-read, forced-now, read-clean, then-read-rect, forces, drop-loop, card-1, card-2, card-rest, fifty-layouts, frame-due, next-card, next-cards, fix, drag-start-read, midpoints, move-write, per-move, under-ms, keeps, compares]
+  elements:
+    - { id: frame-update, kind: region, label: "One frame's rendering update", at: [2, 37], size: [58, 9] }
+    - { id: raf-callbacks, kind: box, label: rAF callbacks, at: [4, 40], size: [14, 3], in: frame-update }
+    - { id: style-layout, kind: box, label: style and layout, at: [23, 40], size: [14, 3], in: frame-update }
+    - { id: paint-step, kind: box, label: paint, at: [42, 40], size: [14, 3], in: frame-update }
+    - { id: one-bill, kind: note, label: "ten writes or a thousand: one bill", at: [4, 44], in: frame-update }
+    - { id: forcing-reads, kind: region, label: Reads that force layout, at: [62, 37], size: [22, 17] }
+    - { id: offset-reads, kind: note, label: "offsetTop, offsetWidth", at: [64, 40], in: forcing-reads }
+    - { id: client-scroll, kind: note, label: "clientWidth, scrollTop", at: [64, 42], in: forcing-reads }
+    - { id: rect-reads, kind: note, label: "getBoundingClientRect, getClientRects", at: [64, 44], in: forcing-reads }
+    - { id: computed-width, kind: note, label: "computed style: width", at: [64, 46], in: forcing-reads }
+    - { id: inner-text, kind: note, label: innerText, at: [64, 48], in: forcing-reads }
+    - { id: test-q, kind: note, label: could an earlier write change it?, at: [64, 51], in: forcing-reads }
+    - { id: free-reads, kind: region, label: Reads that never do, at: [86, 37], size: [18, 16] }
+    - { id: text-content, kind: note, label: "textContent, dataset", at: [88, 40], in: free-reads }
+    - { id: class-contains, kind: note, label: classList contains, at: [88, 42], in: free-reads }
+    - { id: inline-style, kind: note, label: inline style height, at: [88, 44], in: free-reads }
+    - { id: computed-colour, kind: note, label: "computed colour: style only", at: [88, 46], in: free-reads }
+    - { id: observer-entries, kind: note, label: ResizeObserver entries, at: [88, 48], in: free-reads }
+    - { id: intersection, kind: note, label: IntersectionObserver entries, at: [88, 50], in: free-reads }
+    - { id: layout-cost, kind: region, label: What one layout costs, at: [2, 48], size: [56, 11] }
+    - { id: one-card, kind: box, label: "gap on one card: Review only", at: [4, 51], size: [24, 3], in: layout-cost }
+    - { id: sidebar, kind: box, label: "sidebar collapsed: 400 cards", at: [30, 51], size: [26, 3], in: layout-cost, tone: red }
+    - { id: whole-doc, kind: note, label: "starts from the root: bigger DOM, more cost", at: [4, 55], in: layout-cost }
+    - { id: contain-layout, kind: note, label: "contain layout keeps it in Review", at: [4, 57], in: layout-cost }
+    - { id: two-x, kind: note, label: "twice the cards: 3 to 4 times the cost", at: [30, 55], in: layout-cost }
+    - { id: scheduler, kind: region, label: A shared read and write scheduler, at: [2, 61], size: [43, 12] }
+    - { id: queued-reads, kind: box, label: all queued reads, at: [4, 64], size: [16, 3], in: scheduler, tone: blue }
+    - { id: queued-writes, kind: box, label: all queued writes, at: [25, 64], size: [16, 3], in: scheduler, tone: green }
+    - { id: skip-write, kind: note, label: skip the write if the target is unchanged, at: [4, 68], in: scheduler }
+    - { id: read-before, kind: note, label: "in one task: every read first", at: [4, 70], in: scheduler }
+    - { id: raf-ro, kind: region, label: rAF and ResizeObserver, at: [62, 56], size: [47, 13] }
+    - { id: handler-read, kind: box, label: "event handler: read", at: [64, 59], size: [18, 3], in: raf-ro, tone: blue }
+    - { id: raf-write, kind: box, label: "rAF callback: write", at: [89, 59], size: [18, 3], in: raf-ro, tone: green }
+    - { id: resize-observer, kind: box, label: ResizeObserver callback, at: [64, 64], size: [22, 3], in: raf-ro }
+    - { id: ro-timing, kind: note, label: "after layout, before paint", at: [89, 64], in: raf-ro }
+    - { id: ro-loop, kind: note, label: "must converge, or a loop error", at: [89, 66], in: raf-ro }
+  arrows:
+    - { id: then-style, from: raf-callbacks, to: style-layout, label: then }
+    - { id: then-paint, from: style-layout, to: paint-step, label: then }
+    - { id: then-writes, from: queued-reads, to: queued-writes, label: then }
+    - { id: hands-off, from: handler-read, to: raf-write, label: hands off }
+beats:
+  - point: Layout is a debt normally paid once per frame, writes mark the touched nodes and their ancestors, and in the rendering update rAF callbacks run, then style and layout settle every mark at once, then paint.
+    kind: mechanism
+    weight: core
+    teach:
+      - When script changes a class, a style, some text or the tree, the engine flags the touched nodes as needing style and, if geometry could change, layout, and flags their ancestors as holding something dirty. Nothing is recomputed yet.
+      - The marks are cleared in the frame's rendering update. requestAnimationFrame callbacks run first, then style and layout settle every pending mark together, then paint. Ten writes or a thousand, the frame pays one bill.
+      - A forced read pays the same bill early, inside your task. If more writes follow, the frame has to pay it again.
+    draw: [frame-update, raf-callbacks, style-layout, paint-step, then-style, then-paint, one-bill]
+    check: In what order does a frame's rendering update run requestAnimationFrame callbacks, style and layout, and paint, and why does that make many writes cost one layout?
+    answer: rAF callbacks first, then style and layout, then paint; style and layout settle every pending mark at once, so however many writes came before, they share one layout.
+    misconceptions:
+      - "A forced layout is extra work on top of the frame's -> it is the same work moved earlier; it only adds up when writes follow and the frame must lay out again."
+  - point: Offset, client and scroll sizes, getBoundingClientRect, layout-dependent getComputedStyle values and innerText force layout when marks are pending, while textContent, classList, dataset, inline styles and observer entries never do.
+    kind: rule
+    weight: core
+    teach:
+      - Go down the left list. Any read whose answer is a position, a size, a scroll offset, or depends on them, needs a current layout. That includes getComputedStyle for width, whose resolved value is the used value, and innerText, which depends on CSS.
+      - The right list is plain DOM or inline-style state, textContent, classList, dataset, el.style. A computed colour needs style but not layout. ResizeObserver and IntersectionObserver entries arrive after the browser has computed layout.
+      - "The test: could the answer change because of a write earlier in this task? If yes, the browser must lay out first. That is why one read at the very start of a handler is almost always fine."
+    draw: [forcing-reads, offset-reads, client-scroll, rect-reads, computed-width, inner-text, test-q, free-reads, text-content, class-contains, inline-style, computed-colour, observer-entries, intersection]
+    check: Tasklane copies a card title to the clipboard with innerText, right after a class change. Does that force layout, and what would not?
+    answer: Yes, innerText depends on CSS, so it forces style and layout when marks are pending; textContent reads plain DOM state and forces nothing.
+    misconceptions:
+      - "Only getBoundingClientRect forces layout -> offset, client and scroll properties, layout-dependent getComputedStyle values and innerText do too."
+      - "Reading el.style.height forces layout -> it is the inline style as written; no layout is needed."
+  - point: A layout's cost depends on how far the change can spread and on the size of the document around it, so a forcing loop multiplies both, while layout containment can keep a column's change inside it.
+    kind: metric
+    weight: core
+    teach:
+      - Compare two changes on Tasklane's board. A gap above one Review card can push only that column's cards down, though the engine still starts from the root to confirm the others. A collapsed sidebar widens every column, so all 400 cards can re-wrap.
+      - Layout is almost always scoped to the whole document, and larger DOMs generally cost more. A loop over N cards forces N layouts that each grow with the board, so double the cards and the loop costs three to four times as much; one batched layout grows roughly in line.
+      - With contain layout on each column, what happens inside one cannot move anything outside, so the gap's layout stays in Review.
+    draw: [layout-cost, one-card, sidebar, whole-doc, contain-layout, two-x]
+    check: Why does a forcing loop over twice as many cards cost three to four times as much, rather than twice?
+    answer: There are twice as many forced layouts, and each one grows with the size of the board, which has also doubled, so both factors multiply.
+    misconceptions:
+      - "A small change makes a small layout -> the engine still starts from the root and confirms the rest still fits, so page size matters too."
+  - point: Inside one task, do every read before the first write; across components that do not know each other, a small shared scheduler can run every queued read, then every queued write, once per frame.
+    kind: rule
+    weight: core
+    teach:
+      - The fixed drop gap keeps midpoints measured before any gap was opened, which is what keeps the cache valid, and skips the write when the target card has not changed, so most moves touch nothing.
+      - By hand, the rule is simple inside one task, reads first. Across separate components it is hard to keep, so one way out is a shared scheduler. Components queue reads and writes instead of touching the DOM, and once per frame it runs all the reads, then all the writes.
+    draw: [scheduler, queued-reads, queued-writes, then-writes, skip-write, read-before]
+    check: Two components each read a size and then write a style in the same frame. How does a shared scheduler stop them forcing a layout each?
+    answer: Both queue their reads and writes; once per frame it runs all the reads first, from one layout, then all the writes, so no read follows a write.
+  - point: Writes made in a requestAnimationFrame callback are settled by the layout that runs right after, so the safe pattern is to read in the event handler and write in rAF; a read inside rAF after another callback's write still forces layout.
+    kind: rule
+    weight: core
+    teach:
+      - rAF callbacks run inside the rendering update, after the frame's resize and scroll events and just before style and layout. A write there costs nothing extra; the layout that follows was going to run anyway.
+      - Reads there are another matter. If an earlier callback in the same frame wrote something, the read forces layout.
+      - So split the work. Read in the event handler, while layout is still the one the last frame computed, and hand the write to a rAF callback.
+    draw: [raf-ro, handler-read, raf-write, hands-off]
+    check: Why is requestAnimationFrame a good place for writes but a risky place for reads?
+    answer: Its writes are settled by the layout that runs right after it; a read there can follow another callback's write and force layout, so reads belong in the event handler.
+    misconceptions:
+      - "Anything inside requestAnimationFrame is free -> writes are; a read after another callback's write still forces layout."
+  - point: ResizeObserver answers whether something changed size without a read, calling back after the frame's layout and before paint, and its callback must converge or the leftover changes wait a frame and raise a loop error.
+    kind: mechanism
+    weight: core
+    teach:
+      - Many reads exist only to learn whether something resized, a column narrowed when the sidebar opened, a card grew under a long title. Register the elements, and after layout, before paint, the browser calls back with the ones whose size changed, using the layout it just did.
+      - Tasklane's old window resize handler read every column's width and wrote a density, read, write, read, write, and missed the sidebar toggle entirely. The observer version gets the toggle too, and the first value arrives as soon as observing starts.
+      - If the callback changes sizes again, the browser lays out again and reports only deeper elements; the rest wait for the next frame with the error ResizeObserver loop completed with undelivered notifications. Make it converge, the same width giving the same density, or move the write to rAF.
+    draw: [resize-observer, ro-timing, ro-loop]
+    check: Why does Tasklane's ResizeObserver set a column's density without forcing layout, and what keeps it out of the loop error?
+    answer: Its sizes come from the layout the browser just did, delivered after layout and before paint; it only writes when the density actually changes, so the same width always gives the same answer and the callback converges.
+    misconceptions:
+      - "A window resize listener catches every size change -> it misses changes like the sidebar toggle, where the window does not resize."
+task:
+  prompt: Draw one frame's rendering update, mark where Tasklane's drop gap should read and where it should write, and add where a ResizeObserver callback fires.
+  expects: [1, 5, 6]

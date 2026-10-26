@@ -1,0 +1,139 @@
+# How windowing works: the range from the scroll offset, the spacer and two ways to place rows, one recompute per frame, recycled rows and where their state lives, and overscan.
+id: virtualization/windowing/how-it-works
+title: Window arithmetic and recycling
+source:
+  hash: c87e2b7376f3
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: virtualization/windowing/key-idea
+  assumes:
+    - A windowed list keeps all items in a JavaScript array and mounts only the rows that overlap the viewport, plus an overscan.
+    - One empty spacer as tall as the whole list keeps the scrollbar honest.
+    - The compositor can scroll a painted layer without waiting for the main thread.
+    - Reading a layout value after writing to the DOM forces the browser to lay out early.
+  carries:
+    - With fixed heights the first visible row is floor(scrollTop ÷ row height), the last is the row holding the pane's bottom pixel, clamped and widened by the overscan.
+    - Mounted rows are placed over the spacer either one by one at top = i × height or by moving one wrapper with a transform, which keeps DOM order equal to screen order.
+    - Every trigger goes through one requestAnimationFrame scheduler that reads scrollTop once and writes only if the range changed.
+    - Rows leaving the range are rebound to entering lines from a pool; per-line state lives in the store, keyed by line id.
+    - Overscan covers the delay between the compositor scrolling and the range being recomputed; too little shows blank edges, too much gives the savings back.
+  terms:
+    - term: scrollTop
+      means: How many pixels of the list sit above the pane's top edge.
+    - term: row pool
+      means: The set of row elements reused as lines enter and leave the range; it grows only to the largest range needed.
+    - term: slot key
+      means: Keying a row by its position in the pool rather than by line id, so a framework patches it instead of remounting it.
+    - term: passive listener
+      means: An event listener that promises never to call preventDefault, so the compositor never waits for it.
+board:
+  keep: [everything, all-rows, heavy, frozen, pane, visible, above-unmounted, below-unmounted, logscope-data, store, cheap-store, overscan-above, overscan-below, mounted-count, spacer, recycle-note, store-search, jump, find-miss, blank-band, binds]
+  elements:
+    - { id: range-math, kind: region, label: Window arithmetic, at: [62, 2], size: [55, 10] }
+    - { id: scroll-top, kind: box, label: "scrollTop 24,440", at: [64, 5], size: [11, 3], in: range-math, tone: blue }
+    - { id: first-formula, kind: note, label: "first: scrollTop over 20, rounded down", at: [64, 9], in: range-math }
+    - { id: worked-visible, kind: box, label: "visible 1,222 to 1,259", at: [81, 5], size: [14, 3], in: range-math, tone: green }
+    - { id: last-formula, kind: note, label: "last: scrollTop + 759, over 20", at: [85, 9], in: range-math }
+    - { id: clamp-note, kind: note, label: clamp to 0 and the end, at: [102, 9], in: range-math }
+    - { id: worked-mounted, kind: box, label: "mounted 1,212 to 1,269", at: [101, 5], size: [14, 3], in: range-math, tone: blue }
+    - { id: placement, kind: region, label: Placing rows on the spacer, at: [62, 14], size: [48, 17] }
+    - { id: abs-rows, kind: box, label: each row at its own top, at: [64, 20], size: [14, 3], in: placement, tone: blue }
+    - { id: wrapper, kind: region, label: "wrapper, down 24,240 px", at: [86, 16], size: [22, 11], in: placement, tone: blue }
+    - { id: wrap-row-a, kind: box, label: "line 1,212", at: [88, 18], size: [18, 2], in: wrapper }
+    - { id: wrap-row-b, kind: box, label: "line 1,213", at: [88, 21], size: [18, 2], in: wrapper }
+    - { id: wrap-row-c, kind: box, label: "line 1,214", at: [88, 24], size: [18, 2], in: wrapper }
+    - { id: abs-order, kind: note, label: DOM order can drift, at: [64, 24], in: placement }
+    - { id: wrapper-order, kind: note, label: DOM order matches the screen, at: [86, 28], in: placement }
+    - { id: frame-loop, kind: region, label: Once a frame, at: [62, 33], size: [52, 10] }
+    - { id: compositor, kind: box, label: compositor scrolls, at: [64, 36], size: [11, 3], in: frame-loop, tone: green }
+    - { id: raf, kind: box, label: one frame callback, at: [83, 36], size: [11, 3], in: frame-loop }
+    - { id: rebind-rows, kind: box, label: write changed rows, at: [101, 36], size: [11, 3], in: frame-loop, tone: blue }
+    - { id: triggers, kind: note, label: "scroll, resize, filter, jump, append", at: [64, 40], in: frame-loop }
+    - { id: read-first, kind: note, label: "passive listener; read scrollTop, then write", at: [85, 40], in: frame-loop }
+    - { id: pool, kind: region, label: Row pool, at: [62, 45], size: [56, 10] }
+    - { id: row-leaving, kind: box, label: "row on line 1,212", at: [64, 48], size: [12, 3], in: pool, tone: grey }
+    - { id: row-rebound, kind: box, label: "same row, line 1,270", at: [82, 48], size: [13, 3], in: pool, tone: green }
+    - { id: state-in-store, kind: box, label: line state in LogStore, at: [102, 48], size: [14, 3], in: pool, tone: amber }
+    - { id: slot-key, kind: note, label: "key by slot: patch text, no remount", at: [64, 52], in: pool }
+    - { id: slot-leak, kind: note, label: "slot state leaks: 1,224 to 1,284", at: [84, 52], in: pool }
+    - { id: overscan-why, kind: region, label: Overscan, at: [62, 57], size: [51, 10] }
+    - { id: fling-math, kind: box, label: "fling 300 px, 50 ms task", at: [64, 60], size: [15, 3], in: overscan-why }
+    - { id: overscan-10, kind: box, label: "overscan: 10 rows", at: [85, 60], size: [11, 3], in: overscan-why, tone: blue }
+    - { id: used-up, kind: box, label: 5 blank lines, at: [102, 60], size: [9, 3], in: overscan-why, tone: red }
+    - { id: balance, kind: note, label: "too little: blank edge; too much: no saving", at: [64, 64], in: overscan-why }
+    - { id: defaults, kind: note, label: "libraries default 1; Logscope 10, 200 px", at: [86, 64], in: overscan-why }
+  arrows:
+    - { id: to-visible, from: scroll-top, to: worked-visible, label: over 20 }
+    - { id: widen, from: worked-visible, to: worked-mounted, label: widen 10 }
+    - { id: or-move, from: abs-rows, to: wrapper, label: or }
+    - { id: scroll-event, from: compositor, to: raf, label: scroll event }
+    - { id: range-changed, from: raf, to: rebind-rows, label: if changed }
+    - { id: rebound, from: row-leaving, to: row-rebound, label: rebound }
+    - { id: fling-uses, from: fling-math, to: overscan-10, label: 15 lines }
+    - { id: leaves-blank, from: overscan-10, to: used-up, label: 5 short }
+beats:
+  - point: With fixed row heights the range needs no measuring, the first visible row is scrollTop divided by the row height rounded down, the last is the row holding the pane's bottom pixel, then clamp and widen by the overscan.
+    kind: metric
+    weight: core
+    teach:
+      - Row i always starts at i × 20 pixels, and scrollTop says how many pixels of list are above the pane. Divide and round down for the first row even partly visible.
+      - The last visible row holds the pixel just above the bottom edge, scrollTop + 760 − 1. At scrollTop 24,440 that is lines 1,222 to 1,259, 38 of them.
+      - Clamp the end to the last line, so a short list never asks for line 250,003, and widen by 10 each side, 1,212 to 1,269.
+      - No loop over the data and no measurement is needed; that is why fixed heights are the easy case.
+    draw: [range-math, scroll-top, worked-visible, to-visible, first-formula, last-formula, clamp-note, worked-mounted, widen]
+    check: The pane is 760 pixels, rows are 20 and scrollTop is 24,440. Which lines are visible, and which are mounted with an overscan of 10?
+    answer: "Visible 1,222 to 1,259 (24,440 ÷ 20 = 1,222, and (24,440 + 759) ÷ 20 rounds down to 1,259); mounted 1,212 to 1,269."
+    misconceptions:
+      - "The range needs each row measured -> with fixed heights it is pure arithmetic on scrollTop; measuring is only needed when heights vary."
+  - point: The mounted rows sit over the spacer either each at top = i × 20 or inside one wrapper moved down by start × 20 with a transform; both put line 1,212 at 24,240 pixels, but only the wrapper keeps DOM order equal to screen order.
+    kind: decision
+    weight: core
+    teach:
+      - Point at the spacer from the first part. The rows have to appear at the right height inside it.
+      - One way positions every row absolutely at top = i × 20. When the range shifts by five, five rows get a new top and text, and a recycled row can stay where it is in the DOM, so DOM order can drift from what is on screen.
+      - The other keeps the rows in normal flow in one wrapper and moves the wrapper by translateY(start × 20). DOM order matches the screen, so text selection and Tab order follow what user 1 sees.
+    draw: [placement, abs-rows, abs-order, wrapper, wrap-row-a, wrap-row-b, wrap-row-c, or-move, wrapper-order]
+    check: Why might a team move one wrapper with a transform instead of placing every row absolutely?
+    answer: The wrapper keeps DOM order equal to screen order, so text selection and Tab order follow the screen; absolutely placed rows can be in any DOM order.
+  - point: The compositor scrolls first and the scroll event reaches the main thread at most once a frame, so every trigger goes through one requestAnimationFrame callback that reads scrollTop once and touches the DOM only if the range changed.
+    kind: mechanism
+    weight: core
+    teach:
+      - The compositor moves the painted layer on its own and the scroll event arrives afterwards on the main thread, batched once per frame. The range can never be fresher than the last frame the main thread produced.
+      - Scroll is not the only trigger. A resize, a filter that changes the line count, a jump from search and a live append all need the same recompute, and two can land in one frame.
+      - So each asks for one animation frame if none is pending. The callback reads scrollTop, runs the arithmetic and writes only if start or end changed. The listener is passive, and the pane height comes from a ResizeObserver, not a layout read.
+    draw: [frame-loop, compositor, raf, rebind-rows, scroll-event, range-changed, triggers, read-first]
+    check: Why read scrollTop before writing any row in the frame callback, and why make the scroll listener passive?
+    answer: Reading before writing keeps the frame free of forced layouts; a passive listener never calls preventDefault, so the compositor never waits for it.
+    misconceptions:
+      - "Recompute on every scroll event -> scroll events are batched per frame; one scheduler serves every trigger and recomputes at most once a frame."
+  - point: Rows that leave the range go back to a small pool and come out bound to the entering lines, so a scroll costs a text update, not new elements; per-line state must live in the store, keyed by line id.
+    kind: rule
+    weight: core
+    teach:
+      - Creating and discarding rows costs allocation, style matching and garbage collection; rebinding one costs a text update. Scroll 100 pixels and the rows for 1,212 to 1,216 become 1,270 to 1,274. The pool tops out around 59 rows.
+      - In a framework the key decides which you get. Key by line id and it unmounts five and mounts five; key by slot and it patches the same five in place.
+      - Slot keys have a sharp edge. User 1 expands the stack trace on line 1,224; they scroll on, the slot is rebound to 1,284, a plain request log, and it still shows expanded. Keep that flag in LogStore by line id and read it on every bind.
+    draw: [pool, row-leaving, row-rebound, rebound, slot-key, slot-leak, state-in-store]
+    check: User 1 expanded a stack trace on line 1,224, scrolled on, and now line 1,284 shows as expanded. What went wrong, and where should that flag live?
+    answer: The flag was kept in the row, which belongs to a slot that was rebound to line 1,284; it should live in LogStore keyed by line id and be read back whenever a row is bound.
+    misconceptions:
+      - "Keying rows by line id is always right -> in a windowed list it makes the framework unmount and mount rows on every scroll; slot keys reuse them, with state kept in the store."
+  - point: Overscan is how far the list can move between the compositor scrolling and the range being recomputed; too little shows blank edges, too much gives the savings back.
+    kind: decision
+    weight: core
+    teach:
+      - Because the compositor scrolls first, there is always a short delay before rows exist for new pixels. Without overscan any scroll shows a sliver of empty spacer for a frame.
+      - Logscope's 10 rows are 200 pixels. A 50-millisecond task during a 300-pixel fling moves 15 lines, uses up the 10 and leaves 5 blank lines until the next frame.
+      - Count it in rows or in pixels, and it can lean ahead in the direction of travel. Libraries often default to 1 and expect you to raise it for fast-scrolling content.
+    draw: [overscan-why, overscan-10, fling-math, fling-uses, used-up, leaves-blank, balance, defaults]
+    check: A 50-millisecond task holds the main thread while user 1 flings 300 pixels. With 20-pixel rows and an overscan of 10, what do they see?
+    answer: "15 lines move past; the 10 rows of overscan cover 10 of them and 5 lines show as blank space until the next frame recomputes the range."
+    misconceptions:
+      - "More overscan is always safer -> each extra row is mounted, styled and laid out, and enough of it turns the window back into the full list."
+task:
+  prompt: For a 760-pixel pane with 20-pixel rows and an overscan of 10, work out the visible and mounted lines at scrollTop 24,440, then draw the rows that move when user 1 scrolls 100 pixels down.
+  expects: [1, 4]

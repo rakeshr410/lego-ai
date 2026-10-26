@@ -19,6 +19,7 @@ import {
   nextUtcMidnight,
   reply,
   secondsUntil,
+  sessionPlan,
   speculate,
   startSession,
   toView,
@@ -36,7 +37,7 @@ import { getSession, interviewSpendKey, updateSession, voiceMinutesKey, voiceMon
 import { startPipeline, stopPipeline, VoiceServiceError, pipelineRunning } from './voice-client';
 import { mintVoiceToken, verifyVoiceToken } from './voice-token';
 
-// The voice room's server side (design section 6, docs/interview/README.md "Voice"). A voice
+// The voice room's server side (design section 6, docs/README.md "Voice"). A voice
 // session is a text session the interview-voice service speaks for: the web tier owns the
 // session, the quota, the budget and every model call; the service owns the audio. The room
 // joins a private Daily room; the service dials it out, transcribes the candidate, posts each
@@ -162,16 +163,16 @@ const dailyOpts = (cfg: InterviewConfig) => ({ apiUrl: cfg.voice.dailyApiUrl, ap
  * or resumes the reader's running voice session there. Counts one of the month's voice sessions
  * and its planned minutes.
  */
-export async function startVoiceSession(reader: Reader, system: string, consentVersion: unknown, audioOptIn: unknown, scope: PlanScope = null, kind: SessionKind = 'interview'): Promise<{ session: SessionView; join: VoiceJoin; resumed: boolean }> {
+export async function startVoiceSession(reader: Reader, system: string, consentVersion: unknown, audioOptIn: unknown, scope: PlanScope = null, kind: SessionKind = 'interview', lesson: string | null = null, name: string | null = null): Promise<{ session: SessionView; join: VoiceJoin; resumed: boolean }> {
   const cfg = interviewConfig();
   if (!hasVoicePlan(reader)) throw fail('plan', 403, kind === 'coach' ? 'Voice lessons are part of Pro.' : 'Voice interviews are part of Pro.', undefined, { plan: planOf(reader) });
   await checkVoiceCalls(cfg);
-  const { session, resumed } = await startSession(reader.documentId, system, consentVersion, { mode: 'voice', audioOptIn: audioOptIn === true, scope, ...(kind === 'coach' ? { kind } : {}) });
+  const { session, resumed } = await startSession(reader.documentId, system, consentVersion, { mode: 'voice', audioOptIn: audioOptIn === true, scope, ...(kind === 'coach' ? { kind } : {}), ...(lesson ? { lesson } : {}), ...(name ? { name } : {}) });
   if (session.mode !== 'voice') throw fail('active', 409, `You have a typed ${kind === 'coach' ? 'lesson' : 'interview'} in progress on this system. Finish it first.`, undefined, { id: session.id });
   if (!resumed) {
     // A top-up session reserves no monthly minutes (its own caps bound it).
     const saved = await getSession(session.id);
-    const minutes = saved?.system === system && !saved.topup ? interviewMinutes(getPlan(system, saved.scope ?? null)!.plan) : 0;
+    const minutes = saved?.system === system && !saved.topup ? interviewMinutes(getPlan(system, saved.scope ?? null, saved.course?.lesson)!.plan) : 0;
     if (minutes) await (await getStore()).incrByFloat(voiceMinutesKey(reader.documentId), minutes, 40 * DAY_MS).catch(() => 0);
   }
   const join = await joinVoice(reader.documentId, session.id);
@@ -306,7 +307,7 @@ export type PipelineView = {
   audioOptIn: boolean;
   /** The idle rungs (seconds of silence after the interviewer's last word) the pipeline reports. */
   idleRungs: readonly number[];
-  /** A mock interview, or a coach lesson (docs/interview/coach-mode.md): the pipeline speaks for the coach. */
+  /** A mock interview, or a coach lesson (docs/coach-mode.md): the pipeline speaks for the coach. */
   kind: SessionKind;
   /**
    * A coach lesson drives itself: this many seconds after the coach's last word with nothing from the
@@ -409,7 +410,7 @@ export async function attachPipeline(sid: string, token: unknown, task: unknown)
 async function pipelineSession(sid: string): Promise<{ session: Session; plan: Plan }> {
   const session = await getSession(sid);
   if (!session || session.mode !== 'voice' || !session.voice) throw fail('not_found', 404, 'Unknown session.');
-  const plan = getPlan(session.system, session.scope ?? null);
+  const plan = sessionPlan(session);
   if (!plan) throw fail('not_found', 404, 'Unknown session.');
   return { session, plan };
 }
@@ -442,6 +443,23 @@ export async function pipelineTurn(sid: string, call: VoiceCall & { seq: number 
   return { turn: out.turn, state: pipelineView(current, plan, cfg, '', false) };
 }
 
+const norm = (w: string) => w.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+
+/**
+ * The start of `full` the learner heard, or null when they heard all of it (or the words do not match). The voice
+ * reports the words it played without the reply's own punctuation and spacing, so the match is word by word: `full`
+ * is cut after as many words as were heard, when most of them are the same words.
+ */
+export function heardPart(full: string, heard: string): string | null {
+  const said = heard.split(/\s+/).map(norm).filter(Boolean);
+  const words = [...full.matchAll(/\S+/g)].filter((m) => norm(m[0]));
+  if (!said.length || said.length >= words.length) return null;
+  const same = said.filter((w, k) => norm(words[k][0]) === w).length;
+  if (same / said.length < 0.7) return null;
+  const last = words[said.length - 1];
+  return full.slice(0, last.index! + last[0].length);
+}
+
 /**
  * The candidate cut the interviewer off: the reply's text is trimmed to the words that played, so
  * the transcript and the next prompt say what was heard (design section 6, "interruptions").
@@ -456,9 +474,12 @@ export async function pipelinePlayed(sid: string, call: VoiceCall, spoken: unkno
     if (!t || !heard) return s;
     // A reply already cut (the stream dropped at the cut-in, reply()) is trimmed further to the words heard.
     const full = t.meta?.interrupted && t.text.endsWith(' —') ? t.text.slice(0, -2) : t.text;
-    if (!full.startsWith(heard) || heard.length >= full.length) return s;
+    const kept = heardPart(full, heard);
+    if (kept === null) return s;
     const turns = s.turns.slice();
-    turns[i] = { ...t, text: `${heard} —`, meta: { ...t.meta, interrupted: true } };
+    // What it drew past the cut never reached the board: the coach reads back only what was heard.
+    const { said: _said, ...meta } = t.meta ?? {};
+    turns[i] = { ...t, text: `${kept} —`, meta: { ...meta, interrupted: true } };
     return { ...s, turns };
   });
 }

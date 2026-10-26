@@ -1,0 +1,150 @@
+# How infinite scroll works: the observer against a scroll handler, the margin and its headroom, the pager's states, the sentinel that never leaves the margin, failure and the end, and what appended cards cost.
+id: infinite-scroll-vs-pagination/infinite-scroll-mechanics/how-it-works
+title: Sentinels, observers and pages
+source:
+  hash: 672a0304cf16
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: infinite-scroll-vs-pagination/infinite-scroll-mechanics/key-idea
+  assumes:
+    - A sentinel after the last card, watched by an IntersectionObserver with a grown bottom margin, triggers the next batch.
+    - Only one request may be in flight; a failed batch keeps the cards and offers Try again; no next cursor ends the list.
+    - Reading a layout value such as getBoundingClientRect after a DOM change can force a layout inside the script.
+  carries:
+    - The browser computes intersections from the layout it already did for the frame and queues the callback only when the state changes.
+    - A percentage rootMargin is a share of the root's size, so the lead time scales in screens; headroom is the margin divided by scroll speed.
+    - The pager is a state machine that starts a request only from idle and resets, aborting the request, on a filter change.
+    - Entries arrive only when isIntersecting changes, so a sentinel that stays inside the margin after an append must be re-observed.
+    - The end is nextCursor null, not a short batch.
+    - Infinite scroll only appends; past a few hundred heavy cards the list needs windowing.
+  terms:
+    - term: entry
+      means: One record the observer delivers per change; isIntersecting on the latest one says whether the sentinel is inside the region.
+    - term: headroom
+      means: The time between the trigger and the reader arriving at the old end of the list, the margin in pixels divided by scroll speed.
+    - term: pager
+      means: The small state machine that owns the cursor and decides whether a trigger starts a request.
+    - term: re-arm
+      means: Unobserving and observing the sentinel again after an append, so the browser reports its current state afresh.
+board:
+  keep: [feed-page, viewport, card-18, card-19, card-20, card-24, late-ask, margin-zone, card-21, card-22, card-23, sentinel, pager, observer, in-flight, ignore-note, fetch-next, api, cursor-note, footer, footer-loading, footer-error, kept-note, footer-end, end-note, watches, fetch-api, callback, go, fails]
+  elements:
+    - { id: two-ways, kind: region, label: Scroll handler or observer, at: [62, 2], size: [46, 10] }
+    - { id: scroll-handler, kind: box, label: "scroll handler: every event", at: [64, 5], size: [18, 3], in: two-ways, tone: red }
+    - { id: observer-way, kind: box, label: "observer: on change only", at: [88, 5], size: [18, 3], in: two-ways, tone: green }
+    - { id: forced-read, kind: note, label: measuring can force layout, at: [64, 9], in: two-ways }
+    - { id: frame-layout, kind: note, label: "browser reuses the frame's layout", at: [88, 9], in: two-ways }
+    - { id: margin-math, kind: region, label: The margin, at: [62, 14], size: [48, 15] }
+    - { id: pct-rule, kind: note, label: "150% of the root's height", at: [80, 17], in: margin-math }
+    - { id: screen-780, kind: box, label: "screen, 780 px", at: [64, 17], size: [14, 4], in: margin-math, tone: blue }
+    - { id: margin-1170, kind: box, label: "margin, 1,170 px", at: [64, 21], size: [14, 6], in: margin-math, dashed: true }
+    - { id: reading-pace, kind: box, label: "reading: 1.95 s ahead", at: [80, 20], size: [14, 3], in: margin-math, tone: green }
+    - { id: fling-pace, kind: box, label: "fling: 160 ms wait", at: [96, 20], size: [12, 3], in: margin-math, tone: red }
+    - { id: headroom-rule, kind: note, label: "headroom: margin over scroll speed", at: [80, 25], in: margin-math }
+    - { id: pager-states, kind: region, label: Pager states, at: [62, 31], size: [53, 21] }
+    - { id: idle, kind: box, label: Idle, at: [64, 34], size: [10, 3], in: pager-states, tone: blue }
+    - { id: loading, kind: box, label: Loading, at: [82, 34], size: [10, 3], in: pager-states, tone: amber }
+    - { id: failed, kind: box, label: Failed, at: [100, 34], size: [10, 3], in: pager-states, tone: red }
+    - { id: first-batch, kind: box, label: First batch, at: [64, 43], size: [10, 3], in: pager-states, tone: blue }
+    - { id: ended, kind: box, label: Ended, at: [82, 44], size: [10, 3], in: pager-states, tone: grey }
+    - { id: retry-note, kind: note, label: "8 s limit, retry sends same cursor", at: [96, 40], in: pager-states }
+    - { id: aria-note, kind: note, label: "aria-busy true, then false", at: [96, 46], in: pager-states }
+    - { id: repeat-note, kind: note, label: "Loading: repeats ignored", at: [64, 49], in: pager-states }
+    - { id: reset-note, kind: note, label: "filter change: abort, clear, restart", at: [80, 49], in: pager-states }
+    - { id: stall, kind: region, label: When the sentinel stays in, at: [62, 54], size: [43, 10] }
+    - { id: short-batch, kind: box, label: "short batch: still inside", at: [64, 57], size: [17, 3], in: stall, tone: red }
+    - { id: rearm, kind: box, label: "unobserve, observe again", at: [86, 57], size: [17, 3], in: stall, tone: green }
+    - { id: flips-only, kind: note, label: entries only when isIntersecting flips, at: [64, 61], in: stall }
+    - { id: growth, kind: region, label: What the cards cost, at: [62, 66], size: [55, 11] }
+    - { id: per-batch, kind: box, label: "batch 1: 24 cards", at: [64, 69], size: [11, 3], in: growth }
+    - { id: twenty-batches, kind: box, label: "20 batches: 480 cards", at: [83, 69], size: [13, 3], in: growth, tone: red }
+    - { id: windowing-next, kind: box, label: "windowing: a few dozen", at: [101, 69], size: [14, 3], in: growth, tone: green }
+    - { id: cap-note, kind: note, label: "home feed: 4 batches, then Show more", at: [64, 74], in: growth }
+  arrows:
+    - { id: turn-around, from: scroll-handler, to: observer-way, label: instead }
+    - { id: trigger, from: idle, to: loading, label: sentinel in, both: true }
+    - { id: fail-retry, from: loading, to: failed, label: "fail, retry", both: true }
+    - { id: first-ok, from: first-batch, to: idle, label: 24 cards }
+    - { id: last-batch, from: loading, to: ended, label: no cursor }
+    - { id: cure, from: short-batch, to: rearm, label: cure }
+    - { id: grows, from: per-batch, to: twenty-batches, label: none removed }
+    - { id: needs, from: twenty-batches, to: windowing-next, label: needs }
+beats:
+  - point: A scroll handler runs on every scroll event on the main thread and its measurements can force a layout, while an IntersectionObserver lets the browser compute the answer from the frame's layout and calls back only when it changes.
+    kind: decision
+    weight: core
+    teach:
+      - The older way listens for scroll and, each time, measures how far the end of the list is from the bottom of the window. During a fling that is many runs a second, on the thread that also has to answer taps.
+      - The measuring itself, getBoundingClientRect or offsetHeight, can force a layout if the DOM changed since the last frame. Throttling it makes the trigger late.
+      - The observer turns the question around. The browser already knows where everything is after layout, works out the intersection while preparing the frame and queues the callback as a task, only when the answer changes.
+    draw: [two-ways, scroll-handler, observer-way, turn-around, forced-read, frame-layout]
+    check: Why is an IntersectionObserver cheaper than a scroll handler that calls getBoundingClientRect?
+    answer: The browser computes the intersection from layout it already did for the frame and calls back only when the state changes, so your code neither runs on every scroll event nor forces a layout.
+    misconceptions:
+      - "The observer's callback runs inside the scroll event -> it is queued as a task after the browser computes intersections for the frame; no scroll handler is involved."
+      - "The observer runs in a worker -> it is part of the browser's own rendering update on the page."
+  - point: rootMargin grows the root's box before the test, and a percentage is a share of the root's own size, so the lead stays in screens; the headroom it buys is the margin divided by scroll speed.
+    kind: metric
+    weight: core
+    teach:
+      - "Secondloop grows only the bottom: rootMargin 0px 0px 150% 0px, with the default threshold of 0, so one pixel of overlap counts."
+      - On user 1's 780-pixel phone that reaches 1,170 pixels below the screen; on a 1,000-pixel desktop window, 1,500. Reading speed scales roughly with the screen, so the lead does too.
+      - At a reading pace of 600 pixels a second that is 1.95 seconds of headroom against a 450-millisecond batch. A fling at 4,000 a second leaves about 160 milliseconds on the loading row.
+      - If the list scrolls inside its own panel, make that panel the root, or the panel's clipping hides the margin.
+    draw: [margin-math, pct-rule, screen-780, margin-1170, reading-pace, fling-pace, headroom-rule]
+    check: "With rootMargin '0px 0px 150% 0px', how far below the visible area does the trigger reach on a 1,000-pixel desktop window, and why?"
+    answer: 1,500 pixels, because a percentage in rootMargin is of the root's size, here the viewport.
+    misconceptions:
+      - "150% means 150% of the whole document -> it is of the root's box, the viewport or the scrolling panel."
+  - point: The pager is a small state machine that starts a request only from idle, ignores triggers while loading, and on a filter change aborts the request in flight and starts again from the first batch.
+    kind: mechanism
+    weight: core
+    teach:
+      - The observer only reports positions; it has no idea a request is out. A small flick up and down, or a re-render that creates a new observer, fires it again.
+      - "Put the decision in one place with an explicit status: Idle, Loading, Failed, Ended. Only Idle starts a request; the request carries the previous cursor, and cards are appended by id as a safety net."
+      - A filter or sort change makes everything obsolete, the batch in flight included. The pager aborts it with its AbortController, clears the cards and cursor and starts from the first batch, so an old answer cannot land in the new list.
+    draw: [pager-states, first-batch, idle, loading, first-ok, trigger, repeat-note, reset-note]
+    check: User 1 changes the filter while batch 3 is loading. What does the pager do, and why?
+    answer: It aborts the request in flight, clears the cards and the cursor, and loads the first batch for the new filter, so the old answer cannot be appended to the new list.
+    misconceptions:
+      - "The observer knows not to fire twice -> it only reports positions; the pager's status is what blocks a duplicate request."
+  - point: The observer delivers an entry only when isIntersecting changes, so if an append leaves the sentinel inside the margin nothing fires again; re-observing after each append gets a fresh first entry.
+    kind: failure
+    weight: core
+    teach:
+      - Observing an element always delivers one first entry with its current state. After that, an entry is queued only when the state flips; moving while staying inside is not a change.
+      - Usually a batch pushes the sentinel thousands of pixels down, and the next crossing is real. On a tall desktop window, or with a filter that returns a few cards, the sentinel can be inside before and after the append. The pager sits in idle and the list looks finished though the server has more.
+      - "The cure: after each append, unobserve the sentinel and observe it again. If it is still in range the next batch starts at once; if not, nothing happens."
+    draw: [stall, short-batch, rearm, cure, flips-only]
+    check: After a short batch is appended the sentinel is still inside the margin, and no further batch ever loads. Why, and what fixes it?
+    answer: Entries are queued only when isIntersecting changes, and it stayed true. Unobserving and observing the sentinel again delivers a fresh first entry, which starts the next batch if it is still in range.
+    misconceptions:
+      - "The observer reports where the sentinel is -> it reports when its state changes."
+  - point: A failed batch keeps the cards and the cursor, and the Try again button resends the same cursor; the end is signalled by nextCursor null, not by a short batch.
+    kind: rule
+    weight: core
+    teach:
+      - Each batch gets 8 seconds; a timeout, a dropped network or a server error all land in Failed. The cards and the cursor stay, so tapping Try again asks for exactly the batch that failed.
+      - Beyond the API client's one quiet retry for a transient error, nothing retries on its own. A sentinel firing into a failed state, or a timer, would keep requesting for someone who may have left.
+      - A short batch is not the end, since server-side filtering can return fewer than 24 while more exist. Only nextCursor null ends the list.
+      - "While a batch is appended the feed carries aria-busy true, and it must go back to false; a real button gives keyboard and switch users a way forward that does not need scrolling."
+    draw: [failed, fail-retry, ended, last-batch, retry-note, aria-note]
+    check: The last batch of a filtered list holds 11 cards instead of 24. Is the list over, and what tells you?
+    answer: Not necessarily; filtering can return fewer than 24 while more exist. The list is over only when the server returns nextCursor null.
+    misconceptions:
+      - "Fewer than 24 cards means the end -> only nextCursor null ends the list."
+  - point: Infinite scroll only ever appends, so a long session keeps hundreds of cards in the DOM for every style and layout pass; past a few hundred heavy items the list needs windowing.
+    kind: failure
+    weight: supporting
+    teach:
+      - Each batch adds 24 cards and none are removed. Twenty batches is 480 cards, each with an image and nested elements, and every recalculation walks them all.
+      - The loader only keeps asking. Windowing keeps a few dozen in the DOM; Secondloop's home feed also stops after four batches, 96 cards, and switches to a Show more button.
+    draw: [growth, per-batch, twenty-batches, grows, windowing-next, needs, cap-note]
+    check: What does a long evening of infinite scroll cost the page, and what keeps it in bounds?
+    answer: Every batch stays in the DOM, so style and layout walk hundreds of cards; windowing keeps only a few dozen mounted, and a cap with a Show more button limits growth.
+task:
+  prompt: "Draw the pager's states, Idle, Loading, Failed and Ended, with what moves it between them, and mark what happens to a trigger that arrives while it is Loading."
+  expects: [3, 5]

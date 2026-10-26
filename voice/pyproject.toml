@@ -1,7 +1,7 @@
 [project]
 name = "interview-voice"
 version = "0.1.0"
-description = "The mock interview's voice service: a Pipecat pipeline per session, speaking for the web tier's interviewer (docs/interview/README.md, Voice)."
+description = "The mock interview's voice service: a Pipecat pipeline per session, speaking for the web tier's interviewer (docs/README.md, Voice)."
 requires-python = ">=3.12"
 dependencies = [
   "pipecat-ai[daily,silero,deepgram,cartesia]==1.13.0",

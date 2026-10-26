@@ -1,8 +1,9 @@
 """One voice session's pipeline (design section 6): Daily in, the transcriber, the turn shaper, the user
-aggregator (Silero VAD and smart-turn end-of-turn), the gateway interviewer, the voice out, the assistant
-aggregator, the idle gate; the vendors are bot/vendors.py's. The web tier is attached first; the pipeline
-stops when the session closes, the candidate leaves, the web refuses its epoch, or the task is asked to stop
-(a deploy: the session is parked for a rejoin).
+aggregator (Silero VAD and smart-turn end-of-turn), the gateway interviewer, the voice, the conductor (a
+lesson's pauses and pen cues around its labels), the output, the assistant aggregator, the idle gate; the
+vendors are bot/vendors.py's. The web tier is attached first; the pipeline stops when the session closes, the
+candidate leaves, the web refuses its epoch, or the task is asked to stop (a deploy: the session is parked for a
+rejoin).
 """
 
 from __future__ import annotations
@@ -32,15 +33,15 @@ from pipecat.turns.user_turn_strategies import ExternalUserTurnStrategies, UserT
 from app.config import Settings
 from app.web_client import State, WebClient, WebError
 from bot import speech
+from bot.conductor import Conductor
 from bot.idle import IdleGate, IdleTimer
 from bot.latency import LatencyObserver
 from bot.llm_gateway import GatewayLLMService
 from bot.observers import UsageObserver
-from bot.pacer import DrawPacer
 from bot.speculate import Speculator
 from bot.sync import Heartbeat
 from bot.turn_shaper import TurnShaper
-from bot.vendors import build_stt, build_tts
+from bot.vendors import build_stt, build_tts, voice_ready
 
 
 @dataclass
@@ -54,7 +55,7 @@ class SessionSpec:
     language: str = "en-IN"
     audio_opt_in: bool = False
     planned_minutes: int = 45
-    # A mock interview, or a coach lesson (docs/interview/coach-mode.md): the bot's name and closing lines.
+    # A mock interview, or a coach lesson (docs/coach-mode.md): the bot's name and closing lines.
     kind: str = "interview"
     # The pause that ends the speaker's turn, when the web wants one other than the service's default.
     turn_stop_secs: float | None = None
@@ -87,7 +88,7 @@ class SessionRun:
     detached: bool = False
     usage: UsageObserver | None = None
     gateway: GatewayLLMService | None = None
-    pacer: DrawPacer | None = None
+    conductor: Conductor | None = None
     _task: PipelineTask | None = field(default=None, repr=False)
     _stop_requested: str | None = field(default=None, repr=False)
 
@@ -173,10 +174,10 @@ async def run_session(
     stt = build_stt(settings, language)
     tts = build_tts(settings)
     rtvi = RTVIProcessor(transport=transport)
-    shaper = TurnShaper()
     audio_in = transport.input()
     audio_out = transport.output()
     usage = UsageObserver(audio_in=audio_in, audio_out=audio_out, stt=stt, tts=tts)
+    shaper = TurnShaper(echoes=usage.memory.echoes)
     run.usage = usage
 
     ending = asyncio.Event()
@@ -211,18 +212,15 @@ async def run_session(
             run.state.closed = reason
         await finish(f"closed:{reason}", speech.closing(reason, spec.kind))
 
-    # The coach's drawings go to the room's board over the call, each as the words before it have played
-    # (bot/pacer.py), so the pen keeps time with the voice.
-    async def send_draw(ops: list[Any]) -> None:
-        await rtvi.send_server_message({"kind": "draw", "ops": ops})
+    # The drawings go to the room's board over the call as the web sends them. In a lesson each carries a
+    # reference (pace), and the pen waits for the voice's cues to draw it: the conductor, after the voice, says
+    # each label as the pen writes it, with a pause before and after (bot/conductor.py).
+    async def on_draw(ops: list[Any], pace: str | None, instant: bool = False) -> None:
+        extra = {"pace": pace} if pace else {"instant": True} if instant else {}
+        await rtvi.send_server_message({"kind": "draw", "ops": ops, **extra})
 
-    pacer = DrawPacer(spoken_words=usage.spoken_words, send=send_draw)
-    usage.on_spoken = pacer.spoken
-    usage.on_stopped = pacer.flush
-    run.pacer = pacer
-
-    async def on_draw(ops: list[Any], anchor: Any = None) -> None:
-        await pacer.draw(ops, anchor)
+    conductor = Conductor()
+    run.conductor = conductor
 
     gateway = GatewayLLMService(
         web=web,
@@ -231,8 +229,10 @@ async def run_session(
         on_state=on_state,
         on_stale=on_stale,
         spoken_text=usage.spoken_text,
+        playing=lambda: usage.playing,
         filler_after_secs=settings.filler_after_secs,
         on_draw=on_draw,
+        pace_drawings=spec.kind == "coach",
     )
     run.gateway = gateway
 
@@ -249,6 +249,9 @@ async def run_session(
         idle.timer.self_drive = new.self_drive
 
     async def on_continue() -> None:
+        # A reply on its way (the learner's turn is being answered): it speaks, and its end arms the clock again.
+        if gateway.busy:
+            return
         await gateway.continue_lesson()
 
     idle = IdleGate(timer=IdleTimer(state.idle_rungs, on_rung, on_continue=on_continue))
@@ -280,7 +283,19 @@ async def run_session(
     )
 
     pipeline = Pipeline(
-        [audio_in, rtvi, stt, shaper, aggregators.user(), gateway, tts, audio_out, aggregators.assistant(), idle]
+        [
+            audio_in,
+            rtvi,
+            stt,
+            shaper,
+            aggregators.user(),
+            gateway,
+            tts,
+            conductor,
+            audio_out,
+            aggregators.assistant(),
+            idle,
+        ]
     )
     observers = [RTVIObserver(rtvi), usage, LatencyObserver(spec.sid)]
     if settings.speculate:
@@ -327,7 +342,10 @@ async def run_session(
             if state.say:
                 await task.queue_frame(TTSSpeakFrame(state.say, append_to_context=False))
             elif state.self_drive is not None:
-                # A lesson that has not opened: nothing to repeat, the coach's first move is fetched.
+                # A lesson that has not opened: nothing to repeat, the coach's first move is fetched, once the
+                # voice can speak it (a socket that failed to open at the start is opened again first).
+                if not await voice_ready(tts):
+                    logger.warning("voice {} starting without a ready voice", spec.sid)
                 await gateway.continue_lesson()
 
     @transport.event_handler("on_participant_left")

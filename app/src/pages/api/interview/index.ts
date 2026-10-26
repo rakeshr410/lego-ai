@@ -4,14 +4,14 @@ import { clientIp, isSameOrigin, json, readJson, tooMany } from '../../../lib/se
 import { assertAccess, interviewAccess } from '../../../lib/server/interview/access';
 import { handle, interviewOff } from '../../../lib/server/interview/http';
 import type { PlanScope } from '../../../lib/server/interview/plans';
-import { interviewStatus, overview, startSession, type SessionKind } from '../../../lib/server/interview/service';
+import { interviewStatus, learnerName, overview, startSession, type SessionKind } from '../../../lib/server/interview/service';
 import { startVoiceSession, voiceStatus } from '../../../lib/server/interview/voice';
 import { rateLimit } from '../../../lib/server/rate-limit';
-import { drillPage } from '../../../lib/interview.node';
+import { drillPage, lessonPage } from '../../../lib/interview.node';
 
 export const prerender = false;
 
-// Mock interview sessions on a system (P3-11, docs/interview/README.md). A 404 in a build without
+// Mock interview sessions on a system (P3-11, docs/README.md). A 404 in a build without
 // PUBLIC_INTERVIEW_ENABLED.
 //
 //   GET  ?system=<slug>                  status (on or off, sessions left this month), the reader's
@@ -21,10 +21,12 @@ export const prerender = false;
 //   POST {system, consent, mode: "voice", audioOptIn}
 //                                        starts a voice session (Pro; the voice consent version)
 //                                        and its pipeline: {session, join: {url, token, expiresAt}}
-//   ?kind=coach / {kind: "coach"}        the same, for a coach lesson on the plan (docs/interview/coach-mode.md):
+//   ?kind=coach / {kind: "coach"}        the same, for a coach lesson on the plan (docs/coach-mode.md):
 //                                        the coach teaches the plan's sections and checks them; its own quota
+//   ?lesson=<slug> / {lesson}          a lesson of the playlist `system` names (docs/coaching.md);
+//                                        coach only. The GET's `page` is then the lesson's projection.
 //   ?topic=<slug>[&section=<key>] / {topic, section}
-//                                        the same, on a drill (docs/interview/README.md, "Drills"):
+//                                        the same, on a drill (docs/README.md, "Drills"):
 //                                        the topic's or one section's short plan. The GET's `page`
 //                                        is then the drill's landing-page projection (the system's
 //                                        page is prerendered; a drill's comes from here).
@@ -47,6 +49,14 @@ function scopeOf(topic: unknown, section: unknown): PlanScope | Response {
   return { topic, section };
 }
 
+/** The playlist lesson the request names, null for none, or an error; a lesson is a coach's and has no drill scope. */
+function lessonOf(lesson: unknown, kind: SessionKind, scope: PlanScope): string | null | Response {
+  if (lesson === null || lesson === undefined || lesson === '') return null;
+  if (typeof lesson !== 'string' || !SLUG.test(lesson)) return json({ error: 'Unknown lesson' }, 400);
+  if (kind !== 'coach' || scope) return json({ error: 'A lesson is taught by the coach, on its own.' }, 400);
+  return lesson;
+}
+
 /** The session kind the request names: a mock interview unless it says coach. */
 function kindOf(kind: unknown): SessionKind | Response {
   if (kind === null || kind === undefined || kind === '' || kind === 'interview') return 'interview';
@@ -63,15 +73,18 @@ export const GET: APIRoute = async (ctx) => {
   if (scope instanceof Response) return scope;
   const kind = kindOf(ctx.url.searchParams.get('kind'));
   if (kind instanceof Response) return kind;
+  const lesson = lessonOf(ctx.url.searchParams.get('lesson'), kind, scope);
+  if (lesson instanceof Response) return lesson;
   const reader = await readerOr503(ctx.cookies);
   if (reader instanceof Response) return reader;
   const limit = await rateLimit(`interview:get:${reader?.documentId ?? clientIp(ctx)}`, 120, 60_000);
   if (!limit.ok) return tooMany(limit.retryAfter, 'Too many requests. Give it a minute.');
-  const page = scope ? await drillPage(system, scope.topic, scope.section) : null;
+  const page = lesson ? await lessonPage(system, lesson) : scope ? await drillPage(system, scope.topic, scope.section) : null;
+  if (lesson && !page) return json({ error: 'There is no such lesson.' }, 404);
   if (scope && !page) return json({ error: 'There is no drill on that topic or section.' }, 404);
   if (!reader) return json({ signedIn: false, status: await interviewStatus(null), voice: await voiceStatus(null), current: null, past: [], page });
   return handle('overview', async () => {
-    const [o, voice, access] = await Promise.all([kind === 'coach' ? overview(reader.documentId, system, scope, 'coach') : overview(reader.documentId, system, scope), voiceStatus(reader), interviewAccess(reader)]);
+    const [o, voice, access] = await Promise.all([kind === 'coach' ? overview(reader.documentId, system, scope, 'coach', lesson) : overview(reader.documentId, system, scope), voiceStatus(reader), interviewAccess(reader)]);
     const status = access.allowed ? o.status : { ...o.status, enabled: false, reason: 'access' as const };
     return json({ signedIn: true, ...o, status, voice, page });
   });
@@ -93,16 +106,18 @@ export const POST: APIRoute = async ({ request, url, cookies }) => {
   if (scope instanceof Response) return scope;
   const kind = kindOf(body?.kind);
   if (kind instanceof Response) return kind;
+  const lesson = lessonOf(body?.lesson, kind, scope);
+  if (lesson instanceof Response) return lesson;
   if (body?.mode === 'voice') {
     return handle('start voice', async () => {
       await assertAccess(reader);
-      const { session, join, resumed } = kind === 'coach' ? await startVoiceSession(reader, system, body?.consent, body?.audioOptIn, scope, kind) : await startVoiceSession(reader, system, body?.consent, body?.audioOptIn, scope);
+      const { session, join, resumed } = kind === 'coach' ? await startVoiceSession(reader, system, body?.consent, body?.audioOptIn, scope, kind, lesson, learnerName(body?.name)) : await startVoiceSession(reader, system, body?.consent, body?.audioOptIn, scope);
       return json({ session, join, resumed }, resumed ? 200 : 201);
     });
   }
   return handle('start', async () => {
     await assertAccess(reader);
-    const { session, resumed } = await startSession(reader.documentId, system, body?.consent, { scope, ...(kind === 'coach' ? { kind } : {}) });
+    const { session, resumed } = await startSession(reader.documentId, system, body?.consent, { scope, ...(kind === 'coach' ? { kind, name: learnerName(body?.name) } : {}), ...(lesson ? { lesson } : {}) });
     return json({ session, resumed }, resumed ? 200 : 201);
   });
 };

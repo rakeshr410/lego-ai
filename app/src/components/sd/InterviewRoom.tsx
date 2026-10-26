@@ -54,8 +54,9 @@ const clock = (ms: number) => {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 };
 
-async function post(id: string, body: unknown) {
-  const res = await fetch(`/api/interview/${id}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+/** `keepalive`: the request goes through even when the learner leaves the page right after (an End). */
+async function post(id: string, body: unknown, keepalive = false) {
+  const res = await fetch(`/api/interview/${id}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), keepalive });
   const data = await res.json().catch(() => ({}));
   return { ok: res.ok, data: data as { session?: SessionView; error?: string } };
 }
@@ -66,7 +67,7 @@ export default function InterviewRoom({ page, initial, join = null, onExit }: Pr
   // A reply on its way: the learner's words (null on a lesson's continue) and the reply so far.
   const [pending, setPending] = useState<{ candidate: string | null; reply: string } | null>(null);
   const [busy, setBusy] = useState<'reply' | 'continue' | 'advance' | 'finish' | 'delete' | null>(null);
-  // A coach lesson's auto-continue (docs/interview/coach-mode.md): when the last move landed (0: the
+  // A coach lesson's auto-continue (docs/coach-mode.md): when the last move landed (0: the
   // lesson has not opened yet, so the first move comes at once), and whether the learner paused it.
   const [armedAt, setArmedAt] = useState<number | null>(() => (initial.kind === 'coach' && initial.turns.length === 0 ? 0 : null));
   const [paused, setPaused] = useState(false);
@@ -197,7 +198,7 @@ export default function InterviewRoom({ page, initial, join = null, onExit }: Pr
           setPending({ candidate: text, reply });
         } else if (event === 'draw' && Array.isArray(d.ops)) {
           // Each drawing lands as its element closes in the stream; the saved turn is not drawn again.
-          boardRef.current?.draw(d.ops as DrawOp[]);
+          boardRef.current?.draw(d.ops as DrawOp[], undefined, !!(d.anchor as { prelude?: boolean } | undefined)?.prelude);
           drawnLive = true;
         } else if (event === 'done') {
           ended = true;
@@ -234,19 +235,26 @@ export default function InterviewRoom({ page, initial, join = null, onExit }: Pr
   const act = async (kind: 'advance' | 'finish', body: Record<string, unknown>) => {
     setBusy(kind);
     setError('');
-    // The board as the stage leaves it: saved, and a picture for the grader.
-    await boardRef.current?.flush().catch(() => {});
-    await boardRef.current?.exportStage(stage.key).catch(() => {});
+    // The board as the stage leaves it: saved, and a picture for the grader. A lesson has no grader, so its end
+    // does not wait for the board (a drawing still landing would hold it up, and a learner who leaves the page
+    // at once would leave the lesson open); the save goes on beside it.
+    const ending = coach && kind === 'finish';
+    const board = (async () => {
+      await boardRef.current?.flush().catch(() => {});
+      if (!ending) await boardRef.current?.exportStage(stage.key).catch(() => {});
+    })();
+    if (!ending) await board;
     if (voiceOn && kind === 'finish') {
       // Ending while the voice is on: the voice part goes first (the session is 409 voice_live until it does).
-      const left = await fetch(`/api/interview/${session.id}/voice`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'leave' }) }).catch(() => null);
+      // A lesson ends in the same request.
+      const left = await fetch(`/api/interview/${session.id}/voice`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'leave', ...(coach ? { finish: true } : {}) }), keepalive: true }).catch(() => null);
       if (!left?.ok) {
         setBusy(null);
         setError(t('error.action'));
         return;
       }
     }
-    const r = await post(session.id, body).catch(() => null);
+    const r = await post(session.id, body, kind === 'finish').catch(() => null);
     setBusy(null);
     setConfirmEnd(false);
     if (r?.ok && r.data.session) {
@@ -267,9 +275,10 @@ export default function InterviewRoom({ page, initial, join = null, onExit }: Pr
   // A lesson opens with the coach's first move, and goes on by itself after each move that waits for
   // no answer (the server says which): reading time for the move from the moment it landed, unless
   // the learner is typing or paused. `armedAt` is set where a turn lands (run, act), never in an effect.
+  // While the voice is on the pipeline drives instead: it asks for each move, the first one too, as it speaks.
   const lastTurn = session.turns[session.turns.length - 1];
   const autoDelay = !lastTurn ? 0 : lastTurn.role === 'event' ? AUTO_BASE_MS : Math.min(AUTO_MAX_MS, AUTO_BASE_MS + lastTurn.text.split(/\s+/).length * AUTO_PER_WORD_MS);
-  const continueAt = coach && armedAt !== null && !finished && !closed && lesson?.waiting === 'continue' && lastTurn?.role !== 'candidate' ? armedAt + autoDelay : null;
+  const continueAt = coach && !voiceOn && armedAt !== null && !finished && !closed && lesson?.waiting === 'continue' && lastTurn?.role !== 'candidate' ? armedAt + autoDelay : null;
   const counting = continueAt !== null && !paused && !draft && !busy;
   const runRef = useRef(run);
   useEffect(() => {
@@ -399,7 +408,9 @@ export default function InterviewRoom({ page, initial, join = null, onExit }: Pr
               showTranscript={showTranscript}
               onHideTranscript={() => setShowTranscript(false)}
               kind={coach ? 'coach' : 'interview'}
-              onDraw={(ops) => boardRef.current?.draw(ops)}
+              onDraw={(ops, pace, instant) => boardRef.current?.draw(ops, pace, instant)}
+              onPen={(cue) => boardRef.current?.cue(cue)}
+              onVoice={(e) => ('words' in e ? boardRef.current?.spoken(e.words) : boardRef.current?.speaking(e.speaking))}
               rail={coach && lesson ? <CoachRail lesson={lesson} stageIndex={session.stageIndex} /> : null}
             />
           </Suspense>
@@ -415,9 +426,11 @@ export default function InterviewRoom({ page, initial, join = null, onExit }: Pr
           <Logo tone="dark" />
         </a>
         <nav className="iv-top__crumbs" aria-label={tc('nav.breadcrumb')}>
-          <a href={`/systems/${page.system.slug}`}>{page.system.name}</a>
+          <a href={page.course?.hub ?? `/systems/${page.system.slug}`}>{page.system.name}</a>
           <span>/</span>
-          {session.scope ? (
+          {page.course ? (
+            <strong>{page.title}</strong>
+          ) : session.scope ? (
             <>
               <a href={`/systems/${page.system.slug}/interview${coach ? '?kind=coach' : ''}`}>{t(coach ? 'coach.crumb' : 'crumb')}</a>
               <span>/</span>
@@ -517,7 +530,7 @@ export default function InterviewRoom({ page, initial, join = null, onExit }: Pr
 
               {voiceOn && VoiceRoom ? (
                 <Suspense fallback={<div className="ivr-closed">{t('voice.joining')}</div>}>
-                  <VoiceRoom sessionId={session.id} join={join} session={session} onSession={setSession} onLeft={setSession} kind={coach ? 'coach' : 'interview'} onDraw={(ops) => boardRef.current?.draw(ops)} />
+                  <VoiceRoom sessionId={session.id} join={join} session={session} onSession={setSession} onLeft={setSession} kind={coach ? 'coach' : 'interview'} onDraw={(ops, pace, instant) => boardRef.current?.draw(ops, pace, instant)} onPen={(cue) => boardRef.current?.cue(cue)} />
                 </Suspense>
               ) : closed ? (
                 <div className="ivr-closed" role="status">

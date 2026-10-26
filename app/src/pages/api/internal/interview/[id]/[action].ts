@@ -19,7 +19,7 @@ export const prerender = false;
 //   POST attach     {token, task}                         takes the session: {epoch, seq, stage, say, ...}
 //   POST turns      {epoch, seq, text}                    a spoken candidate turn; the reply streams
 //                                                         (Accept: text/event-stream): delta, draw {ops, anchor}, done {turn, state}, error
-//   POST turns      {epoch, kind: "continue"}             a coach lesson's next move (docs/interview/coach-mode.md),
+//   POST turns      {epoch, kind: "continue"}             a coach lesson's next move (docs/coach-mode.md),
 //                                                         no words from the learner; streams the same way
 //   POST turns      {epoch, text, speculative: true}      the turn as heard so far, before it is confirmed:
 //                                                         the reply is started on it: {started}

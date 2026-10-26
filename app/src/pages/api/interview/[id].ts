@@ -20,7 +20,7 @@ export const prerender = false;
 //                                           event: done   {turn, session}   both turns saved
 //                                           event: error  {error, code, status, retryAfter}
 //                                         Checks that fail before Claude is called are plain JSON.
-//   POST {action: "continue"}            a coach lesson (docs/interview/coach-mode.md): the coach's next
+//   POST {action: "continue"}            a coach lesson (docs/coach-mode.md): the coach's next
 //                                         move without a message; streams like a reply
 //   POST {action: "advance", from}        the next stage (from: the stage index being left)
 //   POST {action: "finish"}               ends the session and writes the feedback
@@ -29,8 +29,9 @@ export const prerender = false;
 //                                         nothing is advanced on silence
 //   DELETE                                deletes the session now
 // In a voice session, reply, advance, idle and finish are 409 voice_live while a voice pipeline
-// holds the session (its lease, renewed by its turns and heartbeats; stale after a minute):
-// the candidate speaks, or ends the voice part first (POST [id]/voice {action: "leave"}).
+// holds the session (its lease, renewed by its turns and heartbeats; stale after a minute), and
+// before the first pipeline has attached (the voice speaks first): the candidate speaks, or ends
+// the voice part first (POST [id]/voice {action: "leave"}).
 
 const signedIn = async (cookies: Parameters<APIRoute>[0]['cookies']) => {
   const reader = await readerOr503(cookies);

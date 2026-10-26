@@ -1,0 +1,117 @@
+# Observers in practice: choosing the tool by the question, IntersectionObserver in brief, one shared observer per kind with cleanup, and the habits an interview answer names.
+id: dom-and-virtual-dom/observers/in-practice
+title: Choosing and sharing observers
+source:
+  hash: "b58547f08e2b"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: dom-and-virtual-dom/observers/resize-observer
+  assumes:
+    - "All three observers share one shape: a callback, observe per target, an array of entries, unobserve or disconnect."
+    - MutationObserver reports tree changes in a microtask after the script; its cost is the records it causes.
+    - ResizeObserver reports element sizes after layout and before paint; a callback must write only on a change and never change the size it reads.
+    - Container queries restyle a component from its container's size with no script.
+  carries:
+    - Pick the tool by the question; CSS first when the change is only visual, then the observer that answers exactly what the code needs.
+    - IntersectionObserver takes root, rootMargin and threshold in its constructor and reports threshold crossings, not continuous scroll positions.
+    - One observer per kind and configuration, shared through a map from element to handler; unobserve on unmount and disconnect on teardown.
+  terms:
+    - term: rootMargin
+      means: How much an IntersectionObserver grows or shrinks its root before testing intersection, which gives a look-ahead.
+    - term: threshold
+      means: The fraction, or list of fractions, of a target that must be visible for a change to be reported.
+    - term: shared observer
+      means: One observer for every component of a kind, with a map from element to that component's handler.
+board:
+  keep: [three-kinds, mo-kind, ro-kind, io-kind, shape, shape-new, shape-observe, shape-entries, shape-stop, frame, mo-delivery, ro-delivery, io-delivery, page-tree, editor-root, mo-flow, observer-box, mo-callback, four-ways, media-query, container-query, window-resize, ro-any-element, boxes-entry, border-box, content-box, depth-rounds, panel-depth, canvas-depth, kpi-tile, tile-small, tile-big, toolbar, tb-compact, tb-shorter, tb-full, tb-taller, band]
+  elements:
+    - { id: choose-tool, kind: region, label: Which tool answers the question, at: [1, 63], size: [58, 17] }
+    - { id: ask-visual, kind: diamond, label: only visual?, at: [3, 65], size: [11, 4], in: choose-tool, tone: neutral }
+    - { id: ask-size, kind: diamond, label: need the size?, at: [18, 65], size: [11, 4], in: choose-tool, tone: neutral }
+    - { id: ask-near, kind: diamond, label: near the screen?, at: [33, 65], size: [11, 4], in: choose-tool, tone: neutral }
+    - { id: ask-tree, kind: diamond, label: tree changed?, at: [48, 65], size: [11, 4], in: choose-tool, tone: neutral }
+    - { id: use-container, kind: box, label: container query, at: [3, 73], size: [11, 3], in: choose-tool, tone: green }
+    - { id: use-resize, kind: box, label: ResizeObserver, at: [18, 73], size: [11, 3], in: choose-tool, tone: blue }
+    - { id: use-intersection, kind: box, label: IntersectionObserver, at: [33, 73], size: [12, 3], in: choose-tool, tone: blue }
+    - { id: use-mutation, kind: box, label: MutationObserver, at: [48, 73], size: [11, 3], in: choose-tool, tone: blue }
+    - { id: one-per-kind, kind: note, label: one shared observer per kind, at: [3, 78], in: choose-tool }
+    - { id: unobserve-unmount, kind: note, label: unobserve on unmount, at: [20, 78], in: choose-tool }
+    - { id: baseline, kind: note, label: "all three Baseline, no polyfills", at: [33, 78], in: choose-tool }
+  arrows:
+    - { id: visual-yes, from: ask-visual, to: use-container, label: "yes" }
+    - { id: visual-no, from: ask-visual, to: ask-size, label: "no" }
+    - { id: size-yes, from: ask-size, to: use-resize, label: "yes" }
+    - { id: size-no, from: ask-size, to: ask-near, label: "no" }
+    - { id: near-yes, from: ask-near, to: use-intersection, label: "yes" }
+    - { id: near-no, from: ask-near, to: ask-tree, label: "no" }
+    - { id: tree-yes, from: ask-tree, to: use-mutation, label: "yes" }
+beats:
+  - point: Pick the tool by the question you are asking, and start with CSS, if a component only needs to restyle when its container narrows, a container query does it with no script and no loop.
+    kind: decision
+    weight: core
+    teach:
+      - Draw the questions as a row of decisions. The first one is whether the change is only visual, hiding labels, stacking columns.
+      - If it is, a container query answers it in the style engine. No callback, no chance of a loop, no frame of the wrong layout.
+    draw: [choose-tool, ask-visual, use-container, visual-yes]
+    check: A card only needs to hide its labels when it is narrower than 300 pixels. What is the best first choice, and why?
+    answer: A container query; the change is purely visual and depends on the space the card gets, so no script is needed and nothing can loop.
+    misconceptions:
+      - "Any size-dependent behaviour needs a ResizeObserver -> if only the styling changes, a container query does it with no script."
+  - point: When code needs the size as a number, a chart's pixel width or a canvas bitmap, ResizeObserver gives it from the layout already done, before paint.
+    kind: decision
+    weight: core
+    teach:
+      - Point back at the panel toolbar and the canvas. They needed numbers, a width to pick a mode and a device-pixel size for the bitmap, so CSS alone could not do it.
+      - The answer comes from the layout just computed, delivered before paint, so the adapted chart is in the same frame.
+    draw: [ask-size, visual-no, use-resize, size-yes]
+    check: Ledgerleaf's chart needs to know how many axis ticks fit its width. Container query or ResizeObserver?
+    answer: ResizeObserver, because the chart's code needs the pixel width as a number; a container query can only restyle.
+  - point: IntersectionObserver answers whether an element is within a root and by how much; root, rootMargin and threshold go in the constructor, each target gets an entry on observe, and it reports crossings, not continuous scroll positions.
+    kind: mechanism
+    weight: core
+    teach:
+      - The root is the viewport by default or a scroll container, rootMargin grows or shrinks it, and threshold is the fraction or list of fractions that must be visible. Entries carry isIntersecting, intersectionRatio and target, and observing always gives one first entry with the current state.
+      - Ledgerleaf's chart loader observes all six panels with rootMargin 600 pixels top and bottom, fetches a chart's series the first time its panel comes within 600 pixels of the viewport, and then unobserves it.
+      - The same machinery drives infinite-scroll sentinels, lazy images and seen analytics. It is the wrong tool for the exact scroll offset every frame; that is a passive scroll listener or a scroll-driven animation.
+    draw: [ask-near, size-no, use-intersection, near-yes]
+    check: Which of these is IntersectionObserver the wrong tool for, a panel coming within 600 pixels, half of a video being visible, or the exact scroll offset on every frame?
+    answer: The exact scroll offset on every frame; it reports threshold crossings, not continuous positions.
+    misconceptions:
+      - "IntersectionObserver takes options in observe like the others -> its root, rootMargin and threshold are fixed in the constructor for every target."
+  - point: When nodes, attributes or text change, possibly from code you do not own, MutationObserver is the tool; for what the person just typed, beforeinput and input events carry the intent.
+    kind: decision
+    weight: core
+    teach:
+      - Spellcheck, paste, an extension, a third-party script, any of them can change the editor. The observer on the editor root catches them all, after the script that made them.
+      - For the person's own typing, beforeinput and input events say what they meant and can be cancelled. In an editor the events give intent and the observer is the safety net.
+    draw: [ask-tree, near-no, use-mutation, tree-yes]
+    check: How would Ledgerleaf's editor notice that a browser extension changed a block's text?
+    answer: Through the MutationObserver on the editor root with subtree, childList and characterData; input events only describe the person's own input.
+  - point: Share one observer per kind and configuration across components, with a map from element to handler; register on mount, and on unmount unobserve the element and delete its handler, or both stay alive.
+    kind: rule
+    weight: core
+    teach:
+      - The natural mistake in a component framework is one observer per instance, six panels, six ResizeObservers, six callbacks a frame. It works, but one shared observer gives one callback per frame with batched entries and one place to reason about loops.
+      - Each component puts its handler in the map and calls observe when it mounts. The handler sets state only when the width really changed, so nothing re-renders for nothing.
+      - On unmount it calls unobserve and deletes its handler. Otherwise the observer still holds the removed element and the map still holds the closure, and neither can be collected.
+    draw: [one-per-kind, unobserve-unmount]
+    check: A panel component observes itself with a shared ResizeObserver but never unobserves on unmount. What does that cost?
+    answer: The removed panel stays in the observer's target list and its handler stays in the map, so the element and the closure cannot be garbage collected.
+    misconceptions:
+      - "Observers forget removed elements on their own -> an observed element stays referenced until it is unobserved or the observer is disconnected."
+  - point: "The interview answer names the habits: CSS when the change is only visual, one observer per kind with many targets, the narrowest config on the smallest root, writes only on a change, a band around thresholds, never changing the size you read, and cleanup; all three are Baseline, so no polyfills."
+    kind: rule
+    weight: supporting
+    teach:
+      - "For a dashboard whose widgets adapt to their space: restyling goes in container queries; where code needs the number, one shared ResizeObserver watches every widget, sizes after layout and before paint, writes only on a mode change, with a band so a scrollbar cannot make it flap. Expensive refetching is debounced, the layout response is not."
+      - If the error tracker shows the ResizeObserver loop message, look for a callback that resizes its own target or a parent, or flips between two states.
+      - MutationObserver has been everywhere for over a decade, IntersectionObserver since 2019, ResizeObserver since 2020; do not ship polyfills by default.
+    draw: [baseline]
+    check: Name three habits that keep observers cheap and loop-free.
+    answer: "Any three of: CSS when only visual; one observer per kind with many targets; narrowest MutationObserver config on the smallest root; write only when the derived value changes; a hysteresis band around thresholds; never change the size a ResizeObserver callback reads; unobserve on removal and disconnect on teardown."
+task:
+  prompt: Draw the row of questions from only visual to tree changed, with the tool each yes leads to, and add how six panel components share one ResizeObserver and clean up when one unmounts.
+  expects: [1, 2, 3, 4, 5]

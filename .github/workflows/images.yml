@@ -1,0 +1,90 @@
+name: Images
+
+# Builds lego-ai's two images and pushes them to the main site's ECR (lego: infra/lib/ci-stack.ts,
+# AiPushRole): arrowbox-ai:<env>-<sha> (the PUBLIC_* settings are compiled in, as for the web) and
+# arrowbox-voice:<sha>. Deploying them is lego's: its Deploy workflow, with ai_image_tag and
+# voice_image_tag. Run by hand; off until the repository variable AWS_PUSH_ROLE_ARN is set.
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: The environment whose build settings the app image gets
+        type: choice
+        options: [staging, prod]
+        default: staging
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  push:
+    if: vars.AWS_PUSH_ROLE_ARN != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      AWS_REGION: ap-south-1
+      REGISTRY: 627592226659.dkr.ecr.ap-south-1.amazonaws.com
+      SHA: ${{ github.sha }}
+      ENV_NAME: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: lego-ai
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ vars.LEGO_REPOSITORY || 'rakeshr410/lego' }}
+          token: ${{ secrets.LEGO_CHECKOUT_TOKEN }}
+          path: lego
+          sparse-checkout: |
+            content
+            content-kit
+            infra
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      # The main site's build settings for this environment, so the header and footer match its
+      # pages, plus the room's own flags (lego: infra/scripts/web-build-args.ts, config `ai.build`).
+      - name: App build arguments
+        id: args
+        working-directory: lego/infra
+        run: |
+          npm ci --no-audit --no-fund
+          {
+            echo 'args<<ARGS_END'
+            npx tsx scripts/web-build-args.ts "$ENV_NAME" "$SHA" ai
+            echo 'ARGS_END'
+          } >> "$GITHUB_OUTPUT"
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_PUSH_ROLE_ARN }}
+          role-session-name: lego-ai-images-${{ github.run_id }}
+          aws-region: ${{ env.AWS_REGION }}
+      - uses: aws-actions/amazon-ecr-login@v2
+      - uses: docker/setup-buildx-action@v3
+      - name: Build and push the app image
+        uses: docker/build-push-action@v6
+        with:
+          context: lego-ai
+          file: lego-ai/app/Dockerfile
+          build-contexts: lego=lego
+          platforms: linux/amd64
+          push: true
+          provenance: false
+          tags: ${{ env.REGISTRY }}/arrowbox-ai:${{ inputs.environment }}-${{ github.sha }}
+          labels: org.opencontainers.image.revision=${{ github.sha }}
+          build-args: ${{ steps.args.outputs.args }}
+          cache-from: type=gha,scope=ai-${{ inputs.environment }}
+          cache-to: type=gha,scope=ai-${{ inputs.environment }},mode=max
+      - name: Build and push the voice image (unless this commit's is there)
+        run: |
+          tag="$REGISTRY/arrowbox-voice:$SHA"
+          if aws ecr describe-images --repository-name arrowbox-voice --image-ids imageTag="$SHA" >/dev/null 2>&1; then
+            echo "$tag exists"; exit 0
+          fi
+          docker buildx build --platform linux/amd64 --provenance=false -f lego-ai/voice/Dockerfile \
+            --label org.opencontainers.image.revision="$SHA" -t "$tag" --push lego-ai
+      - name: Deploy with
+        run: |
+          echo "lego's Deploy workflow (${ENV_NAME}) with ai_image_tag=${ENV_NAME}-${SHA} and voice_image_tag=${SHA}" >> "$GITHUB_STEP_SUMMARY"

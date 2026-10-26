@@ -1,10 +1,10 @@
 import { serverEnv } from '../env';
 import { knownModel } from '../llm-gateway';
 
-// The mock interview's settings (web/.env.example, "Mock interview"), read per call like Ask's so
+// The mock interview's settings (app/.env.example, "Mock interview"), read per call like Ask's so
 // a restart picks up a change. Types, defaults and ranges are declared in env.ts.
 
-/** The turn-by-turn interviewer: a cheaper model than Ask's (docs/interview/cost-model.md). */
+/** The turn-by-turn interviewer: a cheaper model than Ask's (docs/cost-model.md). */
 export const DEFAULT_TURN_MODEL = 'claude-sonnet-5';
 /** The one feedback pass at the end reads the whole transcript: the premium model. */
 export const DEFAULT_FEEDBACK_MODEL = 'claude-opus-5';
@@ -12,7 +12,7 @@ export const DEFAULT_FEEDBACK_MODEL = 'claude-opus-5';
 export const DEFAULT_EVALUATOR_MODEL = 'claude-haiku-5-5';
 
 /**
- * The consent text's version (InterviewRoom.tsx shows it; docs/interview/privacy.md). Sessions
+ * The consent text's version (InterviewRoom.tsx shows it; docs/privacy.md). Sessions
  * record the version the candidate agreed to; bump it whenever the consent text changes.
  */
 export const CONSENT_VERSION = '2026-09-27.text-beta';
@@ -36,12 +36,14 @@ export function interviewConfig() {
     boardVisionCalls: s.INTERVIEW_BOARD_VISION_CALLS,
     monthlySessions: s.INTERVIEW_MONTHLY_SESSIONS,
     monthlyDrills: s.INTERVIEW_MONTHLY_DRILLS,
-    // Coach mode (docs/interview/coach-mode.md): its own quota; the interviewer's model unless set.
+    // Coach mode (docs/coach-mode.md): its own quota; the interviewer's model unless set.
     coach: {
       monthlySessions: s.INTERVIEW_COACH_MONTHLY_SESSIONS,
       maxTokens: s.INTERVIEW_COACH_MAX_TOKENS,
       sessionBudgetUsd: s.INTERVIEW_COACH_SESSION_BUDGET_USD,
       drawTools: s.INTERVIEW_COACH_DRAW_TOOLS,
+      questions: s.INTERVIEW_COACH_QUESTIONS,
+      asks: s.INTERVIEW_COACH_ASKS,
       model: knownModel(s.INTERVIEW_COACH_MODEL ?? s.INTERVIEW_MODEL ?? DEFAULT_TURN_MODEL, 'INTERVIEW_COACH_MODEL'),
     },
     maxTurns: s.INTERVIEW_MAX_TURNS,

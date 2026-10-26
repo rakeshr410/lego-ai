@@ -619,6 +619,26 @@
   margin: 1px 0 0;
   accent-color: var(--ink);
 }
+.ivl-name {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  font-size: var(--text-base);
+  color: var(--ink);
+}
+.ivl-name input {
+  max-width: 260px;
+  padding: var(--space-8) var(--space-10);
+  border: 1px solid var(--midnight-110);
+  border-radius: var(--radius-8);
+  background: var(--white);
+  font: inherit;
+  color: var(--ink);
+}
+.ivl-name small {
+  font-size: var(--text-sm);
+  color: var(--midnight-605);
+}
 .ivl-check--strong {
   font-weight: 600;
   color: var(--ink);

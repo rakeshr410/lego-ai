@@ -1,0 +1,171 @@
+# How polling, long polling and server-sent events work: who waits, where the old price stays on screen, and the cursor that keeps a watcher from missing a bid.
+id: client-server-protocols/polling-and-server-sent-events/how-it-works
+title: Polling and server-sent events
+source:
+  hash: deccae5037dd
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: null
+  assumes:
+    - Methods, paths, headers and status codes mean the same in HTTP/1.1, HTTP/2 and HTTP/3; page code does not change.
+  carries:
+    - "Short polling: the client asks on a timer and the server answers at once; the interval is the worst staleness and requests = watchers ÷ interval."
+    - A 304 to If-None-Match shrinks an empty poll's answer, never the request or its round trip.
+    - "Long polling: the server holds the request until there is news or a timeout, then the client asks again at once."
+    - Every event carries an increasing id, and a request that names the last id it saw cannot miss events published in between.
+    - "Server-sent events: one GET whose text/event-stream response stays open, one way, server to client."
+    - EventSource reconnects by itself with Last-Event-ID, and the server replays the log after that id.
+  terms:
+    - term: short polling
+      means: An ordinary GET on a timer; the server answers at once, usually with no change.
+    - term: long polling
+      means: A GET the server holds open until there is something new or its timeout fires; the page then asks again.
+    - term: cursor
+      means: The id of the last event the page has, sent with each request so the server can answer with everything newer.
+    - term: server-sent events (SSE)
+      means: A single HTTP response of type text/event-stream that never finishes, carrying events from server to page.
+    - term: Last-Event-ID
+      means: The header EventSource adds on reconnecting, holding the id of the last event it received.
+board:
+  keep: []
+  elements:
+    - { id: short-poll, kind: region, label: "Short polling, every 3 s", at: [2, 2], size: [37, 25] }
+    - { id: sp-page, kind: box, label: watcher's page, at: [4, 5], size: [11, 2], in: short-poll, tone: grey }
+    - { id: sp-server, kind: box, label: price endpoint, at: [26, 5], size: [11, 2], in: short-poll, tone: grey }
+    - { id: poll-get, kind: box, label: polls every 3 s, at: [4, 9], size: [11, 3], in: short-poll, tone: blue }
+    - { id: sp-price, kind: box, label: answers at once, at: [26, 9], size: [11, 3], in: short-poll, tone: blue }
+    - { id: sp-bid, kind: box, label: "bid $1,280 at 6.1 s", at: [26, 14], size: [11, 3], in: short-poll, tone: amber }
+    - { id: poll-late, kind: box, label: "$1,280 on screen 2.9 s late", at: [4, 14], size: [11, 3], in: short-poll, tone: red }
+    - { id: poll-stale, kind: note, label: "stale: one interval, average half", at: [4, 18], in: short-poll }
+    - { id: poll-rate, kind: note, label: "load: watchers over interval", at: [22, 18], in: short-poll }
+    - { id: sp-etag, kind: box, label: polls with ETag, at: [4, 20], size: [11, 3], in: short-poll, tone: blue }
+    - { id: poll-304, kind: box, label: "304 Not Modified, no body", at: [26, 20], size: [11, 3], in: short-poll, tone: green }
+    - { id: poll-etag, kind: note, label: "304: the request still goes", at: [4, 24], in: short-poll }
+    - { id: poll-hidden, kind: note, label: "hidden tab: every 30 s", at: [20, 24], in: short-poll }
+    - { id: long-poll, kind: region, label: Long polling, at: [41, 2], size: [37, 28] }
+    - { id: lp-page, kind: box, label: watching page, at: [43, 5], size: [11, 2], in: long-poll, tone: grey }
+    - { id: lp-server, kind: box, label: feed server, at: [65, 5], size: [11, 2], in: long-poll, tone: grey }
+    - { id: wait-get, kind: box, label: asks and waits, at: [43, 9], size: [11, 3], in: long-poll, tone: blue }
+    - { id: held, kind: box, label: held until a bid or 25 s, at: [65, 9], size: [11, 3], in: long-poll, tone: blue }
+    - { id: lp-bid, kind: box, label: bid 1042 lands, at: [65, 14], size: [11, 3], in: long-poll, tone: amber }
+    - { id: bid-answer, kind: box, label: "shows it, asks again", at: [43, 14], size: [11, 3], in: long-poll, tone: green }
+    - { id: timeout-204, kind: note, label: "timeout: 204, ask again", at: [43, 18], in: long-poll }
+    - { id: lp-render, kind: box, label: rendering 1042, at: [43, 20], size: [11, 3], in: long-poll, tone: grey }
+    - { id: gap, kind: box, label: "1043 lands, nobody waiting", at: [65, 20], size: [11, 3], in: long-poll, tone: red }
+    - { id: cursor, kind: box, label: next GET names 1042, at: [43, 25], size: [11, 3], in: long-poll, tone: green }
+    - { id: log-answer, kind: box, label: "1043 from its log, at once", at: [65, 25], size: [11, 3], in: long-poll, tone: green }
+    - { id: sse, kind: region, label: Server-sent events, at: [80, 2], size: [38, 30] }
+    - { id: sse-page, kind: box, label: lot page, at: [82, 5], size: [11, 2], in: sse, tone: grey }
+    - { id: sse-server, kind: box, label: feed endpoint, at: [104, 5], size: [11, 2], in: sse, tone: grey }
+    - { id: event-source, kind: box, label: new EventSource, at: [82, 9], size: [11, 3], in: sse, tone: blue }
+    - { id: sse-response, kind: box, label: "200 event-stream, stays open", at: [104, 9], size: [11, 3], in: sse, tone: green }
+    - { id: sse-event, kind: box, label: "id 1042, event price, data", at: [104, 14], size: [11, 3], in: sse, tone: amber }
+    - { id: sse-fired, kind: box, label: price listener runs, at: [82, 14], size: [11, 3], in: sse, tone: green }
+    - { id: blank-line, kind: note, label: a blank line ends an event, at: [82, 18], in: sse }
+    - { id: heartbeat, kind: note, label: comment every 10 s for proxies, at: [97, 18], in: sse }
+    - { id: sse-drop, kind: box, label: drained for a deploy, at: [104, 20], size: [11, 3], in: sse, tone: red }
+    - { id: reconnect, kind: box, label: "waits 3 s, then reconnects", at: [82, 20], size: [11, 8], in: sse, tone: green }
+    - { id: replay-log, kind: box, label: replays 1043 from log, at: [104, 25], size: [11, 3], in: sse, tone: amber }
+    - { id: snapshot, kind: note, label: "cursor too old: send a snapshot", at: [82, 29], in: sse }
+    - { id: stop-204, kind: note, label: "204 on reconnect: closed for good", at: [99, 29], in: sse }
+  arrows:
+    - { id: poll-ask, from: poll-get, to: sp-price, label: GET price }
+    - { id: poll-next, from: sp-bid, to: poll-late, label: at the 9 s poll }
+    - { id: nothing-new, from: sp-etag, to: poll-304, label: If-None-Match }
+    - { id: server-waits, from: wait-get, to: held, label: GET wait }
+    - { id: bid-lands, from: lp-bid, to: bid-answer, label: 200 with the bid }
+    - { id: lost-1043, from: gap, to: lp-render, label: never sent, dashed: true }
+    - { id: the-fix, from: cursor, to: log-answer, label: after 1042 }
+    - { id: one-get, from: event-source, to: sse-response, label: one GET }
+    - { id: keeps-writing, from: sse-event, to: sse-fired, label: keeps writing }
+    - { id: drop-retry, from: sse-drop, to: reconnect, label: drop, dashed: true }
+    - { id: after-id, from: reconnect, to: replay-log, label: Last-Event-ID 1042 }
+beats:
+  - point: Short polling is an ordinary GET on a timer that the server answers at once, so its interval is the worst staleness and its request rate, watchers divided by the interval, is the same whether the lot is quiet or busy.
+    kind: metric
+    weight: core
+    teach:
+      - Follow one watcher of Gavelry's lot 214, polling the price every 3 s. A bid of $1,280 lands at 6.1 s, just after a poll, so the page shows it 2.9 s late.
+      - That is the first number, the interval is the worst staleness, and on average a change waits half of it.
+      - The second number is load. Every watcher sends one full HTTP exchange per interval, cookies and all, even when the answer is no change. Busy or quiet, the rate is watchers over interval.
+    draw: [short-poll, sp-page, sp-server, poll-get, sp-price, poll-ask, sp-bid, poll-late, poll-next, poll-stale, poll-rate]
+    check: Watchers poll every 3 seconds. What is the longest a new bid can stay off a watcher's screen, and does a quiet lot cost the server fewer requests?
+    answer: Up to a whole interval, 3 s (1.5 s on average); and no, the request rate is watchers divided by the interval whatever the lot is doing.
+    misconceptions:
+      - "In short polling the server waits until there is news -> it answers at once, usually with no change; holding the request is long polling."
+  - point: An ETag and If-None-Match let an unchanged poll come back as a 304 with no body, which shrinks the answer but not the request or its round trip, and a hidden tab should poll far less often.
+    kind: rule
+    weight: core
+    teach:
+      - The price endpoint sends an ETag, a short version tag. With fetch's cache set to no-cache the browser revalidates every call with If-None-Match, and an unchanged price comes back 304 Not Modified, with the stored copy reused.
+      - Be clear what that saves. The request still goes and still costs a round trip; only the response shrinks.
+      - A hidden tab does not need the price every 3 s, and the browser throttles its timers anyway. Gavelry stretches the delay to 30 s while document.hidden is true and polls at once on visibilitychange.
+    draw: [sp-etag, poll-304, nothing-new, poll-etag, poll-hidden]
+    check: Gavelry adds ETags to its price endpoint. Which part of an empty poll gets cheaper, and which does not?
+    answer: The response shrinks to a 304 with no body; the request, its headers and its round trip are still paid every interval.
+    misconceptions:
+      - "A 304 means the browser skipped the request -> the request is still sent; only the answer has no body."
+  - point: Long polling moves the waiting to the server, which holds the request until a bid arrives or its timeout fires, and the page asks again the moment it gets an answer.
+    kind: flow
+    weight: core
+    teach:
+      - The page sends GET /lots/214/wait and the feed server sits on it until a bid comes in or 25 s pass, under the 60 s a default proxy allows a silent response.
+      - A bid completes the held request at once, so the watcher sees it about one trip later, roughly 20 ms. A timeout answers 204 with nothing new.
+      - Either way the page sends its next request straight away.
+    draw: [long-poll, lp-page, lp-server, wait-get, held, server-waits, lp-bid, bid-answer, bid-lands, timeout-204]
+    check: What does the server do with a long-poll request when nothing has happened yet, and what does the page do when it gets an answer?
+    answer: It holds the request until there is news or its timeout fires (204); the page then sends the next request immediately.
+    misconceptions:
+      - "Long polling is short polling with a longer interval -> the server holds each request open until there is news, so updates arrive about one trip after they happen."
+  - point: Between one answer and the next request no request is held, so a bid that lands then is lost unless every request carries a cursor, the last event id the page has, and the server answers from its log first.
+    kind: failure
+    weight: core
+    teach:
+      - Zoom in on the moment after the server answers with bid 1042. The page is still rendering it and its next request has not arrived. Bid 1043 lands right then, and nobody is waiting for it.
+      - If the next request only means tell me about the next thing, 1043 never reaches this watcher.
+      - The fix is a cursor. Every event has an increasing id, the request says GET /wait?after=1042, and the server first checks the lot's log. Anything newer is answered at once; only if nothing is newer does it hold the request.
+    draw: [lp-render, gap, lost-1043, cursor, log-answer, the-fix]
+    check: A long-poll client re-requests with GET /wait and no cursor. A bid is published while its previous answer is still in flight. What happens to that bid for this watcher, and how does a cursor fix it?
+    answer: It is never delivered, because the new request only waits for later events; with after=<last id> the server finds the bid in its log and answers at once.
+    misconceptions:
+      - "The server will queue the missed bid on the connection -> no request was held when it landed, so without a cursor nothing delivers it."
+  - point: Server-sent events keep long polling's held request but never close it, one GET whose text/event-stream response stays open while the server writes events into it, one way from server to page.
+    kind: mechanism
+    weight: core
+    teach:
+      - The page makes an EventSource for /lots/214/feed. The browser sends one GET, the server answers 200 with Content-Type text/event-stream and simply keeps writing.
+      - The body is UTF-8 lines of field, colon, value. data carries the payload, event names the type, id sets the event's id, retry sets the reconnect delay. A blank line ends and dispatches an event.
+      - A line starting with a colon is a comment the browser ignores, which makes it a good heartbeat for proxies, sent every 10 s here. The page never sees it, so a page watchdog needs a real event.
+      - A named event such as price goes only to addEventListener('price'); onmessage hears only events with no event line.
+    draw: [sse, sse-page, sse-server, event-source, sse-response, one-get, sse-event, sse-fired, keeps-writing, blank-line, heartbeat]
+    check: What does the wire look like for one price event on lot 214's feed, and what tells the browser the event is complete?
+    answer: Lines such as id 1042, event price and a data line with the JSON, inside one long-lived text/event-stream response; a blank line ends and dispatches the event.
+    misconceptions:
+      - "Server-sent events need HTTP/2 -> they are an ordinary HTTP response that stays open; Gavelry's feed is a plain HTTP/1.1 200 response."
+      - "SSE is two-way like a WebSocket -> events flow only from server to page; the page talks back with ordinary requests."
+      - "onmessage receives every event -> it hears only events with no event line; a named event needs addEventListener with its name."
+  - point: EventSource remembers the last event id, and when the connection drops it waits the retry delay and reconnects by itself with a Last-Event-ID header, so the server replays what the page missed from its log.
+    kind: flow
+    weight: core
+    teach:
+      - The feed instance is drained for a deploy. The browser waits the 3 s the server set with retry, then reconnects on its own with Last-Event-ID 1042.
+      - The server reads the lot's log after 1042 and writes 1043 first, then goes live. That is the long-poll cursor, built in.
+      - If the cursor is older than anything the log still holds, the server cannot know what was missed and sends one snapshot event with the whole state instead.
+      - Ending the response just triggers another reconnect. To stop for good, the server answers the reconnection with 204 or any non-200 status or wrong type, and EventSource closes.
+    draw: [sse-drop, reconnect, drop-retry, replay-log, after-id, snapshot, stop-204]
+    check: How does Gavelry's server make an EventSource stop reconnecting once the lot closes?
+    answer: It answers the reconnection with 204 No Content (any non-200 status or a wrong Content-Type also works), which closes the EventSource for good; ending the body only causes another reconnect.
+    misconceptions:
+      - "Closing the response stops the EventSource -> the browser treats it like a drop and reconnects; only a refused reconnection ends it."
+  - point: When a stream needs a POST body or custom headers, fetch can read a response as it arrives, but it gives up EventSource's automatic reconnect and Last-Event-ID.
+    kind: decision
+    weight: supporting
+    teach:
+      - The Ask about this lot panel sends its question in a POST with an Authorization header. EventSource always sends a GET and cannot add headers, its only option being withCredentials.
+      - fetch's response body is a stream the page reads chunk by chunk, still in the text/event-stream format. The cost is that reconnecting and resuming are now the page's job, acceptable for a one-off answer.
+task:
+  prompt: Draw one watcher hearing about bid 1043 three ways, short polling, long polling with a cursor and server-sent events, and mark who is waiting in each and how the page catches up after a gap.
+  expects: [1, 3, 4, 5, 6]

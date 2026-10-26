@@ -1,0 +1,153 @@
+# Reacting: pausing the poll and sockets when offline or hidden, catching up from a cursor before replaying, what a poll costs a phone's radio, network switches, and adapting to slow links.
+id: state-management/network-connectivity/live-updates-and-slow-links
+title: Live updates, battery and slow links
+source:
+  hash: "23207afd2975"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: state-management/network-connectivity/retries-and-queued-writes
+  assumes:
+    - "The monitor learns Offline from failed requests and a probe, and confirms Online with a probe answered by Stallhand."
+    - Writes made offline wait in a durable outbox and replay in order with idempotency keys.
+    - "Slow is a status: the rolling round-trip average is over 1,000 ms."
+  carries:
+    - OrderFeed polls with a cursor every 20 s, and stops when the monitor says Offline or the page is hidden.
+    - "On return it catches up from the cursor first (a full reload if the server says the cursor is too old), then restarts the timer, and only then does the outbox replay."
+    - "A poll's cost on a phone is the radio waking and staying in its high-power tail, not the bytes or an idle connection; 20 s polls cost about 29 per cent of a battery in a 7 h market day, 60 s about 10."
+    - "A switch from Wi-Fi to cellular kills TCP connections, and the next request pays about 3 round trips of setup; QUIC can migrate."
+    - "On Slow or Save-Data the app polls every 60 s, asks for small images, stops prefetching and lengthens read timeouts."
+  terms:
+    - term: cursor
+      means: "The server's position in the order log as of the last answer; GET /api/orders?since=cursor returns only what changed."
+    - term: radio tail
+      means: The seconds a phone's cellular radio stays in its high-power state after the last packet, in case more data follows.
+    - term: connection migration
+      means: "QUIC's ability, under HTTP/3, to keep a connection when the phone's address changes, because connections are named by IDs."
+    - term: Save-Data
+      means: "The person's request for less data use, sent as the Save-Data: on header and readable as navigator.connection.saveData."
+board:
+  keep: [retry-rules, timeouts, retry-yes, retry-no, parked, outbox-flow, sale-tap, outbox-store, req-layer, api, key-note, replay-when, post-sale, recorded, reply-lost, retry-same, dedupe, deleted, failed-rule, saved-first, in-order, one-by-one, sent, link-drops, error-seen, key-known, done, rollback, row-218, conflict, rolled-back, nell-decides, waiting-note, replayed, to-rollback, shown-to-her]
+  elements:
+    - { id: outage, kind: region, label: Two minutes without data, at: [2, 49], size: [66, 22] }
+    - { id: lbl-cell, kind: box, label: cell link, at: [4, 52], size: [8, 3], in: outage, tone: grey }
+    - { id: cell-4g, kind: box, label: "4G, 150 ms", at: [14, 52], size: [7, 3], in: outage, tone: green }
+    - { id: cell-dead, kind: box, label: "attached, no data", at: [22, 52], size: [32, 3], in: outage, tone: grey, dashed: true }
+    - { id: cell-back, kind: box, label: 4G again, at: [55, 52], size: [11, 3], in: outage, tone: green }
+    - { id: lbl-feed, kind: box, label: OrderFeed, at: [4, 60], size: [8, 3], in: outage, tone: grey }
+    - { id: feed-polls, kind: box, label: polls every 20 s, at: [14, 60], size: [13, 3], in: outage, tone: green }
+    - { id: feed-paused, kind: box, label: paused, at: [28, 60], size: [32, 3], in: outage, tone: grey, dashed: true }
+    - { id: lbl-mon, kind: box, label: monitor, at: [4, 56], size: [8, 3], in: outage, tone: grey }
+    - { id: mon-online, kind: box, label: Online, at: [14, 56], size: [12, 3], in: outage, tone: green }
+    - { id: mon-checking, kind: box, label: Checking, at: [27, 56], size: [6, 3], in: outage, tone: blue }
+    - { id: mon-offline, kind: box, label: Offline, at: [34, 56], size: [25, 3], in: outage, tone: red }
+    - { id: mon-back, kind: box, label: back Online, at: [60, 56], size: [8, 3], in: outage, tone: green }
+    - { id: feed-catchup, kind: box, label: catch up since c812, at: [61, 60], size: [7, 3], in: outage, tone: blue }
+    - { id: lbl-outbox, kind: box, label: outbox, at: [4, 64], size: [8, 3], in: outage, tone: grey }
+    - { id: box-sale1, kind: box, label: sale queued at 70 s, at: [33, 64], size: [10, 3], in: outage, tone: amber }
+    - { id: box-sale2, kind: box, label: second sale at 125 s, at: [48, 64], size: [10, 3], in: outage, tone: amber }
+    - { id: box-sent, kind: box, label: both sent, at: [61, 64], size: [7, 3], in: outage, tone: green }
+    - { id: lbl-screen, kind: box, label: screen, at: [4, 68], size: [8, 3], in: outage, tone: grey }
+    - { id: scr-none, kind: box, label: no banner, at: [14, 68], size: [13, 3], in: outage }
+    - { id: scr-banner, kind: box, label: "offline banner, rows dated", at: [28, 68], size: [32, 3], in: outage, tone: amber }
+    - { id: scr-sync, kind: box, label: "syncing, then clear", at: [61, 68], size: [7, 3], in: outage }
+    - { id: radio, kind: region, label: What a poll costs the radio, at: [72, 18], size: [46, 13] }
+    - { id: poll-wake, kind: box, label: a poll, at: [74, 21], size: [5, 3], in: radio, tone: red }
+    - { id: tail, kind: box, label: "tail: 11.6 s at 1 W", at: [80, 21], size: [13, 3], in: radio, tone: red }
+    - { id: idle-gap, kind: box, label: idle 8 s, at: [94, 21], size: [7, 3], in: radio, tone: grey }
+    - { id: next-poll, kind: box, label: next poll, at: [102, 21], size: [7, 3], in: radio, tone: red }
+    - { id: tail-again, kind: box, label: tail again, at: [110, 21], size: [7, 3], in: radio, tone: red }
+    - { id: awake-note, kind: note, label: "20 s polls: about 29 per cent of the battery", at: [74, 25], in: radio }
+    - { id: sixty-note, kind: note, label: "60 s polls: 10 per cent", at: [100, 25], in: radio }
+    - { id: idle-conn, kind: box, label: "an idle connection: no cost", at: [74, 27], size: [12, 3], in: radio, tone: grey }
+    - { id: headers-tiny, kind: box, label: "headers: tiny, compressed", at: [88, 27], size: [12, 3], in: radio, tone: grey }
+    - { id: slow-and-switch, kind: region, label: Switches and slow links, at: [72, 33], size: [37, 24] }
+    - { id: wifi-cell, kind: box, label: Wi-Fi to cellular, at: [74, 36], size: [10, 3], in: slow-and-switch, tone: blue }
+    - { id: tcp-dies, kind: box, label: TCP connections die, at: [93, 36], size: [12, 3], in: slow-and-switch, tone: red }
+    - { id: new-conn, kind: box, label: "new connection: 3 round trips", at: [93, 40], size: [14, 3], in: slow-and-switch, tone: red }
+    - { id: quic, kind: box, label: "on HTTP/3, QUIC migrates", at: [74, 40], size: [10, 3], in: slow-and-switch, tone: green }
+    - { id: slow-box, kind: box, label: "Slow, or save data on", at: [74, 45], size: [10, 3], in: slow-and-switch, tone: amber }
+    - { id: poll-60, kind: box, label: "poll every 60 s, not 20", at: [93, 45], size: [14, 3], in: slow-and-switch, tone: green }
+    - { id: thumbs, kind: box, label: "120 px thumbnails, no prefetch", at: [93, 49], size: [14, 3], in: slow-and-switch, tone: green }
+    - { id: read-15, kind: box, label: "reads wait 15 s, not 8", at: [93, 53], size: [14, 3], in: slow-and-switch, tone: green }
+    - { id: save-data-note, kind: note, label: "server sees Save-Data: on", at: [74, 50], in: slow-and-switch }
+  arrows:
+    - { id: then-replay, from: feed-catchup, to: box-sent }
+    - { id: address-changes, from: wifi-cell, to: tcp-dies, label: address changes }
+    - { id: to-new-conn, from: tcp-dies, to: new-conn }
+    - { id: to-quic, from: wifi-cell, to: quic }
+    - { id: spend-less, from: slow-box, to: poll-60, label: spend less }
+    - { id: to-thumbs, from: slow-box, to: thumbs }
+    - { id: to-reads, from: slow-box, to: read-15 }
+beats:
+  - point: "OrderFeed polls GET /api/orders?since=cursor every 20 s, and stops its timer when the monitor leaves Online for Offline or the page is hidden, because polls that cannot succeed only pile up failures."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Draw the outage as lanes over two minutes. The cell stops carrying data at 30 s and recovers at 150 s; navigator.onLine stays true throughout."
+      - "The cursor is the server's position in the order log as of the last answer, so each poll returns only what changed. The poll at 40 s times out at 48, the monitor checks, the probe fails, and OrderFeed pauses."
+      - "It also pauses when user 1 locks the phone or switches to the card reader's app. Hidden pages have their timers throttled anyway, to at least a second and in Chrome eventually to once a minute, so a hidden loop runs unpredictably rather than not at all."
+    draw: [outage, lbl-cell, cell-4g, cell-dead, cell-back, lbl-mon, mon-online, mon-checking, mon-offline, lbl-feed, feed-polls, feed-paused]
+    check: Why does OrderFeed stop its timer when the page is hidden, when the browser throttles hidden timers anyway?
+    answer: "Throttled timers still fire, just unpredictably, waking the network for nothing; stopping makes the behaviour deliberate, and the catch-up on return fills the gap."
+    misconceptions:
+      - "Keep polling while offline so you notice the return -> the monitor's probes do that; failed polls only pile up errors."
+  - point: "Resuming is a sequence: once Online is confirmed, OrderFeed first fetches everything since its cursor, then restarts the timer, and only then does the outbox replay, so queued writes meet the latest state."
+    kind: flow
+    weight: core
+    teach:
+      - "Finish the lanes. The link is back at 150 s, but the monitor only notices with its probe at 170 s. Then the catch-up since c812, possibly several pages, then the two queued sales replay, 201 each."
+      - "Catching up first means a queued 'collected' is judged against an order's latest state, and user 1 sees the current list before their own changes land. If the cursor is too old for the server's log it answers 410 and OrderFeed reloads today's list in full."
+      - "A WebSocket gets the same treatment, plus an application-level ping, because the page cannot send protocol pings."
+    draw: [mon-back, feed-catchup, lbl-outbox, box-sale1, box-sale2, box-sent, then-replay, lbl-screen, scr-none, scr-banner, scr-sync]
+    check: "When connectivity returns, why does OrderFeed catch up before the outbox replays?"
+    answer: "So queued writes are checked against the orders' latest state, such as a cancellation made meanwhile, and the screen is current before user 1's changes are reconciled."
+    misconceptions:
+      - "Restart the poll timer and carry on -> orders placed during the outage would be missed; fetch since the cursor first."
+  - point: "On a phone, a poll's real cost is the cellular radio waking to high power and staying in its tail for seconds after the last packet, so how often you poll sets the battery bill."
+    kind: metric
+    weight: core
+    teach:
+      - "An idle radio draws very little. To send anything it is promoted to a high-power state, and after the last packet it stays there for a tail in case more follows. LTE phones were measured at about 11.6 s at about 1 W (Huang et al.)."
+      - "Draw two polls with their tails. Each poll is about 12.8 J. A 20 s poll keeps the radio in the tail more than half the time."
+      - "Over a 7 hour market day that is 1,260 polls, about 16 kJ, some 29 per cent of a 4,000 mAh battery. Every 60 s is about 10. Newer networks often have shorter tails, so treat this as an upper bound."
+    draw: [radio, poll-wake, tail, idle-gap, next-poll, tail-again, awake-note, sixty-note]
+    check: "Polling every 60 s instead of every 20 s: roughly how does the radio energy change, and why?"
+    answer: "About three times less, since each poll pays roughly the same wake-up and tail and there are a third as many; about 29 per cent of the battery becomes about 10."
+  - point: "It is not the open connection or the header bytes that cost energy: an idle connection sends nothing and headers are small and compressed; it is how often the radio is woken."
+    kind: rule
+    weight: supporting
+    teach:
+      - "An idle TCP connection sends nothing, so the radio can sleep. Request headers are a few hundred bytes, and HTTP/2 and HTTP/3 compress repeated ones to a few bytes each."
+      - "A socket heartbeat every 30 s pays the same tail per beat; it is cheaper than a 20 s poll only because it wakes the radio less often."
+    draw: [idle-conn, headers-tiny]
+    check: What mainly makes a 20-second poll expensive on a phone?
+    answer: Waking the radio and holding it in its high-power tail after each request; not the headers and not keeping a connection open.
+    misconceptions:
+      - "Keeping a connection open drains the battery -> an idle connection sends nothing; wake-ups do."
+  - point: "Switching from Wi-Fi to cellular gives the phone a new address and kills every TCP connection, so the next request pays DNS, TCP and TLS setup, about 3 round trips; QUIC under HTTP/3 can migrate instead."
+    kind: failure
+    weight: supporting
+    teach:
+      - "Handing over between cells usually keeps the address; changing networks does not. TCP connections are tied to the addresses at both ends."
+      - "At 150 ms a round trip, setup is about 450 ms before the request's own round trip. QUIC names connections by IDs, so it can move to the new network without a new handshake."
+    draw: [slow-and-switch, wifi-cell, tcp-dies, address-changes, new-conn, to-new-conn, quic, to-quic]
+    check: "User 1 leaves the café Wi-Fi for cellular. What happens to Stallhand's open HTTP/2 connection?"
+    answer: "It dies, because the phone's address changed; the next request pays for a new connection, about 3 round trips. HTTP/3 over QUIC could have migrated."
+  - point: "When the status is Slow or saveData is on, Stallhand spends its bandwidth on what user 1 needs now: polls every 60 s, small thumbnails, no prefetch, and longer read timeouts so slow but working requests are not cut off."
+    kind: decision
+    weight: core
+    teach:
+      - "Draw the changes off the Slow box. Poll every 60 s not 20; 120 px thumbnails not 320; no prefetch of tomorrow's orders; stall photo uploads wait for a better link unless they ask."
+      - "Read timeouts go from 8 to 15 s: cutting off a slow but working request and retrying it only adds load."
+      - "The server sees the same preference without script: the browser sends Save-Data: on with every request, so image endpoints can pick smaller files."
+    draw: [slow-box, poll-60, spend-less, thumbs, to-thumbs, read-15, to-reads, save-data-note]
+    check: "On a Slow link, why does Stallhand lengthen its read timeout instead of keeping 8 s?"
+    answer: "Requests still succeed, just slowly; an 8 s timeout would cut them off and retry them, adding load to a link that is already struggling."
+    misconceptions:
+      - "Shorter timeouts on slow links fail faster and help -> they abort requests that would have worked and pile on retries."
+task:
+  prompt: "Draw the two-minute outage as lanes, cell link, monitor, OrderFeed, outbox and screen, and mark when the poll pauses, when the monitor notices the link is back, and the order of catch-up and replay."
+  expects: [1, 2]

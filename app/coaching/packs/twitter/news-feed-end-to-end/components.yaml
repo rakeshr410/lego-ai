@@ -1,0 +1,82 @@
+# News feed interview, components: drawn once the mock-up and the requirements are on the board; the UI tree from the mock-up, and the store, client, live channel and offline cache the requirements call for.
+id: twitter/news-feed-end-to-end/components
+title: Then the components
+source:
+  hash: "6dee6814fbb2"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: twitter/news-feed-end-to-end/requirements
+  assumes:
+    - "A TweetCard is an author row, text, an image box sized before the image arrives, and an action row with counts."
+    - "The requirements are written: newest first, endless with no repeats, images only, new tweets within about 10 s behind a pill, offline reading of the last 100 tweets."
+  carries:
+    - "The UI: FeedScreen (shell), FeedList (virtual list), TweetCard of AuthorRow, TweetText, ImageBox and ActionRow."
+    - "Behind the UI: Feed Store, Feed Client, Live Channel and Offline Cache; outside, the Image CDN and the Feed API."
+    - Cards read their tweet from the store by id and never fetch; only the Feed Client calls the server.
+    - The component diagram comes after the requirements, because the requirements decide what sits behind the UI.
+  terms:
+    - term: FeedList
+      means: The virtual list that renders the tweets in range and asks for more.
+    - term: Feed Store
+      means: The client store holding entities by id and the feed's ordered ids.
+board:
+  keep: [title, mock-up, phone, mock-header, tweet-one, author-row, tweet-text, image-box, action-row, tweet-two, more-below, requirements, fr-heading, fr-newest, fr-endless, fr-images, fr-new, fr-end, nfr-heading, nfr-devices, nfr-network, nfr-load, nfr-js, nfr-cpu, nfr-tasks, nfr-inp, nfr-stable, nfr-offline]
+  elements:
+    - { id: components, kind: region, label: "Components", at: [23, 3], size: [35, 26] }
+    - { id: c-feed-screen, kind: box, label: FeedScreen, at: [29, 8], size: [12, 2], in: components, tone: blue }
+    - { id: c-feed-list, kind: box, label: "FeedList, virtual list", at: [28, 12], size: [14, 2], in: components, tone: blue }
+    - { id: c-tweet-card, kind: region, label: TweetCard, at: [24, 16], size: [22, 10], in: components, tone: blue }
+    - { id: c-author, kind: box, label: AuthorRow, at: [25, 18], size: [10, 2], in: c-tweet-card }
+    - { id: c-text, kind: box, label: TweetText, at: [36, 18], size: [10, 2], in: c-tweet-card }
+    - { id: c-image, kind: box, label: ImageBox, at: [25, 21], size: [10, 2], in: c-tweet-card }
+    - { id: c-actions, kind: box, label: ActionRow, at: [36, 21], size: [10, 2], in: c-tweet-card }
+    - { id: c-store, kind: oval, label: Feed Store, at: [48, 12], size: [9, 3], in: components, tone: amber }
+    - { id: c-client, kind: box, label: Feed Client, at: [48, 17], size: [9, 2], in: components }
+    - { id: c-live, kind: box, label: Live Channel, at: [48, 20], size: [9, 2], in: components }
+    - { id: c-cache, kind: box, label: Offline Cache, at: [48, 23], size: [9, 2], in: components }
+  arrows:
+    - { id: screen-holds-list, from: c-feed-screen, to: c-feed-list }
+    - { id: list-holds-card, from: c-feed-list, to: c-tweet-card }
+    - { id: list-reads-store, from: c-feed-list, to: c-store, label: reads }
+    - { id: store-calls-client, from: c-store, to: c-client }
+beats:
+  - point: The breakdown is the component tree, FeedScreen is the route shell, FeedList the virtual list inside it, and each TweetCard is made of AuthorRow, TweetText, ImageBox and ActionRow.
+    kind: component
+    weight: core
+    teach:
+      - "Now that the requirements are written, turn the drawing into components. FeedScreen is the shell for the home route: it ships a skeleton in its HTML, hosts the list and the new-tweets pill, and restores the reading position."
+      - "FeedList is the virtual list: two sentinels and a pool of recycled nodes, which the rendering section draws. Each tweet is a TweetCard, built from the four parts you just drew."
+    draw: [components, c-feed-screen, c-feed-list, screen-holds-list, c-tweet-card, list-holds-card, c-author, c-text, c-image, c-actions]
+    check: Why break one tweet into four parts on the mock-up?
+    answer: The parts are the component tree, and their fields are the data each card needs, both reused by the later sections.
+  - point: Behind the UI sit the Feed Store, the Feed Client, the Live Channel and the Offline Cache; the list reads ids from the store, cards read their tweet by id and never fetch, and only the client calls the server.
+    kind: component
+    weight: core
+    teach:
+      - "Feed Store holds every entity by id and the feed's ids in order. FeedList reads the ids in range and calls loadMore; each TweetCard reads its tweet by id."
+      - "Feed Client is the only caller of the tweets endpoint and hands pages to the store. Live Channel exists because of the new-tweets requirement, announced within about 10 seconds. Offline Cache, the service worker plus IndexedDB, exists because of the offline requirement."
+      - Outside the browser are the Image CDN, which the cards' images come from, and the Feed API, the black box.
+    draw: [c-store, list-reads-store, c-client, store-calls-client, c-live, c-cache]
+    check: Does a TweetCard fetch its own tweet? Where does it get it from?
+    answer: No; it reads its tweet by id from the Feed Store, and only the Feed Client calls the server.
+    misconceptions:
+      - "Each card fetches its own data -> the store owns the data, the client fetches pages for it, and cards read by id."
+asks:
+  - ids: [c-feed-screen, c-feed-list, c-tweet-card, c-author, c-text, c-image, c-actions]
+    beats: [1]
+    question: "Looking at the mock-up, what components would you split the screen into? Name them and I'll draw them."
+    hints:
+      - Start from the whole screen, then the list, then one tweet.
+      - Each part of a tweet you drew could be a component of its own.
+  - ids: [c-store, c-client, c-live, c-cache]
+    beats: [2]
+    question: "Now, what has to sit behind the UI to meet the requirements? Name the pieces."
+    hints:
+      - Where do the tweets live once they've arrived, and who fetches them?
+      - Look at the requirements again, the new tweets and the offline reading.
+task:
+  prompt: "Draw the components the feed becomes: FeedScreen, FeedList, TweetCard and its parts, and the Feed Store, Feed Client, Live Channel and Offline Cache behind them."
+  expects: [1, 2]

@@ -3,7 +3,7 @@
 - **Status:** Accepted, 2026-10-23
 - **Extends:** [ADR 0003](0003-section-driven-interviews.md) (the web tier owns the session) and
   [ADR 0004](0004-interview-whiteboard.md) (the board stays as it is in a voice session)
-- **Design:** [docs/interview/README.md](../interview/README.md), "Voice"; the AI interviewer
+- **Design:** [docs/README.md](../README.md), "Voice"; the AI interviewer
   design note (Arrowbox, 22 October 2026), section 6; owner decisions of 2026-10-22: Pro only,
   five 45-minute sessions a month, realistic mode only, English (Indian English), desktop only
 - **Code:** `web/src/lib/server/interview/voice.ts`, `voice-token.ts`, `daily.ts`,

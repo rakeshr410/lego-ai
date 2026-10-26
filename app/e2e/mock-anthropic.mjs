@@ -18,7 +18,7 @@ let aborted = 0;
 
 const ANSWER = 'Mock tutor answer: the passage explains how the login form validates input before it calls the API.';
 
-/** JSON for the interview feedback schema (web/src/lib/server/interview/prompt.ts feedbackSchema). */
+/** JSON for the interview feedback schema (src/lib/server/interview/prompt.ts feedbackSchema). */
 function structured(schema) {
   const keys = (name) => schema?.properties?.[name]?.items?.properties?.key?.enum ?? [];
   return JSON.stringify({

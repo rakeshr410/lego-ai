@@ -1,6 +1,6 @@
 import type { DerivedItem, DerivedPlan, DerivedStage } from '@arrowbox/content-kit';
 
-// The director (docs/interview/README.md, design section 5): a decision table, run once per
+// The director (docs/README.md, design section 5): a decision table, run once per
 // candidate turn (and on idle rungs), that decides what the interviewer does next: which coverage
 // item to ask about, whether to probe a wrong answer, rephrase, hint, skip, move to the next
 // section inside the stage, advance the stage or wrap up. The model has no tools: it reads the

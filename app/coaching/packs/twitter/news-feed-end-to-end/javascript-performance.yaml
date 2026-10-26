@@ -1,0 +1,126 @@
+# News feed interview, JavaScript performance and wrap-up: the UI thread kept free (small tasks, one store update per page, only the window rendered) and what moves off it or is deferred (workers, idle callbacks, IndexedDB, the service worker, less code, stream events batched per frame), then the recap.
+id: twitter/news-feed-end-to-end/javascript-performance
+title: Keep the UI thread free, then recap
+source:
+  hash: "81ae1a727e2d"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: twitter/news-feed-end-to-end/rendering-performance
+  assumes:
+    - "CPU budget: no task over 50 ms while scrolling, INP 200 ms or less; initial JavaScript 100 KB or less compressed."
+    - Pages outside the in-memory window are offloaded to IndexedDB; localStorage is only for small preferences.
+    - "New-tweet ids arrive over server-sent events, wait in pending ids and are counted by the pill."
+    - Route splitting and one modern build were covered in the network bucket.
+  carries:
+    - "Never block the UI thread: keep every task under 50 ms, apply a page in one store update, render only the window, and split long loops into chunks that yield."
+    - "Web Workers for genuinely heavy work (a search index, image decoding), not for parsing a 12 KB page."
+    - "Background chores run in requestIdleCallback with a timeout, with a setTimeout fallback where it is not supported (Safari)."
+    - "The service worker serves hashed assets and images cache-first from Cache Storage and the feed network-first, falling back to tweets in IndexedDB offline."
+    - "Stream updates are buffered and applied once per animation frame; minimizing runtime state means normalizing and offloading."
+  terms:
+    - term: UI thread
+      means: The browser's main thread, which runs JavaScript, style, layout and input handling for the page.
+    - term: long task
+      means: A task on the UI thread longer than 50 ms, which delays frames and the next interaction.
+    - term: Web Worker
+      means: A background thread for JavaScript that cannot touch the DOM; data is copied to and from it.
+    - term: service worker
+      means: A worker that sits between the page and the network, serving requests from Cache Storage.
+board:
+  keep: []
+  elements:
+    - { id: javascript, kind: region, label: "JavaScript, then recap", at: [82, 86], size: [37, 23] }
+    - { id: ui-thread, kind: region, label: "UI thread, tasks under 50 ms, INP 200 ms", at: [83, 88], size: [35, 7], in: javascript, tone: blue }
+    - { id: input-task, kind: box, label: scroll and taps, at: [84, 90], size: [10, 3], in: ui-thread, tone: green }
+    - { id: render-window, kind: box, label: render the window only, at: [96, 90], size: [10, 3], in: ui-thread }
+    - { id: one-update, kind: box, label: one store update per page, at: [108, 90], size: [10, 3], in: ui-thread, tone: amber }
+    - { id: off-thread, kind: region, label: "Off the thread, or batched", at: [83, 97], size: [35, 11], in: javascript, tone: green }
+    - { id: worker, kind: box, label: "worker, search index", at: [84, 99], size: [10, 3], in: off-thread }
+    - { id: idb-async, kind: box, label: "IndexedDB, not localStorage", at: [96, 99], size: [10, 3], in: off-thread, tone: amber }
+    - { id: idle, kind: box, label: "idle time, offload pages", at: [108, 99], size: [10, 3], in: off-thread }
+    - { id: service-worker, kind: box, label: "service worker, cache first", at: [84, 103], size: [10, 3], in: off-thread }
+    - { id: less-js, kind: box, label: "ship less JS, 100 KB", at: [96, 103], size: [10, 3], in: off-thread }
+    - { id: batch-frame, kind: box, label: "stream events, once a frame", at: [108, 103], size: [10, 3], in: off-thread }
+  arrows:
+    - { id: later, from: one-update, to: idle, label: later }
+beats:
+  - point: "Everything the reader does waits for the UI thread, so never block it: keep every task under 50 ms, apply a page to the store in one update, render only the cards in the window, and split any loop that might run long into chunks that yield."
+    kind: rule
+    weight: core
+    teach:
+      - "Scrolling, tapping like and opening a tweet all wait for the main thread. One long task, say normalizing a large page or writing to storage, delays the next frame and the reader's next tap; INP should stay at 200 ms or less."
+      - "Do as little as possible per task and make the rest asynchronous: one store update per page, only the window's cards rendered, and long loops broken into chunks that yield back to the browser."
+    draw: [javascript, ui-thread, input-task, render-window, one-update]
+    check: What is the rule of thumb for work on the UI thread while the reader scrolls?
+    answer: No task over 50 ms; do as little per task as possible, render only the window, and chunk or defer the rest.
+  - point: "Move genuinely heavy work to a Web Worker, such as building a search index over cached tweets or decoding and resizing images before upload; parsing a 12 KB page is not heavy, and copying it to and from a worker would cost more than it saves."
+    kind: decision
+    weight: core
+    teach:
+      - CPU-heavy jobs on the main thread freeze scrolling. A worker runs them on another thread, but the data is copied across, and DOM work must stay on the main thread.
+      - "So the worker is for big jobs: an index over thousands of cached tweets, image decoding. Not for a page of ten tweets."
+    draw: [off-thread, worker]
+    check: Which is worth moving to a Web Worker, parsing one 12 KB page or building a search index over thousands of cached tweets?
+    answer: The search index; a small page costs more to copy to a worker than it saves.
+    misconceptions:
+      - "Move all data processing to a worker -> small jobs cost more to copy than they save; workers are for heavy CPU work."
+  - point: "Background chores such as offloading pages to IndexedDB are scheduled with requestIdleCallback and a timeout so they run when the browser has nothing else to do; Safari does not support it, so fall back to setTimeout there."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Offloading a page that left the window is a chore; run mid-scroll it costs a frame. Queue it for idle time, with a timeout so it still happens eventually."
+      - requestIdleCallback is not in Safari; a setTimeout fallback covers it.
+    draw: [idle, later]
+    check: Why schedule offloading with requestIdleCallback, and what do you do in Safari?
+    answer: So it runs when the browser is idle rather than mid-scroll; Safari lacks it, so fall back to setTimeout.
+  - point: "Storage stays asynchronous: IndexedDB for anything sizeable, as in the state section, and localStorage, which is synchronous and blocks the thread, only for a few small preferences read once at start."
+    kind: rule
+    weight: core
+    teach:
+      - "Point back at IndexedDB in the state section. Its reads and writes are asynchronous; localStorage's are synchronous and would block the thread on every write of a page."
+    draw: [idb-async]
+    check: Why is localStorage the wrong place for offloaded feed pages?
+    answer: Its reads and writes are synchronous and block the UI thread; IndexedDB is asynchronous and structured.
+  - point: "A service worker between the page and the network makes repeat visits cheap and the feed readable offline: hashed assets and images are cache-first from Cache Storage, the feed endpoint is network-first, and offline the store renders the tweets saved in IndexedDB."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Without it, the app does not even open offline and every visit redownloads the shell. The service worker keeps responses, the shell and images, in Cache Storage, not in IndexedDB."
+      - "Hashed assets and images are cache-first. The feed is network-first; when there is no network the store reads the tweets it saved in IndexedDB. A new deploy installs a new worker with new hashed files."
+    draw: [service-worker]
+    check: Where does the service worker keep the responses it caches, and where do the offline tweets come from?
+    answer: Responses go in Cache Storage (the Cache API); the normalized tweets the store reads offline are in IndexedDB.
+    misconceptions:
+      - "The service worker stores the feed in IndexedDB -> it caches request and response pairs in Cache Storage; IndexedDB holds the store's offloaded tweets."
+  - point: "Ship less JavaScript: every kilobyte is downloaded, then parsed and compiled, which is costly on a mid-range phone, so route splitting and the modern build come back here, each dependency's cost is checked before it is added, and the 100 KB initial budget is enforced in CI."
+    kind: rule
+    weight: supporting
+    teach:
+      - "The cheapest main-thread work is code that never ships. Check a dependency's size before adding it, and fail the build when the initial bundle passes 100 KB compressed."
+    draw: [less-js]
+    check: How is the 100 KB initial JavaScript budget kept from creeping up?
+    answer: Route splitting and a modern build keep it small, each dependency is checked before it is added, and CI fails the build over budget.
+  - point: "To wrap up: Live Channel buffers bursts of stream events and applies them once per animation frame (the pill's count, never an insert above the reader); minimizing runtime state means normalizing and offloading; then recap the board and name the stretch topics."
+    kind: flow
+    weight: core
+    teach:
+      - "Twenty new-tweet events in a second should not mean twenty renders. Buffer them and apply them in one requestAnimationFrame: the pill's count changes once. For streamed text, the same buffering appends one chunk per frame so it grows without flicker."
+      - "Minimizing runtime state is the state and storage sections together: store less by normalizing, keep less by offloading pages outside the window to IndexedDB."
+      - "Then a short recap, top to bottom: mock-up, requirements, state, API, the three buckets. With time left, take the parking lot: accessibility of the virtual list first, then cache invalidation for the offline copy."
+    draw: [batch-frame]
+    check: Twenty new-tweet events arrive within a second. How should Live Channel update the UI?
+    answer: Buffer them and apply them to the store once per animation frame, updating the pill's count once; never insert tweets above the reader.
+asks:
+  - ids: [render-window, one-update, worker, idle, idb-async, service-worker, less-js]
+    frame: [javascript, ui-thread, input-task, off-thread]
+    beats: [1, 2, 3, 4, 5, 6]
+    question: "The UI thread runs everything the reader does. How would you keep it free, so taps answer fast? Name your ideas one at a time."
+    hints:
+      - What could move off the thread, or wait until the browser is idle?
+      - And what about how much JavaScript there is?
+task:
+  prompt: "Draw the UI thread with what stays on it, and below it what moves off it or is deferred: worker, idle callbacks, IndexedDB, the service worker, less JavaScript and stream events batched per frame."
+  expects: [1, 2, 3, 5, 7]

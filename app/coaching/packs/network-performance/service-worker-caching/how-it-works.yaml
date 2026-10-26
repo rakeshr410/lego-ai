@@ -1,0 +1,168 @@
+# How a service worker works: registration and scope, its own thread, the lifecycle and why versions wait, skipWaiting and clients.claim, update checks, the five strategies, and Cache Storage's rules.
+id: network-performance/service-worker-caching/how-it-works
+title: Strategies, updates and offline
+source:
+  hash: b122e6dcf9d0
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: network-performance/service-worker-caching/key-idea
+  assumes:
+    - A service worker receives a fetch event for every request from pages in its scope and answers it with a Response it chooses.
+    - Each kind of request gets its own strategy over Cache Storage and the network.
+    - A new worker version installs beside the old one and waits until no open tab depends on the old one.
+  carries:
+    - A worker's scope is by default the folder its script lives in, and service workers only run on secure origins.
+    - The worker runs on its own thread with no DOM and is stopped when idle, so state that must last goes in Cache Storage or IndexedDB.
+    - "A version goes installing, installed (waiting), activating, activated, and the waiting ends when the old worker has no clients or skipWaiting() is called."
+    - skipWaiting() puts old pages under the new worker; Tidewatch only calls it when the reader asks, and reloads every tab.
+    - "Five strategies: cache-first, network-first with a timeout, stale-while-revalidate, network-only and cache-only."
+    - Nothing in Cache Storage expires; every cache needs code that deletes it.
+  terms:
+    - term: client
+      means: A page or tab that a service worker version controls.
+    - term: waiting
+      means: The installed state in which a new version is ready but the old one still controls open tabs.
+    - term: skipWaiting()
+      means: A call that makes the installed version activate at once and take over every tab the registration controls.
+    - term: clients.claim()
+      means: A call during activate that makes the worker control in-scope tabs that loaded without it.
+    - term: stale-while-revalidate
+      means: Answer from the cache now and refresh the cache from the network in the background.
+    - term: opaque response
+      means: A cross-origin response fetched without CORS, unreadable to code and counted heavily against quota.
+board:
+  keep: [no-worker, nw-page, http-cache, offline-error, headers-note, sw-path, sw-page, sw, network, cache-storage, every-request, answers, morning, m-no-sw, m-sw, m-offline, not-faster, two-ideas, idea-strategy, idea-lifecycle, strategy-note, lifecycle-note, asks-cache, nw-offline, fetch-event, to-network, match-put]
+  elements:
+    - { id: lifecycle, kind: region, label: One worker version, at: [1, 34], size: [68, 20] }
+    - { id: url-note, kind: note, label: "one stable sw.js URL, compared byte by byte", at: [3, 36], in: lifecycle }
+    - { id: lc-parsed, kind: box, label: parsed, at: [3, 38], size: [8, 3], in: lifecycle, tone: grey }
+    - { id: lc-installing, kind: box, label: "installing: precache", at: [17, 38], size: [12, 3], in: lifecycle, tone: blue }
+    - { id: lc-installed, kind: box, label: "installed, waiting", at: [35, 38], size: [12, 3], in: lifecycle, tone: amber }
+    - { id: lc-activating, kind: box, label: "activating: drop old caches", at: [55, 38], size: [12, 3], in: lifecycle, tone: blue }
+    - { id: lc-redundant, kind: box, label: redundant, at: [17, 46], size: [12, 3], in: lifecycle, tone: grey }
+    - { id: skip-waiting, kind: box, label: skipWaiting, at: [35, 46], size: [12, 3], in: lifecycle, tone: red }
+    - { id: lc-activated, kind: box, label: "activated: handles fetch", at: [55, 46], size: [12, 3], in: lifecycle, tone: green }
+    - { id: reload-note, kind: note, label: "a reload keeps the old page a client", at: [3, 51], in: lifecycle }
+    - { id: mismatch-note, kind: note, label: "v41 page under v42 worker: chunk missing", at: [23, 51], in: lifecycle }
+    - { id: claim-note, kind: note, label: "clients.claim takes uncontrolled tabs", at: [44, 51], in: lifecycle }
+    - { id: registration, kind: region, label: Registration and scope, at: [71, 34], size: [49, 15] }
+    - { id: register-call, kind: box, label: register sw.js after load, at: [73, 38], size: [14, 3], in: registration, tone: blue }
+    - { id: scope-box, kind: region, label: "scope: the script's folder", at: [93, 37], size: [26, 8], in: registration, dashed: true }
+    - { id: sc-spots, kind: box, label: spot pages, at: [95, 40], size: [10, 3], in: scope-box, tone: blue }
+    - { id: sc-forecast, kind: box, label: forecast pages, at: [107, 40], size: [10, 3], in: scope-box, tone: blue }
+    - { id: https-note, kind: note, label: "HTTPS only, localhost to develop", at: [73, 42], in: registration }
+    - { id: allowed-note, kind: note, label: "wider scope: Service-Worker-Allowed", at: [93, 46], in: registration }
+    - { id: thread-note, kind: note, label: "own thread, no DOM, stopped when idle", at: [73, 46], in: registration }
+    - { id: strategies, kind: region, label: Five strategies, at: [1, 56], size: [59, 22] }
+    - { id: st-cache-group, kind: region, label: cache answers first, at: [3, 59], size: [50, 8], in: strategies, dashed: true }
+    - { id: st-cache-only, kind: box, label: "cache-only: the precached shell", at: [5, 62], size: [14, 3], in: st-cache-group, tone: green }
+    - { id: st-cache-first, kind: box, label: "cache-first: hashed JS, CSS, photos", at: [21, 62], size: [14, 3], in: st-cache-group, tone: green }
+    - { id: st-swr, kind: box, label: "stale-while-revalidate: spot list", at: [37, 62], size: [14, 3], in: st-cache-group, tone: green }
+    - { id: swr-note, kind: note, label: "stale copy: one visit behind at worst", at: [37, 68], in: strategies }
+    - { id: st-net-group, kind: region, label: network answers first, at: [3, 70], size: [34, 8], in: strategies, dashed: true }
+    - { id: st-network-first, kind: box, label: "network-first, 3 s: forecast", at: [5, 73], size: [14, 3], in: st-net-group, tone: blue }
+    - { id: st-network-only, kind: box, label: "network-only: POSTs, search", at: [21, 73], size: [14, 3], in: st-net-group, tone: grey }
+    - { id: dated-note, kind: note, label: "offline: the last copy, dated in the UI", at: [39, 74], in: strategies }
+    - { id: cache-rules, kind: region, label: What Cache Storage does not do, at: [62, 56], size: [44, 17] }
+    - { id: cr-precache, kind: box, label: precache list, at: [64, 60], size: [12, 3], in: cache-rules, tone: grey }
+    - { id: shell-cache, kind: oval, label: tidewatch-shell-v42, at: [85, 60], size: [18, 3], in: cache-rules, tone: amber }
+    - { id: cr-reply, kind: box, label: forecast response, at: [64, 66], size: [12, 3], in: cache-rules, tone: blue }
+    - { id: forecast-cache, kind: oval, label: tidewatch-forecasts, at: [85, 66], size: [18, 3], in: cache-rules, tone: amber }
+    - { id: rule-opaque, kind: note, label: "opaque reply: about 7 MB of quota", at: [64, 70], in: cache-rules }
+    - { id: rule-expiry, kind: note, label: "nothing expires: your code deletes it", at: [85, 70], in: cache-rules }
+  arrows:
+    - { id: sc-controls, from: register-call, to: scope-box, label: controls }
+    - { id: lc-install, from: lc-parsed, to: lc-installing, label: install }
+    - { id: lc-ok, from: lc-installing, to: lc-installed, label: cached }
+    - { id: lc-fail, from: lc-installing, to: lc-redundant, label: fails, dashed: true }
+    - { id: lc-no-clients, from: lc-installed, to: lc-activating, label: tabs closed }
+    - { id: lc-done, from: lc-activating, to: lc-activated, label: done }
+    - { id: lc-skip, from: skip-waiting, to: lc-activating, label: skips the wait }
+    - { id: cr-all-or-nothing, from: cr-precache, to: shell-cache, label: all or nothing }
+    - { id: cr-clone, from: cr-reply, to: forecast-cache, label: a clone }
+beats:
+  - point: The page registers sw.js for a scope, by default the folder the script sits in, and only on a secure origin, because a script that can rewrite every response must not be injectable.
+    kind: mechanism
+    weight: core
+    teach:
+      - Tidewatch calls register for /sw.js once the page has loaded, so installing never competes with a first visit's critical requests.
+      - The scope is a URL prefix, by default the script's own folder, which is why sw.js sits at the root and not under /static/. A wider scope needs the server to send Service-Worker-Allowed with the script.
+      - Service workers only exist over HTTPS, or localhost while developing.
+    draw: [registration, register-call, scope-box, sc-spots, sc-forecast, sc-controls, allowed-note, https-note]
+    check: Tidewatch's sw.js is served from /static/sw.js. Which pages can it control by default, and how would you widen that?
+    answer: Only pages under /static/, its own folder; to cover the whole site, serve it from the root or send a Service-Worker-Allowed header with the script.
+  - point: The worker runs on its own thread with no DOM, and the browser stops it when idle and starts it for the next event, so anything kept in a global can vanish between two requests.
+    kind: rule
+    weight: core
+    teach:
+      - Once a page is controlled, every request it makes passes through the worker, including requests to static.tidewatch.example and api.tidewatch.example. Pages on other origins are never controlled by it.
+      - The worker is not part of the page. It runs on its own thread, without a DOM, and is stopped when idle, so state that must survive goes in Cache Storage or IndexedDB.
+    draw: [thread-note]
+    check: Tidewatch's worker counts forecast requests in a global variable. Why does the count keep resetting?
+    answer: The browser stops an idle worker and starts it again for the next event, so globals are lost; anything that must last belongs in Cache Storage or IndexedDB.
+    misconceptions:
+      - "The service worker runs on the page's main thread -> it runs on its own thread with no DOM, between the page and the network."
+      - "A worker keeps running in the background -> the browser stops it when idle and restarts it per event."
+  - point: Each version installs, fills its precache, then waits as installed until the old version has no clients left, and only then activates, deletes old caches and handles fetches.
+    kind: mechanism
+    weight: core
+    teach:
+      - Walk release v42 while two tabs run v41. A navigation finds a byte-different sw.js, so v42 installs beside v41 and caches its shell under its own name. If one precache URL returns 404, addAll fails as a whole, v42 is discarded and v41 keeps running.
+      - Then v42 waits, because a tab that booted on v41's HTML expects v41's scripts and chunks. A reload does not end the wait, since the old page stays a client until the new response arrives.
+      - When the last v41 tab closes, v42 activates, its activate handler deletes the v41 shell cache, and the next visit runs v42.
+    draw: [lifecycle, lc-parsed, lc-installing, lc-install, lc-installed, lc-ok, lc-redundant, lc-fail, lc-activating, lc-no-clients, lc-activated, lc-done, reload-note]
+    check: A reader reloads a Tidewatch tab after v42 has installed. Which worker serves the reloaded page, and why?
+    answer: Still v41; during a reload the old page remains a client until the new response arrives, so v41 never has zero clients and v42 keeps waiting.
+    misconceptions:
+      - "A reload picks up the new worker -> the old page stays a client through the reload; the wait ends only when every old tab closes."
+  - point: skipWaiting() activates the new version at once and puts every open tab under it, which can break a v41 page whose chunks the v42 worker has deleted, so Tidewatch calls it only when the reader asks and then reloads every tab.
+    kind: decision
+    weight: core
+    teach:
+      - Called from install, skipWaiting makes v42 take over tabs still running v41 code. Its activate handler has already deleted the v41 cache, so the next lazy v41 chunk misses, and on bad signal fails.
+      - Tidewatch instead shows a New version ready toast. A tap posts a message, the worker calls skipWaiting, and every tab reloads on controllerchange, so page and worker are the same release.
+      - clients.claim() during activate is the other lever, it takes control of in-scope tabs that loaded without any worker, such as the very first visit.
+    draw: [skip-waiting, lc-skip, mismatch-note, claim-note]
+    check: Why is calling skipWaiting() unconditionally in the install handler risky for Tidewatch?
+    answer: Tabs already running v41 come under the v42 worker, whose activate handler deleted v41's cache, so a v41 chunk they request later misses and can fail offline.
+    misconceptions:
+      - "skipWaiting() is a harmless way to update faster -> it puts old pages under the new worker and its caches; it is safe only if old pages can live with them."
+  - point: The browser checks for a new sw.js on navigation, on registration.update() and on some background events, and compares it byte for byte, so the worker's URL must stay the same across releases.
+    kind: rule
+    weight: supporting
+    teach:
+      - Any byte difference starts an install. By default the check ignores the HTTP cache for sw.js itself, though the scripts it imports can still come from it.
+      - If each release registered its own file, a user holding v41's cached shell would keep registering v41's worker and stay stuck. Keep one URL and change its content.
+    draw: [url-note]
+    check: Why must Tidewatch never rename sw.js to sw-42.js in a release?
+    answer: A user on v41's cached shell would keep registering the v41 script, which serves v41's shell, so they would never see v42; one stable URL lets the byte comparison find the update.
+  - point: A strategy is just an order of attempts, cache-first for files named by their content, network-first with a timeout for live data, stale-while-revalidate for things that rarely change, network-only and cache-only at the ends.
+    kind: decision
+    weight: core
+    teach:
+      - Cache-first suits hashed scripts, styles, fonts and photos whose URL holds an id. Network-first with a 3-second timeout suits the forecast, falling back to the stored copy, which the page dates.
+      - Stale-while-revalidate answers the spot list from the cache at once and refreshes it in the background, so a new spot shows on the next visit.
+      - Network-only is for POSTs, search-as-you-type and analytics; Tidewatch's worker simply does not handle them. Cache-only serves the shell precached at install.
+    draw: [strategies, st-cache-group, st-net-group, st-cache-first, st-network-first, dated-note, st-swr, swr-note, st-network-only, st-cache-only]
+    check: Which strategy fits Tidewatch's forecast, which its spot list, and which a search request?
+    answer: Network-first with a timeout for the forecast, falling back to a dated copy; stale-while-revalidate for the spot list; network-only for search.
+    misconceptions:
+      - "Cache-first is fine for the forecast -> it would show an old forecast forever; cache-first is safe only when a new version means a new URL."
+  - point: Cache Storage never expires anything, reads a response body only once, stores an addAll batch all or nothing, and counts each opaque cross-origin response heavily against quota.
+    kind: rule
+    weight: core
+    teach:
+      - It is named caches mapping requests to responses. Cache-Control means nothing to match, so an entry stays until code deletes it, which is why Tidewatch versions its shell cache and deletes old ones in activate.
+      - A body can be read once, so to return a response and store it, put a clone. addAll fails as a whole if any response is outside 2xx.
+      - A cross-origin request without CORS comes back opaque, unreadable and in Chrome counted as roughly 7 MB, so Tidewatch loads its static origin with CORS headers.
+    draw: [cache-rules, shell-cache, forecast-cache, rule-expiry, cr-reply, cr-clone, cr-precache, cr-all-or-nothing, rule-opaque]
+    check: Tidewatch sets a one-hour max-age on its forecast responses. Does a forecast stored in Cache Storage expire after an hour?
+    answer: No; Cache Storage ignores Cache-Control, so the entry stays until Tidewatch's code deletes it or the browser evicts the origin's storage.
+    misconceptions:
+      - "Cache Storage honours max-age like the HTTP cache -> nothing expires; every cache needs code that deletes it."
+task:
+  prompt: Draw one worker version's lifecycle from installing to activated, mark where v42 waits while v41 tabs are open and what skipWaiting() does, and write which strategy the forecast, the spot list and the hashed app script each use.
+  expects: [3, 4, 6]

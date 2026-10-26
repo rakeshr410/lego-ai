@@ -1,0 +1,184 @@
+# How the painted page becomes layers the compositor moves on its own: property trees, layerization, what earns a layer, tiles, threaded scrolling, and which stages each animated property reruns.
+id: how-browsers-render-content/layers-and-compositing/how-it-works
+title: Layers and the compositor
+source:
+  hash: "fee3bcd147c2"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: null
+  assumes:
+    - "Rendering is a chain of stages: parse, style, layout tree, layout, paint, raster, composite."
+    - Paint records drawing commands; raster turns them into pixels; compositing stacks the rasterized layers into the frame.
+    - Parsing, style, layout and paint run on the main thread; raster and compositing run on other threads.
+    - The browser keeps every stage's output, so a change reruns only the stages whose inputs it changed.
+  carries:
+    - Transforms, clips, opacity and scroll offsets live in property trees the drawing commands point to; the compositor keeps its own copy.
+    - Layerization, after paint, decides which paint chunks share a layer; Chromium splits where a property is expected to change on the compositor.
+    - Content that overlaps a composited layer and paints above it needs a layer too; will-change also makes a stacking context and a containing block for fixed descendants.
+    - The compositor cuts layers into tiles, rasters near the viewport first, and never waits for pixels, so a fast fling can show blank tiles.
+    - The compositor scrolls on its own unless a non-passive touch or wheel listener could cancel the scroll.
+    - Animating width or top reruns layout and paint every frame; background colour reruns paint; transform and opacity on a rastered layer rerun only compositing.
+  terms:
+    - term: property trees
+      means: Chromium's four trees, transform, clip, effect and scroll, that hold what drawing commands point to instead of baking it in.
+    - term: paint chunk
+      means: A run of consecutive drawing commands that share the same property tree state.
+    - term: layerization
+      means: The step after paint that decides which paint chunks share a bitmap and which get a layer of their own.
+    - term: tile
+      means: A piece of a layer that is rastered on its own; tiles near the viewport go first.
+    - term: checkerboard
+      means: Tiles that reach the screen before they are rastered, drawn as plain background until raster catches up.
+    - term: threaded scrolling
+      means: The compositor turning input into a new scroll offset itself, without the main thread.
+    - term: passive listener
+      means: An event listener that promises not to call preventDefault, so the compositor need not wait for it.
+board:
+  keep: []
+  elements:
+    - { id: property-trees, kind: region, label: Four property trees, at: [2, 1], size: [52, 22] }
+    - { id: transform-tree, kind: box, label: transform tree, at: [6, 4], size: [11, 2], in: property-trees, tone: blue }
+    - { id: transform-slide, kind: box, label: slide, at: [4, 8], size: [7, 2], in: property-trees, tone: blue }
+    - { id: transform-bar, kind: box, label: basket bar, at: [12, 8], size: [7, 2], in: property-trees, tone: blue }
+    - { id: clip-tree, kind: box, label: clip tree, at: [39, 8], size: [11, 2], in: property-trees, tone: blue }
+    - { id: one-chunk, kind: box, label: a paint chunk, at: [23, 11], size: [10, 3], in: property-trees, tone: amber }
+    - { id: effect-tree, kind: box, label: effect tree, at: [6, 16], size: [11, 2], in: property-trees, tone: blue }
+    - { id: scroll-tree, kind: box, label: scroll tree, at: [39, 16], size: [11, 2], in: property-trees, tone: blue }
+    - { id: chunk-points, kind: note, label: commands point at tree nodes, at: [4, 20], in: property-trees }
+    - { id: compositor-copy, kind: note, label: the compositor keeps a copy, at: [30, 20], in: property-trees }
+    - { id: layerize, kind: region, label: Layerize after paint, at: [56, 1], size: [36, 21] }
+    - { id: paint-chunks, kind: box, label: paint chunks, at: [66, 4], size: [14, 3], in: layerize, tone: amber }
+    - { id: page-layer, kind: box, label: page layer, at: [58, 14], size: [14, 3], in: layerize, tone: blue }
+    - { id: own-layer, kind: box, label: own layer, at: [76, 14], size: [14, 3], in: layerize, tone: green }
+    - { id: split-where, kind: note, label: "split: scroller, animation, will-change", at: [58, 19], in: layerize }
+    - { id: layer-reasons, kind: region, label: What earns a layer, at: [94, 1], size: [25, 18] }
+    - { id: wc-hint, kind: note, label: "will-change: transform or opacity", at: [96, 4], in: layer-reasons }
+    - { id: running-anim, kind: note, label: a running transform or opacity animation, at: [96, 6], in: layer-reasons }
+    - { id: own-content, kind: note, label: "video, WebGL canvas, iframe", at: [96, 8], in: layer-reasons }
+    - { id: sticky-over, kind: note, label: sticky header over a scroller, at: [96, 10], in: layer-reasons }
+    - { id: badge-overlap, kind: box, label: "Free delivery badge: pulled up", at: [96, 12], size: [20, 3], in: layer-reasons, tone: red }
+    - { id: wc-effects, kind: note, label: "also: stacking context, holds fixed children", at: [96, 16], in: layer-reasons }
+    - { id: tiles-region, kind: region, label: Gallery as tiles, at: [42, 28], size: [38, 10] }
+    - { id: tile-p1, kind: box, label: photo 1, at: [44, 31], size: [6, 3], in: tiles-region, tone: green }
+    - { id: tile-p2, kind: box, label: photo 2, at: [51, 31], size: [6, 3], in: tiles-region, tone: blue }
+    - { id: tile-p3, kind: box, label: photo 3, at: [58, 31], size: [6, 3], in: tiles-region }
+    - { id: tile-p4, kind: box, label: photo 4, at: [65, 31], size: [6, 3], in: tiles-region }
+    - { id: tile-p5, kind: box, label: photo 5, at: [72, 31], size: [6, 3], in: tiles-region, tone: red }
+    - { id: gallery-width, kind: note, label: "five photos, about 1,965 px: viewport tiles first", at: [44, 35], in: tiles-region }
+    - { id: fling-blank, kind: note, label: "fling: moves on time, tiles blank a frame", at: [44, 37], in: tiles-region }
+    - { id: threads-scroll, kind: region, label: Scrolling during a task, at: [42, 40], size: [39, 10] }
+    - { id: compositor-thread, kind: box, label: Compositor thread, at: [44, 43], size: [14, 3], in: threads-scroll, tone: green }
+    - { id: main-busy, kind: box, label: "Main thread: 180 ms task", at: [65, 43], size: [14, 3], in: threads-scroll, tone: red }
+    - { id: passive-rule, kind: note, label: "passive listener: scrolls at once", at: [44, 47], in: threads-scroll }
+    - { id: touch-action, kind: note, label: "touch-action pan-y: says so up front", at: [62, 47], in: threads-scroll }
+    - { id: routes, kind: region, label: Which stages a change reruns, at: [2, 28], size: [38, 17] }
+    - { id: route-layout, kind: box, label: "bottom: layout, paint, composite", at: [4, 31], size: [34, 3], in: routes, tone: red }
+    - { id: route-paint, kind: box, label: "background colour: paint, composite", at: [4, 35], size: [34, 3], in: routes }
+    - { id: route-composite, kind: box, label: "transform, opacity: composite only", at: [4, 39], size: [34, 3], in: routes, tone: green }
+    - { id: bar-jump, kind: note, label: "bottom, during the task: freezes, then jumps", at: [4, 43], in: routes }
+    - { id: layer-life, kind: region, label: "The basket bar's layer", at: [83, 28], size: [36, 10] }
+    - { id: in-page, kind: box, label: in the page layer, at: [85, 31], size: [12, 3], in: layer-life, tone: grey }
+    - { id: promoted, kind: box, label: "own layer, tiles ready", at: [105, 31], size: [12, 3], in: layer-life, tone: green }
+    - { id: count-change, kind: note, label: "new text: repaint, layer or not", at: [85, 35], in: layer-life }
+    - { id: promote-briefly, kind: note, label: hint only while it moves, at: [85, 37], in: layer-life }
+  arrows:
+    - { id: transform-to-slide, from: transform-tree, to: transform-slide }
+    - { id: transform-to-bar, from: transform-tree, to: transform-bar }
+    - { id: chunk-transform, from: one-chunk, to: transform-bar }
+    - { id: chunk-clip, from: one-chunk, to: clip-tree }
+    - { id: chunk-effect, from: one-chunk, to: effect-tree }
+    - { id: chunk-scroll, from: one-chunk, to: scroll-tree }
+    - { id: merged, from: paint-chunks, to: page-layer, label: merged }
+    - { id: kept-apart, from: paint-chunks, to: own-layer, label: kept apart }
+    - { id: asks-first, from: compositor-thread, to: main-busy, label: asks first, dashed: true }
+    - { id: promote, from: in-page, to: promoted, label: will-change }
+beats:
+  - point: Paint records commands that point to nodes in four property trees, transform, clip, effect and scroll, so a transform, clip, opacity or scroll offset can change without touching the commands, and the compositor keeps its own copy of the trees.
+    kind: mechanism
+    weight: core
+    teach:
+      - Pick up where paint left off on Copperpot's page. Each drawing command is tagged with the context it is drawn in, and in Chromium that context is a place in four property trees. Commands in a row that share a context form a paint chunk.
+      - "Name a node in each tree on the casserole page: the basket bar's translateY and the page's scroll offset in the transform tree, the gallery's overflow box in the clip tree, the bar's fade in the effect tree, the page and the gallery in the scroll tree."
+      - The point is that those values are not baked into the commands. Change the node and everything under it moves, fades or scrolls. The compositor thread holds its own copy, so it can change a node and draw the next frame without asking the main thread.
+    draw: [property-trees, transform-tree, transform-slide, transform-bar, transform-to-slide, transform-to-bar, clip-tree, effect-tree, scroll-tree, one-chunk, chunk-transform, chunk-clip, chunk-effect, chunk-scroll, chunk-points, compositor-copy]
+    check: Why can the compositor scroll or fade part of the page without new drawing commands from the main thread?
+    answer: Scroll offsets, transforms and opacity live in property tree nodes that the commands point to, not in the commands; the compositor has its own copy of the trees and changes the node.
+  - point: After paint, layerization decides which paint chunks share a layer, merging saves GPU memory and keeping a chunk apart lets it move without the layer under it being redrawn, and Chromium splits where it expects a property to change on the compositor.
+    kind: mechanism
+    weight: core
+    teach:
+      - In current Chromium the decision comes after paint, on the compositor side of the commit, with the whole painted result in hand. This is Composite After Paint, shipped in M94.
+      - Each choice has a price. Chunks merged into one layer share one bitmap and save GPU memory. A chunk kept apart can move without the layer beneath being drawn again.
+      - Chromium splits where it expects change on the compositor, a scroller, a running transform or opacity animation, a will-change hint.
+    draw: [layerize, paint-chunks, page-layer, own-layer, merged, kept-apart, split-where]
+    check: What does keeping a paint chunk in its own layer buy, and what does it cost?
+    answer: It can be moved or faded without redrawing the layer under it; it costs GPU memory, which merging chunks into one layer would save.
+    misconceptions:
+      - "Layers are decided while the HTML is parsed or during layout -> in current Chromium layerization runs after paint, on the painted result."
+  - point: An element earns a layer through a will-change hint, a running transform or opacity animation, content such as video or a WebGL canvas, or a scroller, and anything that overlaps a composited layer and paints above it needs one too.
+    kind: rule
+    weight: core
+    teach:
+      - Go through the list on the board. Some reasons you ask for directly, will-change or a running animation; some the browser decides, a video, a WebGL canvas, an iframe, a sticky header over a composited scroll.
+      - The surprise is overlap. The compositor stacks layers in a fixed order, so Copperpot's Free delivery badge, painted over the gallery, would end up hidden under it if it stayed in the page layer. It gets pulled up into a layer too. Chromium squashes overlapping elements into shared layers, but a careless hint can still multiply them.
+      - will-change has the side effects the real property would. The element becomes a stacking context, and will-change transform makes it the containing block for position fixed descendants, so a fixed close button inside a promoted panel sticks to the panel.
+    draw: [layer-reasons, wc-hint, running-anim, own-content, sticky-over, badge-overlap, wc-effects]
+    check: A panel gets will-change transform, and its position fixed close button now scrolls with the panel. Why?
+    answer: The hint has the same effects as a real transform, so the panel becomes the containing block for its fixed descendants; fixed now means fixed to the panel.
+    misconceptions:
+      - "will-change is only a performance hint with no visible effect -> it creates a stacking context and, for transform, a containing block for fixed descendants."
+      - "Only the elements you promote get layers -> anything that overlaps a composited layer and paints above it is given a layer too."
+  - point: The compositor cuts each layer into tiles and has them rastered viewport first, and it never waits for pixels, so a hard fling keeps moving on time but can show unrastered tiles as blank for a frame or two.
+    kind: mechanism
+    weight: core
+    teach:
+      - A layer can be far wider than the screen. Copperpot's gallery is five photos, about 1,965 CSS pixels. It is cut into tiles, and raster workers fill the ones in the viewport first, then the ones just outside; far ones may never be rastered.
+      - At rest on photo 1, photo 2 is already rastered, so a normal swipe has every frame complete and photo 3 is queued as it comes near.
+      - A hard fling reaches photo 5 in about 150 ms. The compositor still moves the layer on time, but those tiles were never rastered, so they show as plain background until raster catches up. Smooth motion, late content, and no main-thread work at all.
+    draw: [tiles-region, tile-p1, tile-p2, tile-p3, tile-p4, tile-p5, gallery-width, fling-blank]
+    check: During a hard fling, photo 5 shows as a blank area for a frame, yet the motion never stutters. What happened?
+    answer: The compositor moved the layer on time, but photo 5's tiles had not been rastered yet; it does not wait for pixels, so they showed as background until raster caught up.
+    misconceptions:
+      - "A blank area while flinging means the main thread dropped frames -> the motion was on time; the tiles simply had not been rastered."
+  - point: The compositor scrolls by itself unless a touch or wheel listener could call preventDefault; a non-passive listener on an element makes it ask the main thread first, while a passive listener or touch-action lets it scroll at once.
+    kind: mechanism
+    weight: core
+    teach:
+      - Threaded scrolling means the compositor turns finger and wheel input into a new scroll offset itself. A scroll listener cannot stop that, because the scroll event fires after the page has already moved.
+      - A touchstart, touchmove or wheel listener can cancel the scroll, so over the area it covers the compositor must send the event to the main thread and wait. If the 180 ms reviews task is running, the swipe waits too.
+      - "Passing { passive: true } promises no preventDefault, so the compositor scrolls first and runs the listener later. Listeners on window, document and body are already passive by default; the trap is one on an element like the gallery. touch-action, such as pan-y, says up front which gestures the browser may take."
+    draw: [threads-scroll, compositor-thread, main-busy, asks-first, passive-rule, touch-action]
+    check: An analytics script adds a wheel listener to the gallery with no options. Why can scrolling over the gallery now stall during the reviews task?
+    answer: The listener might call preventDefault, so the compositor must wait for the main thread before scrolling that area; passing passive true lets it scroll at once.
+    misconceptions:
+      - "A scroll listener makes scrolling wait -> scroll events cannot cancel and fire after the move; touch and wheel listeners are the ones that can block."
+  - point: Animating width, height, top or bottom reruns layout and paint every frame, animating background colour reruns paint, and animating transform or opacity on an already rastered layer reruns only compositing, on the compositor thread.
+    kind: rule
+    weight: core
+    teach:
+      - Take Copperpot's basket bar sliding up over 250 ms. Animating bottom changes geometry, so every frame needs style, layout and paint on the main thread. A colour or shadow skips layout but repaints every frame.
+      - Moved to transform and opacity, the bar's layout never changes. Once its layer is rastered, the compositor samples the new values each frame with no layout and no paint.
+      - Put the 180 ms reviews task under it. The bottom version freezes, then jumps to about nine tenths of the way up when the task ends. The transform version reaches its place on time.
+    draw: [routes, route-layout, route-paint, route-composite, bar-jump]
+    check: Copperpot's basket bar animates bottom while the reviews widget holds the main thread for 180 ms. What does the shopper see, and what changes if it animates transform instead?
+    answer: The bar freezes, then jumps most of the way up when the task ends, because every frame needs layout and paint on the main thread; animated with transform and opacity on its own rastered layer, it is moved by the compositor and stays smooth.
+    misconceptions:
+      - "Transforms are fast because they run on the GPU -> they skip layout and paint because the compositor can change them on a layer that is already rastered."
+      - "A slow animation of top is fine if the main thread is idle -> it still spends part of every frame on layout and paint, and any task longer than what is left drops a frame."
+  - point: A layer makes moving cheap but not content changes; new content in the bar still needs a repaint, so the hint is best added just before the motion and removed when it settles.
+    kind: rule
+    weight: supporting
+    teach:
+      - Follow the bar through its life. will-change gives it a layer on the next commit, its tiles are rastered once, the transition runs on the compositor, and when it settles the hint is removed so it merges back and stops holding GPU memory.
+      - If the count changes from 3 items to 4 while it is a layer, that is new content. The main thread repaints the bar and its tiles are rastered again; the only saving is that the rest of the page is not.
+    draw: [layer-life, in-page, promoted, promote, count-change, promote-briefly]
+    check: The basket bar has its own layer and its text changes from 3 items to 4. What work does that cause?
+    answer: A repaint of the bar on the main thread and a new raster of its tiles; the layer only spares the rest of the page.
+    misconceptions:
+      - "Once an element has a layer, every change to it is cheap -> moving and fading are; changing its content still needs paint and raster."
+task:
+  prompt: Draw Copperpot's basket bar sliding up two ways, animating bottom and animating transform, and for each mark which stages run on every frame and what a 180 ms task on the main thread does to it.
+  expects: [6]

@@ -1,0 +1,127 @@
+# News feed optimizations: a rubric picks four deep dives, virtualisation, media loading, a stable reading position and the accessible infinite list.
+id: facebook/news-feed/optimizations
+title: Four deep dives for long sessions
+source:
+  hash: 1a8d554242c3
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: facebook/news-feed/interface-definition
+  assumes:
+    - "Targets: 60 fps with at most 20 posts mounted, CLS < 0.1, no shift from new posts, WCAG 2.1 AA, at most 500 posts cached."
+    - "Data flows one way: Feed Service fetches, Feed Store normalises and holds state, FeedList renders ids."
+    - New post ids wait in the store's pending ids until the pill is pressed.
+    - Media width, height and placeholder arrive in the API before the image does.
+    - A ScrollSnapshot saves the top visible post's id and offset, not a pixel scroll position.
+    - Windowing mounts only the items near the viewport and keeps spacers for the rest.
+  carries:
+    - A rubric scores each area on impact, users affected and frequency, and the top four get deep dives.
+    - FeedList mounts the viewport plus 3 posts each side, caches measured heights by post id and pins the focused post.
+    - Every media item gets its box before its bytes; only the first post's media skips lazy loading.
+    - Content under the reader moves only when the reader asks; the pill is an overlay and FeedList corrects scrollTop itself.
+    - The list follows the feed pattern, role feed, one article per post, position from Feed.ids, aria-busy while it changes.
+  terms:
+    - term: overscan
+      means: Posts mounted just outside the viewport, 3 above and 3 below, so a fast scroll shows no blanks.
+    - term: spacer
+      means: Empty space standing in for unmounted posts, sized from measured or estimated heights.
+    - term: anchor
+      means: The post the reader is on, whose position is kept when things change above it or on return.
+    - term: feed pattern
+      means: The WAI-ARIA pattern for an endless list, a role feed container of articles with position and busy state.
+board:
+  keep: [browser, feed-page, feed-list, post-card, new-posts-pill, feed-store, live-updates, feed-service, server, store-to-page, store-service, service-server, load-more, server-stream, add-pending, like-toggled, response, page-response, entities, post-entity, user-entity, media-entity, lists, feed-top, client-only, like-intent, scroll-snapshot, endpoints, get-feed, like-endpoint, stream-endpoint, get-posts]
+  elements:
+    - { id: rubric, kind: note, label: "rubric: impact, users, how often; top 4", at: [31, 34] }
+    - { id: opt-window, kind: region, label: "Virtualisation: FeedList", at: [78, 36], size: [41, 17] }
+    - { id: w-spacer-above, kind: box, label: spacer above, at: [81, 38], size: [12, 2], in: opt-window, tone: grey, dashed: true }
+    - { id: w-mounted-above, kind: box, label: mounted above, at: [81, 40], size: [12, 2], in: opt-window, tone: green }
+    - { id: w-viewport, kind: region, label: viewport, at: [80, 42], size: [14, 5], in: opt-window, dashed: true }
+    - { id: w-in-view, kind: box, label: in view, at: [81, 44], size: [12, 2], in: w-viewport, tone: blue }
+    - { id: w-mounted-below, kind: box, label: mounted below, at: [81, 47], size: [12, 2], in: opt-window, tone: green }
+    - { id: w-spacer-below, kind: box, label: spacer below, at: [81, 49], size: [12, 2], in: opt-window, tone: grey, dashed: true }
+    - { id: w-spacers, kind: note, label: "spacers: measured height or a 520 px guess", at: [95, 38], in: opt-window }
+    - { id: w-mounted, kind: note, label: "at most 20 mounted: view plus 3 each side", at: [95, 40], in: opt-window, tone: green }
+    - { id: w-cache, kind: note, label: "heights cached by post id, focus pinned", at: [95, 44], in: opt-window }
+    - { id: w-evict, kind: note, label: "past 500 posts: evict far ones, refetch by id", at: [95, 49], in: opt-window, tone: amber }
+    - { id: opt-media, kind: region, label: "Media loading: MediaBox", at: [78, 55], size: [41, 7] }
+    - { id: m-box, kind: note, label: box sized from width and height, at: [80, 57], in: opt-media, tone: green }
+    - { id: m-first, kind: note, label: "first post eager and high, rest lazy", at: [100, 57], in: opt-media }
+    - { id: m-srcset, kind: note, label: "srcset 480 to 1440, colour fill", at: [80, 59], in: opt-media }
+    - { id: m-video, kind: note, label: "video: no preload, muted when half seen", at: [100, 59], in: opt-media }
+    - { id: opt-stable, kind: region, label: "Stable position: pill, FeedList", at: [78, 63], size: [41, 7] }
+    - { id: s-overlay, kind: note, label: "the pill floats, outside the flow", at: [80, 65], in: opt-stable }
+    - { id: s-scrolltop, kind: note, label: "height change above: fix scrollTop", at: [100, 65], in: opt-stable }
+    - { id: s-cap, kind: note, label: "over 50 pending: pill reloads the top", at: [80, 67], in: opt-stable }
+    - { id: s-restore, kind: note, label: "restore by anchor, snapshot 30 min", at: [100, 67], in: opt-stable }
+    - { id: opt-a11y, kind: region, label: "Accessible feed: the page", at: [78, 71], size: [41, 7] }
+    - { id: a-role, kind: note, label: "role feed, one article per post", at: [80, 73], in: opt-a11y, tone: blue }
+    - { id: a-posinset, kind: note, label: "posinset from ids, setsize -1", at: [100, 73], in: opt-a11y }
+    - { id: a-busy, kind: note, label: aria-busy while a page lands, at: [80, 75], in: opt-a11y }
+    - { id: a-keys, kind: note, label: "Page Down, Up; one notice per batch", at: [100, 75], in: opt-a11y }
+  arrows: []
+beats:
+  - point: A rubric scores each optimisation area from 1 to 3 on impact if it fails, users affected and how often it matters, and the top four become deep dives.
+    kind: decision
+    weight: supporting
+    teach:
+      - Long sessions are where a feed goes wrong, so do not try to optimise everything. Score each area on three questions and go deep on the top four.
+      - Rendering and DOM size, media and layout stability, a stable reading position and accessibility of the endless list come out on top. First-load speed, network efficiency, memory, offline and SEO are handled elsewhere in the design or matter less here.
+    draw: [rubric]
+    check: Why is SEO left out of the deep dives for the home feed?
+    answer: It scores lowest on all three questions; the home feed is personal and behind login.
+  - point: FeedList mounts only the posts in the viewport plus 3 above and 3 below, stands spacers in for the rest, caches each measured height by post id and pins the focused post.
+    kind: mechanism
+    weight: core
+    teach:
+      - After 300 posts the DOM would hold thousands of nodes and scrolling would stutter on a mid-range phone. So only the posts near the viewport exist, at most 20, and spacers above and below keep the scrollbar the right size.
+      - Reading post 41 of 120, posts 39 to 44 are mounted. A post starts at an estimate of 520 px, is measured with ResizeObserver once mounted, and its height is cached by id, so its spacer is exact after it unmounts. When a card above the viewport changes size, scrollTop is corrected by the difference in the same frame.
+      - The focused article is pinned so focus never falls to the body. See more and video position live in the store by post id, and past 500 posts the furthest payloads are evicted and refetched by id if the reader scrolls back.
+    draw: [opt-window, w-spacer-above, w-mounted-above, w-viewport, w-in-view, w-mounted-below, w-spacer-below, w-mounted, w-spacers, w-cache, w-evict]
+    check: The focused post scrolls out of the mounted window. What happens, and why?
+    answer: It stays mounted, pinned, so a keyboard or screen reader user does not lose focus to the page body.
+    misconceptions:
+      - "An unmounted post's space is guessed again every time -> its measured height stays cached by post id, so its spacer is exact."
+      - "Expanded text can live in the card's own state -> a remounted card would lose it; it is kept in the store by post id."
+  - point: Every image and video gets its box before its bytes, sized from the API's width and height, and only the first post's media skips lazy loading.
+    kind: mechanism
+    weight: core
+    teach:
+      - Media is most of the bytes and most of the layout risk. The API sends width and height, so MediaBox sets aspect-ratio before the image arrives and the image fills a box whose size never changes.
+      - The first post's media is likely the LCP element, so it gets fetchpriority high and no lazy loading; everything else is lazy. A srcset of 480, 960 and 1440 lets phones take small images, and the smallest is chosen under Save-Data.
+      - The dominant colour from the API fills the box until the image lands, and a failed image keeps its box with a retry icon. Video uses preload none with a poster and plays muted only while at least half is visible.
+    draw: [opt-media, m-box, m-first, m-srcset, m-video]
+    check: An image above the viewport finishes loading. Why doesn't the page jump?
+    answer: Its box was already sized with aspect-ratio from the width and height in the API response, so the image fills it without changing its size.
+    misconceptions:
+      - "Lazy-load every image, including the first -> that delays the likely LCP image; the first post's media gets fetchpriority high instead."
+  - point: Content under the reader moves only when the reader asks, new posts wait behind an overlay pill, FeedList corrects scrollTop itself for height changes above, and the position is restored by anchor.
+    kind: rule
+    weight: core
+    teach:
+      - New ids go to pending and their payloads are prefetched while the tab is visible. The pill sits over the top of the list, outside its flow, so showing it moves nothing; past 50 pending it reads 50+ and reloads the first page instead of prepending.
+      - A re-measured card, a late font or an expanded post above the reader would push everything down, so FeedList fixes scrollTop by the measured difference. Browser scroll anchoring helps where it exists, but not every browser has it, so the design does not depend on it.
+      - Coming back, render from the store, scroll the anchor post into place and keep it there as cards are measured. After a full reload a sessionStorage snapshot younger than 30 minutes restores ids and cursor. On pagehide the EventSource is closed so the page can enter the back/forward cache, and reopened on pageshow with last_event_id in the URL.
+    draw: [opt-stable, s-overlay, s-scrolltop, s-cap, s-restore]
+    check: Why doesn't the design rely on the browser's scroll anchoring to keep the reader's post still?
+    answer: Not every browser supports it, so FeedList corrects scrollTop by the measured difference itself and treats anchoring only as a help.
+    misconceptions:
+      - "The pill can sit at the top of the list in normal flow -> it would push content down when it appears; it is an overlay."
+      - "Keep the stream open while the page is hidden -> an open connection can keep the page out of the back/forward cache; close it on pagehide."
+  - point: The endless list follows the feed pattern, a named role feed with one article per post, its position taken from Feed.ids, aria-busy while it changes, and keys that move focus between posts.
+    kind: rule
+    weight: core
+    teach:
+      - Without structure a screen reader hears one endless run of text. The list is role feed with a name, and each post an article labelled by its author and time.
+      - Only a window is mounted, so each article's aria-posinset comes from its index in Feed.ids, and aria-setsize is -1 while more can load. aria-busy is true while a page is appended or pending posts are prepended.
+      - Page Down and Page Up move focus between articles. New posts get one polite live-region message per batch, at most once a minute, and nothing is placed below the feed, since infinite scroll would make it unreachable.
+    draw: [opt-a11y, a-role, a-posinset, a-busy, a-keys]
+    check: Only posts 39 to 44 of 120 are mounted. How does a screen reader user learn they are on post 41?
+    answer: The article carries aria-posinset 41, taken from its index in Feed.ids, with aria-setsize -1 while more can load.
+    misconceptions:
+      - "Announce every new post as it arrives -> one polite message per batch, at most once a minute, so the reader is not interrupted."
+task:
+  prompt: Annotate the feed you drew with the four deep dives, what FeedList mounts, how media keeps its box, how the reader's place is held, and what makes the list accessible, each pointing at the component that owns it.
+  expects: [2, 3, 4, 5]

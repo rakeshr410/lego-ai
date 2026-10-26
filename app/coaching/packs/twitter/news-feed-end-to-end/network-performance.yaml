@@ -1,0 +1,123 @@
+# News feed interview, network performance: the request and asset path from a phone on slow 4G over HTTP/2 to a CDN, the origin and an image service, with each technique (split and modern bundles, deferred extras, Brotli, long caching, image formats and widths, fonts) placed where it acts.
+id: twitter/news-feed-end-to-end/network-performance
+title: Fewer bytes, fewer trips
+source:
+  hash: "84e5b195ad4d"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: twitter/news-feed-end-to-end/live-updates
+  assumes:
+    - "Network budgets: LCP 2.5 s or less on Lighthouse mobile throttling, first load 300 KB or less, initial JavaScript 100 KB or less compressed."
+    - "Pages of tweets come from GET /api/tweets; new-tweet ids come over a server-sent event stream."
+    - "Attachments carry width and height; offline reading keeps images at 480 px wide."
+  carries:
+    - "Serve over HTTP/2 (or HTTP/3): many requests multiplex on one connection instead of queuing behind about six HTTP/1.1 connections."
+    - "Split the bundle by route, ship one modern build with type=module, and load analytics after the load event."
+    - "Brotli for static text, precompressed at quality 11, gzip as the fallback; never recompress images or fonts."
+    - "Static files and images come from a CDN; hashed names are cached for a year as immutable."
+    - "Images come from an image service in AVIF, then WebP, with a JPEG fallback, at 480, 960 or 1440 px chosen by srcset."
+    - "Fonts are WOFF2, subset, font-display swap or optional, and only the one used above the fold is preloaded."
+  terms:
+    - term: multiplexing
+      means: Many requests sent as streams over one HTTP/2 connection at the same time.
+    - term: Brotli
+      means: A text compression format; precompressed at its top quality it typically comes out 15 to 20 percent smaller than gzip.
+    - term: CDN
+      means: A content delivery network, servers close to the reader that cache static files and images.
+    - term: srcset
+      means: An image attribute listing the widths available, so the browser picks one for its screen.
+board:
+  keep: [title, mock-up, phone, mock-header, tweet-one, author-row, tweet-text, image-box, action-row, tweet-two, more-below, requirements, fr-heading, fr-newest, fr-endless, fr-images, fr-new, fr-end, nfr-heading, nfr-devices, nfr-network, nfr-load, nfr-js, nfr-cpu, nfr-tasks, nfr-inp, nfr-stable, nfr-offline, components, c-feed-screen, c-feed-list, c-tweet-card, c-author, c-text, c-image, c-actions, c-store, c-client, c-live, c-cache, screen-holds-list, list-holds-card, list-reads-store, store-calls-client, state, naive, need-tweet, need-author, need-counts, naive-note, feed-store, js-open, js-tweet, js-tweet-refs, js-users, js-images, js-replies, js-feed, js-meta, js-pending, order-note, normalize, storage, strip, idb, window, pages-before, page-reader, pages-after, pages-unloaded, cache-storage, cache-note, session-storage, session-note, local-storage, local-note, component-state, component-note, offload, api, endpoint, limit-note, endpoint-next, page, res-open, res-tweet-more, res-users, res-images, res-cursor, size-note, cursor-note, offset-bad, rest-note, live, opt-short, opt-short-note, opt-long, opt-long-note, opt-ws, opt-ws-note, opt-sse, opt-sse-note, stream-endpoint, stream, event-source, pill, sse-note, http2-note, new-ids, to-pending]
+  elements:
+    - { id: network, kind: region, label: Network, at: [1, 86], size: [41, 23] }
+    - { id: net-phone, kind: box, label: "phone, slow 4G", at: [2, 89], size: [8, 3], in: network }
+    - { id: cdn, kind: box, label: "CDN, near the reader", at: [16, 89], size: [11, 3], in: network, tone: green }
+    - { id: origin, kind: box, label: origin server, at: [33, 89], size: [8, 3], in: network, tone: grey }
+    - { id: split-bundle, kind: box, label: split by route, at: [2, 94], size: [10, 2], in: network, tone: blue }
+    - { id: modern-build, kind: box, label: one modern build, at: [2, 97], size: [10, 2], in: network, tone: blue }
+    - { id: defer-extras, kind: box, label: analytics after load, at: [2, 100], size: [10, 3], in: network, tone: blue }
+    - { id: image-service, kind: box, label: "image service, width and format", at: [16, 94], size: [11, 3], in: network }
+    - { id: formats, kind: box, label: "AVIF, then WebP, JPEG fallback", at: [16, 98], size: [11, 3], in: network, tone: green }
+    - { id: srcset, kind: box, label: "srcset 480, 960, 1440", at: [16, 102], size: [11, 3], in: network, tone: green }
+    - { id: lazy-note, kind: note, label: "lazy below the fold, first image high priority", at: [2, 106], in: network }
+    - { id: brotli, kind: box, label: "Brotli text, not images", at: [30, 94], size: [11, 3], in: network, tone: green }
+    - { id: cache-headers, kind: box, label: hashed names cached a year, at: [30, 98], size: [11, 3], in: network, tone: green }
+    - { id: fonts, kind: box, label: "fonts WOFF2, swap, preload", at: [30, 102], size: [11, 3], in: network }
+  arrows:
+    - { id: http2, from: net-phone, to: cdn, label: HTTP 2 }
+    - { id: miss, from: cdn, to: origin, label: miss, dashed: true }
+    - { id: cdn-images, from: cdn, to: image-service }
+beats:
+  - point: "The network bucket serves the network budget (LCP 2.5 s, 300 KB, 100 KB of JavaScript), and it starts with HTTP/2: many requests multiplex on one connection instead of queuing behind about six HTTP/1.1 connections per host."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Performance is the last section, in three buckets; network comes first. Point at the network line in the requirements: every item here serves it."
+      - "Draw the phone on a slow 4G link talking to a CDN. Over HTTP/1.1 a browser opens at most about six connections per host, each with its own handshake, and requests queue. Over HTTP/2 they multiplex as streams on one connection, headers are compressed, and the SSE stream is just one more stream."
+      - HTTP/3 also removes TCP head-of-line blocking on lossy mobile links.
+    draw: [network, net-phone, cdn, http2]
+    check: What does HTTP/2 change for a page that loads 40 small files?
+    answer: They multiplex as streams on one connection instead of queuing behind about six HTTP/1.1 connections.
+  - point: "Ship less on first load: split the bundle by route and feature, ship one modern build loaded with type=module, and load analytics and other third-party scripts after the load event or in idle time."
+    kind: decision
+    weight: core
+    teach:
+      - "One bundle for every route makes the phone parse everything before the feed works. Split by route and feature: the feed loads its list and card; the composer, settings and image viewer load on demand. Over HTTP/2 several smaller files cost little extra."
+      - "Transpiling everything to ES5 adds polyfills and longer code. Ship one modern build with type=module; add a legacy nomodule build only if analytics show old browsers."
+      - Load the app with defer and analytics after load; nothing third-party sits in the critical path.
+    draw: [split-bundle, modern-build, defer-extras]
+    check: When would you add a legacy nomodule build?
+    answer: Only if analytics show a real share of visitors on old browsers; otherwise one modern build is enough.
+  - point: "Compress text: Brotli for static JavaScript, CSS and HTML, precompressed at build time at quality 11, typically 15 to 20 percent smaller than gzip, which itself removes about 70 to 80 percent; gzip is the fallback, and images are never recompressed."
+    kind: mechanism
+    weight: core
+    teach:
+      - "The CDN goes back to the origin only on a miss. The origin's static text is precompressed with Brotli at its top quality, 11; the browser asks for it with Accept-Encoding and gzip is the fallback."
+      - API JSON is compressed on the fly at a lower level; that is how ten tweets go from about 12 KB to about 3 KB.
+      - "JPEG, WebP, AVIF and WOFF2 are already compressed; running them through gzip or Brotli costs CPU, saves almost nothing and can make them larger."
+    draw: [origin, miss, brotli]
+    check: Which of these should the server not compress with Brotli or gzip, the JavaScript bundle, the JSON of a page, AVIF images, or the CSS?
+    answer: The AVIF images; image formats are already compressed, so recompressing costs CPU and saves almost nothing.
+    misconceptions:
+      - "Compress every response -> already-compressed formats such as images and WOFF2 fonts gain nothing and can grow."
+  - point: "Static files and images come from a CDN close to the reader, and files with hashed names are served with Cache-Control public, max-age of a year, immutable, so repeat visits download nothing for them."
+    kind: mechanism
+    weight: core
+    teach:
+      - Without a CDN every asset comes from the origin, far from many readers. The CDN edge serves them from nearby.
+      - "Because each build gives files new hashed names, they can be cached for a year as immutable. A new deploy simply references new names."
+    draw: [cache-headers]
+    check: Why can a hashed file be cached for a year without going stale?
+    answer: Its name changes whenever its content changes, so a new deploy references a new file and the old cached one is never wrong.
+  - point: "Images go through an image service behind the CDN, in AVIF, then WebP, with JPEG as the fallback, at a width the browser picks from a srcset of 480, 960 and 1440; images below the fold load lazily and the first tweet's image gets high fetch priority."
+    kind: mechanism
+    weight: core
+    teach:
+      - "A 360 px phone should not download a 1,600 px photo. The image service resizes on request; cards list 480, 960 and 1,440 widths in srcset with sizes matching the column, and the browser picks one for its screen density."
+      - "Format next: AVIF, then WebP, JPEG as the fallback, with picture and source type, or Accept negotiation at the image service with Vary Accept. Lossy WebP is typically 25 to 34 percent smaller than JPEG; AVIF often smaller again."
+      - "Illustratively, one 4 by 3 photo: about 380 KB as the original JPEG, about 70 KB as AVIF at 960 px, about 25 KB at 480 px, the variant kept for offline. Below-the-fold images use loading lazy; the first gets fetchpriority high."
+    draw: [image-service, cdn-images, formats, srcset, lazy-note]
+    check: A phone 360 px wide shows a tweet image full width. What should the card request?
+    answer: A width the browser picks from srcset (about 720 to 960 px on a 2x screen), in AVIF or WebP when supported.
+  - point: "Fonts are WOFF2, subset to the scripts used, with font-display swap (or optional for body text on slow networks), and only the face used above the fold is preloaded; system fonts are cheapest of all."
+    kind: rule
+    weight: supporting
+    teach:
+      - "With the default font-display, most browsers hide text for up to about 3 s while a custom font downloads. Swap shows the fallback at once; optional uses the font only if it is already there."
+      - Subset to the scripts the feed uses, ship WOFF2, and preload only the one face above the fold.
+    draw: [fonts]
+    check: What does font-display swap change for the reader on a slow connection?
+    answer: Text shows at once in a fallback font instead of being hidden for up to about 3 s while the custom font downloads.
+asks:
+  - ids: [split-bundle, modern-build, defer-extras, brotli, cache-headers, image-service, formats, srcset, lazy-note, fonts]
+    beats: [2, 3, 4, 5, 6]
+    question: "How would you make the first load fast on a phone on a slow network? Name techniques one at a time and I'll put each where it acts."
+    hints:
+      - Think about the JavaScript you ship, and its size on the wire.
+      - And the images and fonts, the heaviest things on the page?
+task:
+  prompt: "Draw the path from a phone on slow 4G to the CDN, the origin and the image service, and write each network technique next to where it acts."
+  expects: [1, 2, 3, 4, 5]

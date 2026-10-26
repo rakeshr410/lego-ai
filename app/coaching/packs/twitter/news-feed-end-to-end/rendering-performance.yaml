@@ -1,0 +1,127 @@
+# News feed interview, rendering performance: the virtual list as drawn on the board (a container as tall as every tweet, two sentinels, a viewport, a pool of about 20 recycled cards placed by transform with heights cached by id), then flat selectors, compositor-only animation, reserved image boxes, a skeleton, and the accessibility caveat.
+id: twitter/news-feed-end-to-end/rendering-performance
+title: A constant number of nodes
+source:
+  hash: "b4baf7bde53b"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: twitter/news-feed-end-to-end/network-performance
+  assumes:
+    - "CPU and memory budget: 25 cards or fewer in the DOM, no task over 50 ms while scrolling; CLS 0.1 or less."
+    - "FeedList reads feed ids and a range of it; each TweetCard reads its tweet by id."
+    - Attachments carry width and height, so a card knows its image box size before the image arrives.
+    - Accessibility of the virtual list is parked as the first stretch topic.
+  carries:
+    - "Virtualization keeps the DOM to a pool of about 20 cards and two sentinels however long the session, so memory and style and layout costs stay flat."
+    - "Two sentinels watched by an IntersectionObserver with a one-screen root margin mount the next tweets (and ask for the next page) before the reader gets there."
+    - "Cards leaving the top are recycled: given new tweets and moved to the bottom with translateY; y of a card is the one above plus its height plus the gap."
+    - "Heights are measured, cached by tweet id and updated by a ResizeObserver; the container is as tall as all tweets so the scrollbar is right."
+    - "Flat single-class selectors, animate only transform and opacity, image boxes reserved from width and height, and a skeleton in the initial HTML."
+    - "Keep DOM order equal to visual order when recycling, and use the feed pattern (aria-posinset, aria-setsize -1, aria-busy)."
+  terms:
+    - term: virtualization
+      means: Mounting only the cards near the viewport and leaving the rest of the list as measured empty space.
+    - term: sentinel
+      means: An empty element at the edge of the mounted cards; when it enters the observer's margin, the list mounts more.
+    - term: node pool
+      means: The fixed set of card elements reused as tweets enter and leave the range.
+    - term: compositor
+      means: The part of the browser that moves and fades painted layers without layout or paint.
+board:
+  keep: []
+  elements:
+    - { id: rendering, kind: region, label: Rendering, at: [44, 86], size: [36, 23] }
+    - { id: container, kind: region, label: "list container, full height", at: [45, 88], size: [14, 20], in: rendering, dashed: true }
+    - { id: space-above, kind: box, label: empty space above, at: [46, 90], size: [12, 2], in: container, dashed: true, tone: grey }
+    - { id: top-sentinel, kind: box, label: top sentinel, at: [46, 92], size: [12, 1], in: container }
+    - { id: card-old, kind: box, label: card leaving the top, at: [46, 93], size: [12, 2], in: container, tone: grey }
+    - { id: viewport, kind: region, label: viewport, at: [46, 95], size: [12, 8], in: container, dashed: true }
+    - { id: tweet-42, kind: box, label: tweet 42 in view, at: [47, 97], size: [10, 2], in: viewport, tone: blue }
+    - { id: tweet-43, kind: box, label: tweet 43 in view, at: [47, 100], size: [10, 2], in: viewport, tone: blue }
+    - { id: card-below, kind: box, label: "tweet 47, recycled", at: [46, 103], size: [12, 2], in: container, tone: green }
+    - { id: bottom-sentinel, kind: box, label: bottom sentinel, at: [46, 105], size: [12, 1], in: container }
+    - { id: space-below, kind: box, label: space below, at: [46, 106], size: [12, 1], in: container, dashed: true, tone: grey }
+    - { id: observer-note, kind: note, label: sentinels fire one screen ahead, at: [61, 90], in: rendering }
+    - { id: pool, kind: box, label: pool of 20 nodes, at: [63, 92], size: [10, 3], in: rendering, tone: green }
+    - { id: heights, kind: box, label: heights cached by id, at: [63, 97], size: [12, 2], in: rendering, tone: amber }
+    - { id: transform-note, kind: note, label: "moved with translateY, no reflow", at: [61, 100], in: rendering, tone: green }
+    - { id: flat-css, kind: box, label: flat selectors, at: [61, 102], size: [9, 3], in: rendering }
+    - { id: compositor, kind: box, label: transform and opacity, at: [71, 102], size: [9, 3], in: rendering, tone: green }
+    - { id: reserved, kind: box, label: image boxes reserved, at: [61, 105], size: [9, 3], in: rendering }
+    - { id: skeleton, kind: box, label: skeleton in the HTML, at: [71, 105], size: [9, 3], in: rendering }
+  arrows:
+    - { id: freed, from: card-old, to: pool, label: freed }
+    - { id: reused, from: pool, to: card-below, label: reused }
+beats:
+  - point: "The rule that matters most for an endless list is a constant number of DOM nodes; draw the viewport as a frame over the tweets and two sentinels at the edges of the mounted cards, watched by an IntersectionObserver with a margin of about one screen."
+    kind: mechanism
+    weight: core
+    teach:
+      - "After 500 tweets a naive list holds tens of thousands of elements; style, layout and memory all grow and scrolling stutters. The CPU and memory line says 25 cards at most."
+      - "Draw the list's container, the viewport over it, and a sentinel just above the first mounted card and just below the last. An IntersectionObserver with a root margin of about one screen fires before the reader gets there."
+      - "When the bottom sentinel comes into range, the list mounts the next tweets and, if the store has none, asks for the next page. The top sentinel does the same in reverse on the way back up."
+    draw: [rendering, container, space-above, top-sentinel, viewport, tweet-42, tweet-43, bottom-sentinel, space-below, observer-note]
+    check: Why give the IntersectionObserver a root margin of about one screen?
+    answer: So the sentinel fires a screen before the reader reaches the edge, and the next cards (or the next page) are ready in time.
+  - point: "FeedList keeps a pool of about 20 card nodes and recycles them: a card that has scrolled well out of view at the top is given a new tweet and moved to the bottom instead of creating a new element."
+    kind: mechanism
+    weight: core
+    teach:
+      - Creating and discarding cards costs allocation, style and garbage collection. Instead the card that held tweet 41 is freed as it leaves the top.
+      - It goes back to the pool and comes out at the bottom holding tweet 47. The DOM holds the pool and two sentinels whatever the session length, so memory stays flat.
+    draw: [card-old, pool, freed, card-below, reused]
+    check: After the reader scrolls through 500 tweets, how many card elements exist?
+    answer: Still the pool, about 20, plus the two sentinels; cards are recycled, not created.
+    misconceptions:
+      - "Virtualization deletes old cards and creates new ones -> it reuses the same nodes, giving them new tweets."
+  - point: "Each card is positioned absolutely and moved with translateY, at the card above's position plus its height plus the gap; heights are measured once rendered and cached by tweet id, a ResizeObserver catches later changes, and the container is set to the total height so the scrollbar is right."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Cards are taken out of normal flow and placed with a transform, so moving one does not reflow its neighbours. y of card n is y of card n minus one, plus that card's height, plus the gap."
+      - "Heights vary, so each card is measured after it renders and its height cached by tweet id; unseen ones use an estimate. A ResizeObserver catches a card that grows, say when text is expanded, and the positions below are recomputed."
+      - The container's height is the sum of all heights and gaps, measured or estimated, so the scroll range is right even though most of the list does not exist.
+    draw: [heights, transform-note]
+    check: How does the list keep the scrollbar the right size when most tweets are not in the DOM?
+    answer: It sets the container's height to the sum of all measured or estimated heights plus gaps.
+    misconceptions:
+      - "Place card n at n times a fixed height -> heights vary; positions are a running sum of measured heights cached by id."
+  - point: "Keep style and layout cheap: one class per element instead of long descendant selectors, and move or animate only with transform and opacity, which can skip layout and paint and run on the compositor."
+    kind: rule
+    weight: core
+    teach:
+      - "Flat selectors, one class per element as in BEM. On its own this rarely costs much in modern engines; it matters because it multiplies with element count, which virtualization already caps."
+      - "Moving or animating with top, height or margin forces layout every frame. Transform and opacity can skip layout and paint; use will-change sparingly, only on elements that really animate."
+    draw: [flat-css, compositor]
+    check: Why are recycled cards placed with transform rather than top?
+    answer: Changing top is a layout change that reflows; a transform moves the already-painted card and can be handled by the compositor.
+  - point: "Nothing jumps under the reader: image boxes take their size from the attachment's width and height (or aspect-ratio) with the placeholder colour until the image decodes, and the initial HTML carries a skeleton of three card-shaped placeholders the height of real cards."
+    kind: rule
+    weight: core
+    teach:
+      - "This serves CLS 0.1 or less. The API sent width and height, so the image box is reserved and filled with the dominant colour; the image arrives without pushing anything down."
+      - "So the reader does not stare at a blank page while the JavaScript downloads, the HTML has a skeleton of three placeholders the same height as real cards; swapping them shifts nothing."
+    draw: [reserved, skeleton]
+    check: Which requirement do reserved image boxes serve, and what makes them possible?
+    answer: Layout stability (CLS 0.1 or less); the API sends each image's width and height, so the box is sized before the image arrives.
+  - point: "Recycling has an accessibility cost: screen readers follow DOM order, so keep DOM order equal to visual order when a node moves, follow the feed pattern (role feed, aria-posinset, aria-setsize -1 while more can load, aria-busy during loads), and keep the focused card mounted."
+    kind: rule
+    weight: supporting
+    teach:
+      - "A recycled node moved to the bottom by a transform can sit first in the DOM while showing tweet 47, and a screen reader loses its place. Move the node in the DOM too."
+      - "This is the first stretch topic. Some large feeds give up part of the reflow savings for it, re-rendering a small window of 10 to 20 items in order."
+    check: A recycled card shows tweet 47 at the bottom but is still first in the DOM. What breaks, and what is the fix?
+    answer: Screen readers follow DOM order and lose their place; move the node in the DOM as well so DOM order matches visual order, and use the feed pattern's aria attributes.
+asks:
+  - ids: [flat-css, compositor, reserved, skeleton]
+    beats: [4, 5]
+    question: "Beyond the number of nodes, how would you keep style and layout cheap, and stop things from jumping while the feed loads?"
+    hints:
+      - Think about your CSS selectors, and which properties you animate.
+      - And what happens when an image arrives with no size set?
+task:
+  prompt: "Draw the virtual list: the container, the viewport, the two sentinels, a card leaving the top going back to the pool and coming out at the bottom, and say how the next card's position is computed."
+  expects: [1, 2, 3]

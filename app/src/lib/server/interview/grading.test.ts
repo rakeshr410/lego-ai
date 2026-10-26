@@ -5,12 +5,14 @@ import { describe, expect, it } from 'vitest';
 import { stageItems } from './director';
 import { assembleFeedback, rateItems, reachedIn, verifyVerdicts, type ItemVerdict } from './grading';
 import type { Turn } from './sessions';
+import { snapshotPaths } from '../../content-snapshot.node';
 
 // The rating rules (design section 8), on the customer-support-agent plan: ratings follow core
 // coverage and wrong answers by fixed thresholds; a verdict without the candidate's words behind
 // it is downgraded; sections the candidate never reached are not held against them.
 
-const contentDir = fileURLToPath(new URL('../../../../../content', import.meta.url));
+// lego's content/ (CONTENT_DIR overrides it), where the build reads it too.
+const contentDir = snapshotPaths(fileURLToPath(new URL('../../../../', import.meta.url))).contentDir;
 const { catalog } = loadContent(contentDir);
 const system = catalog.systems.find((s) => s.slug === 'customer-support-agent')!;
 const plan: DerivedPlan = derivePlans({ system, topics: catalog.topics.filter((t) => t.system === system.slug).map((t) => ({ slug: t.slug, file: t.file, data: t.data })), override: null }).system!;

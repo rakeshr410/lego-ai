@@ -1,0 +1,121 @@
+# News feed interface: HTTP for pages and likes, server-sent events for notices, the cursor, the set-not-toggle like calls, and the store actions between components.
+id: facebook/news-feed/interface-definition
+title: Endpoints, cursors and store actions
+source:
+  hash: e57f9ce45849
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: facebook/news-feed/data-model
+  assumes:
+    - "Data flows one way: Feed Service fetches, Feed Store normalises and holds state, FeedList renders ids."
+    - Live Updates holds an SSE stream; new post ids wait in the store's pending ids until the pill is pressed.
+    - Each tab has one Feed, its ordered ids, next_cursor, status, pending ids and error.
+    - A LikeIntent is a client-only overlay; the card shows its desired state if one exists, otherwise the confirmed state.
+    - Server-sent events are one-way over plain HTTP; a WebSocket is a two-way channel.
+  carries:
+    - Pages and likes are request and response over HTTP; new-post notices use server-sent events, with 60 s polling as a fallback.
+    - The feed cursor is opaque and points into the server's ranked snapshot; next_cursor null means the end, and an expired cursor means a fresh first page.
+    - The like calls set state rather than toggle it, so one automatic retry is safe.
+    - The browser's own reconnect resends Last-Event-ID; a manual reopen passes last_event_id in the URL.
+    - Components dispatch store actions and never call each other; only the store talks to Feed Service.
+    - FeedList renders ids through renderItem and never sees post payloads.
+  terms:
+    - term: cursor
+      means: An opaque token from the server marking where the next page starts in its ranked snapshot for this feed session.
+    - term: idempotent
+      means: Safe to repeat, sending the call twice leaves the same state as sending it once.
+    - term: Last-Event-ID
+      means: The id of the last event received, which lets the server replay what was missed on reconnect.
+    - term: store action
+      means: A named message a component dispatches to the store (like/toggled, feed/loadMoreRequested), never a direct call.
+board:
+  keep: [browser, feed-page, feed-list, post-card, new-posts-pill, feed-store, live-updates, feed-service, server, store-to-page, store-service, service-server, load-more, server-stream, add-pending, like-toggled, response, page-response, entities, post-entity, user-entity, media-entity, lists, feed-top, client-only, like-intent, scroll-snapshot, service-normalises, normalise, to-lists, saved]
+  elements:
+    - { id: transport, kind: region, label: Transport, at: [52, 36], size: [22, 10] }
+    - { id: t-rest, kind: note, label: "REST: pages and likes, safe to retry", at: [53, 38], in: transport, tone: blue }
+    - { id: t-sse, kind: note, label: "SSE: new-post notices, one way", at: [53, 40], in: transport, tone: blue }
+    - { id: t-poll, kind: note, label: "poll every 60 s after 3 failed connects", at: [53, 42], in: transport }
+    - { id: t-not, kind: note, label: "not used: WebSocket, GraphQL", at: [53, 44], in: transport, tone: grey }
+    - { id: endpoints, kind: region, label: Endpoints, at: [52, 47], size: [22, 21] }
+    - { id: get-feed, kind: box, label: GET /api/feed with a cursor, at: [53, 50], size: [20, 2], in: endpoints, tone: blue }
+    - { id: cursor-rule, kind: note, label: "opaque cursor, end when none comes back", at: [53, 53], in: endpoints, tone: amber }
+    - { id: like-endpoint, kind: box, label: POST or DELETE a like, at: [53, 55], size: [20, 2], in: endpoints, tone: blue }
+    - { id: set-rule, kind: note, label: "sets state, so one retry is safe", at: [53, 58], in: endpoints, tone: green }
+    - { id: stream-endpoint, kind: box, label: GET /api/feed/stream, at: [53, 60], size: [20, 2], in: endpoints, tone: blue }
+    - { id: replay-rule, kind: note, label: replays from the last event id, at: [53, 63], in: endpoints }
+    - { id: get-posts, kind: box, label: "GET /api/posts, 20 ids max", at: [53, 65], size: [20, 2], in: endpoints, tone: blue }
+    - { id: actions, kind: region, label: Client to client, at: [52, 69], size: [22, 10] }
+    - { id: a-dispatch, kind: note, label: "components dispatch actions, never call", at: [53, 71], in: actions }
+    - { id: a-only-store, kind: note, label: only Feed Store calls Feed Service, at: [53, 73], in: actions }
+    - { id: a-like-once, kind: note, label: "like: one in flight, one follow-up", at: [53, 75], in: actions }
+    - { id: a-feedlist, kind: note, label: "FeedList gets ids, never posts", at: [53, 77], in: actions }
+  arrows: []
+beats:
+  - point: Pages and likes are ordinary request and response calls over HTTP, while new-post notices only flow from server to client, so they use server-sent events, with polling as a fallback.
+    kind: decision
+    weight: core
+    teach:
+      - Choose the transport per kind of traffic. A page or a like is a request with a response, plain HTTP; GETs are safe to retry, and the like calls set state, so they are too.
+      - New-post notices go one way and are small, which is what server-sent events are for. The browser reconnects by itself and resends the last event id, and over HTTP/2 the stream does not use up the small per-host connection limit of HTTP/1.1.
+      - A WebSocket is not needed, nothing is sent back on this channel. The app has a chat socket, but the feed keeps its own stream so the home page never waits on the chat layer. If the stream fails three times in a row, poll every 60 s.
+    draw: [transport, t-rest, t-sse, t-poll, t-not]
+    check: Why are server-sent events chosen over a WebSocket for new-post notices?
+    answer: The notices only flow from server to client; SSE reconnects and replays with Last-Event-ID over plain HTTP, and likes go over ordinary HTTP anyway.
+    misconceptions:
+      - "Live features always need a WebSocket -> these notices are one-way, so server-sent events are enough."
+      - "The notices should ride on the chat socket -> they could, but the feed would then depend on the chat layer for no gain."
+  - point: The feed is paged with an opaque cursor that points into the server's ranked snapshot; the first page needs none because it is in the HTML, next_cursor null marks the end, and an expired cursor means a fresh first page with duplicates dropped.
+    kind: mechanism
+    weight: core
+    teach:
+      - Write GET /api/feed with feed, limit 10 and cursor c1. The cursor means nothing to the client; it marks a place in the server's ranked snapshot for this feed session.
+      - The response hands back next_cursor, c2, for the next call, or null at the end, when FeedList removes the sentinel. The response is private and never stored by caches.
+      - If the session ends, the server answers 410 cursor_expired. The client keeps what is shown, fetches a fresh first page, drops the ids it already has and appends the rest.
+    draw: [endpoints, get-feed, cursor-rule]
+    check: Loading page 4 returns 410 cursor_expired. What does the client do?
+    answer: It keeps what is shown, fetches a fresh first page, drops ids already in the list and appends the rest, showing the end state if nothing new is left.
+    misconceptions:
+      - "A cursor is a page number -> it is opaque and points into a ranked snapshot; the client only passes it back."
+      - "On an expired cursor, clear the list and start again -> keep the reader's place and dedupe the fresh page by id."
+  - point: The like calls set the viewer's like rather than toggle it, so repeating one leaves the same state, one automatic retry is safe, and the store keeps at most one request in flight per post.
+    kind: rule
+    weight: core
+    teach:
+      - POST to /api/posts/{id}/like sets the like and DELETE removes it, each with a CSRF token. Sending POST twice still leaves the post liked and returns the same state, so the client may retry once by itself.
+      - The response carries the confirmed liked flag and count, which the store copies into the post before dropping the intent.
+      - Three quick taps only flip the intent's desired state. When the request settles, the store sends one follow-up only if desired differs from what the server confirmed.
+    draw: [like-endpoint, set-rule]
+    check: The reader taps Like three times quickly. How many like requests can be in flight for that post at once?
+    answer: One, plus at most one follow-up afterwards if the final desired state differs from the confirmed one.
+    misconceptions:
+      - "A like endpoint should toggle -> a toggle repeated by a retry would undo itself; setting state makes repeats harmless."
+  - point: New-post notices come from an EventSource stream that replays from the last event id, and the posts they name are fetched by id, up to 20 at a time.
+    kind: mechanism
+    weight: core
+    teach:
+      - Live Updates opens GET /api/feed/stream with EventSource. Each new_posts event has an id and lists post ids; the ids are hints, so the client still dedupes. A comment line every 25 s keeps proxies from closing the stream.
+      - On its own reconnect the browser sends the Last-Event-ID header. When Live Updates reopens the stream itself, a new EventSource cannot send that header, so it puts last_event_id in the URL; the server replays from either.
+      - GET /api/posts with up to 20 ids prefetches the pending posts while the tab is visible. Ids the viewer can no longer see are left out, and the client drops them from pending.
+    draw: [stream-endpoint, replay-rule, get-posts]
+    check: Live Updates reopens the stream after a backoff. How does the server know which notices were missed?
+    answer: A new EventSource cannot send the Last-Event-ID header, so the client passes last_event_id in the URL and the server replays from it.
+    misconceptions:
+      - "Every new EventSource sends Last-Event-ID -> only the browser's own automatic reconnect does; a manual reopen puts it in the URL."
+  - point: Components never call each other, they dispatch named actions to the store, which alone talks to Feed Service; and FeedList renders ids through renderItem, never post payloads.
+    kind: component
+    weight: core
+    teach:
+      - PostCard dispatches like/toggled, FeedList feed/loadMoreRequested, the pill feed/pendingShown. Each action has a source, a payload and an effect on the store.
+      - Only the store calls Feed Service, and Feed Service reports back with actions like feed/pageLoaded and like/failed.
+      - FeedList takes items, the ordered ids, and renderItem, which renders a PostCard for each. It knows nothing about posts, so the same list serves both tabs and could serve other collections.
+    draw: [actions, a-dispatch, a-only-store, a-like-once, a-feedlist]
+    check: What does FeedList receive to render the feed, and why not the post payloads?
+    answer: The ordered post ids and a renderItem function that renders PostCard; keeping it to ids lets one list serve both tabs and other collections.
+    misconceptions:
+      - "PostCard calls FeedList or Feed Service directly -> it dispatches an action; only the store talks to Feed Service."
+task:
+  prompt: Draw the endpoints the feed uses, with the method, path and cursor, and mark which transport each one is, and write why the like call is safe to retry.
+  expects: [1, 2, 3]

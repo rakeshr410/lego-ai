@@ -1,0 +1,165 @@
+# Reacting: timeouts on every request, retries with backoff and full jitter, what to retry, the outbox with idempotency keys, and optimistic rows that can be taken back.
+id: state-management/network-connectivity/retries-and-queued-writes
+title: Retries and queued writes
+source:
+  hash: "0db8328a5b48"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: state-management/network-connectivity/how-it-works
+  assumes:
+    - "One ConnectivityMonitor owns the status (online, slow, checking, offline) and every part of the app reads it."
+    - "Only a TypeError or a timeout counts against the connection; two in a row start Checking, and a probe settles it."
+    - "Offline, a cash sale is still recorded and sent later; a card refund is disabled with a reason."
+  carries:
+    - "fetch has no timeout of its own; every call gets one sized to its purpose: 8 s reads, 15 s writes, 4 s probe."
+    - "Reads retry with full jitter, a random wait from zero to min(30 s, 1 s times 2 to the attempt), at most 5 times."
+    - "Retry network errors, timeouts, 408, 429, 502, 503 and 504; honour Retry-After; never retry other 4xx; nothing retries while Offline."
+    - Writes allowed offline go to a durable outbox in IndexedDB before the screen shows them, and replay in order, one at a time, after the catch-up read.
+    - "Each entry's id is its Idempotency-Key, so a retry after a lost reply is recognised and not recorded twice."
+    - "Queued rows are optimistic and say 'Not sent yet'; a 409 or 422 on replay rolls the row back and keeps the problem on screen."
+  terms:
+    - term: full jitter
+      means: Waiting a random time between zero and the current backoff cap, so phones that failed together come back spread out.
+    - term: outbox
+      means: "The IndexedDB store of writes made on this phone that the server has not confirmed: id, kind, payload, createdAt, attempts, state."
+    - term: idempotency key
+      means: "A client-made id sent with a write and reused on every retry, so the server can recognise a repeat and return the first result."
+    - term: lost reply
+      means: The server did the work but the answer never arrived, so the client sees an error for a write that succeeded.
+board:
+  keep: []
+  elements:
+    - { id: retry-rules, kind: region, label: Timeouts and retries, at: [2, 1], size: [66, 21] }
+    - { id: no-timeout, kind: box, label: "fetch alone: hangs for minutes", at: [4, 4], size: [12, 3], in: retry-rules, tone: red }
+    - { id: timeouts, kind: box, label: "8 s reads, 15 s writes, 4 s probe", at: [26, 4], size: [14, 3], in: retry-rules, tone: blue }
+    - { id: timeout-note, kind: note, label: a timeout counts as a failure, at: [42, 5], in: retry-rules }
+    - { id: try-first, kind: box, label: first try, at: [4, 10], size: [6, 3], in: retry-rules, tone: red }
+    - { id: try-1, kind: box, label: retry 1, at: [17, 10], size: [5, 3], in: retry-rules }
+    - { id: try-2, kind: box, label: retry 2, at: [30, 10], size: [5, 3], in: retry-rules }
+    - { id: try-3, kind: box, label: retry 3, at: [44, 10], size: [5, 3], in: retry-rules }
+    - { id: try-4, kind: box, label: retry 4, at: [59, 10], size: [5, 3], in: retry-rules }
+    - { id: jitter-note, kind: note, label: "wait: random from zero to the cap; cap 30 s, 5 retries", at: [4, 14], in: retry-rules }
+    - { id: retry-yes, kind: box, label: "retry: errors, timeouts, 408, 429, 502 to 504", at: [4, 16], size: [16, 3], in: retry-rules, tone: green }
+    - { id: retry-no, kind: box, label: "never retry: other 4xx", at: [24, 16], size: [12, 3], in: retry-rules, tone: red }
+    - { id: parked, kind: box, label: "Offline: park it, release on Online", at: [40, 16], size: [14, 3], in: retry-rules, tone: amber }
+    - { id: retry-after, kind: note, label: Retry-After wins over the formula, at: [4, 20], in: retry-rules }
+    - { id: release, kind: note, label: released with 0 to 1 s jitter, at: [40, 20], in: retry-rules }
+    - { id: outbox-flow, kind: region, label: The outbox and a lost reply, at: [2, 24], size: [66, 23] }
+    - { id: sale-tap, kind: box, label: user 1 records a sale, at: [4, 27], size: [10, 3], in: outbox-flow, tone: blue }
+    - { id: outbox-store, kind: oval, label: outbox in IndexedDB, at: [22, 27], size: [12, 3], in: outbox-flow, tone: amber }
+    - { id: req-layer, kind: box, label: request layer, at: [40, 27], size: [9, 3], in: outbox-flow, tone: blue }
+    - { id: api, kind: box, label: Stallhand API, at: [56, 27], size: [10, 3], in: outbox-flow, tone: grey }
+    - { id: key-note, kind: note, label: id is the Idempotency-Key, at: [22, 31], in: outbox-flow }
+    - { id: replay-when, kind: note, label: replay after Online and catch-up, at: [40, 31], in: outbox-flow }
+    - { id: post-sale, kind: box, label: "POST sale, key 7f3c", at: [4, 34], size: [10, 3], in: outbox-flow, tone: blue }
+    - { id: recorded, kind: box, label: server records £14.50, at: [20, 34], size: [11, 3], in: outbox-flow, tone: green }
+    - { id: reply-lost, kind: box, label: 201 lost on the way, at: [38, 34], size: [10, 3], in: outbox-flow, tone: red, dashed: true }
+    - { id: retry-same, kind: box, label: "retry, same body and key", at: [38, 40], size: [10, 3], in: outbox-flow, tone: blue }
+    - { id: dedupe, kind: box, label: "201, the original sale", at: [20, 40], size: [11, 3], in: outbox-flow, tone: green }
+    - { id: deleted, kind: box, label: entry deleted, at: [4, 40], size: [10, 3], in: outbox-flow }
+    - { id: failed-rule, kind: note, label: "409 or 422: marked failed, shown, never dropped", at: [4, 44], in: outbox-flow }
+    - { id: rollback, kind: region, label: "Shown now, taken back", at: [70, 1], size: [40, 15] }
+    - { id: row-218, kind: box, label: "order 218: collected, not sent yet", at: [72, 4], size: [14, 3], in: rollback, tone: amber }
+    - { id: conflict, kind: box, label: "409: customer cancelled at 11:25", at: [94, 4], size: [14, 3], in: rollback, tone: red }
+    - { id: rolled-back, kind: box, label: "row back to cancelled, reason shown", at: [94, 9], size: [14, 3], in: rollback }
+    - { id: nell-decides, kind: box, label: "User 1 decides: cheese or payment", at: [72, 9], size: [14, 3], in: rollback, tone: blue }
+    - { id: waiting-note, kind: note, label: "banner: 2 sales waiting to send", at: [72, 13], in: rollback }
+  arrows:
+    - { id: add-limit, from: no-timeout, to: timeouts, label: add a time limit }
+    - { id: up-to-2, from: try-first, to: try-1, label: up to 2 s }
+    - { id: up-to-4, from: try-1, to: try-2, label: up to 4 s }
+    - { id: up-to-8, from: try-2, to: try-3, label: up to 8 s }
+    - { id: up-to-16, from: try-3, to: try-4, label: up to 16 s }
+    - { id: saved-first, from: sale-tap, to: outbox-store, label: saved first }
+    - { id: in-order, from: outbox-store, to: req-layer, label: in order }
+    - { id: one-by-one, from: req-layer, to: api, label: one by one }
+    - { id: sent, from: post-sale, to: recorded, label: sent }
+    - { id: link-drops, from: recorded, to: reply-lost, label: link drops }
+    - { id: error-seen, from: reply-lost, to: retry-same }
+    - { id: key-known, from: retry-same, to: dedupe, label: key known }
+    - { id: done, from: dedupe, to: deleted, label: done }
+    - { id: replayed, from: row-218, to: conflict, label: replayed }
+    - { id: to-rollback, from: conflict, to: rolled-back }
+    - { id: shown-to-her, from: rolled-back, to: nell-decides, label: shown to them }
+beats:
+  - point: "fetch has no timeout of its own, so every request gets one sized to what it is for: 8 s for reads, 15 s for writes, 4 s for the probe; a timeout counts as a failed attempt."
+    kind: rule
+    weight: core
+    teach:
+      - On a link that has stopped moving data a request can hang until the operating system gives up on the connection, which can take minutes, and a spinner turns the whole time.
+      - "Stallhand's request layer attaches AbortSignal.timeout to every call. Writes get longer because they carry more and matter more. A timeout rejects with a TimeoutError, which is reported to the monitor like any failure."
+      - "Pick the numbers from the request's purpose: the order poll runs again in 20 seconds anyway, so waiting longer than 8 buys nothing."
+    draw: [retry-rules, no-timeout, timeouts, add-limit, timeout-note]
+    check: "In the crowded hall the cell carries no data but the phone stays attached. What happens to an order poll with no timeout, and with Stallhand's?"
+    answer: "Without one it can hang for minutes with a spinner; with an 8 s AbortSignal.timeout it fails with a TimeoutError, counts as a failure for the monitor, and the screen can fall back to its cache."
+    misconceptions:
+      - "The browser times requests out quickly on its own -> fetch has no default timeout; a stalled connection can hang for minutes."
+  - point: "A failed read is retried with exponential backoff and full jitter, a random wait from zero to min(30 s, 1 s times 2 to the attempt), and given up after 5 retries with a Retry button."
+    kind: mechanism
+    weight: core
+    teach:
+      - Each retry waits longer than the last so a struggling link or server gets room to recover. Draw the attempts with growing gaps.
+      - "The jitter matters because many phones fail together. When the hall's cell recovers, 300 stallholders' phones would otherwise retry in the same instant and knock it over again. Full jitter draws the wait anywhere from zero to the cap."
+      - "Waits are drawn from up to 2, 4, 8, 16, then 30 seconds; the worst case for all five is about a minute, then an error with Retry."
+    draw: [try-first, try-1, up-to-2, try-2, up-to-4, try-3, up-to-8, try-4, up-to-16, jitter-note]
+    check: Why does Stallhand randomise each retry's wait instead of waiting exactly 1, 2, 4 and 8 seconds?
+    answer: "Because hundreds of phones fail at the same moment; fixed waits would bring them all back together and overload the recovering cell or server again. A random wait up to the cap spreads them out."
+    misconceptions:
+      - "Exponential backoff alone is enough -> phones that failed together still retry together; jitter spreads them."
+  - point: "Only some failures are retried: network errors, timeouts, 408, 429, 502, 503 and 504, with Retry-After winning when sent; other 4xx are final, and while Offline nothing retries until the monitor's return to Online releases it."
+    kind: rule
+    weight: core
+    teach:
+      - "Retryable means asking again might get a different answer. A 429 or 503 usually comes with Retry-After, and that wait beats the formula."
+      - "A 400, 403 or 404 is a final answer: the same request gets the same reply."
+      - "While the monitor says Offline, retrying into a dead link only burns battery. The request layer parks the work; when the monitor confirms Online it releases it with a small 0 to 1 second jitter."
+    draw: [retry-yes, retry-no, parked, retry-after, release]
+    check: "The monitor says Offline. What does the request layer do with a read that just failed?"
+    answer: "It parks it rather than retrying on the schedule; the monitor is already probing, and its return to Online releases the parked work within a second, jittered."
+    misconceptions:
+      - "Retry every failure -> other 4xx are final answers; retrying them only repeats the same reply."
+      - "Keep retrying while offline -> nothing can succeed; park the work and let the monitor's return release it."
+  - point: "Every write allowed offline goes into a durable outbox in IndexedDB before the screen shows it, and replays in order, one at a time, after Online is confirmed and the order list has caught up."
+    kind: component
+    weight: core
+    teach:
+      - "A cash sale at 11:20 cannot wait for the network to exist, and cannot live only in memory: user 1 might close the app or the phone might discard the tab."
+      - "An entry holds a client-made UUID, the kind of write, the payload, createdAt, attempts and a state: queued, sending or failed."
+      - "Replay goes in creation order so a sale arrives before its refund. Background Sync can replay from a service worker in Chromium only, so Stallhand also replays on start and on every return to Online."
+    draw: [outbox-flow, sale-tap, outbox-store, saved-first, req-layer, in-order, api, one-by-one, key-note, replay-when]
+    check: Why is the sale written to IndexedDB before the row appears, rather than kept in memory until it is sent?
+    answer: "So it survives the app closing or the tab being discarded; it is deleted only after the server confirms it."
+    misconceptions:
+      - "Keep pending writes in memory -> a closed app or discarded tab loses sales that already happened."
+  - point: "The entry's id travels as its Idempotency-Key, so when the server recorded the sale but the reply was lost, the retry is recognised and the original result comes back instead of a second sale."
+    kind: failure
+    weight: core
+    teach:
+      - "The dangerous case is not a request that failed, but one whose reply was lost. Draw it: the POST with key 7f3c arrives, the server records £14.50, the link drops before the 201 returns."
+      - "The phone sees an error and sends the same body with the same key. The server knows the key and returns the first result. The entry is deleted."
+      - "A 2xx or 'already done' deletes the entry; a network error puts it back to queued; a 409 or 422 marks it failed and shows it, never dropping it, because a lost sale is a till that does not balance."
+    draw: [post-sale, recorded, sent, reply-lost, link-drops, retry-same, error-seen, dedupe, key-known, deleted, done, failed-rule]
+    check: Why does the outbox entry's id travel as an Idempotency-Key header?
+    answer: "So a retry after a lost reply is recognised: the server already recorded the sale, sees the same key, and returns the original result instead of recording it twice."
+    misconceptions:
+      - "Only failed requests are a risk -> the risk is a write that succeeded but whose reply was lost; without a key the retry doubles it."
+      - "A new key per attempt -> the key must be the same on every attempt of one write, or the server cannot match them."
+  - point: "Queued writes are optimistic: the row shows at once with 'Not sent yet' and the banner counts what is waiting; when the replay is refused, the row rolls back to the server's state and the problem stays on screen for user 1 to decide."
+    kind: flow
+    weight: core
+    teach:
+      - "The sale already happened in the world, so showing it now is right, but the row is honest about it until the outbox entry is gone, and the banner says how many are waiting so user 1 does not close the app thinking all is safe."
+      - "At 11:30 user 1 marks order 218 collected, offline. At 11:25 the customer had cancelled it online. On replay the server answers 409 with the reason."
+      - "Stallhand rolls the row back to 'Cancelled by customer at 11:25', keeps the failed entry visible, and lets user 1 decide: hand back the cheese or take payment."
+    draw: [rollback, row-218, conflict, replayed, rolled-back, to-rollback, nell-decides, shown-to-her, waiting-note]
+    check: "A replayed 'collected' for order 218 gets 409 because the customer cancelled meanwhile. What should Stallhand do?"
+    answer: "Not retry and not drop it: roll the row back to the server's state, keep the failed entry visible with the reason, and let user 1 decide what to do."
+    misconceptions:
+      - "Retry a 409 until it succeeds -> it is a final answer; retrying cannot change it."
+      - "Silently drop the refused write -> that hides a real-world problem from the person who has to sort it out."
+task:
+  prompt: "Draw a cash sale recorded offline travelling through the outbox to Stallhand, including a reply lost on the way, and show what makes the retry safe and when the entry is deleted."
+  expects: [4, 5]

@@ -1,0 +1,31 @@
+# News feed interview, the prompt: design Twitter's feed; the server is a black box, so the design is the UI in the browser. The title goes on the board and the lesson moves straight to the mock-up.
+id: twitter/news-feed-end-to-end/approach
+title: The prompt
+source:
+  hash: "139124d9bfb1"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: null
+  assumes: []
+  carries:
+    - "The interview designs the client of Twitter's feed, the UI in the browser; the server is a black box whose contract the candidate proposes."
+  terms:
+    - term: tweet
+      means: One Twitter post, short text with up to four optional images.
+board:
+  keep: []
+  elements:
+    - { id: title, kind: note, label: Design the Twitter news feed, at: [53, 0] }
+  arrows: []
+beats:
+  - point: "The prompt is to design the news feed of Twitter; the server is a black box, so what we design is the UI that runs in the browser."
+    kind: rule
+    weight: core
+    teach:
+      - "Write the title: design the Twitter news feed. People post tweets and read a feed of the people they follow."
+      - "We treat the server as a black box and design the UI, the part that runs in the browser. Then go straight to the mock-up."
+      - Two or three sentences, no question, and nothing about how the board is laid out; the learner sees that from the board itself.
+    draw: [title]

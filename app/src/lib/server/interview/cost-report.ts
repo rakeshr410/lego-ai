@@ -1,4 +1,4 @@
-// The cost re-measurement of the early-access phase (docs/interview/cost-model.md, "Re-measuring";
+// The cost re-measurement of the early-access phase (docs/cost-model.md, "Re-measuring";
 // design phase 3 gate: cost per session within 20% of the model). Pure: scripts/interview-cost-report.ts
 // reads the sessions from Redis and hands them here. Finished sessions only count towards the
 // per-session figures (a running session's cost is not complete).

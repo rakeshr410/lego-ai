@@ -165,4 +165,28 @@ describe('the interviewer’s audio', () => {
       vi.unstubAllGlobals();
     }
   });
+
+  it('leaves with the client a failed line left behind before joining again, and stops listening to it', async () => {
+    const clients: FakeClient[] = [];
+    const cbs: VoiceCallbacks[] = [];
+    const states: string[] = [];
+    const call = new VoiceCall({ onState: (s) => states.push(s), onCaption: () => {}, onSpeaking: () => {} }, async (cb) => {
+      cbs.push(cb);
+      clients.push(new FakeClient());
+      return clients[clients.length - 1];
+    });
+    await call.connect({ url: 'u', token: 't1' });
+    cbs[0].onBotReady();
+    cbs[0].onTransportStateChanged('error');
+    await call.connect({ url: 'u', token: 't2' });
+    // The first client gave its seat back before the second took one.
+    expect(clients[0].disconnects).toBe(1);
+    expect(clients[1].connected).toEqual({ url: 'u', token: 't2' });
+    states.length = 0;
+    cbs[0].onBotReady();
+    cbs[0].onDisconnected();
+    expect(states).toEqual([]);
+    cbs[1].onBotReady();
+    expect(states).toEqual(['live']);
+  });
 });

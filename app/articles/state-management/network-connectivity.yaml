@@ -1,0 +1,1066 @@
+# yaml-language-server: $schema=../../../../lego/content-kit/schema/topic.schema.json
+# provenance: ai-drafted by claude-opus-5-5 on 2026-10-26
+#
+# Concept topic in five sections: key-idea → how-it-works (knowing the state) →
+# retries-and-queued-writes → live-updates-and-slow-links → in-practice.
+# Running example (our own): Stallhand, a made-up app for market stallholders at stallhand.example
+# (RFC 2606 name). Nell Arden runs a cheese stall at the back of a covered Saturday market. Her
+# phone shows click-and-collect pre-orders as they arrive (polled), records walk-up cash sales,
+# marks orders collected and carries a chat with her helper Arlo. The hall's cell gets crowded
+# and drops data; the café next door has Wi-Fi with a sign-in page.
+# Key-idea: connectivity is a piece of state with a shape (status, since, lastOkAt, rtt,
+# saveData, pending writes) and five situations the user meets. How-it-works: navigator.onLine
+# and its events (false is trustworthy, true is not), confirming with a probe and with real
+# requests, captive portals under HTTPS, link quality from the Network Information API
+# (Chromium only) and from the app's own timings; a monitor state machine with hysteresis.
+# Retries-and-queued-writes: timeouts, backoff with full jitter, what to retry, the outbox with
+# idempotency keys, optimistic rows and rollback. Live-updates-and-slow-links: pausing polling and
+# sockets offline or hidden, catching up with a cursor, what a timer poll costs a phone's radio
+# (the RRC tail), connection setup and network switches, adapting to slow links and Save-Data.
+# In-practice: the screen through each state, queue or disable per action, stale markers,
+# testing, failure modes, the interview answer.
+# Every timing, count and battery figure is Stallhand's own assumption unless a source is named;
+# API behaviour comes from MDN, the WICG Network Information draft and Chrome's docs; radio power
+# figures from Huang et al. (MobiSys 2012) and High Performance Browser Networking.
+# Owners elsewhere: retry loops and AbortSignal in depth (data-retrieval/races-dedupe-and-cancellation),
+# optimistic writes (data-retrieval/mutations-and-optimistic-updates), offline caching of the app
+# itself (network-performance/service-worker-caching), long polling and SSE
+# (client-server-protocols/polling-and-server-sent-events), socket heartbeats
+# (client-server-protocols/websockets), document-level offline merge (google-docs/offline-and-conflicts),
+# a cross-tab outbox (facebook/messenger-chat).
+catalogVersion: 5
+title: "Network connectivity: when the network drops and comes back"
+shortTitle: Network connectivity
+summary: "Treat the connection as state the whole app reads: know it from real requests rather than navigator.onLine, then retry with backoff, queue writes made offline, pause live updates and resync, and tell people what still works."
+group: core
+order: 3
+xp: 240
+difficulty: intermediate
+tags: [offline, sync, retries, networking]
+prerequisites: [kinds-of-state]
+related:
+  - persisting-and-syncing-state
+  - network-performance/service-worker-caching
+  - data-retrieval/races-dedupe-and-cancellation
+  - data-retrieval/mutations-and-optimistic-updates
+  - client-server-protocols/polling-and-server-sent-events
+  - client-server-protocols/websockets
+  - client-server-protocols/http-versions
+  - google-docs/offline-and-conflicts
+  - facebook/messenger-chat
+  - cookies-and-sessions/client-storage
+eyebrow: State management
+breadcrumb: [Core]
+lede: "Networks do not fail cleanly. A phone can show full bars and move no data, sit behind a Wi-Fi sign-in page, or crawl at a few kilobytes a second. An app that only knows 'online' and 'offline' gets most of these wrong. Treat connectivity as one more piece of state, learn it from what your requests actually do, and decide what every screen and every button does in each case."
+reviewStatus: draft
+author: rakeshr410
+provenance: ai-drafted
+sources:
+  - title: "Navigator: onLine property (MDN)"
+    url: https://developer.mozilla.org/en-US/docs/Web/API/Navigator/onLine
+    note: "false is reliable; true only means the device has a network connection (in Chrome and Safari, a LAN or router), not that the internet is reachable."
+  - title: "Window: online and offline events (MDN)"
+    url: https://developer.mozilla.org/en-US/docs/Web/API/Window/online_event
+    note: Fired on window when navigator.onLine changes; same caveat as onLine.
+  - title: Network Information API (MDN)
+    url: https://developer.mozilla.org/en-US/docs/Web/API/Network_Information_API
+    note: "navigator.connection with effectiveType, rtt, downlink, saveData and a change event; limited availability (Chromium browsers, not Safari or Firefox)."
+  - title: Network Information API (WICG draft)
+    url: https://wicg.github.io/netinfo/
+    note: "effectiveType thresholds: slow-2g at RTT 2000 ms or 50 kbps, 2g 1400 ms or 70 kbps, 3g 270 ms or 700 kbps, otherwise 4g; rtt and downlink are rounded."
+  - title: Save-Data request header (MDN)
+    url: https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Save-Data
+    note: "Save-Data: on is sent when the user has asked for reduced data use; the same preference is navigator.connection.saveData."
+  - title: "AbortSignal: timeout() static method (MDN)"
+    url: https://developer.mozilla.org/en-US/docs/Web/API/AbortSignal/timeout_static
+    note: An AbortSignal that aborts with a TimeoutError DOMException after the given milliseconds.
+  - title: Exponential Backoff And Jitter (AWS Architecture Blog)
+    url: https://aws.amazon.com/blogs/architecture/exponential-backoff-and-jitter/
+    note: "Full jitter: sleep = random(0, min(cap, base × 2^attempt)); spreads retries from many clients and finishes the work with fewer calls."
+  - title: Retry-After (MDN)
+    url: https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Retry-After
+    note: Sent with 503 or 429 (and redirects); seconds or an HTTP date to wait before the next request.
+  - title: The Idempotency-Key HTTP header field (IETF draft)
+    url: https://datatracker.ietf.org/doc/draft-ietf-httpapi-idempotency-key-header/
+    note: A client-made unique key per operation so a server can recognise a retried non-idempotent request.
+  - title: Background Synchronization API (MDN)
+    url: https://developer.mozilla.org/en-US/docs/Web/API/Background_Synchronization_API
+    note: SyncManager lets a service worker run deferred work when connectivity returns; limited availability (Chromium only).
+  - title: Page Visibility API (MDN)
+    url: https://developer.mozilla.org/en-US/docs/Web/API/Page_Visibility_API
+    note: visibilitychange and document.visibilityState; hidden pages have their timers throttled.
+  - title: "setTimeout: timeouts in inactive tabs (MDN)"
+    url: https://developer.mozilla.org/en-US/docs/Web/API/Window/setTimeout#timeouts_in_inactive_tabs
+    note: Background tabs clamp timers to at least 1 s, and Chrome throttles chained timers in long-hidden pages to once a minute.
+  - title: "Mobile networks (High Performance Browser Networking, Ilya Grigorik)"
+    url: https://hpbn.co/mobile-networks/
+    note: The radio resource controller's power states, the cost of promotion from idle, and the inactivity tail before the radio drops back.
+  - title: "Optimizing for mobile networks (High Performance Browser Networking)"
+    url: https://hpbn.co/optimizing-for-mobile-networks/
+    note: Periodic polling is expensive on mobile because each transfer wakes the radio and pays the tail; batch, coalesce and push instead.
+  - title: "A close examination of performance and power characteristics of 4G LTE networks (Huang et al., MobiSys 2012)"
+    url: https://dl.acm.org/doi/10.1145/2307636.2307658
+    note: "Measured LTE tail of about 11.6 s at about 1.06 W after the last packet; the source of the per-poll energy assumption here."
+  - title: Network features reference, throttling (Chrome DevTools)
+    url: https://developer.chrome.com/docs/devtools/network/reference#throttling
+    note: Offline mode and the Fast 4G, Slow 4G and 3G presets, plus custom profiles.
+  - title: "BrowserContext.setOffline (Playwright)"
+    url: https://playwright.dev/docs/api/class-browsercontext#browser-context-set-offline
+    note: Emulates the network being offline for a whole browser context in automated tests.
+  - title: RFC 9000, QUIC connection migration
+    url: https://www.rfc-editor.org/rfc/rfc9000#section-9
+    note: QUIC connections are identified by connection IDs, so a client can move to a new address (Wi-Fi to cellular) without a new handshake.
+tutorBrief: >-
+  Running example (our own): Stallhand (stallhand.example), an app for market stallholders. Nell Arden
+  runs a cheese stall at the back of a covered Saturday market; her phone polls for click-and-collect
+  pre-orders every 20 s, records walk-up cash sales, marks orders collected, chats with helper Arlo;
+  the hall's crowded cell drops data, the café Wi-Fi has a sign-in page. Key idea: connectivity is
+  state with a shape: status (online, slow, checking, offline), since, lastOkAt, rttMs (rolling
+  average), saveData, pendingWrites; five situations: online, slow, flaky (brief drops), offline,
+  connected but cut off (captive portal, blocked). Each needs: what the screen shows, which actions
+  run, queue, or are disabled. Detecting: navigator.onLine false is reliable; true only means an
+  interface or router (MDN); the online/offline events follow it. Confirm with real traffic: any
+  HTTP response (even 4xx) proves the path works; a network TypeError or timeout is evidence; two
+  failures in a row (or one offline event) move to Checking, which sends a probe GET /api/ping
+  (cache no-store, 4 s timeout, expects 204 and header x-stallhand: 1); 5xx means the server is ill,
+  not the network. Captive portals under HTTPS usually look like a network error (TLS fails), so the
+  wording says "If you are on public Wi-Fi, you may need to sign in". Probes while offline back off
+  2, 4, 8, 16, 30 s (cap) with jitter; the online event, app becoming visible, or a Retry tap probe
+  now. Quality: Network Information API (Chromium only) effectiveType slow-2g/2g/3g/4g by WICG
+  thresholds (3g at 270 ms RTT or 700 kbps), rtt and downlink rounded; saveData mirrors the Save-Data
+  header; elsewhere use own timings: rolling RTT over the last 10 requests; Slow above 1,000 ms, back
+  to Online below 600 ms (hysteresis). Reacting: fetch has no default timeout, use
+  AbortSignal.timeout (8 s reads, 15 s writes, 4 s probe). Retries: full jitter random(0,
+  min(30 s, 1 s × 2^attempt)), at most 5 for reads; retry network errors, timeouts, 408, 429, 502,
+  503, 504; honour Retry-After; never retry other 4xx; while Offline nothing retries, the monitor's
+  return to Online releases the work with 0–1 s jitter. Outbox in IndexedDB: {id (UUID, also
+  Idempotency-Key), kind, payload, createdAt, attempts, state queued|sending|failed}; written before
+  the UI shows the row; replayed in order, one at a time, after the catch-up read; server dedupes by
+  key; 2xx or duplicate → delete; 409/422 → failed, shown to the person, never silently dropped;
+  network error → back to queued. Optimistic rows show "Not sent yet"; a rejected replay rolls back
+  with a reason (customer cancelled the pre-order while Nell was offline → 409). Background Sync is
+  Chromium only, so replay also runs on start and on reconnect. Live updates: stop the 20 s poll when
+  Offline or hidden; on return GET /api/orders?since=<cursor> before resuming; sockets need an
+  app-level ping because browsers expose no ping frames. Phone radio: each poll wakes the radio and
+  keeps it in high power for the tail (LTE measured about 11.6 s at about 1.06 W, Huang et al. 2012);
+  about 12.8 J per poll; 20 s polls for a 7 h market day ≈ 1,260 polls ≈ 16 kJ ≈ 29% of a 4,000 mAh
+  3.85 V battery (55 kJ); 60 s ≈ 10%; the cost is wakeups, not an open idle TCP connection and not
+  header bytes (a few hundred bytes, compressed by HPACK/QPACK). A new connection costs DNS + TCP +
+  TLS 1.3 ≈ 3 RTT before the request; a switch from Wi-Fi to cellular changes the address and kills
+  TCP connections; QUIC (HTTP/3) can migrate. Slow links: smaller images, no prefetch, poll every
+  60 s, longer timeouts, smaller pages. Queue vs disable: cash sale, collected, chat → queue; mark
+  sold out → queue with a warning that the online shop still sells it; card refund and new stock
+  levels from the till integration → disabled with a reason. Stale markers: "Updated 10:42" when data
+  is older than 2 min or offline. Testing: DevTools Offline and Fast 4G/Slow 4G/3G presets plus a
+  custom high-latency profile; Playwright setOffline and route() to abort or hang; a stub that
+  accepts the connection and never answers; a real phone in a lift.
+
+components:
+  - key: connectivity-monitor
+    name: ConnectivityMonitor
+    tone: blue
+    kind: client
+    summary: Owns the connectivity state. Listens to the browser's online and offline events, hears every request's outcome from the request layer, sends probes, and publishes one status the whole app reads.
+    owns: [status, lastOkAt, rolling RTT, probe timer]
+    talksTo: [request-layer, stallhand-api]
+  - key: request-layer
+    name: Request layer
+    tone: sand
+    kind: client
+    summary: The one place fetch is called. Adds timeouts, retries reads with backoff and jitter, reports each outcome to the monitor, and holds work while the monitor says Offline.
+    owns: [timeouts, retry policy]
+    talksTo: [connectivity-monitor, stallhand-api]
+  - key: outbox
+    name: Outbox (IndexedDB)
+    tone: green
+    kind: datastore
+    summary: Writes made on this phone that the server has not confirmed yet, each with its own idempotency key, kept across reloads and replayed in order.
+    owns: [queued writes, idempotency keys]
+    talksTo: [request-layer]
+  - key: order-feed
+    name: OrderFeed
+    tone: purple
+    kind: client
+    summary: Keeps today's pre-orders current by polling every 20 s with a cursor. Pauses when offline or hidden and catches up when it resumes.
+    owns: [order list, since cursor, poll timer]
+    talksTo: [request-layer]
+  - key: status-ui
+    name: Status UI
+    tone: orange
+    kind: client
+    summary: The connection banner, the per-row "Not sent yet" and "Updated 10:42" markers, and the disabled buttons with their reasons. Reads the monitor and the outbox; owns no facts of its own.
+    owns: [banner wording, row markers]
+    talksTo: [connectivity-monitor, outbox]
+  - key: stallhand-api
+    name: Stallhand API
+    tone: gray
+    kind: service
+    summary: The server. Answers the probe with 204, returns orders changed since a cursor, and deduplicates writes by their idempotency key.
+    owns: [orders, sales, idempotency records]
+    talksTo: []
+
+content:
+  # ────────────────────────────────────────────────────────────────── 1. The idea
+  - __component: sd.section
+    key: key-idea
+    title: The idea.
+    railLabel: The idea
+    intro: "Whether the app can reach its server is a fact that changes every few minutes on a phone, and almost every screen depends on it. It deserves the same care as any other state: one owner, a clear shape, and a decision about what people see and can do in each value."
+  - __component: sd.statement
+    key: connectivity-statement
+    text: "Connectivity is state, not a boolean: know it from what your requests do, and decide for every screen and every action what happens in each case."
+  - __component: sd.rich-text
+    key: connectivity-why
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Nell Arden sells cheese at the back of a covered Saturday market. Stallhand on her phone shows click-and-collect pre-orders as customers place them, records the walk-up cash sales she rings up, lets her mark a pre-order as collected, and carries a chat with Arlo, who restocks from the van. At 9 a.m. the hall is empty and her phone has a fast 4G connection. By 11 the hall is packed, the one cell that covers it is overloaded, and her phone still shows two bars while almost no data moves. At lunch she takes a break in the café next door, whose Wi-Fi joins automatically but sends every request to a sign-in page until she accepts its terms."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Each of those moments needs different behaviour. When the connection is slow, Stallhand should keep working but stop fetching anything it can skip. When it is gone, Nell must still be able to record a sale (the money is already in the tin) and see the orders she had, marked with how old they are. When it comes back, the sales she recorded must reach the server exactly once and the order list must catch up on what she missed. Some actions cannot be done without the server at all, such as refunding a card payment, and those buttons should say why they are unavailable instead of failing after a spinner."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Nearly every piece of this already has its own topic: retries and timeouts in Racing requests, optimistic writes in Writing data, caching the app's code and data in Caching with a service worker. This topic is about what ties them together: one value, owned in one place, that says how good the connection is right now, and the rules each part of the app follows when it changes."
+  - __component: sd.table
+    key: five-situations
+    title: Five situations, and what Stallhand does in each
+    columns:
+      - { label: Situation, style: strong }
+      - { label: What is really happening, style: text }
+      - { label: What Nell sees, style: text }
+      - { label: What she can do, style: text }
+    rows:
+      - [Online, "Requests answer within a second or so", "Live pre-orders, no banner", Everything]
+      - [Slow, "Requests succeed but take seconds; the link is congested or weak", "A quiet 'Slow connection' label; thumbnails load small", "Everything; extras like photo previews wait"]
+      - [Flaky, "Short drops of a few seconds; most requests succeed on a retry", "Nothing, unless a drop lasts long enough to need saying", "Everything; a request may take a retry or two"]
+      - [Offline, "No requests get through; the device may or may not know it", "A banner, orders marked 'Updated 10:42', unsent rows marked", "Record sales, mark collected, write chat messages; refunds disabled"]
+      - [Connected but cut off, "The device has a network, but requests never reach Stallhand: a Wi-Fi sign-in page, a firewall", "The offline banner, plus a hint about signing in to public Wi-Fi", Same as offline]
+  - __component: sd.data-model
+    key: connectivity-shape
+    title: The connectivity state every screen reads
+    caption: "One owner, ConnectivityMonitor, writes it; components subscribe to the parts they need. pendingWrites comes from the outbox, so the banner can say how many sales are waiting."
+    groups:
+      - key: state
+        step: "01"
+        label: ConnectivityMonitor
+        types:
+          - name: Connectivity
+            fields:
+              - { name: status, type: Status }
+              - { name: since, type: number, note: "when status last changed (ms)" }
+              - { name: lastOkAt, type: number, note: "last time any response came back from Stallhand" }
+              - { name: rttMs, type: number | null, note: "rolling average of the last 10 requests" }
+              - { name: saveData, type: boolean, note: "the person asked for less data" }
+              - { name: pendingWrites, type: number, note: "outbox entries not yet confirmed" }
+      - key: enums
+        label: Enums
+        column: 2
+        types:
+          - name: Status
+            values: [online, slow, checking, offline]
+    flows:
+      - { from: state, to: [enums], label: uses }
+  - __component: sd.rich-text
+    key: connectivity-shape-notes
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Two details of that shape matter. First, there is a Checking status between Online and Offline: one failed request is not enough to tell Nell she is offline, so the app spends a few seconds confirming before it changes the screen. Second, lastOkAt is a timestamp rather than a flag. 'Offline' with lastOkAt three seconds ago and 'offline' with lastOkAt forty minutes ago call for different wording, and the stale markers on the order list are computed from it."
+      - type: paragraph
+        children:
+          - type: text
+            text: "The connected-but-cut-off case does not get its own status. To the app it looks exactly like being offline, as the next section shows, so it shares Offline's behaviour and only the banner's wording mentions the possibility."
+  - __component: sd.quiz
+    key: idea-quiz
+    questions:
+      - question: "Nell's phone shows two bars, but nothing loads. Which Stallhand status should this become?"
+        optionA: Online, because the phone reports a connection
+        optionB: Offline (after a short Checking), because what counts is whether requests reach Stallhand
+        optionC: Slow, because some signal is present
+        optionD: None; the app should wait until the phone itself reports offline
+        answer: B
+        explanation: "Bars and network interfaces describe the radio, not the path to the server. The status is learned from requests: when they stop coming back, the app checks briefly and then treats itself as offline."
+      - question: Why does the state keep lastOkAt instead of a boolean such as wasRecentlyOnline?
+        optionA: Timestamps are cheaper to store
+        optionB: So the screen can say how old its data is and word the banner by how long the outage has lasted
+        optionC: Because navigator.onLine returns a timestamp
+        optionD: To schedule the next poll
+        answer: B
+        explanation: "'Updated 10:42' on each order and 'Offline for 40 minutes' both come from that one timestamp. A boolean cannot tell a three-second blip from a long outage."
+      - question: Which action should stay available while Nell is offline?
+        optionA: Refunding a card payment
+        optionB: Recording a walk-up cash sale
+        optionC: Accepting a brand-new pre-order that needs a live stock check
+        optionD: Loading a customer's order history she never opened
+        answer: B
+        explanation: "The cash sale already happened; the app only records it and sends it later. The other three need the server's answer now, so they are disabled with a reason."
+
+  # ────────────────────────────────────────────────────────────────── 2. How it works: knowing
+  - __component: sd.section
+    key: how-it-works
+    title: "How it works: knowing the state."
+    railLabel: Knowing
+    intro: "The browser offers one cheap signal that is only half reliable. The app's own requests are the real evidence, a small probe settles doubtful cases, and timing data says whether a working link is good or bad."
+  - __component: sd.subsection
+    key: browser-signal
+    title: What the browser tells you
+    numbered: true
+  - __component: sd.rich-text
+    key: browser-signal-body
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "navigator.onLine is a boolean, and the window fires an offline event when it turns false and an online event when it turns true. The two values are not equally trustworthy. false means the device has no network connection at all: Wi-Fi off, airplane mode, no cellular data. That is reliable, and Stallhand acts on it at once. true means only that some network interface is up; in Chrome and Safari it means the device can reach a local network or router. It says nothing about whether that network reaches the internet, let alone Stallhand's servers."
+      - type: paragraph
+        children:
+          - type: text
+            text: "In the crowded market hall Nell's phone is still attached to the cell, so navigator.onLine stays true for the whole outage and no offline event ever fires. In the café the phone joins the Wi-Fi, which counts as a network, so the value is true while every request is being diverted to a sign-in page. Code that shows its offline banner only on the offline event shows nothing in either case."
+      - type: paragraph
+        children:
+          - type: text
+            text: "So the events are used as triggers, not verdicts. offline moves the monitor straight to Offline. online moves it to Checking, which sends a probe, because the interface coming back does not mean the server is reachable yet."
+  - __component: sd.subsection
+    key: confirming
+    title: Confirming with real requests
+    numbered: true
+  - __component: sd.rich-text
+    key: confirming-body
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "The best evidence is traffic the app sends anyway. Every request goes through the request layer, which reports its outcome to the monitor. Any HTTP response at all, a 200, a 404 or a 401, proves the path to Stallhand works, so it updates lastOkAt and feeds the round-trip time into the rolling average. A 5xx also proves the path works: the server is unwell, which is a different problem with a different message ('Stallhand is having trouble'), not a connectivity one. Only two outcomes count against the connection: fetch rejecting with a TypeError (no response came back) and a timeout."
+      - type: paragraph
+        children:
+          - type: text
+            text: "One failure is not enough, because a single request can die for many reasons on a mobile link. Two failures in a row move the monitor to Checking, and so does the offline event. In Checking the monitor sends a probe: GET /api/ping with cache: 'no-store' so no cache can answer for the server, a 4-second timeout, and the expectation of a 204 carrying a header only Stallhand sets (x-stallhand: 1). A matching answer means Online. Anything else means Offline."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Why check the header? Some networks answer requests themselves. Over plain HTTP a captive portal replies 200 with its own sign-in page, and some corporate proxies return their own error pages. Over HTTPS, which is all Stallhand uses, a portal cannot impersonate the server: the TLS handshake fails and fetch rejects with a TypeError, exactly as if there were no network. A web app therefore usually cannot tell 'sign in to the Wi-Fi' from 'no signal' (operating systems detect portals with their own plain-HTTP probes). That is why Stallhand's offline banner adds 'If you're on public Wi-Fi, you may need to sign in to it' rather than claiming to know."
+      - type: paragraph
+        children:
+          - type: text
+            text: "While Offline, the monitor keeps probing on a backoff: after 2, 4, 8, 16 seconds and then every 30 seconds, each delay jittered. Three things probe immediately instead: the online event, the app becoming visible again, and Nell tapping Retry on the banner. Without that, a phone that regained signal 1 second after a 30-second wait started would sit 29 seconds longer than it needs to in the Offline state."
+  - __component: sd.table
+    key: signals-compared
+    title: The signals and what each is worth
+    columns:
+      - { label: Signal, style: strong }
+      - { label: What it tells you, style: text }
+      - { label: Where it misleads, style: text }
+      - { label: Stallhand uses it to, style: muted }
+    rows:
+      - ["navigator.onLine is false / offline event", "No network interface is connected", "Rarely wrong", "Go to Offline at once"]
+      - ["navigator.onLine is true / online event", "Some interface is up", "Crowded cells, captive portals, broken upstream networks all read true", "Start Checking, never declare Online"]
+      - ["A response from a real request (any status)", "The path to Stallhand works right now", "5xx means the server is ill, not the link", "Stay or become Online; update lastOkAt and RTT"]
+      - ["A TypeError or timeout from a real request", "No answer came back", "One failure can be noise on a mobile link", "Two in a row → Checking"]
+      - ["Probe GET /api/ping → 204 with x-stallhand", "Stallhand itself answered", "Costs a request (tiny; sent only when in doubt)", "Settle Checking; poll for the way back while Offline"]
+      - ["navigator.connection.effectiveType, rtt, saveData", "A rough class of link quality, and the data-saving preference", "Chromium only; values rounded; describes recent traffic, not the next request", "Lower quality on slow links where available"]
+  - __component: sd.subsection
+    key: link-quality
+    title: How good is the link?
+    numbered: true
+  - __component: sd.rich-text
+    key: link-quality-body
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Working is not the same as usable. Chromium browsers expose navigator.connection, the Network Information API. Its effectiveType is one of slow-2g, 2g, 3g or 4g, chosen from recently observed round-trip time and throughput rather than from the radio technology: under the draft's thresholds a link with more than 270 ms of RTT or under 700 kbps reports 3g even on a 5G phone. rtt and downlink are given as rounded estimates, saveData is true when the person has asked the browser to use less data, and a change event fires when the estimate moves. Safari and Firefox do not implement it, so it can only ever be an enhancement."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Stallhand therefore measures for itself. The request layer already times every request, so the monitor keeps a rolling average of the last 10 round trips. Above 1,000 ms the status becomes Slow; it only returns to Online below 600 ms. The gap between the two thresholds is deliberate hysteresis: with one threshold, a link hovering around 1 second would flip the label back and forth every few requests, and anything that reacts to the label (image sizes, poll interval) would flap with it."
+  - __component: sd.state-machine
+    key: monitor-machine
+    title: ConnectivityMonitor's states
+    caption: "Only the offline event and a failed probe can make Stallhand say Offline, and only an answer from Stallhand itself can make it say Online. Slow and Online differ by the rolling RTT, with a gap so the label does not flap."
+    component: connectivity-monitor
+    states:
+      - { key: online, label: Online, kind: initial, tone: green, note: "Responses arrive; RTT average under 1 s" }
+      - { key: slow, label: Slow, tone: yellow, note: "Responses arrive, but the average is over 1 s" }
+      - { key: checking, label: Checking, note: "Probe GET /api/ping in flight, 4 s timeout" }
+      - { key: offline, label: Offline, kind: error, note: "Banner shown; reads from cache, writes to the outbox" }
+    transitions:
+      - { key: ok, from: online, to: online, event: any response, action: "lastOkAt, RTT" }
+      - { key: got-slow, from: online, to: slow, event: "RTT avg > 1,000 ms" }
+      - { key: got-fast, from: slow, to: online, event: "RTT avg < 600 ms" }
+      - { key: fail-online, from: online, to: checking, event: 2 failures in a row }
+      - { key: fail-slow, from: slow, to: checking, event: 2 failures in a row }
+      - { key: event-offline, from: online, to: offline, event: offline event, actor: Browser }
+      - { key: probe-ok, from: checking, to: online, event: "204 + x-stallhand" }
+      - { key: probe-fail, from: checking, to: offline, event: "error, timeout, wrong answer" }
+      - { key: retry, from: offline, to: checking, event: "backoff timer, online event, visible, Retry" }
+    walkthroughs:
+      - name: The crowded hall
+        note: "11:05. The cell is overloaded; navigator.onLine stays true throughout."
+        steps:
+          - { transition: ok, note: "The 11:04:40 order poll answers in 180 ms." }
+          - { transition: fail-online, note: "The next poll and the photo upload both time out. No offline event fires." }
+          - { transition: probe-fail, note: "The probe gets no answer in 4 s. The banner appears." }
+          - { transition: retry, note: "Probes at 2, 4, 8, 16 s fail; this one, 30 s later, is sent." }
+          - { transition: probe-ok, note: "The crowd thins and the probe returns 204. Catch-up and replay begin." }
+      - name: The café Wi-Fi
+        note: "Nell's phone joins the café network, which diverts everything to a sign-in page."
+        steps:
+          - { transition: event-offline, note: "Leaving the cell briefly fires offline, so the banner shows." }
+          - { transition: retry, note: "Joining the Wi-Fi fires online, so the monitor probes immediately." }
+          - { transition: probe-fail, note: "Over HTTPS the portal breaks TLS, so fetch rejects. Still Offline, and the banner mentions public Wi-Fi." }
+      - name: A congested afternoon
+        note: "Requests work, but slowly."
+        steps:
+          - { transition: got-slow, note: "The last 10 round trips average 1,400 ms. Thumbnails switch to small, polling slows." }
+          - { transition: got-fast, note: "The average falls to 520 ms; under 600 ms the label clears. At 800 ms it would have stayed Slow." }
+  - __component: sd.code
+    key: monitor-code
+    title: The core of ConnectivityMonitor
+    snippets:
+      - label: connectivity.ts
+        language: typescript
+        code: |
+          type Status = "online" | "slow" | "checking" | "offline";
+          type Outcome = { ok: true; rttMs: number } | { ok: false }; // ok: any HTTP response
+
+          let status: Status = navigator.onLine ? "online" : "offline";
+          let lastOkAt = 0, failures = 0, probeAttempt = 0;
+          const rtts: number[] = [];
+          let probeTimer: ReturnType<typeof setTimeout> | undefined;
+
+          function set(next: Status) {
+            if (next === status) return;
+            status = next;
+            publish({ status, since: Date.now(), lastOkAt, rttMs: average(rtts) });
+          }
+
+          // Called by the request layer after every request it makes.
+          export function report(o: Outcome) {
+            if (o.ok) {
+              failures = 0; lastOkAt = Date.now();
+              rtts.push(o.rttMs); if (rtts.length > 10) rtts.shift();
+              const avg = average(rtts)!;
+              if (status === "online" && avg > 1000) set("slow");
+              else if (status === "slow" && avg < 600) set("online");  // hysteresis
+              else if (status === "checking" || status === "offline") set("online");
+            } else if (++failures >= 2 && (status === "online" || status === "slow")) {
+              check();
+            }
+          }
+
+          async function check() {
+            clearTimeout(probeTimer);
+            set("checking");
+            try {
+              const t0 = performance.now();
+              const r = await fetch("/api/ping", { cache: "no-store", signal: AbortSignal.timeout(4000) });
+              if (r.status === 204 && r.headers.get("x-stallhand") === "1") {
+                probeAttempt = 0; failures = 0;
+                return report({ ok: true, rttMs: performance.now() - t0 });
+              }
+            } catch { /* TypeError or TimeoutError: no answer */ }
+            set("offline");
+            const cap = Math.min(30_000, 2000 * 2 ** probeAttempt++);   // 2, 4, 8, 16, 30 s
+            probeTimer = setTimeout(check, cap / 2 + Math.random() * cap / 2);
+          }
+
+          addEventListener("offline", () => { clearTimeout(probeTimer); set("offline"); });
+          addEventListener("online", () => check());
+          document.addEventListener("visibilitychange", () => {
+            if (document.visibilityState === "visible" && status === "offline") check();
+          });
+          export const retryNow = () => check(); // the banner's Retry button
+  - __component: sd.quiz
+    key: knowing-quiz
+    questions:
+      - question: "A request to Stallhand returns 503. What should the monitor conclude about connectivity?"
+        optionA: The phone is offline
+        optionB: "The path works; the server is having trouble, which is a different message"
+        optionC: Start Checking immediately
+        optionD: The link is slow
+        answer: B
+        explanation: "Any HTTP response, including an error status, came back from across the network, so the link is fine. A 5xx is reported as a server problem, and retried by the request layer's rules, not by the monitor."
+      - question: Why does the probe insist on a 204 with an x-stallhand header instead of any 2xx?
+        optionA: 204 responses are faster
+        optionB: "So a network that answers on the server's behalf, such as a proxy or a portal on plain HTTP, cannot make the app believe it is online"
+        optionC: Because fetch cannot read a 200 body
+        optionD: To avoid CORS
+        answer: B
+        explanation: "The probe's job is to prove Stallhand itself answered. A specific status and a header only Stallhand sets make an imposter's reply count as a failure."
+      - question: "The rolling RTT drifts between 700 and 1,100 ms. Why does Stallhand use 1,000 ms to enter Slow but 600 ms to leave it?"
+        optionA: The Network Information API requires it
+        optionB: "To stop the status, and everything that reacts to it, flapping on a link near one threshold"
+        optionC: Because RTT is measured in different units on the way down
+        optionD: To save battery
+        answer: B
+        explanation: "With one threshold, an average wandering around 1 s would switch the label every few requests and change image sizes and poll rates with it. Two thresholds make a band where the status holds."
+
+  # ────────────────────────────────────────────────────────────────── 3. Reacting: retries and writes
+  - __component: sd.section
+    key: retries-and-queued-writes
+    title: "Reacting: retries and queued writes."
+    railLabel: Retries and writes
+    intro: "Once the app knows the state, every request needs a rule for it. Reads get a time limit and a few spaced retries. Writes that can wait go into a durable queue with a key that makes replaying them safe, and the screen shows them at once with an honest marker."
+  - __component: sd.subsection
+    key: timeouts
+    title: Timeouts first
+    numbered: true
+  - __component: sd.rich-text
+    key: timeouts-body
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "fetch has no timeout of its own. On a link that has stopped moving data a request can hang until the operating system gives up on the connection, which may take minutes, and for that whole time a spinner turns and nothing else happens. Stallhand's request layer attaches AbortSignal.timeout to every call: 8 seconds for reads, 15 for writes (they carry more and matter more), 4 for the probe. A timeout rejects with a TimeoutError, which the layer treats as a failed attempt and reports to the monitor."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Choose the numbers from what the request is for, not from what the network usually does. The order poll runs again in 20 seconds anyway, so waiting longer than 8 seconds buys nothing. How AbortSignal combines a timeout with cancellation when the person navigates away is covered in "
+          - type: link
+            url: /systems/data-retrieval/races-dedupe-and-cancellation
+            children:
+              - type: text
+                text: Racing requests
+          - type: text
+            text: "."
+  - __component: sd.subsection
+    key: backoff
+    title: Retrying with backoff and jitter
+    numbered: true
+  - __component: sd.rich-text
+    key: backoff-body
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "A failed read is retried, but not straight away and not forever. Each retry waits longer than the last (exponential backoff), so a struggling link or server gets room to recover. Each wait is also randomised (jitter), because many phones fail at the same moment: when the market hall's cell recovers, 300 stallholders' phones would otherwise retry in the same instant and knock it over again. Stallhand uses full jitter, wait = random(0, min(30 s, 1 s × 2^attempt)), and gives up on a read after 5 retries, showing an error with a Retry button."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Only some failures are worth retrying: network errors and timeouts, 408, 429, 502, 503 and 504. When the server sends Retry-After (usual with 429 and 503) that wait wins over the computed one. Every other 4xx is a final answer: asking again will get the same reply. And while the monitor says Offline nothing retries at all. Retrying into a dead link only burns battery; instead the request layer parks the work, and the monitor's return to Online releases it with a short 0 to 1 second jitter."
+  - __component: sd.table
+    key: backoff-schedule
+    title: Stallhand's retry schedule for reads (full jitter, base 1 s, cap 30 s)
+    columns:
+      - { label: Retry, style: strong }
+      - { label: Wait drawn from, style: mono }
+      - { label: Average wait, style: text }
+      - { label: Worst case so far, style: muted }
+    rows:
+      - ["1", "0–2 s", "1 s", "2 s"]
+      - ["2", "0–4 s", "2 s", "6 s"]
+      - ["3", "0–8 s", "4 s", "14 s"]
+      - ["4", "0–16 s", "8 s", "30 s"]
+      - ["5", "0–30 s", "15 s", "60 s; then an error with Retry"]
+  - __component: sd.subsection
+    key: outbox-queue
+    title: Queueing writes made offline
+    numbered: true
+  - __component: sd.rich-text
+    key: outbox-body
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "A cash sale recorded at 11:20 cannot wait for the network to come back before it exists, and it cannot live only in memory, because Nell might close the app or the phone might discard the tab. So every write Stallhand allows offline goes to the outbox, a store in IndexedDB, before the screen shows it. An entry holds a client-made id (a UUID), the kind of write, its payload, when it was made, how many attempts it has had and its state: queued, sending or failed."
+      - type: paragraph
+        children:
+          - type: text
+            text: "The id is also the request's Idempotency-Key header. That is what makes replay safe. The dangerous case is not a request that failed but one whose reply was lost: the server recorded the sale, the connection dropped before the 201 arrived, and the phone, seeing an error, sends it again. With the key the server recognises the second request and returns the original result instead of recording £14.50 twice."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Replay starts when the monitor returns to Online, after the order list has caught up, and sends entries one at a time in the order they were made, so 'sale' arrives before 'refund of that sale'. A 2xx, or the server's 'already done' answer for a known key, deletes the entry. A network error puts it back to queued for the next round. A 409 or 422 marks it failed and shows it to Nell; it is never dropped silently, because a lost sale is a till that does not balance. Chromium's Background Sync API can run this replay from a service worker even after the tab closes, but Safari and Firefox do not support it, so Stallhand also replays on start and on every return to Online."
+  - __component: sd.data-model
+    key: outbox-model
+    title: One outbox entry
+    caption: "Stored in IndexedDB before the UI shows the row; deleted only after the server confirms."
+    groups:
+      - key: entry
+        step: "01"
+        label: Outbox (IndexedDB)
+        types:
+          - name: OutboxEntry
+            fields:
+              - { name: id, type: string, note: "UUID; sent as Idempotency-Key" }
+              - { name: kind, type: WriteKind }
+              - { name: payload, type: object, note: "e.g. { lines, total: 1450, method: cash }" }
+              - { name: createdAt, type: number }
+              - { name: attempts, type: number }
+              - { name: state, type: EntryState }
+              - { name: error, type: string, optional: true, note: "server's reason when failed" }
+      - key: entry-enums
+        label: Enums
+        column: 2
+        types:
+          - name: WriteKind
+            values: [sale, collected, chat-message, sold-out]
+          - name: EntryState
+            values: [queued, sending, failed]
+    flows:
+      - { from: entry, to: [entry-enums], label: uses }
+  - __component: sd.sequence-diagram
+    key: replay-sequence
+    title: A sale recorded offline reaches the server once
+    autonumber: true
+    participants:
+      - { key: nell, label: Nell, tone: sand }
+      - { key: status-ui }
+      - { key: outbox }
+      - { key: connectivity-monitor }
+      - { key: request-layer }
+      - { key: stallhand-api }
+    steps:
+      - { from: nell, to: status-ui, text: "Record sale: 2 × Westcombe, £14.50 cash" }
+      - { from: status-ui, to: outbox, text: "put { id: 7f3c…, kind: sale, state: queued }" }
+      - { kind: note, from: status-ui, text: "Row shown at once: 'Not sent yet'" }
+      - { from: connectivity-monitor, to: stallhand-api, text: "probe GET /api/ping" }
+      - { kind: reply, from: stallhand-api, to: connectivity-monitor, text: "204, x-stallhand: 1 → Online" }
+      - { from: request-layer, to: stallhand-api, text: "GET /api/orders?since=c812 (catch up first)" }
+      - { from: request-layer, to: stallhand-api, text: "POST /api/sales, Idempotency-Key: 7f3c…" }
+      - { kind: note, from: request-layer, to: stallhand-api, text: "Reply lost: the link drops again" }
+      - { from: request-layer, to: stallhand-api, text: "Retry: same body, same key" }
+      - { kind: reply, from: stallhand-api, to: request-layer, text: "201, the original sale (recorded once)" }
+      - { from: request-layer, to: outbox, text: "delete 7f3c…" }
+      - { kind: reply, from: status-ui, to: nell, text: "Marker cleared; banner: 'All sales sent'" }
+  - __component: sd.subsection
+    key: optimistic
+    title: Showing it now, and taking it back
+    numbered: true
+  - __component: sd.rich-text
+    key: optimistic-body
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Queued writes are optimistic updates with a long delay: the screen shows the result before the server agrees. For Nell that is right, since the sale has already happened in the real world. But the row must be honest about it: a small 'Not sent yet' marker until the outbox entry is gone, and a count in the banner ('2 sales waiting to send') so she does not close the app thinking everything is safe."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Sometimes the server says no when the write finally arrives. At 11:30 Nell marks order #218 as collected, offline. At 11:25 the customer had cancelled it online, which her phone never heard about. On replay the server answers 409 with a reason. Stallhand rolls the row back to its server state ('Cancelled by customer at 11:25'), keeps the failed entry visible with the reason, and lets Nell decide what to do (here, hand back the cheese or take payment). The snapshot, apply, settle and roll back mechanics, and when not to be optimistic at all, are taught in "
+          - type: link
+            url: /systems/data-retrieval/mutations-and-optimistic-updates
+            children:
+              - type: text
+                text: Writing data
+          - type: text
+            text: "; a long offline session on a shared document, where queued edits must merge with everyone else's, is "
+          - type: link
+            url: /systems/google-docs/offline-and-conflicts
+            children:
+              - type: text
+                text: Offline and conflicts
+          - type: text
+            text: "."
+  - __component: sd.quiz
+    key: retries-quiz
+    questions:
+      - question: Why does the outbox entry's id travel as an Idempotency-Key header?
+        optionA: So the server can sort entries by time
+        optionB: "So a retry after a lost reply is recognised and not recorded twice"
+        optionC: Because IndexedDB requires unique keys
+        optionD: To authenticate the phone
+        answer: B
+        explanation: "The risky failure is the one where the server did the work and the reply never arrived. The same key on the retry lets the server return the first result instead of applying the sale again."
+      - question: "The monitor says Offline. What does the request layer do with a failed read?"
+        optionA: Retries it on the normal backoff schedule
+        optionB: Retries it every second until it works
+        optionC: "Parks it; the return to Online releases it with a short jitter"
+        optionD: Discards it
+        answer: C
+        explanation: "Retrying into a link known to be dead wastes battery and requests. The monitor is already probing; when it confirms Online, parked work resumes within a second."
+      - question: "A replayed 'collected' write gets 409 because the customer cancelled the order meanwhile. What should Stallhand do?"
+        optionA: Retry with backoff until it succeeds
+        optionB: Delete the entry silently; the server knows best
+        optionC: "Roll the row back to the server's state, keep the failed entry visible with the reason, and let Nell decide"
+        optionD: Overwrite the cancellation with a forced write
+        answer: C
+        explanation: "A 409 is a final answer, so retrying is pointless, and dropping it hides a real-world problem from the person who has to sort it out."
+
+  # ────────────────────────────────────────────────────────────────── 4. Reacting: live updates, battery and slow links
+  - __component: sd.section
+    key: live-updates-and-slow-links
+    title: "Reacting: live updates, battery and slow links."
+    railLabel: Live updates
+    intro: "Anything that runs on its own, a poll timer or an open socket, must stop when the network or the person goes away and catch up when they return. On a phone, how often it runs is also a battery decision, because the cost of a small request is mostly the radio waking up."
+  - __component: sd.subsection
+    key: pause-and-resync
+    title: Pause, then catch up
+    numbered: true
+  - __component: sd.rich-text
+    key: pause-body
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "OrderFeed asks GET /api/orders?since=<cursor> every 20 seconds. The cursor is the server's position in the order log as of the last answer, so each poll returns only what changed. When the monitor leaves Online for Offline, OrderFeed stops its timer: polls that cannot succeed only pile up failures. It also stops when the page is hidden (Nell locks her phone or switches to the card reader's app). Browsers throttle timers in hidden pages anyway, to at least 1 second and, in Chrome, eventually to once a minute, so a hidden poll loop runs unpredictably rather than not at all."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Resuming is a sequence. When the monitor confirms Online (or the page becomes visible), OrderFeed first fetches everything since its cursor, possibly several pages, then restarts the timer. Only after that catch-up does the outbox replay, so a queued 'collected' is checked against the order's latest state rather than one from an hour ago. If the cursor is too old for the server to answer from its log, the server says so (410) and OrderFeed reloads today's list in full. A WebSocket needs the same treatment, plus an application-level ping, because browsers answer the protocol's ping frames but give JavaScript no way to send them; see "
+          - type: link
+            url: /systems/client-server-protocols/websockets
+            children:
+              - type: text
+                text: WebSockets
+          - type: text
+            text: "."
+  - __component: sd.timeline
+    key: hall-outage-timeline
+    title: Two minutes without data in the market hall
+    caption: "The cell stops carrying data at 30 s and recovers at 150 s; navigator.onLine is true throughout. The monitor learns from a timed-out poll and a failed probe, probes on a backoff, and finds the link 20 s after it returned. Times are illustrative."
+    axis: { unit: s, from: 0, to: 190, step: 20 }
+    lanes:
+      - { key: net, label: Cell link }
+      - { key: mon, label: Monitor, component: connectivity-monitor }
+      - { key: feed, label: OrderFeed, component: order-feed }
+      - { key: box, label: Outbox, component: outbox }
+    spans:
+      - { lane: net, from: 0, to: 30, label: "4G, 150 ms", tone: green }
+      - { lane: net, from: 30, to: 150, label: "attached, no data", tone: gray, style: hatched }
+      - { lane: net, from: 150, to: 190, label: "4G again", tone: green }
+      - { lane: mon, from: 0, to: 48, label: Online, tone: green }
+      - { lane: mon, from: 48, to: 52, label: Checking, tone: blue }
+      - { lane: mon, from: 52, to: 170, label: Offline, tone: orange, note: "Probes after about 2, 4, 8, 16 and 30 s all fail" }
+      - { lane: mon, from: 170, to: 190, label: Online, tone: green }
+      - { lane: feed, from: 52, to: 171, label: paused, tone: gray, style: faded }
+      - { lane: box, from: 70, to: 173, label: "sales waiting (1, then 2)", tone: sand }
+    marks:
+      - { lane: feed, at: 0, label: poll ok, kind: ok }
+      - { lane: feed, at: 20, label: poll ok, kind: ok }
+      - { lane: feed, at: 40, label: poll times out at 48, kind: error }
+      - { lane: mon, at: 140, label: probe fails, kind: error }
+      - { lane: mon, at: 170, label: "probe 204", kind: ok, verdict: ok }
+      - { lane: feed, at: 171, label: "catch up since c812", kind: event }
+      - { lane: box, at: 70, label: cash sale queued, kind: event }
+      - { lane: box, at: 125, label: cash sale queued, kind: event }
+      - { lane: box, at: 173, label: "2 replayed, 201 each", kind: ok, verdict: ok }
+    windows:
+      - { from: 150, to: 170, label: "link back, not yet noticed", lanes: [net, mon] }
+  - __component: sd.subsection
+    key: radio-cost
+    title: What a poll costs a phone
+    numbered: true
+  - __component: sd.rich-text
+    key: radio-cost-body
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "On a desktop with a cable, a request every 20 seconds is nearly free. On a phone it is one of the most expensive habits an app can have, and the reason is the cellular radio's power states. An idle radio draws very little. To send or receive anything it must be promoted to a connected, high-power state, which takes time (tens of milliseconds on LTE, longer on older networks) and energy. After the last packet the radio does not drop back at once; the network keeps it in a high-power tail for several seconds in case more data follows. Measurements of LTE phones found a tail of about 11.6 seconds at about 1 watt."
+      - type: paragraph
+        children:
+          - type: text
+            text: "So a poll that moves 1 KB costs almost nothing for the bytes and a lot for the wake-up and the tail. It is not the open TCP connection that costs energy; an idle connection sends nothing and the radio can sleep. It is not the header bytes either: request headers are a few hundred bytes, and HTTP/2 and HTTP/3 compress repeated ones to a few bytes per request. It is how often the radio is woken. A 20-second poll keeps it in the high-power tail more than half the time."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Moving between networks adds latency of its own. Handing over between cells on the same carrier usually keeps the phone's address, but a switch between Wi-Fi and cellular gives it a new one, and every TCP connection bound to the old address dies. The next request then pays for a new connection, DNS plus a TCP handshake plus a TLS 1.3 handshake, about 3 round trips (some 450 ms at 150 ms each) before its own round trip starts. HTTP/3 runs over QUIC, whose connections are identified by connection IDs instead of addresses and can migrate to the new network without a new handshake. The protocols themselves, and the trade-offs between polling, long polling and server-sent events, are in "
+          - type: link
+            url: /systems/client-server-protocols/polling-and-server-sent-events
+            children:
+              - type: text
+                text: Polling, long polling and server-sent events
+          - type: text
+            text: " and "
+          - type: link
+            url: /systems/client-server-protocols/http-versions
+            children:
+              - type: text
+                text: HTTP versions
+          - type: text
+            text: "."
+  - __component: sd.estimate
+    key: poll-battery
+    title: What polling for pre-orders costs Nell's battery on a market day
+    assumptions:
+      - { key: tail, label: Radio tail after each transfer, value: "11.6 s at 1.06 W", note: "LTE measurement, Huang et al. 2012; newer phones and networks often have shorter tails, so treat this as an upper bound" }
+      - { key: wake, label: "Promotion plus transfer per poll", value: "about 0.5 J", note: assumption }
+      - { key: day, label: Market day with the app open, value: 7 h }
+      - { key: battery, label: "Nell's battery", value: "4,000 mAh at 3.85 V", note: assumption }
+    lines:
+      - { key: per-poll, label: Energy per poll, formula: "11.6 s × 1.06 W + 0.5 J", result: "≈ 12.8 J", from: [tail, wake] }
+      - { key: capacity, label: Battery energy, formula: "4 Ah × 3.85 V = 15.4 Wh × 3,600", result: "≈ 55 kJ", from: [battery] }
+      - { key: polls-20, label: "Polls a day at 20 s", formula: "7 × 3,600 ÷ 20", result: "1,260", from: [day] }
+      - { key: energy-20, label: "Polling every 20 s", formula: "1,260 × 12.8 J", result: "≈ 16 kJ ≈ 29% of the battery", from: [polls-20, per-poll, capacity], headline: true }
+      - { key: energy-60, label: "Polling every 60 s", formula: "420 × 12.8 J", result: "≈ 5.4 kJ ≈ 10%", from: [day, per-poll, capacity], headline: true }
+      - { key: awake, label: "Share of time the radio is in high power at 20 s", formula: "11.6 ÷ 20", result: "≈ 58%", from: [tail] }
+    takeaways:
+      - "The interval, not the payload, sets the bill: three times fewer polls is three times less radio energy."
+      - "Pausing while the screen is off removes most of the cost on a day when the phone spends hours in a pocket."
+      - "A socket that sends a heartbeat every 30 s pays the same tail per heartbeat; it is cheaper than a 20 s poll only because it wakes the radio less often. Push through the operating system's channel (Web Push) shares one wake-up across every app."
+  - __component: sd.subsection
+    key: slow-links
+    title: Adapting to a slow link
+    numbered: true
+  - __component: sd.rich-text
+    key: slow-links-body
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "When the monitor says Slow, or saveData is true, Stallhand spends the bandwidth it has on what Nell needs right now. It asks for small product thumbnails, stops prefetching the next day's orders, polls every 60 seconds instead of 20, and lengthens read timeouts from 8 to 15 seconds so that slow-but-working requests are not cut off and retried, which would only add load. Uploads of stall photos wait for a better link unless she asks for one now. The server can see the same preference without any script: browsers send Save-Data: on with every request when it is set, so image endpoints can pick smaller files themselves."
+  - __component: sd.table
+    key: slow-adaptations
+    title: What changes when the link is slow or data is scarce
+    columns:
+      - { label: Behaviour, style: strong }
+      - { label: Online, style: text }
+      - { label: "Slow, or saveData", style: text }
+      - { label: Offline, style: muted }
+    rows:
+      - ["Order poll", "Every 20 s", "Every 60 s", "Stopped; catch up on return"]
+      - ["Read timeout", "8 s", "15 s", "No reads sent; cache shown"]
+      - ["Product thumbnails", "320 px", "120 px, low quality", "Cached ones only"]
+      - ["Prefetch tomorrow's orders", "Yes, when idle", "No", "No"]
+      - ["Stall photo upload", "Immediately", "Waits for Online unless forced", "Queued"]
+      - ["Chat messages", "Sent at once", "Sent at once (small)", "Queued in the outbox"]
+  - __component: sd.quiz
+    key: live-quiz
+    questions:
+      - question: "When connectivity returns, why does OrderFeed catch up before the outbox replays?"
+        optionA: Reads are cheaper than writes
+        optionB: "So queued writes are judged against the orders' latest state, and the screen is current before changes land"
+        optionC: Because the server rejects writes before reads
+        optionD: To warm the TLS connection
+        answer: B
+        explanation: "A queued 'collected' for an order that was cancelled meanwhile should meet the cancellation on the screen first. Catching up also gives Nell the current list before her own changes are reconciled."
+      - question: "What mainly makes a 20-second poll expensive on a phone?"
+        optionA: The size of the HTTP headers
+        optionB: Keeping a TCP connection open
+        optionC: "Waking the radio and holding it in its high-power tail after each request"
+        optionD: Parsing JSON
+        answer: C
+        explanation: "An idle connection sends nothing and headers are small and compressed. Each poll promotes the radio and keeps it at high power for seconds afterwards, so frequency sets the cost."
+      - question: "Nell's phone moves from the café Wi-Fi to cellular. What happens to Stallhand's open HTTP/2 connection?"
+        optionA: It carries on unchanged
+        optionB: "It dies, because the phone's address changed; the next request pays for a new connection"
+        optionC: It downgrades to HTTP/1.1
+        optionD: It migrates automatically, as all TCP connections do
+        answer: B
+        explanation: "TCP connections are tied to the addresses at both ends. QUIC, under HTTP/3, can migrate with connection IDs; HTTP/2 over TCP cannot."
+
+  # ────────────────────────────────────────────────────────────────── 5. In practice
+  - __component: sd.section
+    key: in-practice
+    title: In practice.
+    railLabel: In practice
+    intro: "What Nell sees through a Saturday morning, which actions queue and which are switched off, how old data is marked, how to test all of it without waiting for a crowded market, the ways it goes wrong, and how to say it in an interview."
+  - __component: sd.screen
+    key: today-screen
+    title: "Stallhand's Today screen, from online to back again"
+    alt: "A phone showing Stallhand's Today list of click-and-collect pre-orders and walk-up sales, in states from online through slow, offline with queued sales and a disabled refund, the café Wi-Fi, catching up, and a replay the server rejects."
+    frame: phone
+    url: stallhand.example/today
+    carryUi: false
+    screen:
+      type: collection
+      layout: list
+      title: Today
+      toolbar: { tabs: [Orders, Sales, Chat], activeTab: Orders }
+      items:
+        - { key: o216, title: "#216 Priya S.", subtitle: "Collect 11:00–11:30", text: "Westcombe 250 g, Baron Bigod wedge", meta: "£18.40 paid" }
+        - { key: o218, title: "#218 Tom W.", subtitle: "Collect 11:30–12:00", text: "Stichelton 200 g", meta: "£9.20 paid" }
+        - { key: o219, title: "#219 Ama O.", subtitle: "Collect 12:00–12:30", text: "Cornish Yarg, oatcakes", meta: "£12.60 paid" }
+    states:
+      - name: Online
+        note: "Polls answer in under a second; no banner, no markers. New pre-orders slide in within 20 s of being placed."
+      - name: Slow
+        note: "The rolling RTT passed 1 s. A quiet label, not a banner: everything still works. Thumbnails are small and the poll runs every 60 s."
+        state:
+          status: { label: Slow connection, tone: warn }
+      - name: Offline, sales queued
+        note: "Two polls failed and the probe got no answer. The list stays readable and says how old it is; two cash sales recorded since are on the Sales tab with 'Not sent yet'. Refunds are disabled with a reason, not hidden."
+        state:
+          status: { label: Offline, tone: warn }
+          banner: { text: "Offline since 11:05. 2 sales will send when you're back. Refunds need a connection.", tone: warn }
+          collection:
+            stale: true
+            items:
+              update:
+                o216: { subtitle: "Collect 11:00–11:30 · updated 11:04" }
+                o218: { subtitle: "Collect 11:30–12:00 · updated 11:04", status: queued, statusText: "Marked collected · not sent yet" }
+                o219: { subtitle: "Collect 12:00–12:30 · updated 11:04" }
+          highlight: [banner, "item:o218"]
+      - name: Café Wi-Fi
+        note: "The phone joined the café network, the online event fired, and the probe failed over HTTPS. Stallhand cannot tell a sign-in page from no signal, so it says both."
+        state:
+          status: { label: Offline, tone: warn }
+          banner: { text: "Can't reach Stallhand. If you're on public Wi-Fi, you may need to sign in to it.", tone: info }
+          collection: { stale: true }
+          highlight: banner
+      - name: Back online, catching up
+        note: "The probe returned 204. Rows stay visible but dimmed while OrderFeed catches up since its cursor, then the outbox replays; one new order arrived during the outage."
+        state:
+          status: { label: Syncing, tone: info, busy: true }
+          collection:
+            stale: true
+            items:
+              add:
+                - { item: { key: o220, title: "#220 Lena K.", subtitle: "Collect 12:30–13:00 · new", text: "Westcombe 500 g", meta: "£21.00 paid" } }
+      - name: A replay is refused
+        note: "The queued 'collected' for #218 got 409: Tom cancelled at 11:25, while Nell was offline. The row returns to the server's state and the problem stays on screen until she deals with it."
+        state:
+          status: { label: Online, tone: success }
+          toast: { text: "#218 couldn't be marked collected: cancelled by customer at 11:25", action: Review, tone: error }
+          collection:
+            items:
+              update:
+                o218: { subtitle: "Cancelled 11:25", status: failed, statusText: "Not saved · cancelled by customer" }
+          highlight: "item:o218"
+    callouts:
+      - { region: banner, label: Connection banner, component: status-ui }
+      - { region: "item:o218", label: "Row marker from the outbox", component: outbox }
+  - __component: sd.table
+    key: queue-or-disable
+    title: "Each action, offline: queue it, warn, or switch it off"
+    columns:
+      - { label: Action, style: strong }
+      - { label: Offline behaviour, style: text }
+      - { label: Why, style: muted }
+    rows:
+      - ["Record a cash sale", "Queue; row shows 'Not sent yet'", "It already happened; the record must not be lost"]
+      - ["Mark a pre-order collected", "Queue; may be refused on replay", "Usually fine; a cancellation meanwhile is shown, not hidden"]
+      - ["Message Arlo", "Queue; bubble shows 'Not sent'", "Low risk; order is kept by the outbox"]
+      - ["Mark a cheese sold out", "Queue, with a warning: 'The online shop will keep selling it until you're back online'", "The write is late by design; the person must know the world has not changed yet"]
+      - ["Refund a card payment", "Disabled, with 'Refunds need a connection'", "The payment provider must answer now; a queued refund could arrive hours later"]
+      - ["Open a customer's past orders", "Shown if cached, otherwise 'Not available offline'", "A read; nothing to queue"]
+  - __component: sd.rich-text
+    key: ux-rules
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "A few rules sit behind that screen. The banner is a status message, not a dialog: it lives in a role=status region so a screen reader announces it once, never takes focus, and does not block the list. It appears only after Checking has confirmed Offline, so a two-second blip changes nothing visible. Disabled buttons stay in place and say why, because a hidden button makes people think a feature has vanished. Data from the cache carries its age once it is older than 2 minutes or whenever the app is offline ('updated 11:04'), computed from lastOkAt, and the list dims rather than blanking to skeletons while it refreshes. Finally, the app must be able to start offline at all, which means its code and the last data being served from a service worker, as in "
+          - type: link
+            url: /systems/network-performance/service-worker-caching
+            children:
+              - type: text
+                text: Caching with a service worker
+          - type: text
+            text: "."
+  - __component: sd.subsection
+    key: testing
+    title: Testing it without a crowded market
+    numbered: true
+  - __component: sd.table
+    key: testing-table
+    title: How to reproduce each situation
+    columns:
+      - { label: Situation, style: strong }
+      - { label: Tool, style: text }
+      - { label: What it does and does not show, style: muted }
+    rows:
+      - ["Offline", "Chrome DevTools, Network panel, Offline", "Sets navigator.onLine false and fires offline: tests the easy path only"]
+      - ["Slow", "DevTools presets Fast 4G, Slow 4G, 3G, or a custom profile with 2,000 ms latency", "Adds delay and caps bandwidth; never drops a request"]
+      - ["Attached but no data", "A stub server or Playwright route() that accepts the request and never answers", "The real market-hall case: onLine true, requests hang until the timeout"]
+      - ["Lost reply", "route() that forwards the POST and then aborts the response", "Proves the idempotency key stops a double sale"]
+      - ["Offline in automated tests", "Playwright browserContext.setOffline(true)", "Repeatable offline and back-online runs in CI"]
+      - ["Network switch and real radio", "A real phone: airplane mode, a lift, Wi-Fi to cellular", "Handover, captive portals and battery, which no emulator reproduces"]
+  - __component: sd.failure-modes
+    key: connectivity-failures
+    title: How connectivity handling goes wrong
+    rows:
+      - component: connectivity-monitor
+        failure: Trusting navigator.onLine
+        impact: "No banner in the crowded hall or the café; buttons spin and fail"
+        detection: "Error reports with network failures while the client logged onLine true"
+        mitigation: "Learn from requests; use the online event only to start a probe"
+        degraded: Requests time out one by one with no explanation
+      - component: request-layer
+        failure: No timeout on fetch
+        impact: A spinner that turns for minutes on a link that moves no data
+        detection: Long-tail request durations in real-user monitoring
+        mitigation: AbortSignal.timeout on every call, sized per purpose
+        degraded: The screen waits instead of falling back to cache
+      - component: request-layer
+        failure: Retries without jitter
+        impact: "When a busy cell or the server recovers, every phone retries at once and knocks it over again"
+        detection: Synchronised spikes in request rate after each recovery
+        mitigation: "Full jitter, a retry cap, Retry-After honoured, no retries while Offline"
+        degraded: Recovery takes several rounds instead of one
+      - component: outbox
+        failure: Writes kept only in memory
+        impact: "Sales recorded offline vanish when the tab is discarded or the app closed"
+        detection: Till totals that do not match recorded sales
+        mitigation: "Write to IndexedDB before showing the row; delete only on confirmation"
+        degraded: Lost records, found at the end of the day
+      - component: outbox
+        failure: Replay without idempotency keys
+        impact: "A lost reply turns into a sale recorded twice"
+        detection: Duplicate sales seconds apart with identical lines
+        mitigation: One client-made key per write, reused on every attempt; server dedupes
+        degraded: Wrong totals that someone has to correct by hand
+      - component: order-feed
+        failure: Resuming the poll without catching up
+        impact: "Orders placed during the outage never appear, or appear only after their pickup slot"
+        detection: Orders collected that never showed on the stall's list
+        mitigation: Fetch since the cursor on every return, then restart the timer
+        degraded: A customer arrives for an order the stall has not seen
+  - __component: sd.subsection
+    key: interview
+    title: Saying it in an interview
+    numbered: true
+  - __component: sd.checklist
+    key: interview-answer
+    title: When the interviewer asks what happens on a bad network
+    items:
+      - text: "Name the states: online, slow, offline, and 'connected but cut off', with one owner that every screen reads."
+        note: "A short Checking state between online and offline keeps blips off the screen."
+      - text: "Say how you know: navigator.onLine false is reliable, true is not; real request outcomes plus a small probe decide."
+      - text: "Give every request a timeout and retry reads with exponential backoff and full jitter; no retries while offline."
+        note: "Name the retryable statuses and Retry-After."
+      - text: "Classify each write: queue it in a durable outbox with an idempotency key, or disable it with a reason."
+        note: "Payments and anything that needs a live answer are disabled."
+      - text: "Pause polling and sockets when offline or hidden; on return, catch up from a cursor, then replay queued writes."
+      - text: "On mobile, mention that poll frequency is a battery cost because of radio wake-ups, and what you do on slow links or Save-Data."
+      - text: "Describe the UI: a non-blocking status banner, stale markers with a time, per-row 'not sent' markers, and how you test hangs, not just Offline."
+  - __component: sd.split-list
+    key: connectivity-scope
+    leftLabel: This topic
+    leftItems:
+      - text: Connectivity as one piece of state and its five situations
+      - text: "Detecting it: onLine, probes, request outcomes, link quality"
+      - text: Timeouts, backoff with jitter, the outbox and idempotent replay
+      - text: Pausing and resyncing live updates; the battery cost of polling
+      - text: The offline UI and how to test it
+    rightLabel: Elsewhere
+    rightItems:
+      - text: Retry loops, AbortSignal and dedupe in depth
+        note: Racing requests
+      - text: Optimistic updates and rollback in depth
+        note: Writing data
+      - text: Making the app itself load offline
+        note: Caching with a service worker
+      - text: "Polling, long polling and SSE; WebSocket heartbeats and reconnects"
+        note: Client-server protocols
+      - text: "Merging long offline edits; a cross-tab outbox"
+        note: "Offline and conflicts; Messenger chat"
+  - __component: sd.quiz
+    key: practice-quiz
+    questions:
+      - question: "Which test reproduces the market-hall outage most faithfully?"
+        optionA: DevTools Offline
+        optionB: The Slow 4G preset
+        optionC: "A stub or route() that accepts requests and never answers, with navigator.onLine left true"
+        optionD: Turning off the laptop's Wi-Fi
+        answer: C
+        explanation: "In the hall the phone stays attached and requests hang. DevTools Offline and switching Wi-Fi off both flip navigator.onLine, which is the easy case the real outage never gives you."
+      - question: "Why is 'Mark sold out' queued with a warning rather than queued silently?"
+        optionA: Because the write might be refused
+        optionB: "Because until it reaches the server the online shop keeps selling the cheese, and Nell needs to know that"
+        optionC: Because sold-out flags cannot be stored in IndexedDB
+        optionD: Because it needs a card payment
+        answer: B
+        explanation: "Some writes matter for what happens elsewhere in the meantime. Saying what has not changed yet lets the person act, for example by telling Arlo to pause online orders from his phone."
+      - question: "Where should the offline banner live?"
+        optionA: "In a modal dialog that takes focus until dismissed"
+        optionB: "In a role=status region that is announced once and never blocks the list"
+        optionC: In the browser's title bar only
+        optionD: In a console warning
+        answer: B
+        explanation: "The person can keep working offline, so the message must inform without interrupting. A status region is announced politely and leaves focus where it was."

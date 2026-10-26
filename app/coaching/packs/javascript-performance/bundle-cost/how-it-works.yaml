@@ -1,0 +1,145 @@
+# What a byte of JavaScript costs: compressed vs parsed size, streaming and lazy compilation, the code cache across visits, device spread, and what tree shaking can remove.
+id: javascript-performance/bundle-cost/how-it-works
+title: What a byte of JavaScript costs
+source:
+  hash: 9eaca79dbc67
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: null
+  assumes: []
+  carries:
+    - Compression shrinks only the transfer; the engine parses the unpacked text, so minifying and shipping less are what cut parse work.
+    - A script from a src URL is parsed and compiled on a background thread as it streams; running it, and compiling lazily called functions, happen on the main thread.
+    - Functions not needed at load are only preparsed, then compiled on the main thread the first time they are called.
+    - The code cache lets a third visit skip compiling, but it is tied to one URL, and executing the startup code is paid every visit.
+    - The same bundle costs a low-end phone several times the processor time of a high-end one.
+    - Tree shaking needs static ES module imports and code that does nothing on import, or says which parts do.
+  terms:
+    - term: preparse
+      means: A quick pass that checks a function's syntax and skips its body; the full compile waits until the first call.
+    - term: code cache
+      means: Compiled code the browser stores beside a script's HTTP cache entry so a later visit can skip compiling.
+    - term: tree shaking
+      means: The bundler dropping exports no one imports, by reading the static import graph before anything runs.
+    - term: side effect
+      means: Work a module does just by being imported, such as registering a locale or patching a prototype.
+board:
+  keep: []
+  elements:
+    - { id: bytes, kind: region, label: "main.js: wire vs parsed", at: [2, 2], size: [56, 21] }
+    - { id: brotli, kind: box, label: "Brotli on the wire: 360 KB", at: [4, 5], size: [9, 3], in: bytes, tone: green }
+    - { id: gzip, kind: box, label: "gzip on the wire: 410 KB", at: [15, 5], size: [10, 3], in: bytes }
+    - { id: minify-rule, kind: note, label: minifying cuts parse work; compression does not, at: [28, 6], in: bytes }
+    - { id: parsed, kind: box, label: "the engine parses 1,320 KB", at: [4, 14], size: [33, 3], in: bytes, tone: red }
+    - { id: unminified, kind: box, label: "unminified: about 2,100 KB to scan", at: [4, 18], size: [52, 3], in: bytes, tone: grey }
+    - { id: engine, kind: region, label: Engine and threads, at: [2, 25], size: [56, 21] }
+    - { id: eng-bg, kind: region, label: background thread, at: [4, 28], size: [52, 6], in: engine, tone: green }
+    - { id: bg-thread, kind: box, label: stream-parse and compile, at: [6, 30], size: [20, 3], in: eng-bg, tone: green }
+    - { id: preparse, kind: box, label: "unused function: preparsed", at: [32, 30], size: [22, 3], in: eng-bg, tone: grey }
+    - { id: eng-main, kind: region, label: main thread, at: [4, 37], size: [52, 6], in: engine, tone: red }
+    - { id: main-thread, kind: box, label: run the code, at: [6, 39], size: [20, 3], in: eng-main, tone: red }
+    - { id: first-call, kind: box, label: "first call: compiled here", at: [32, 39], size: [22, 3], in: eng-main, tone: red }
+    - { id: inline-rule, kind: note, label: "inline script: parsed on the main thread", at: [4, 44], in: engine }
+    - { id: eager-hint, kind: note, label: "eager hint: parentheses or a file comment", at: [25, 44], in: engine }
+    - { id: visits, kind: region, label: Repeat visits and devices, at: [2, 48], size: [56, 16] }
+    - { id: cold, kind: box, label: "cold: 3.15 s", at: [4, 51], size: [12, 3], in: visits, tone: red }
+    - { id: warm, kind: box, label: "warm: store code", at: [25, 51], size: [12, 3], in: visits }
+    - { id: hot, kind: box, label: "hot: 1.24 s", at: [44, 51], size: [12, 3], in: visits, tone: green }
+    - { id: exec-floor, kind: note, label: "execute every visit: 1.1 s floor", at: [4, 55], in: visits }
+    - { id: new-url, kind: note, label: "deploy: new hashed URL, cold again", at: [22, 55], in: visits }
+    - { id: flagship, kind: box, label: "high-end: 1.8 s download", at: [4, 57], size: [18, 2], in: visits, tone: blue }
+    - { id: flagship-cpu, kind: box, label: 0.45 s, at: [23, 57], size: [5, 2], in: visits, tone: red }
+    - { id: budget-phone, kind: box, label: "low-end: 1.8 s download", at: [4, 60], size: [18, 2], in: visits, tone: blue }
+    - { id: budget-cpu, kind: box, label: "CPU: 2.8 s", at: [23, 60], size: [28, 2], in: visits, tone: red }
+    - { id: shaking, kind: region, label: Tree shaking, at: [2, 66], size: [56, 12] }
+    - { id: shake-drop, kind: region, label: can be dropped, at: [4, 69], size: [25, 7], in: shaking, tone: green }
+    - { id: esm, kind: box, label: static ES imports, at: [5, 71], size: [11, 3], in: shake-drop, tone: green }
+    - { id: pure, kind: box, label: "sideEffects false, PURE", at: [17, 71], size: [11, 3], in: shake-drop, tone: green }
+    - { id: shake-keep, kind: region, label: kept whole, at: [31, 69], size: [25, 7], in: shaking, tone: red }
+    - { id: cjs, kind: box, label: require() calls, at: [32, 71], size: [11, 3], in: shake-keep, tone: red }
+    - { id: side-effects, kind: box, label: runs on import, at: [44, 71], size: [11, 3], in: shake-keep, tone: red }
+    - { id: shake-needs, kind: note, label: tree shaking needs ES modules and safe-to-drop code, at: [4, 76], in: shaking }
+  arrows:
+    - { id: unpacked-br, from: brotli, to: parsed, label: unpacked }
+    - { id: unpacked-gz, from: gzip, to: parsed, label: unpacked }
+    - { id: bytecode, from: bg-thread, to: main-thread, label: bytecode }
+    - { id: called, from: preparse, to: first-call, label: called }
+    - { id: second-visit, from: cold, to: warm, label: "2nd visit, 72 h" }
+    - { id: third-visit, from: warm, to: hot, label: 3rd visit }
+beats:
+  - point: Compression shrinks only the bytes on the wire; the engine parses the unpacked text, so Tallybook's main.js costs 360 KB of transfer but 1,320 KB of parsing.
+    kind: metric
+    weight: core
+    teach:
+      - Tallybook's main.js travels as 360 KB with Brotli or 410 KB with gzip. Brotli saves 50 KB, about a quarter of a second at 200 KB a second.
+      - But the parser reads the unpacked file, 1,320 KB either way. Compression helps only the download.
+      - Minifying is different. It removes whitespace, comments and long names the engine would otherwise scan, so unminified the parser would face about 2,100 KB.
+    draw: [bytes, brotli, gzip, parsed, unpacked-br, unpacked-gz, unminified, minify-rule]
+    check: Tallybook switches from gzip to Brotli and main.js shrinks from 410 KB to 360 KB on the wire. How much less does the engine have to parse?
+    answer: Nothing; the parser works on the unpacked 1,320 KB either way. Only minifying or shipping less code reduces parsing.
+    misconceptions:
+      - "A 360 KB script costs the same as a 360 KB image -> the script unpacks to 1,320 KB that must be parsed, compiled and run on the phone's processor."
+      - "Better compression makes parsing faster -> compression only changes the transfer; the parser always reads the unpacked text."
+  - point: A script loaded from a URL is parsed and compiled on a background thread as it streams in, but functions not needed at load are only preparsed and get compiled on the main thread the first time they are called.
+    kind: mechanism
+    weight: core
+    teach:
+      - V8 starts reading before the last byte arrives. A src script is parsed and compiled on a background thread while it streams, so on a slow network much of that hides behind the download. An inline script gets no such head start; it is parsed on the main thread.
+      - Most functions are not called at startup, so V8 preparses them, checks syntax and skips the body. On the first call the full compile happens right then, on the main thread, in the middle of whatever was running.
+      - That is why a profile of Tallybook's start shows compile slices sprinkled through execution, and why code that is never called still costs a download and a scan.
+    draw: [engine, eng-bg, bg-thread, eng-main, main-thread, bytecode, preparse, first-call, called, inline-rule]
+    check: A function in main.js is never called during startup. What does it cost at load?
+    answer: Its download and a quick preparse to skip over it; it is fully compiled, on the main thread, only if it is ever called.
+    misconceptions:
+      - "Code that is never called is free -> it is still downloaded and scanned by the preparser."
+      - "All parsing happens off the main thread -> streamed src scripts compile in the background, but inline scripts and first calls of lazy functions compile on the main thread."
+  - point: The code cache lets a repeat visit skip compiling, a second visit within 72 hours stores the compiled code and a third reuses it, but it is tied to one URL, and executing the startup code is paid on every visit.
+    kind: mechanism
+    weight: core
+    teach:
+      - User 1's Monday visit is cold, everything downloaded and compiled, usable at 3.15 s, and only the file is cached. Tuesday, within 72 hours, it compiles again and stores the compiled functions beside the file.
+      - Wednesday is hot. The file comes from disk, the code is loaded instead of rebuilt, and the dashboard is usable at 1.24 s.
+      - What no cache removes is execution, about 1.1 s of running module top levels, starting the framework and rendering. That is the floor.
+      - A deploy that renames main.js is a new URL, so there is no cache entry and no code cache, and user 1 pays a cold run again even if most of the code is unchanged.
+    draw: [visits, cold, warm, second-visit, hot, third-visit, exec-floor, new-url]
+    check: On a hot visit with the file and its compiled code cached, what is still paid in full, and what happens the day Tallybook ships a new hashed main.js?
+    answer: Executing the startup code is still paid in full; a new hashed name is a new URL, so the HTTP cache entry and code cache are gone and the visit is cold again.
+    misconceptions:
+      - "A cached script costs nothing -> caching removes the download and most compiling, but the startup code still runs every visit."
+  - point: Download time is set by the network but parse, compile and execution are set by the processor, so the same file costs a low-end phone over six times the processor time it costs a high-end one.
+    kind: metric
+    weight: core
+    teach:
+      - On one 200 KB a second connection the download is 1.8 s on every phone. Parsing, compiling and running take 0.45 s on a high-end phone and 2.8 s on a low-end one.
+      - Budget phones have slower and fewer fast cores, smaller caches and less memory, and they throttle sooner when hot. They are 40% of Tallybook's sessions.
+      - So profile on a real mid-range or budget phone, or with the CPU throttled, and read field data split by device class rather than one average.
+    draw: [flagship, flagship-cpu, budget-phone, budget-cpu]
+    check: Why does the same main.js take far longer to become usable on a low-end phone when the download time is identical?
+    answer: Parse, compile and execution run on the phone's processor, which is several times slower on a budget phone; only the download depends on the network.
+    misconceptions:
+      - "Testing on a developer laptop shows what users get -> a laptop hides most of the processor bill; profile on a real budget phone or with CPU throttling."
+  - point: Tree shaking can drop unused code only when imports are static ES modules and the code does nothing on import, or the package says which parts do.
+    kind: rule
+    weight: core
+    teach:
+      - The bundler reads the import graph before anything runs. ES import and export sit at the top level with fixed names, so it can see which exports are used and drop the rest.
+      - CommonJS hides that. require can take a computed path or sit in an if, and module.exports can change at run time, so the whole module is kept.
+      - Dropping must also be safe. A module that registers a locale or patches a prototype on import is kept unless the package sets sideEffects in package.json, or a call is marked with a PURE comment.
+    draw: [shaking, shake-drop, esm, shake-keep, cjs, side-effects, pure, shake-needs]
+    check: Tallybook imports one helper from a utility package that ships only CommonJS and registers its locales on import. Why does the whole package end up in main.js?
+    answer: The bundler cannot see statically which exports are used in CommonJS, and it must keep code that runs on import, so neither condition for tree shaking holds.
+    misconceptions:
+      - "Named imports always tree-shake -> only from ES modules whose code is safe to drop; CommonJS and import-time side effects keep the module."
+  - point: V8 can be told to compile eagerly code that is known to run at load, but the hint wastes time and memory on anything else.
+    kind: rule
+    weight: supporting
+    teach:
+      - Wrapping a function expression in parentheses makes V8 compile it eagerly, and from Chrome 136 a file that starts with the allFunctionsCalledOnLoad comment is compiled eagerly in the background.
+      - Use it only for small startup files where every function runs. Later, hot functions are recompiled by faster tiers, but startup gets almost none of that benefit.
+    draw: [eager-hint]
+task:
+  prompt: Draw main.js from the wire to a usable dashboard, marking what compression changes, which thread parses, compiles and runs it, and what a hot visit and a deploy each do to the bill.
+  expects: [1, 2, 3]

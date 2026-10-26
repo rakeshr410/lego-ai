@@ -54,7 +54,7 @@ const CACHE_WRITE = 1.25;
 // ---------------------------------------------------------------------------------------
 // Provider. Claude is served by Anthropic's API, or by Amazon Bedrock (LLM_PROVIDER=bedrock) from
 // BEDROCK_REGION, which puts the model's first token on the same continent as the voice room
-// (docs/interview/README.md, "Latency"). Bedrock's Messages endpoint takes the same request with
+// (docs/README.md, "Latency"). Bedrock's Messages endpoint takes the same request with
 // three differences handled here: its own model ids (a geo inference profile such as
 // `in.anthropic.claude-sonnet-5` keeps inference in India; `global.` routes anywhere), explicit cache
 // breakpoints only (no top-level cache_control), and no server-side fallbacks. The bearer token

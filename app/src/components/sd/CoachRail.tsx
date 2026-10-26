@@ -1,7 +1,7 @@
 import t from '../../i18n/messages/interview';
 import type { SessionView } from '../../pages/api/interview/index';
 
-// The coach lesson's syllabus rail (docs/interview/coach-mode.md): every part with its sections
+// The coach lesson's syllabus rail (docs/coach-mode.md): every part with its sections
 // and items, each item's status as the coach's ledger has it, the item being taught marked. It
 // replaces the interview room's stage bar in a lesson, and the end screen reads it as the summary.
 

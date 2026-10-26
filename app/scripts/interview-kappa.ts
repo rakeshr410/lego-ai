@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * The kappa study (docs/interview/README.md "Rollout"; design section 8): the grader's section
+ * The kappa study (docs/README.md "Rollout"; design section 8): the grader's section
  * ratings against two human raters, quadratic-weighted Cohen's kappa, gate 0.6 on 20 sessions.
  * Exit 0 when the gate passes (numeric ratings may be shown), 1 when it does not.
  *

@@ -60,3 +60,13 @@ def test_each_vendor_builds(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("VOICE_TTS", "nobody")
     with pytest.raises(ValueError):
         build_tts(Settings())
+
+
+async def test_the_voice_spells_id_and_leaves_other_words_alone():
+    from bot.vendors import SayAsLetters
+
+    say = SayAsLetters().filter
+    assert await say("Each tweet has an id.") == "Each tweet has an ID."
+    assert await say("feed ids, newest first") == "feed IDs, newest first"
+    assert await say("read by authorId and tweetIds") == "read by author ID and tweet IDs"
+    assert await say("I'd say the Idea is valid") == "I'd say the Idea is valid"

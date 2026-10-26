@@ -1,4 +1,4 @@
-// The whiteboard serialiser (docs/interview/README.md "The whiteboard"; design section 7): an
+// The whiteboard serialiser (docs/README.md "The whiteboard"; design section 7): an
 // Excalidraw scene as a small graph and as the text the interviewer and the grader read. Shared by
 // the browser (the room computes the fingerprint and compacts the scene it posts) and the server
 // (the only side that serialises, keeps the graph and renders the prompt), so it imports nothing.
@@ -36,6 +36,22 @@ export type BoardElement = {
   startArrowhead?: string | null;
   endArrowhead?: string | null;
   customData?: Record<string, unknown>;
+  /** How it looks (colours, text, corners, what is bound to it): read by no one here, kept so a board loaded again looks as it was drawn. */
+  strokeColor?: string;
+  backgroundColor?: string;
+  fillStyle?: string;
+  strokeWidth?: number;
+  roughness?: number;
+  opacity?: number;
+  roundness?: { type: number } | null;
+  fontSize?: number;
+  fontFamily?: number;
+  textAlign?: string;
+  verticalAlign?: string;
+  lineHeight?: number;
+  originalText?: string;
+  autoResize?: boolean;
+  boundElements?: readonly { id: string; type: string }[];
 };
 
 export const NODE_TYPES = new Set(['rectangle', 'ellipse', 'diamond']);
@@ -126,10 +142,39 @@ export function fingerprint(elements: readonly Pick<BoardElement, 'id' | 'versio
 const num = (v: unknown, fallback = 0) => (typeof v === 'number' && Number.isFinite(v) ? v : fallback);
 const str = (v: unknown) => (typeof v === 'string' ? v : undefined);
 
+const COLOR = /^(#[0-9a-fA-F]{3,8}|transparent)$/;
+const WORD = /^[a-z-]{1,16}$/;
+
+/** The room's own marks besides the author (a group, a region, a highlight ring): strings and booleans only. */
+function flags(data: unknown): Record<string, unknown> {
+  const d = data as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  if (typeof d.group === 'string') out.group = d.group.slice(0, 60);
+  for (const k of ['region', 'highlight'] as const) if (d[k] === true) out[k] = true;
+  return out;
+}
+
+/** Copies how an element looks onto its compact form, checked, so a reload draws it the same. */
+function look(e: Record<string, unknown>, c: BoardElement) {
+  for (const k of ['strokeColor', 'backgroundColor'] as const) if (typeof e[k] === 'string' && COLOR.test(e[k])) c[k] = e[k];
+  for (const k of ['fillStyle', 'textAlign', 'verticalAlign'] as const) if (typeof e[k] === 'string' && WORD.test(e[k])) c[k] = e[k];
+  for (const k of ['strokeWidth', 'roughness', 'opacity', 'fontSize', 'fontFamily', 'lineHeight'] as const) if (typeof e[k] === 'number' && Number.isFinite(e[k])) c[k] = e[k];
+  if (typeof e.autoResize === 'boolean') c.autoResize = e.autoResize;
+  const r = e.roundness as { type?: unknown } | null | undefined;
+  if (r && typeof r.type === 'number') c.roundness = { type: r.type };
+  if (c.type === 'text' && typeof e.originalText === 'string') c.originalText = e.originalText.slice(0, 1000);
+  if (Array.isArray(e.boundElements))
+    c.boundElements = e.boundElements
+      .filter((b): b is { id: string; type: string } => !!b && typeof b === 'object' && typeof (b as { id?: unknown }).id === 'string' && typeof (b as { type?: unknown }).type === 'string')
+      .slice(0, 32)
+      .map((b) => ({ id: b.id, type: b.type }));
+}
+
 /**
- * The scene reduced to what the serialiser reads, deleted elements dropped, freehand reduced to its
- * box and point count. Unknown element types are kept by id, type and box only (so the fingerprint
- * still covers them).
+ * The scene reduced to what the serialiser reads and how each element looks, deleted elements
+ * dropped, freehand reduced to its box and point count. Unknown element types are kept by id, type
+ * and box only (so the fingerprint still covers them). The room loads a board again from this
+ * copy, so its colours, label sizes and bindings come back as they were drawn.
  */
 export function compactElements(raw: readonly unknown[]): BoardElement[] {
   const out: BoardElement[] = [];
@@ -158,7 +203,8 @@ export function compactElements(raw: readonly unknown[]): BoardElement[] {
     if (type === 'freedraw') c.pointCount = Array.isArray(e.points) ? e.points.length : 0;
     if (typeof e.strokeStyle === 'string' && e.strokeStyle !== 'solid') c.strokeStyle = e.strokeStyle;
     const author = authorOf(e.customData);
-    if (author) c.customData = { author };
+    if (author) c.customData = { author, ...flags(e.customData) };
+    look(e, c);
     out.push(c);
   }
   return out;

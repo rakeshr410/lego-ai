@@ -5,17 +5,21 @@ import { getStore } from '../store';
 import { CONSENT_VERSION, interviewConfig, MAX_MESSAGE_CHARS, MAX_VOICE_MESSAGE_CHARS, VOICE_CONSENT_VERSION, type InterviewConfig } from './config';
 import { getPlan, sameScope, type Plan, type PlanScope } from './plans';
 import { decide, initialState, intentOf, toMeta, type DirectorResult, type LiveSignal } from './director';
-import { decideCoach, initialCoachState, lessonView, toCoachMeta, type CoachResult, type LessonView } from './coach';
+import { asksLearner, decideCoach, dropQuestions, initialCoachState, lessonView, questionFilter, toCoachMeta, type CoachResult, type LessonView } from './coach';
 import { aggregate, evaluatorRequest, evaluatorSchema, parseEvaluation, toEntry, type Ledger } from './evaluator';
 import { assembleFeedback, verifyVerdicts } from './grading';
 import { coachRequest, feedbackRequest, feedbackSchema, lessonMarker, parseFeedback, replyOf, replyRequest, stageMarker, type BoardImage } from './prompt';
-import { COACH_DRAW_MAX_OPS, countWords, drawParser, drawToolBody, drawToolResult, holdDraw, parseDraw, type DrawAnchor, type DrawOp, type DrawOptions } from './draw';
+import { recallFor, exportProgress, purgeProgress, recordProgress } from '../coaching/progress';
+import { nextLesson } from '../coaching/lessons';
+import { COACH_DRAW_MAX_OPS, PLACE_MAX_IDS, countWords, drawParser, fillPlanned, listRuns, onBoard, readBack, drawToolBody, drawToolResult, holdDraw, parseDraw, type DrawAnchor, type DrawOp, type DrawOptions } from './draw';
 import type { CallResult } from '../llm-gateway';
 import { claimPrefetch, normalizeSpoken, startPrefetch, type PrefetchKey } from './prefetch';
 import { createHash } from 'node:crypto';
 import { BoardConflict, BoardInvalid, boardTextFor, CURRENT_PNG, readBoard, readPng, saveBoard, savePng, withSnapshot, type BoardRecord } from './board';
 import { boardMatchRequest, boardMatchSchema, boardTags, boardVisionRequest, matchBoard, parseBoardMatch, parseBoardVision, sectionsUpTo, type Coverage } from './board-match';
 import type { BoardElement, BoardGraph } from '../../board/serialise';
+import { plannedIds } from '../coaching/notes';
+import { asideFor } from '../coaching/aside';
 import {
   createSession,
   deleteReaderSessions,
@@ -49,11 +53,11 @@ import {
   type TurnMeta,
 } from './sessions';
 
-// The mock interview (P3-11, docs/interview/README.md): a text-only prototype of the interview
+// The mock interview (P3-11, docs/README.md): a text-only prototype of the interview
 // service, behind PUBLIC_INTERVIEW_ENABLED. A reader starts a session on a system's plan, answers
 // the interviewer stage by stage, moves on when ready, and ends with written feedback.
 //
-// Cost controls (docs/interview/cost-model.md), in the order a call meets them:
+// Cost controls (docs/cost-model.md), in the order a call meets them:
 //   - sign-in, and consent to the session's terms (CONSENT_VERSION), before anything starts;
 //   - INTERVIEW_MONTHLY_SESSIONS per reader per calendar month, counted when a session starts;
 //   - per session: INTERVIEW_MAX_TURNS candidate messages, INTERVIEW_SESSION_BUDGET_USD of
@@ -365,10 +369,12 @@ export type SessionView = {
   turnsLeft: number;
   /** Text (the default) or voice. */
   mode: 'text' | 'voice';
-  /** A mock interview (the default) or a coach lesson (docs/interview/coach-mode.md). */
+  /** A mock interview (the default) or a coach lesson (docs/coach-mode.md). */
   kind: 'interview' | 'coach';
   /** A coach lesson's progress: every part's sections and items with their status (null on an interview). */
   lesson: LessonView | null;
+  /** The playlist's lesson the session teaches (docs/coaching.md), or null. */
+  course: { playlist: string; playlistTitle: string; lesson: string; title: string; next: { slug: string; title: string } | null } | null;
   /** The voice room's state (voice sessions only). */
   voice: VoiceView | null;
   /** Time the stage's clock was paused (a voice session parked), to take off the stage timer. */
@@ -404,6 +410,15 @@ export const VOICE_LEASE_MS = 60_000;
 export function voiceLive(s: Session, now = Date.now()): boolean {
   const v = s.voice;
   return !!v && !v.ended && !!v.lease && now - Date.parse(v.lease.at) < VOICE_LEASE_MS;
+}
+
+/**
+ * A voice part no pipeline has taken yet (started, never attached, not parked): the voice speaks
+ * first, so the text controls wait for it too, or a lesson's first move would be drawn in silence.
+ */
+export function voiceAwaited(s: Session): boolean {
+  const v = s.voice;
+  return !!v && !v.ended && !v.lease && !v.parked;
 }
 
 export function closedReason(s: Session, plan: Plan, cfg: InterviewConfig): SessionView['closed'] {
@@ -449,6 +464,7 @@ export function toView(s: Session, plan: Plan, cfg = interviewConfig()): Session
     mode: s.mode ?? 'text',
     kind: s.kind ?? 'interview',
     lesson: s.kind === 'coach' ? lessonView(plan.plan, s.coach, s.stageIndex) : null,
+    course: plan.lesson ? { playlist: plan.lesson.playlist.slug, playlistTitle: plan.lesson.playlist.title, lesson: plan.lesson.slug, title: plan.lesson.title, next: nextOf(plan) } : null,
     voice: s.voice
       ? {
           live: voiceLive(s),
@@ -478,7 +494,7 @@ export type InterviewStatus = {
   /** Drills (topic and section sessions) a reader may start per month, and how many are left. */
   drillLimit: number;
   drillsRemaining: number;
-  /** Coach lessons (docs/interview/coach-mode.md) a reader may start per month, and how many are left. */
+  /** Coach lessons (docs/coach-mode.md) a reader may start per month, and how many are left. */
   coachLimit: number;
   coachRemaining: number;
   resetsAt: string;
@@ -514,24 +530,77 @@ export async function interviewStatus(readerId: string | null): Promise<Intervie
   }
 }
 
-function planFor(system: string, scope: PlanScope = null): Plan {
-  const plan = getPlan(system, scope);
-  if (!plan) throw fail('not_found', 404, scope ? 'There is no drill on that topic or section.' : 'There is no mock interview for this system.');
+function planFor(system: string, scope: PlanScope = null, lesson?: string | null): Plan {
+  const plan = getPlan(system, scope, lesson);
+  if (!plan) throw fail('not_found', 404, lesson ? 'There is no such lesson.' : scope ? 'There is no drill on that topic or section.' : 'There is no mock interview for this system.');
   return plan;
 }
+
+/**
+ * The brief a lesson opens with when its board goes on from earlier lessons: the board is there at once (drawn
+ * before), so the coach first says what it shows and where this lesson picks up, then draws.
+ */
+export function openingBrief(plan: Plan, then = 'then teach the item, drawing as you go.'): string {
+  const info = plan.lesson;
+  const parts = (info?.start ?? []).flatMap((id) => {
+    const e = info!.layout.get(id);
+    return e?.type === 'element' && e.kind === 'region' && !e.in ? [e.label] : [];
+  });
+  if (!parts.length) return '';
+  return (
+    ` The board already shows what earlier lessons drew: ${parts.map((l) => `"${l}"`).join(', ')}. Open with a short brief ` +
+    `instead of the one sentence: two or three sentences saying what we are designing, what those parts on the board ` +
+    `show, and what this lesson adds. Draw nothing during the brief; ${then}`
+  );
+}
+
+/** The lesson after a playlist lesson's, for the room's "next lesson". */
+function nextOf(plan: Plan): { slug: string; title: string } | null {
+  const n = plan.lesson ? nextLesson(plan.lesson.playlist.slug, plan.lesson.slug) : null;
+  return n ? { slug: n.slug, title: n.title } : null;
+}
+
+/**
+ * How the coach draws on a session: the wider vocabulary, and on a playlist's lesson its board plan;
+ * the lesson's first move also draws the board it opens with (what it keeps from earlier lessons),
+ * before the coach's own drawing, as <place> elements of at most PLACE_MAX_IDS ids each.
+ */
+/** A doubt's answer may draw: what it adds to the move's instruction. */
+const ASIDE_ANSWER =
+  ' If a small sketch or a few written lines would make the answer clearer, draw them as you speak: your own boxes, arrows and notes (a heading note naming the question first), up to eight operations. They go in the side notes, to the right of the lesson, never among its parts; to point at a part already on the board, highlight it. Place no lesson ids. Without a need for it, draw nothing.';
+
+function coachDrawOptions(plan: Plan, opening: boolean): DrawOptions {
+  const info = plan.lesson;
+  if (!info) return { maxOps: COACH_DRAW_MAX_OPS, edit: true };
+  const start = opening ? info.start : [];
+  const chunks: string[][] = [];
+  for (let i = 0; i < start.length; i += PLACE_MAX_IDS) chunks.push(start.slice(i, i + PLACE_MAX_IDS));
+  return { maxOps: COACH_DRAW_MAX_OPS + chunks.length, edit: true, layout: info.layout, ...(chunks.length ? { prelude: chunks.map((c) => `<place ids="${c.join(',')}"/>`).join('') } : {}) };
+}
+
+/** A session's plan: a playlist's lesson carries what earlier lessons left with the learner, recorded when it started. */
+export function sessionPlan(s: Session): Plan | null {
+  const plan = getPlan(s.system, s.scope ?? null, s.course?.lesson);
+  return plan?.lesson && s.course ? { ...plan, lesson: { ...plan.lesson, recall: s.course.recall } } : plan;
+}
+
+/** The same lesson, or both not a lesson. */
+const sameLesson = (s: Pick<Session, 'course'>, lesson: string | null | undefined) => (s.course?.lesson ?? null) === (lesson ?? null);
 
 /** A session of this reader's, with its plan, or not_found (someone else's looks the same as none). */
 export async function mine(readerId: string, id: string): Promise<{ session: Session; plan: Plan }> {
   const session = await getSession(id);
   if (!session || session.readerId !== readerId) throw fail('not_found', 404, 'That interview session doesn’t exist, or it has expired.');
-  return { session, plan: planFor(session.system, session.scope ?? null) };
+  const plan = sessionPlan(session);
+  if (!plan) throw fail('not_found', 404, session.course ? 'There is no such lesson.' : session.scope ? 'There is no drill on that topic or section.' : 'There is no mock interview for this system.');
+  return { session, plan };
 }
 
 /** The reader's session that still takes messages, if any. */
 async function activeSession(readerId: string, cfg: InterviewConfig): Promise<{ session: Session; plan: Plan } | null> {
   for (const s of (await listSessions(readerId)).reverse()) {
     if (s.status !== 'active') continue;
-    const plan = getPlan(s.system, s.scope ?? null);
+    const plan = sessionPlan(s);
     if (plan && Date.now() < Date.parse(endsAt(s, plan, cfg))) return { session: s, plan };
   }
   return null;
@@ -541,10 +610,10 @@ async function activeSession(readerId: string, cfg: InterviewConfig): Promise<{ 
 // Actions
 
 /** The status plus the reader's current session on this system and scope (to resume) and past ones. */
-export async function overview(readerId: string, system: string, scope: PlanScope = null, kind: SessionKind = 'interview') {
-  const plan = planFor(system, scope);
+export async function overview(readerId: string, system: string, scope: PlanScope = null, kind: SessionKind = 'interview', lesson?: string | null) {
+  const plan = planFor(system, scope, lesson);
   const cfg = interviewConfig();
-  const sessions = (await listSessions(readerId)).filter((s) => s.system === system && sameScope(s.scope, scope) && (s.kind ?? 'interview') === kind);
+  const sessions = (await listSessions(readerId)).filter((s) => s.system === system && sameScope(s.scope, scope) && sameLesson(s, lesson) && (s.kind ?? 'interview') === kind);
   const views = sessions.map((s) => toView(s, plan, cfg));
   const current = [...views].reverse().find((v) => v.status === 'active' && v.closed !== 'time') ?? null;
   return {
@@ -566,14 +635,29 @@ export type StartOptions = {
   audioOptIn?: boolean;
   /** A drill: the topic's, or one section's, plan instead of the system's whole interview. */
   scope?: PlanScope;
-  /** A coach lesson (docs/interview/coach-mode.md) on the plan instead of a mock interview: its own quota; text only. */
+  /** A coach lesson (docs/coach-mode.md) on the plan instead of a mock interview: its own quota; text only. */
   kind?: SessionKind;
+  /** A playlist's lesson (docs/coaching.md): `system` is the playlist; a coach session only. */
+  lesson?: string | null;
+  /** What the coach calls the learner (`learnerName`); a coach session only. */
+  name?: string | null;
 };
+
+/**
+ * The name a learner gave the coach, or null: a first name or two, letters only (with spaces, hyphens and
+ * apostrophes), at most 30 characters. It goes into the coach's prompt, so anything else is dropped, not cleaned.
+ */
+export function learnerName(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const name = raw.normalize('NFC').trim().replace(/\s+/g, ' ');
+  return name.length > 0 && name.length <= 30 && /^\p{L}[\p{L}\p{M}' -]*$/u.test(name) ? name : null;
+}
 
 export type SessionKind = NonNullable<Session['kind']>;
 
 export async function startSession(readerId: string, system: string, consentVersion: unknown, opts: StartOptions = {}): Promise<{ session: SessionView; resumed: boolean }> {
-  const plan = planFor(system, opts.scope ?? null);
+  if (opts.lesson && opts.kind !== 'coach') throw fail('invalid', 400, 'A lesson is taught by the coach.');
+  const plan = planFor(system, opts.scope ?? null, opts.lesson);
   const cfg = interviewConfig();
   const voice = opts.mode === 'voice';
 
@@ -630,7 +714,12 @@ async function startLocked(
   const coach = opts.kind === 'coach';
   const scope = plan.scope;
   const active = await activeSession(readerId, cfg);
-  if (active?.session.system === system && sameScope(active.session.scope, scope) && (active.session.kind ?? 'interview') === (opts.kind ?? 'interview')) return { session: toView(active.session, active.plan, cfg), resumed: true };
+  if (active?.session.system === system && sameScope(active.session.scope, scope) && sameLesson(active.session, plan.lesson?.slug) && (active.session.kind ?? 'interview') === (opts.kind ?? 'interview')) {
+    // A lesson resumed under another name: the coach calls the learner what they gave this time.
+    const name = coach ? learnerName(opts.name) : null;
+    if (name && name !== active.session.learnerName) await updateSession(active.session.id, cfg.retentionDays, (s) => ({ ...s, learnerName: name })).catch(() => null);
+    return { session: toView(active.session, active.plan, cfg), resumed: true };
+  }
   if (active) {
     const what = active.session.kind === 'coach' ? 'a lesson' : 'an interview';
     throw fail('active', 409, active.session.system === system ? `You have ${what} in progress on this system. Finish it first.` : `You have ${what} in progress on another system. Finish it first.`, undefined, { system: active.session.system, scope: active.session.scope ?? null, id: active.session.id, kind: active.session.kind ?? 'interview' });
@@ -668,13 +757,17 @@ async function startLocked(
 
   const now = new Date().toISOString();
   const first = plan.plan.stages[0];
+  // A playlist's lesson starts from what the learner's earlier lessons left (read once: the prompt stays the same all lesson).
+  const recall = plan.lesson ? await recallFor(readerId, plan).catch(() => []) : [];
   const session: Session = {
     id: newSessionId(),
     readerId,
     system,
     ...(scope ? { scope } : {}),
+    ...(plan.lesson ? { course: { lesson: plan.lesson.slug, recall } } : {}),
     ...(voice ? { mode: 'voice' as const, voice: initialVoice(!!opts.audioOptIn) } : {}),
     ...(coach ? { kind: 'coach' as const, coach: initialCoachState(plan.plan, 0, now) } : {}),
+    ...(coach && learnerName(opts.name) ? { learnerName: learnerName(opts.name)! } : {}),
     ...(topup ? { topup: true as const } : {}),
     planVersion: plan.version,
     consent: { version: consentVersion, at: now },
@@ -697,8 +790,8 @@ async function startLocked(
     await giveBack();
     throw err;
   }
-  console.log(JSON.stringify({ event: 'interview_started', system, scope, session: session.id, plan: plan.version, mode: voice ? 'voice' : 'text', kind: coach ? 'coach' : 'interview', topup }));
-  return { session: toView(session, plan, cfg), resumed: false };
+  console.log(JSON.stringify({ event: 'interview_started', system, scope, ...(plan.lesson ? { lesson: plan.lesson.slug } : {}), session: session.id, plan: plan.version, mode: voice ? 'voice' : 'text', kind: coach ? 'coach' : 'interview', topup }));
+  return { session: toView(session, plan.lesson ? { ...plan, lesson: { ...plan.lesson, recall } } : plan, cfg), resumed: false };
 }
 
 const openSession = async (readerId: string, id: string): Promise<[Session, Plan]> => {
@@ -728,6 +821,7 @@ export type VoiceCall = { epoch: number };
 function assertVoiceTurn(session: Session, voice: VoiceCall | undefined) {
   if (!voice) {
     if (voiceLive(session)) throw fail('voice_live', 409, 'The voice interview is running. Speak, or end the voice part first.');
+    if (voiceAwaited(session)) throw fail('voice_live', 409, 'The voice is still connecting. Wait for it, or switch to typing.');
     return;
   }
   const v = session.voice;
@@ -1267,11 +1361,17 @@ export async function exportReaderSessions(readerId: string) {
   return (await listSessions(readerId)).map(({ readerId: _r, planVersion: _p, ...s }) => s);
 }
 
-/** Deletes every session of a reader (account deletion). */
-export const purgeReaderSessions = (readerId: string) => deleteReaderSessions(readerId);
+/** A reader's progress through the coaching playlists (docs/coaching.md), for the account export. */
+export const exportReaderProgress = (readerId: string) => exportProgress(readerId);
+
+/** Deletes every session of a reader, and their playlist progress (account deletion). */
+export async function purgeReaderSessions(readerId: string) {
+  await purgeProgress(readerId);
+  return deleteReaderSessions(readerId);
+}
 
 // ---------------------------------------------------------------------------------------
-// Coach mode (docs/interview/coach-mode.md): the coach drives. A learner message and a "continue"
+// Coach mode (docs/coach-mode.md): the coach drives. A learner message and a "continue"
 // (the learner is ready for the next move) run the same turn: the coach director decides
 // (coach.ts), the model writes the move, its drawing comes off the reply, and the move's effect
 // (the next part, the end) is applied like the interviewer's.
@@ -1298,6 +1398,9 @@ const textOf = (message: Anthropic.Beta.BetaMessage) =>
  */
 function liveDraw(opts: Pick<ReplyOptions, 'onText' | 'onDraw'>, graph: BoardGraph | null, allowed: boolean, drawOpts?: DrawOptions): { onElement: (body: string, anchor: DrawAnchor) => void; finish: (ops: DrawOp[]) => void } {
   const parser = allowed ? drawParser(graph, drawOpts) : null;
+  // The board a lesson opens with goes first, before a word.
+  const prelude = parser?.ops.length ?? 0;
+  if (prelude) opts.onDraw?.([...parser!.ops], { words: 0, prelude: true });
   let sent = false;
   return {
     onElement: (body, anchor) => {
@@ -1308,7 +1411,8 @@ function liveDraw(opts: Pick<ReplyOptions, 'onText' | 'onDraw'>, graph: BoardGra
     },
     // Not streamed: the whole drawing, at once.
     finish: (ops) => {
-      if (!sent && ops.length) opts.onDraw?.(ops, { words: 0 });
+      const rest = ops.slice(prelude);
+      if (!sent && rest.length) opts.onDraw?.(rest, { words: 0 });
     },
   };
 }
@@ -1344,7 +1448,37 @@ async function coachTurn(readerId: string, id: string, message: string | null, c
     // learner's own boxes show of the items decides a draw task's review.
     const record = await readBoard(id).catch(() => null);
     const board = record ? await boardForTurn(readerId, session, plan, cfg, record, stage.key, state.section) : null;
-    const directed = decideCoach({ plan: plan.plan, stageIndex, elapsedMs, state, text: message, signal: await readSignal(id), closed: false, drawn: board?.tags.map((t) => t.item) ?? [] });
+    // The learner cut the last move short: its reply was cut (the voice reports what was heard), or no reply
+    // was kept at all (they spoke over its first words).
+    const lastTurn = session.turns.at(-1);
+    const cutIn = !!lastTurn && (lastTurn.role === 'interviewer' ? !!lastTurn.meta?.interrupted : lastTurn.role === 'candidate' && !!lastTurn.meta?.coach);
+    // What the lesson's earlier moves drew (not the ones cut before the learner heard them).
+    const earlier = session.turns.flatMap((t) => (t.meta?.interrupted ? [] : (t.meta?.draw ?? [])));
+    // The lines its lists have (a part the learner gives first is written there in their words).
+    const asks = plan.lesson && cfg.coach.asks ? plan.lesson.asks : undefined;
+    // What of the asked parts is on the board, and what the learner gave of it.
+    const runs = plan.lesson ? [...listRuns(plan.lesson.lists, earlier).values()] : [];
+    const askIds = (asks ?? []).flatMap((a) => [...a.before, ...Object.values(a.lines).flat(), ...Object.values(a.rest).flat()]);
+    const placedIds = new Set([...runs.flatMap((r) => [...r.covered]), ...(plan.lesson ? onBoard(plan.lesson.layout, askIds, earlier) : [])]);
+    const lines = { placed: [...placedIds], given: earlier.flatMap((o) => ((o.op === 'note' || o.op === 'box' || o.op === 'region') && o.learner && o.covers ? [o.covers] : [])) };
+    const directed = decideCoach({ plan: plan.plan, stageIndex, elapsedMs, state, text: message, signal: await readSignal(id), closed: false, drawn: board?.tags.map((t) => t.item) ?? [], cutIn, questions: cfg.coach.questions, asks, lines });
+    // A move that draws a lesson item names the item's planned ids in its instruction, so the model has them in hand
+    // (an ask's frame, or the lines the learner left out, when the move names its own).
+    const planned = plan.lesson && directed.decision.draw ? (directed.decision.place ?? (directed.decision.item ? plannedIds(plan.lesson, directed.decision.item) : [])) : [];
+    // An ask names its frame itself, before its question.
+    if (planned.length && directed.decision.move !== 'ask')
+      directed.decision.template += ` Draw it as you speak: its board plan is <draw><place ids="${planned.join(',')}"/></draw>, split into one <draw><place ids="..."/></draw> per part, each at the point in your sentence where that part comes in and each followed by a sentence on what that part does or holds.`;
+    // A doubt may be sketched: the coach's own drawing, in the side notes, clear of the lesson's parts.
+    if (directed.decision.aside) directed.decision.template += ASIDE_ANSWER;
+    // A lesson that goes on from an earlier lesson's board opens on it with a brief before the first drawing.
+    if (directed.decision.move === 'intro') directed.decision.template += openingBrief(plan);
+    else if (directed.decision.move === 'ask' && !state.opened) directed.decision.template += openingBrief(plan, 'then ask.');
+    // A question turns to the learner by name, the wording alternating from one question to the next.
+    if (session.learnerName && (directed.decision.move === 'check' || directed.decision.move === 'reteach')) {
+      const asked = session.turns.filter((t) => t.meta?.coach?.move === 'check' || t.meta?.coach?.move === 'reteach').length;
+      const name = session.learnerName;
+      directed.decision.template += ` Open the question with "${asked % 2 ? `So tell me, ${name},` : `So ${name}, tell me,`}".`;
+    }
     const before: Turn[] = directed.sectionAdvance ? [sectionEvent(stage.key, directed.sectionAdvance, at)] : [];
     const meta = { section: directed.state.section, coach: toCoachMeta(directed.decision), ...board?.meta };
     const learner: Turn =
@@ -1352,7 +1486,7 @@ async function coachTurn(readerId: string, id: string, message: string | null, c
         ? { role: 'event', stage: stage.key, text: CONTINUE_TEXT, at, meta: { ...meta, continued: true } }
         : { role: 'candidate', stage: stage.key, text: message, at, minute: Math.floor(elapsedMs / 60_000), meta: { ...meta, ...(voice ? { source: 'voice' as const } : {}) } };
     const tools = cfg.coach.drawTools;
-    const params = coachRequest(plan, [...session.turns, ...before, learner], { voice: !!voice, tools });
+    const params = coachRequest(plan, [...session.turns, ...before, learner], { voice: !!voice, tools, name: session.learnerName, questions: cfg.coach.questions });
     const callMeta = {
       readerId,
       topic: `${session.system}/interview`,
@@ -1360,12 +1494,28 @@ async function coachTurn(readerId: string, id: string, message: string | null, c
       lane: lane(cfg, 'reply', plan, id, !!voice, true),
       log: { session: id, stage: stage.key, turn: session.candidateTurns + (message === null ? 0 : 1), streamed: !!opts.onText, coach: directed.decision.row, move: directed.decision.move, continued: message === null, prepMs: Date.now() - arrived },
     };
-    const live = liveDraw(opts, record?.graph ?? null, !!directed.decision.draw, { maxOps: COACH_DRAW_MAX_OPS, edit: true });
+    // A lesson's first move opens its board; that drawing is the service's, so it lands whatever the move.
+    // The learner's points go on the list they are giving, and nothing of the plan is placed meanwhile.
+    const giving = directed.decision.move === 'capture' ? asks?.find((a) => a.items.includes(directed.decision.item ?? '')) : undefined;
+    const capture = giving?.list;
+    const parts = giving && !giving.list ? Object.values(giving.lines).flat().filter((id) => !placedIds.has(id)) : undefined;
+    const drawOpts = {
+      ...coachDrawOptions(plan, !state.opened),
+      ...(plan.lesson ? { aside: asideFor(plan.lesson.layout, earlier), lists: { plans: plan.lesson.lists, earlier, capture } } : {}),
+      ...(parts ? { parts } : {}),
+      ...(directed.decision.aside || giving ? { noPlace: true } : {}),
+    };
+    const mayDraw = !!directed.decision.draw || !!directed.decision.aside || !!drawOpts.prelude;
+    const live = liveDraw(opts, record?.graph ?? null, mayDraw, tools ? { ...drawOpts, prelude: undefined } : drawOpts);
     const sink = opts.onText ? holdDraw(opts.onText, live.onElement) : null;
+    // Only a check (or a reteach, a draw task) asks the learner anything: another move's question is not said.
+    const asking = asksLearner(directed.decision.move);
+    const quiet = sink && !asking ? questionFilter((delta) => sink.onText(delta)) : null;
+    const said = (text: string) => (asking ? text : dropQuestions(text));
     let streamed = '';
     const onText = (delta: string) => {
       streamed += delta;
-      sink?.onText(delta);
+      (quiet ?? sink)?.onText(delta);
     };
     // A spoken move the learner cuts into (a question in the middle of an explanation): the pipeline
     // drops the stream, the move is kept as far as it got (`played` trims it to the words heard), and
@@ -1374,7 +1524,8 @@ async function coachTurn(readerId: string, id: string, message: string | null, c
     let cut = false;
     // The tool path (phase 4): the coach's `draw` calls are run inside the turn and answered, up to a cap of
     // rounds, each round one more model call on the cached prefix; its words are the text blocks of every round.
-    const toolParser = tools ? drawParser(record?.graph ?? null, { maxOps: COACH_DRAW_MAX_OPS, edit: true }) : null;
+    const toolParser = tools ? drawParser(record?.graph ?? null, drawOpts) : null;
+    if (toolParser?.ops.length) opts.onDraw?.([...toolParser.ops], { words: 0 });
     let toolText = '';
     try {
       let messages = params.messages;
@@ -1386,7 +1537,7 @@ async function coachTurn(readerId: string, id: string, message: string | null, c
         const calls = result.message.content.filter((b): b is Anthropic.Beta.BetaToolUseBlock => b.type === 'tool_use' && b.name === 'draw');
         if (result.message.stop_reason !== 'tool_use' || !calls.length) break;
         const results: Anthropic.Beta.BetaToolResultBlockParam[] = calls.map((call) => {
-          const allowed = !!directed.decision.draw;
+          const allowed = !!directed.decision.draw || !!directed.decision.aside;
           const seen = toolParser.dropped.length;
           const ops = allowed ? toolParser.element(drawToolBody(call.input)) : [];
           if (ops.length) opts.onDraw?.(ops, { words: countWords(toolText) });
@@ -1402,12 +1553,36 @@ async function coachTurn(readerId: string, id: string, message: string | null, c
       }
       cut = true;
     }
+    quiet?.flush();
     sink?.flush();
     // The coach draws when its decision says so, with the wider vocabulary, on the board it was shown.
     const drawn = toolParser
-      ? { ...parseDraw(result && !cut ? toolText.trim() || 'Go on.' : streamed.trim(), null, false), ops: toolParser.ops, dropped: toolParser.dropped }
-      : parseDraw(result ? replyOf(result.message) : streamed.trim(), record?.graph ?? null, !!directed.decision.draw, { maxOps: COACH_DRAW_MAX_OPS, edit: true });
+      ? { ...parseDraw(said(result && !cut ? toolText.trim() || 'Go on.' : streamed.trim()), null, false), ops: toolParser.ops, dropped: toolParser.dropped }
+      : parseDraw(said(result ? replyOf(result.message) : streamed.trim()), record?.graph ?? null, mayDraw, drawOpts);
     if (!toolParser) live.finish(drawn.ops);
+    // What the plan has for this item and the reply left off the board: the service places it after the words,
+    // so a move that teaches an item never leaves it without its picture.
+    const filled = !toolParser && !cut && planned.length ? fillPlanned(planned, drawn.ops, record?.graph ?? null, drawOpts, earlier) : { ops: [], ids: [] };
+    if (filled.ops.length) {
+      drawn.ops.push(...filled.ops);
+      opts.onDraw?.(filled.ops, { words: countWords(drawn.text) });
+    }
+    // What the move was asked to put on the board and what landed: a lesson whose board stops growing shows here.
+    const raw = toolParser ? '' : said(result ? replyOf(result.message) : streamed);
+    console.log(
+      JSON.stringify({
+        event: 'coach_draw',
+        session: id,
+        stage: stage.key,
+        move: directed.decision.move,
+        item: directed.decision.item,
+        draw: !!directed.decision.draw,
+        elements: (raw.match(/<draw>/gi) ?? []).length,
+        ops: drawn.ops.map((o) => (o.op === 'box' || o.op === 'region' ? `${o.op}:${o.label}${o.at ? '@' : ''}` : o.op === 'arrow' ? `arrow:${o.from}>${o.to}` : o.op === 'note' ? `note${o.at ? '@' : ''}` : o.op)),
+        dropped: drawn.dropped,
+        filled: filled.ops.length,
+      }),
+    );
     const now = new Date().toISOString();
     // A continue cut before a word of it was heard did not happen: the lesson stands where it was.
     if (cut && !drawn.text && message === null) return { turn: viewTurn({ role: 'interviewer', stage: stage.key, text: '', at: now, meta: { interrupted: true } }), session: toView(session, plan, cfg) };
@@ -1419,7 +1594,14 @@ async function coachTurn(readerId: string, id: string, message: string | null, c
             stage: stage.key,
             text: cut ? `${drawn.text} —` : drawn.text,
             at: now,
-            meta: { section: directed.state.section, ...(drawn.ops.length ? { draw: drawn.ops } : {}), ...(drawn.dropped.length ? { drawDropped: drawn.dropped } : {}), ...(cut ? { interrupted: true } : {}) },
+            meta: {
+              section: directed.state.section,
+              ...(drawn.ops.length ? { draw: drawn.ops } : {}),
+              ...(drawn.dropped.length ? { drawDropped: drawn.dropped } : {}),
+              ...(cut ? { interrupted: true } : {}),
+              // What the model reads back of this move: its words with the drawing in them.
+              ...(!cut && drawn.ops.length && raw ? { said: readBack(raw.trim(), filled.ids, drawOpts.layout) } : {}),
+            },
           };
     let ended = false;
     const saved = await updateSession(id, cfg.retentionDays, (s) => {
@@ -1437,6 +1619,8 @@ async function coachTurn(readerId: string, id: string, message: string | null, c
     });
     if (ended) throw fail('finished', 409, 'This lesson has ended.');
     if (!saved) throw fail('not_found', 404, 'That lesson has expired.');
+    // A playlist's lesson: what this move left with the learner, for their next lesson.
+    if (plan.lesson) await recordProgress(readerId, plan, saved.coach, directed.state.parked, directed.decision.move === 'end', cfg.retentionDays).catch((err) => console.error('[coach] progress:', (err as Error).message));
     if (board?.tags.length) await writeBoardEvidence(id, cfg, plan, saved, board.tags).catch((err) => console.error('[interview] board evidence:', (err as Error).message));
     // The evaluator tags the learner's words (never a continue) after the reply is out.
     if (message !== null) scheduleEvaluation(readerId, id, plan, cfg, saved.turns.map((t) => t.role).lastIndexOf('candidate'), saved.candidateTurns);

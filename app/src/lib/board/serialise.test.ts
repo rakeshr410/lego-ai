@@ -204,9 +204,25 @@ describe('fingerprint and compaction', () => {
     expect(fingerprint(a.map((e) => (e.id === 'gw' ? { ...e, version: 2 } : e)))).not.toBe(f);
   });
 
-  it('keeps only what the serialiser reads', () => {
+  it('keeps what the serialiser reads and how each element looks, nothing else', () => {
     const raw = [
       { id: 'r', type: 'rectangle', x: 1, y: 2, width: 3, height: 4, version: 5, strokeColor: '#000', roughness: 1, seed: 42, isDeleted: false, customData: { author: 'interviewer', other: 1 } },
+      {
+        id: 'c',
+        type: 'rectangle',
+        x: 0,
+        y: 0,
+        width: 160,
+        height: 64,
+        version: 1,
+        strokeColor: '#1d4ed8',
+        backgroundColor: '#dbeafe',
+        fillStyle: 'solid',
+        roundness: { type: 3, value: 9 },
+        boundElements: [{ id: 'ct', type: 'text' }, { bad: 1 }],
+        customData: { author: 'coach', group: 'tree', region: true, script: '<x>' },
+      },
+      { id: 'ct', type: 'text', x: 10, y: 20, width: 80, height: 25, version: 1, text: 'Border box', originalText: 'Border box', containerId: 'c', fontSize: 16, fontFamily: 5, textAlign: 'center', verticalAlign: 'top', strokeColor: 'red; x' },
       { id: 'd', type: 'freedraw', x: 0, y: 0, width: 9, height: 9, version: 1, points: [[0, 0], [1, 1], [2, 2]], pressures: [1, 1, 1] },
       { id: 'gone', type: 'ellipse', isDeleted: true, version: 9 },
       { id: 'a', type: 'arrow', x: 0, y: 0, width: 1, height: 1, version: 2, points: [[0, 0], [50, 0]], startBinding: { elementId: 'r', focus: 0, gap: 1 }, endBinding: null, endArrowhead: 'arrow', strokeStyle: 'solid' },
@@ -214,7 +230,23 @@ describe('fingerprint and compaction', () => {
       { type: 'rectangle' },
     ];
     expect(compactElements(raw)).toEqual([
-      { id: 'r', type: 'rectangle', x: 1, y: 2, width: 3, height: 4, version: 5, customData: { author: 'interviewer' } },
+      { id: 'r', type: 'rectangle', x: 1, y: 2, width: 3, height: 4, version: 5, customData: { author: 'interviewer' }, strokeColor: '#000', roughness: 1 },
+      {
+        id: 'c',
+        type: 'rectangle',
+        x: 0,
+        y: 0,
+        width: 160,
+        height: 64,
+        version: 1,
+        customData: { author: 'coach', group: 'tree', region: true },
+        strokeColor: '#1d4ed8',
+        backgroundColor: '#dbeafe',
+        fillStyle: 'solid',
+        roundness: { type: 3 },
+        boundElements: [{ id: 'ct', type: 'text' }],
+      },
+      { id: 'ct', type: 'text', x: 10, y: 20, width: 80, height: 25, version: 1, text: 'Border box', containerId: 'c', originalText: 'Border box', fontSize: 16, fontFamily: 5, textAlign: 'center', verticalAlign: 'top' },
       { id: 'd', type: 'freedraw', x: 0, y: 0, width: 9, height: 9, version: 1, pointCount: 3 },
       { id: 'a', type: 'arrow', x: 0, y: 0, width: 1, height: 1, version: 2, startBinding: { elementId: 'r' }, endBinding: null, points: [[0, 0], [50, 0]], endArrowhead: 'arrow' },
     ]);

@@ -6,7 +6,7 @@ import CoachRail from './CoachRail';
 import '../../styles/interview-feedback.css';
 import '../../styles/interview-coach.css';
 
-// A coach lesson's end screen (docs/interview/coach-mode.md): what the learner understood, what is
+// A coach lesson's end screen (docs/coach-mode.md): what the learner understood, what is
 // shaky and what the lesson never reached, by section, from the coach's ledger; then the way to the
 // mock interview on the same material. No grader runs: the statuses are the lesson's own.
 
@@ -26,6 +26,9 @@ export default function CoachSummary({ page, session, transcript, deleting, erro
   const lesson = session.lesson;
   const kicker = [t('coach.summary.kicker'), page.system.name, session.scope ? t('crumb.drill') : null].filter(Boolean).join(' · ');
   const interviewHref = `/systems/${page.system.slug}/interview${session.scope ? `?topic=${encodeURIComponent(session.scope.topic)}${session.scope.section ? `&section=${encodeURIComponent(session.scope.section)}` : ''}` : ''}`;
+  // A playlist's lesson goes on to the next lesson (or back to the playlist), not to a mock interview.
+  const course = session.course;
+  const nextHref = course ? (course.next ? `/coach/${course.playlist}/${course.next.slug}` : `/coach/${course.playlist}`) : null;
 
   return (
     <main className="ivf" id="content" tabIndex={-1}>
@@ -67,6 +70,12 @@ export default function CoachSummary({ page, session, transcript, deleting, erro
                 <span className="ivk-tally__n is-understood">{lesson.understood}</span>
                 <span>{t('coach.summary.understood', { count: lesson.understood })}</span>
               </div>
+              {lesson.explained > 0 && (
+                <div className="ivk-tally__row">
+                  <span className="ivk-tally__n is-explained">{lesson.explained}</span>
+                  <span>{t('coach.summary.explained', { count: lesson.explained })}</span>
+                </div>
+              )}
               <div className="ivk-tally__row">
                 <span className="ivk-tally__n is-shaky">{lesson.shaky}</span>
                 <span>{t('coach.summary.shaky', { count: lesson.shaky })}</span>
@@ -76,10 +85,21 @@ export default function CoachSummary({ page, session, transcript, deleting, erro
                 <span>{t('coach.summary.left', { count: lesson.left })}</span>
               </div>
               <div className="ivk-tally__next">
-                <a className="ivf-btn ivk-go" href={interviewHref}>
-                  {t('coach.summary.interview')}
-                </a>
-                <p className="ivk-tally__note">{t('coach.summary.interview.note')}</p>
+                {course && nextHref ? (
+                  <>
+                    <a className="ivf-btn ivk-go" href={nextHref}>
+                      {course.next ? t('coach.summary.nextLesson', { title: course.next.title }) : t('coach.summary.playlist', { title: course.playlistTitle })}
+                    </a>
+                    <p className="ivk-tally__note">{t('coach.summary.nextLesson.note')}</p>
+                  </>
+                ) : (
+                  <>
+                    <a className="ivf-btn ivk-go" href={interviewHref}>
+                      {t('coach.summary.interview')}
+                    </a>
+                    <p className="ivk-tally__note">{t('coach.summary.interview.note')}</p>
+                  </>
+                )}
                 <button type="button" className="ivk-link" onClick={onRetry}>
                   {t('coach.summary.again')}
                 </button>

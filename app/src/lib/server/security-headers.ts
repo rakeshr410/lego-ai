@@ -50,7 +50,7 @@ export function labCsp(opts: PolicyOptions & { webSandbox?: string | null } = {}
     .join('; ');
 }
 
-// Daily (the voice room's WebRTC, docs/interview/README.md "Voice"): the call-object bundle daily-js
+// Daily (the voice room's WebRTC, docs/README.md "Voice"): the call-object bundle daily-js
 // loads at run time, its signalling and media hosts, and their fallback domains (Daily's CSP guide:
 // every daily.co host is listed with dailywebrtc.com and dailywebrtc.net). The transport sets
 // avoidEval, so no 'unsafe-eval'.
@@ -58,7 +58,7 @@ const DAILY_HOSTS = ['https://*.daily.co', 'https://*.dailywebrtc.com', 'https:/
 const DAILY_SOCKETS = ['wss://*.daily.co', 'wss://*.dailywebrtc.com', 'wss://*.dailywebrtc.net'];
 
 /**
- * CSP for a system's interview page (docs/interview/README.md, "Whiteboard" and "Voice"): the
+ * CSP for a system's interview page (docs/README.md, "Whiteboard" and "Voice"): the
  * site's policy plus a worker from a blob URL (Excalidraw's canvas creates one for its text
  * measuring) and media from blobs (the voice room's audio). With `voice` (a build with
  * PUBLIC_INTERVIEW_VOICE_ENABLED) Daily's hosts for the call bundle, signalling and media; otherwise
@@ -167,7 +167,7 @@ export function checkoutHeaders(base: Record<string, string>, csp: string): Reco
 export const API_CSP = "default-src 'none'; frame-ancestors 'none'; base-uri 'none'";
 
 /**
- * `microphone` is for the voice room's page only (docs/interview/privacy.md, "Permissions-Policy
+ * `microphone` is for the voice room's page only (docs/privacy.md, "Permissions-Policy
  * and CSP"): the page itself may ask for the microphone; frames never (frame-ancestors 'none').
  */
 export function securityHeaders(csp: string | null, { hsts = false, reportOnly = false, microphone = false }: PolicyOptions & { microphone?: boolean } = {}) {

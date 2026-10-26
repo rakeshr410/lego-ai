@@ -3,15 +3,15 @@
 The design for Arrowbox's mock front end system design interview: what it is, how it is built,
 what it costs, and how it grows from a text beta to voice. It answers GAP3-2 (no architecture),
 GAP3-3 (cost), GAP3-4 (privacy and consent) and GAP3-5 (granularity) in the
-[production-readiness plan](../production-readiness-plan.md).
+production-readiness plan (lego: docs/production-readiness-plan.md).
 
 | Document | What |
 |---|---|
 | This page | Scope, phases, architecture, content, prompts, rollout, open questions |
-| [ADR 0002](../adr/0002-interview-per-system.md) | The unit of an interview is the system |
-| [ADR 0003](../adr/0003-section-driven-interviews.md) | Sections drive the interview; plans derive from the topics; the web tier owns the session |
-| [ADR 0004](../adr/0004-interview-whiteboard.md) | The whiteboard is text to the interviewer and evidence only in part |
-| [ADR 0005](../adr/0005-interview-voice.md) | Voice: the web owns the session, a Pipecat service owns the audio, leases fence them |
+| [ADR 0002](adr/0002-interview-per-system.md) | The unit of an interview is the system |
+| [ADR 0003](adr/0003-section-driven-interviews.md) | Sections drive the interview; plans derive from the topics; the web tier owns the session |
+| [ADR 0004](adr/0004-interview-whiteboard.md) | The whiteboard is text to the interviewer and evidence only in part |
+| [ADR 0005](adr/0005-interview-voice.md) | Voice: the web owns the session, a Pipecat service owns the audio, leases fence them |
 | [cost-model.md](cost-model.md) | Cost per session and per month, and how every quota follows from it |
 | [privacy.md](privacy.md) | What is collected, consent, retention, deletion, Permissions-Policy |
 | [coach-mode.md](coach-mode.md) | Proposal: the AI drives a lesson topic by topic, draws and answers doubts, on the same plans and the same voice service |
@@ -95,7 +95,7 @@ Each phase has its own flag, so voice can be off while text runs.
 
 ## Target architecture: the web tier owns the session
 
-**Superseded on 2026-10-22 by [ADR 0003](../adr/0003-section-driven-interviews.md).** The earlier
+**Superseded on 2026-10-22 by [ADR 0003](adr/0003-section-driven-interviews.md).** The earlier
 plan here (a separate interview service with its own Postgres schema, a retention job of its own
 and sticky WebSocket routing) is not built. The interview is a stateful 45-minute session, but
 everything durable about it is small and private: a few hundred turns, a board, an evidence ledger,
@@ -467,7 +467,7 @@ If the canvas itself crashes (the library's own error), the board shows a notice
 
 ## Voice (phase 3)
 
-Design section 6 of the AI interviewer note; [ADR 0005](../adr/0005-interview-voice.md). The web
+Design section 6 of the AI interviewer note; [ADR 0005](adr/0005-interview-voice.md). The web
 tier keeps owning the session; a separate service owns the audio and nothing else.
 
 ```mermaid

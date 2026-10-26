@@ -4,7 +4,7 @@ import { quoteMatches } from './evaluator';
 import type { Feedback, Rating, Turn } from './sessions';
 
 // Grading (design section 8): the grader model gives item-level verdicts with quotes; the
-// ratings are computed here, by rules the candidate can read (docs/interview/README.md). A
+// ratings are computed here, by rules the candidate can read (docs/README.md). A
 // verdict that credits or blames the candidate without a quote from their own words is
 // downgraded, so the written feedback can never say "you said X" when they did not.
 

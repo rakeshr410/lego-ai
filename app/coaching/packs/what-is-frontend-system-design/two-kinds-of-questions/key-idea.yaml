@@ -1,0 +1,94 @@
+# Two kinds of question: an application prompt hands you a product, a component prompt one widget; name the shape before drawing.
+id: what-is-frontend-system-design/two-kinds-of-questions/key-idea
+title: Applications and components
+source:
+  hash: 23d940ff6fc8
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: what-is-frontend-system-design/the-client-is-the-system/key-idea
+  assumes:
+    - A frontend design details everything inside the browser tab and draws the server as one box known by its contract.
+    - "Inside the tab the parts are views, a client store and a data-access layer that talks to the server."
+  carries:
+    - "A frontend prompt is either an application (a product) or a component (one widget); name which before drawing."
+    - "An application prompt is about views and navigation, a server contract, data that changes under you and product priorities."
+    - "A component prompt is about one widget other developers embed: its props, events and render hooks, its state and who owns its value, and its keyboard, focus and ARIA behaviour."
+    - The shape decides what your interface is and where the minutes go.
+  terms:
+    - term: application prompt
+      means: A prompt about a product, how its screens, data and a server fit together.
+    - term: component prompt
+      means: A prompt about one reusable widget and how it behaves for everyone who uses it, including the developers who embed it.
+    - term: host page
+      means: A page that embeds the component and supplies what it needs, such as the fetch for suggestions.
+board:
+  keep: [browser-tab, trip-board-view, search-box, client-store, data-access, server-side, api-server, intents, query, load-save, https-json]
+  elements:
+    - { id: shape-decision, kind: diamond, label: Product or part?, at: [55, 30], size: [10, 5] }
+    - { id: app-prompt, kind: region, label: "Application prompt: trip planner", at: [2, 25], size: [46, 15] }
+    - { id: app-views, kind: box, label: Views and navigation, at: [4, 29], size: [20, 3], in: app-prompt, tone: blue }
+    - { id: app-contract, kind: box, label: Server as a contract, at: [26, 29], size: [20, 3], in: app-prompt, tone: grey }
+    - { id: app-changing, kind: box, label: Data that changes under you, at: [4, 33], size: [20, 3], in: app-prompt, tone: amber }
+    - { id: app-priorities, kind: box, label: Product priorities to rank, at: [26, 33], size: [20, 3], in: app-prompt }
+    - { id: app-editors, kind: note, label: "two editors: user 1 sees user 2's move", at: [4, 37], in: app-prompt }
+    - { id: app-time, kind: note, label: "time: routes, store, endpoints", at: [26, 37], in: app-prompt }
+    - { id: comp-prompt, kind: region, label: "Component prompt: search box", at: [72, 25], size: [46, 17] }
+    - { id: comp-widget, kind: box, label: "One widget, 3 host teams", at: [74, 29], size: [20, 3], in: comp-prompt, tone: blue }
+    - { id: comp-api, kind: box, label: "Props, events, render hooks", at: [96, 29], size: [20, 3], in: comp-prompt, tone: blue }
+    - { id: comp-state, kind: box, label: "Internal state, who owns value", at: [74, 33], size: [20, 3], in: comp-prompt, tone: amber }
+    - { id: comp-a11y, kind: box, label: "Keyboard, focus and ARIA", at: [96, 33], size: [20, 3], in: comp-prompt, tone: blue }
+    - { id: comp-no-server, kind: note, label: "no endpoints or routes of its own", at: [74, 37], in: comp-prompt }
+    - { id: comp-arrows, kind: note, label: "Down Arrow: focus stays in input", at: [96, 37], in: comp-prompt }
+    - { id: comp-lost, kind: note, label: "lost: server boxes, no keyboard map", at: [74, 39], in: comp-prompt, tone: red }
+  arrows:
+    - { id: a-product, from: shape-decision, to: app-prompt, label: product }
+    - { id: a-part, from: shape-decision, to: comp-prompt, label: part }
+beats:
+  - point: Every frontend design prompt hands you either a product to design or one part of one, and you decide which before you draw anything.
+    kind: decision
+    weight: core
+    teach:
+      - Keep Pathnook's page in view, a search box at the top that suggests places as you type, and the trip board under it that user 1 and user 2 both edit.
+      - "Two prompts can come from that one page: design Pathnook's trip planner, or design the destination search box that three Pathnook teams will drop into their own pages. Same company, same page, two different designs."
+    draw: [shape-decision]
+    check: Why name the shape of the prompt before drawing?
+    answer: Because it decides what your interface is and where the minutes go, so you don't spend them on the wrong layer.
+  - point: "An application prompt asks how screens, data and a server fit together: several views and the navigation between them, a server treated as a contract, data that changes under you, and product priorities to rank."
+    kind: requirement
+    weight: core
+    teach:
+      - For the trip planner you would sketch a few routes, decide what the browser keeps in memory, and agree endpoints with a server you never open.
+      - "The data moves under you: pages of results, freshness, and a second editor. When user 1 moves a place on their phone, user 2's board has to catch up; keeping two editors in step only exists once there is a product with shared state."
+    draw: [app-prompt, a-product, app-views, app-contract, app-changing, app-priorities, app-editors, app-time]
+    check: Which topic gets real time in the trip planner prompt but barely a mention in the search box prompt?
+    answer: Keeping user 1's and user 2's boards in step when both edit the trip; it is a data and server problem that comes with a shared product.
+  - point: "A component prompt asks how one widget behaves for everyone who uses it: an API of props, events and render hooks for the developers who embed it, its internal state and who owns its value, and keyboard, focus and ARIA at the core of the spec."
+    kind: requirement
+    weight: core
+    teach:
+      - "The search box has no server and no routes of its own. It asks the page that embedded it for suggestions; the fetch is supplied by the host."
+      - Its users include the developers on three teams, so the props they pass and the events it sends back are its interface. Its state is open or closed, loading, the active option, and whether the host controls the value.
+      - Walk the keyboard. The Down Arrow moves the active option while focus stays in the text box, and the box tells assistive technology which option is active, the combobox pattern.
+    draw: [comp-prompt, a-part, comp-widget, comp-api, comp-state, comp-a11y, comp-no-server, comp-arrows]
+    check: "A prompt reads: design the place picker that Pathnook's booking, trip and review teams will all reuse. Which shape is it, and what carries the design?"
+    answer: A component prompt; its API, states, keyboard behaviour and ARIA carry the design, and where suggestions come from is the host's concern.
+    misconceptions:
+      - "Three teams are involved, so it is an application -> the deliverable is one reusable widget whose main users are the developers who embed it, a component."
+      - "A component prompt still needs a server and database on the board -> it has no endpoints of its own; the host supplies the fetch."
+  - point: The usual way to lose a component prompt is to answer it as an application, drawing a server and a database while the keyboard map never comes up; both shapes need accessibility and state, at different depths.
+    kind: failure
+    weight: core
+    teach:
+      - Neither shape is harder, but they reward different things. An application answer that never reaches the server contract is incomplete, and so is a component answer that never reaches the keyboard.
+      - Accessibility and state belong to both, just at different depths, so this is about where the minutes go, not about leaving topics out.
+    draw: [comp-lost]
+    check: A candidate given the search box prompt spends ten minutes drawing a server, a database and endpoints. What have they most likely missed?
+    answer: That it is a component prompt; the time belonged to its props and events, its states and its keyboard, focus and ARIA behaviour.
+    misconceptions:
+      - "Application prompts have no accessibility requirements -> both shapes need accessibility and state, at different depths."
+task:
+  prompt: "Pathnook's booking, trip and review teams want one shared place picker. Name the shape of this prompt, then draw the four things you would spend your time on."
+  expects: [1, 3]

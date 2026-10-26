@@ -31,6 +31,7 @@ async function routes() {
     const real = await importOriginal<typeof import('./service')>();
     return {
       InterviewError: real.InterviewError,
+      learnerName: real.learnerName,
       interviewStatus: mocks.interviewStatus,
       overview: mocks.overview,
       startSession: mocks.startSession,
@@ -42,9 +43,10 @@ async function routes() {
       removeSession: mocks.removeSession,
     };
   });
-  // A drill's page projection (docs/interview/README.md, "Drills"): one drill exists, on one topic.
+  // A drill's page projection (docs/README.md, "Drills"): one drill exists, on one topic.
   vi.doMock('../../interview.node', () => ({
     drillPage: vi.fn(async (system: string, topic: string, section: string | null) => (system === 'instagram' && topic === 'login' && section === null ? { scope: 'topic', topic, section, title: 'Login', stages: [] } : null)),
+    lessonPage: vi.fn(async (playlist: string, lesson: string) => (playlist === 'frontend-foundations' && lesson === 'box-model' ? { title: 'The box model', stages: [], course: { playlist, lesson, hub: '/coach/frontend-foundations', href: '/coach/frontend-foundations/box-model' } } : null)),
   }));
   vi.doMock('./voice', () => ({
     voiceStatus: vi.fn().mockResolvedValue({ enabled: false, reason: 'unavailable', limit: 0, remaining: 0, minutesLeft: 0, topups: 0, resetsAt: '' }),
@@ -158,7 +160,7 @@ describe('with PUBLIC_INTERVIEW_ENABLED on', () => {
     expect(mocks.reply.mock.calls[0].slice(0, 3)).toEqual(['doc7', ID, 'A cache.']);
   });
 
-  it('POST continue streams the coach’s next move the same way (docs/interview/coach-mode.md)', async () => {
+  it('POST continue streams the coach’s next move the same way (docs/coach-mode.md)', async () => {
     const { one } = await routes();
     mocks.continueLesson.mockImplementation(async (_r: string, _id: string, opts: { onText?: (d: string) => void }) => {
       opts.onText?.('Next, ');
@@ -176,17 +178,36 @@ describe('with PUBLIC_INTERVIEW_ENABLED on', () => {
     const { index } = await routes();
     mocks.overview.mockResolvedValue({ status: { enabled: true }, current: null, past: [] });
     expect((await index.GET(ctx('GET', '/api/interview?system=instagram&kind=coach'))).status).toBe(200);
-    expect(mocks.overview).toHaveBeenLastCalledWith('doc7', 'instagram', null, 'coach');
+    expect(mocks.overview).toHaveBeenLastCalledWith('doc7', 'instagram', null, 'coach', null);
     expect((await index.GET(ctx('GET', '/api/interview?system=instagram&kind=lecture'))).status).toBe(400);
     mocks.startSession.mockResolvedValue({ session: { id: ID, kind: 'coach' }, resumed: false });
     const res = await index.POST(ctx('POST', '/api/interview', { system: 'instagram', consent: 'v1', kind: 'coach' }));
     expect(res.status).toBe(201);
-    expect(mocks.startSession).toHaveBeenCalledWith('doc7', 'instagram', 'v1', { scope: null, kind: 'coach' });
+    expect(mocks.startSession).toHaveBeenCalledWith('doc7', 'instagram', 'v1', { scope: null, kind: 'coach', name: null });
     // A voice lesson starts as a voice session of the coach kind.
     const { startVoiceSession } = await import('./voice');
     vi.mocked(startVoiceSession).mockResolvedValue({ session: { id: ID, kind: 'coach', mode: 'voice' } as never, join: { url: 'u', token: 't', expiresAt: '' }, resumed: false });
     expect((await index.POST(ctx('POST', '/api/interview', { system: 'instagram', consent: 'v2', kind: 'coach', mode: 'voice' }))).status).toBe(201);
-    expect(startVoiceSession).toHaveBeenLastCalledWith(expect.objectContaining({ documentId: 'doc7' }), 'instagram', 'v2', undefined, null, 'coach');
+    expect(startVoiceSession).toHaveBeenLastCalledWith(expect.objectContaining({ documentId: 'doc7' }), 'instagram', 'v2', undefined, null, 'coach', null, null);
+  });
+
+  it('takes a playlist lesson (docs/coaching.md): the coach’s, on its own, with the lesson’s page', async () => {
+    const { index } = await routes();
+    mocks.overview.mockResolvedValue({ status: { enabled: true }, current: null, past: [] });
+    const got = await index.GET(ctx('GET', '/api/interview?system=frontend-foundations&kind=coach&lesson=box-model'));
+    expect(got.status).toBe(200);
+    expect(await got.json()).toMatchObject({ page: { course: { playlist: 'frontend-foundations', lesson: 'box-model' } } });
+    expect(mocks.overview).toHaveBeenLastCalledWith('doc7', 'frontend-foundations', null, 'coach', 'box-model');
+    expect((await index.GET(ctx('GET', '/api/interview?system=frontend-foundations&kind=coach&lesson=nope'))).status).toBe(404);
+    // Only the coach teaches a lesson, and never as a drill; a malformed slug never reaches the service.
+    expect((await index.GET(ctx('GET', '/api/interview?system=frontend-foundations&lesson=box-model'))).status).toBe(400);
+    expect((await index.GET(ctx('GET', '/api/interview?system=frontend-foundations&kind=coach&topic=login&lesson=box-model'))).status).toBe(400);
+    expect((await index.GET(ctx('GET', '/api/interview?system=frontend-foundations&kind=coach&lesson=../x'))).status).toBe(400);
+
+    mocks.startSession.mockResolvedValue({ session: { id: ID, kind: 'coach' }, resumed: false });
+    expect((await index.POST(ctx('POST', '/api/interview', { system: 'frontend-foundations', consent: 'v1', kind: 'coach', lesson: 'box-model' }))).status).toBe(201);
+    expect(mocks.startSession).toHaveBeenLastCalledWith('doc7', 'frontend-foundations', 'v1', { scope: null, kind: 'coach', name: null, lesson: 'box-model' });
+    expect((await index.POST(ctx('POST', '/api/interview', { system: 'frontend-foundations', consent: 'v1', lesson: 'box-model' }))).status).toBe(400);
   });
 
   it('POST advance, finish and DELETE reach the service; unknown actions and ids do not', async () => {

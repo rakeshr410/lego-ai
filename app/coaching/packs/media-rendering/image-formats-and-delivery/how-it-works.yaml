@@ -1,0 +1,158 @@
+# Image formats and delivery: what each format is for, what a lossy encoder drops, picture sources versus Accept negotiation, an image CDN, and the decoded bitmap.
+id: media-rendering/image-formats-and-delivery/how-it-works
+title: Formats, compression and image CDNs
+source:
+  hash: 5161defdc5d5
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: null
+  assumes: []
+  carries:
+    - "Each format has a job: AVIF and WebP for photos, JPEG as the universal fallback, PNG for hard edges, SVG for icons, video instead of GIF."
+    - A lossy encoder stores colour at lower resolution than brightness and rounds each block's pattern weights; quality numbers do not compare across formats.
+    - A picture element lists formats by type and the browser takes the first it can decode without fetching the others.
+    - "Negotiation keeps one URL, the server picks the format from Accept, and the response must say Vary: Accept."
+    - An image CDN derives every width, format and quality from one master, named fully by the URL and cached for a year.
+    - A decoded image costs about 4 bytes per pixel whatever its file format, so pixel count, not file size, sets memory and decode time.
+  terms:
+    - term: lossy
+      means: Compression that throws away detail the eye is unlikely to miss, to make the file smaller.
+    - term: chroma subsampling
+      means: Keeping colour samples at a lower resolution than brightness; 4:2:0 shares one colour sample per 2 × 2 pixels.
+    - term: content negotiation
+      means: The client says in Accept what it can take and the server chooses which form of the resource to send.
+    - term: "Vary: Accept"
+      means: A response header telling caches the body depends on the request's Accept header.
+    - term: master
+      means: The one full-size original of a photo that an image CDN derives every variant from.
+    - term: decoded bitmap
+      means: The image as pixels in memory, about 4 bytes each for red, green, blue and alpha.
+board:
+  keep: []
+  elements:
+    - { id: formats, kind: region, label: Each format's job, at: [1, 1], size: [36, 18] }
+    - { id: fmt-avif, kind: box, label: "AVIF: photos, smallest", at: [3, 4], size: [15, 3], in: formats, tone: green }
+    - { id: fmt-webp, kind: box, label: "WebP: photo fallback", at: [3, 8], size: [15, 3], in: formats, tone: green }
+    - { id: fmt-jpeg, kind: box, label: "JPEG: works everywhere", at: [3, 12], size: [15, 3], in: formats, tone: blue }
+    - { id: fmt-png, kind: box, label: "PNG: hard edges, UI", at: [20, 4], size: [15, 3], in: formats, tone: blue }
+    - { id: fmt-svg, kind: box, label: "SVG: icons, logos", at: [20, 8], size: [15, 3], in: formats, tone: blue }
+    - { id: fmt-gif, kind: box, label: "GIF: use video", at: [20, 12], size: [15, 3], in: formats, tone: grey }
+    - { id: avif-note, kind: note, label: "AVIF: slow encode, not progressive", at: [3, 16], in: formats }
+    - { id: jxl-note, kind: note, label: "JPEG XL: not yet", at: [22, 16], in: formats }
+    - { id: lossy, kind: region, label: What a lossy encoder drops, at: [39, 1], size: [38, 19] }
+    - { id: px-block, kind: box, label: one 2 by 2 pixel block, at: [41, 4], size: [32, 3], in: lossy, tone: blue }
+    - { id: s-444, kind: box, label: "4:4:4, 12 samples", at: [41, 12], size: [15, 3], in: lossy, tone: grey }
+    - { id: s-420, kind: box, label: "4:2:0, 6 samples", at: [58, 12], size: [15, 3], in: lossy, tone: green }
+    - { id: luma-note, kind: note, label: "brightness sharp, colour shared", at: [41, 17], in: lossy }
+    - { id: quality-note, kind: note, label: "quality: how coarsely weights round", at: [58, 17], in: lossy }
+    - { id: pixels, kind: region, label: The bytes are not the cost, at: [79, 1], size: [40, 16] }
+    - { id: file-avif, kind: box, label: 46 KB AVIF, at: [81, 4], size: [12, 3], in: pixels, tone: green }
+    - { id: file-png, kind: box, label: 620 KB PNG, at: [81, 9], size: [12, 3], in: pixels, tone: grey }
+    - { id: bitmap, kind: box, label: "1.7 MB bitmap, 4 bytes a pixel", at: [100, 6], size: [17, 4], in: pixels, tone: red }
+    - { id: phone-original, kind: note, label: "phone original: 48.8 MB decoded", at: [81, 14], in: pixels }
+    - { id: decode-note, kind: note, label: "decode(): swap with no blank frame", at: [98, 14], in: pixels }
+    - { id: picking, kind: region, label: A format the browser can decode, at: [1, 21], size: [53, 16] }
+    - { id: src-avif, kind: box, label: source type=avif, at: [3, 24], size: [13, 3], in: picking, tone: blue }
+    - { id: src-webp, kind: box, label: source type=webp, at: [20, 24], size: [13, 3], in: picking, tone: blue }
+    - { id: img-jpeg, kind: box, label: "img, JPEG, with alt", at: [39, 24], size: [13, 3], in: picking, tone: blue }
+    - { id: first-wins, kind: note, label: "picture: first source it decodes wins", at: [3, 28], in: picking }
+    - { id: accept, kind: box, label: Accept lists AVIF, at: [3, 31], size: [13, 3], in: picking, tone: amber }
+    - { id: server-picks, kind: box, label: server picks AVIF, at: [22, 31], size: [13, 3], in: picking, tone: blue }
+    - { id: vary, kind: box, label: "Vary: Accept", at: [39, 31], size: [13, 3], in: picking, tone: amber }
+    - { id: q-values, kind: note, label: "Accept: q-values, not order, show preference", at: [3, 35], in: picking }
+    - { id: image-cdn, kind: region, label: Saltbox's image CDN, at: [55, 21], size: [64, 12] }
+    - { id: cdn-url, kind: box, label: "URL: width 800, AVIF, v3", at: [57, 25], size: [12, 3], in: image-cdn, tone: amber }
+    - { id: edge-cache, kind: oval, label: edge cache, at: [73, 25], size: [10, 3], in: image-cdn, tone: green }
+    - { id: transformer, kind: box, label: "transformer: resize, encode", at: [87, 25], size: [13, 3], in: image-cdn, tone: red }
+    - { id: master, kind: oval, label: master 2.9 MB, at: [105, 25], size: [12, 3], in: image-cdn, tone: amber }
+    - { id: cdn-hit, kind: note, label: "later requests: a plain hit, cached a year", at: [57, 30], in: image-cdn }
+    - { id: cdn-version, kind: note, label: "new photo: new v, no purge", at: [80, 30], in: image-cdn }
+  arrows:
+    - { id: full-colour, from: px-block, to: s-444, label: full }
+    - { id: shared-colour, from: px-block, to: s-420, label: shared }
+    - { id: skip-avif, from: src-avif, to: src-webp, label: skip }
+    - { id: fall-to-img, from: src-webp, to: img-jpeg, label: fallback }
+    - { id: sent-with, from: accept, to: server-picks, label: one URL }
+    - { id: answers-with, from: server-picks, to: vary, label: adds }
+    - { id: get-url, from: cdn-url, to: edge-cache, label: GET }
+    - { id: on-miss, from: edge-cache, to: transformer, label: miss }
+    - { id: fetch-master, from: transformer, to: master, label: fetch }
+    - { id: decode-avif, from: file-avif, to: bitmap, label: decode }
+    - { id: decode-png, from: file-png, to: bitmap, label: decode }
+beats:
+  - point: Each format has a job, AVIF and WebP for photos, JPEG as the fallback every browser reads, PNG for screenshots and UI with hard edges, SVG for icons and logos, and video instead of GIF.
+    kind: decision
+    weight: core
+    teach:
+      - Go through Saltbox's images. Photos want AVIF, the smallest of the raster formats, with WebP when AVIF is not available and JPEG as the universal fallback; AVIF is slow to encode and never renders progressively.
+      - PNG is lossless, so it suits screenshots, diagrams and UI with text and hard edges, never photos. SVG is shapes, not pixels, sharp at any size and often a few hundred bytes.
+      - GIF has nothing new to offer, animations go in video and stills in PNG or WebP. JPEG XL is only in Safari for now, worth watching, not a primary format.
+    draw: [formats, fmt-avif, fmt-webp, fmt-jpeg, fmt-png, fmt-svg, fmt-gif, avif-note, jxl-note]
+    check: Which format suits Saltbox's step photos, which its logo, and which a screenshot of the recipe editor?
+    answer: AVIF (with WebP and JPEG fallbacks) for the photos, SVG for the logo, and PNG for the screenshot with its text and hard edges.
+    misconceptions:
+      - "PNG is the high-quality choice for photos -> PNG is lossless and makes photos huge; it is for hard edges and UI."
+  - point: A lossy encoder keeps brightness sharp and stores colour at lower resolution, then describes each block as smooth patterns whose weights the quality setting rounds.
+    kind: mechanism
+    weight: core
+    teach:
+      - Pixels are split into brightness and two colour-difference channels. The eye resolves detail in brightness far better than in colour, so 4:2:0 keeps one colour sample per 2 × 2 block, 6 numbers instead of 12, before any real compression.
+      - Then each block is written as a sum of smooth patterns, and quality decides how coarsely the weights are rounded; heavy rounding smears texture and in JPEG shows the block seams. WebP and AVIF predict a block from its neighbours and encode the difference, which is why they win on photos and why AVIF encodes slowly.
+      - Quality numbers do not translate between formats or encoders. Pick each setting by encoding sample photos and looking at them on the readers' devices.
+    draw: [lossy, px-block, s-444, s-420, full-colour, shared-colour, luma-note, quality-note]
+    check: How many samples does 4:2:0 keep for one 2 × 2 block of pixels, and why is that usually invisible in a photo?
+    answer: Six instead of twelve, all four brightness samples and one of each colour difference; the eye sees fine detail in brightness much better than in colour.
+    misconceptions:
+      - "Quality 75 means the same in every format -> each format and encoder has its own scale; compare by looking at the output."
+  - point: With a picture element the formats are in the markup, and the browser skips every source whose type it cannot decode, without fetching it, and takes the first one it can.
+    kind: mechanism
+    weight: core
+    teach:
+      - A browser that cannot parse a format draws nothing, so a site serving AVIF needs a fallback.
+      - Saltbox lists an AVIF source, then WebP, then an img with a JPEG src. The browser reads top to bottom, skips types it does not support without a request, and uses the first that fits; with none it falls back to the img.
+      - The img is not just the fallback. It is the element that is laid out, styled and carries the alt text; the chosen source is drawn in its box. Each format has its own URL, so caches need no extra rules.
+    draw: [picking, src-avif, src-webp, img-jpeg, skip-avif, fall-to-img, first-wins]
+    check: A browser decodes WebP but not AVIF. What does it download from that picture element?
+    answer: Only the WebP; it rules out the AVIF source by its type before any request, and the JPEG src is used only when no source fits.
+    misconceptions:
+      - "The browser tries the AVIF and falls back when it fails -> the type attribute lets it skip the source without downloading it."
+  - point: With negotiation one URL serves every browser, the server picks the format from the Accept header, and the response must carry Vary Accept so a shared cache never hands one browser's format to another.
+    kind: mechanism
+    weight: core
+    teach:
+      - Option two keeps one URL. The browser's Accept header says which image types it decodes, and the server or image CDN chooses; the .jpg in the URL means nothing, Content-Type says what the bytes are.
+      - Vary Accept tells every cache that the body depends on Accept. Without it, whichever format was cached first is served to everyone.
+      - Preference is in q-values, not order. Safari lists webp before avif with equal weights, so the server may send the smaller AVIF.
+    draw: [accept, server-picks, vary, sent-with, answers-with, q-values]
+    check: An image CDN negotiates the format from Accept but forgets Vary. What can go wrong?
+    answer: A shared cache treats the URL as having one answer, so it can store the AVIF and hand it to a browser that cannot decode AVIF.
+    misconceptions:
+      - "The first type in Accept is the browser's favourite -> preference is given by q-values; equal weights leave the choice to the server."
+  - point: An image CDN keeps one master per photo and derives each width, format and quality from parameters in the URL, so the first request transforms and every later one is a cache hit.
+    kind: component
+    weight: core
+    teach:
+      - Saltbox has tens of thousands of photos and new uploads every minute, too many to pre-render. Each URL carries w, f, q and a version v.
+      - The first request for a combination misses at the edge; the transformer fetches the 2.9 MB master, resizes and encodes it. After that the same URL is an ordinary hit.
+      - Because the URL names the output fully it is cached for a year as immutable, and a replaced photo gets a new v rather than a purge. Masters stay private and the transformer only accepts an allow-list of widths and qualities.
+    draw: [image-cdn, cdn-url, edge-cache, transformer, master, get-url, on-miss, fetch-master, cdn-hit, cdn-version]
+    check: An editor replaces a step photo. How does every cached variant get replaced without a purge?
+    answer: The master's version parameter is bumped, so every variant gets a new URL; the old ones simply stop being requested.
+  - point: Compression only helps on the wire; to paint, every image becomes a bitmap of about 4 bytes per pixel, so memory and decode time follow the pixel count, not the file size.
+    kind: rule
+    weight: core
+    teach:
+      - The butter-folding photo at 800 × 533 is 46 KB as AVIF and 620 KB as PNG, and both decode to the same 1.7 MB bitmap. A 4032 × 3024 phone original becomes about 48.8 MB, which is why a page must never hand the browser a camera original to shrink.
+      - Decoding is CPU work proportional to pixels, and newer codecs spend more per pixel. On a low-end phone an oversized photo can leave an empty box after its bytes have arrived.
+      - img.decode() resolves once the image can paint without a blank frame, so script can wait before swapping pictures; the decoding attribute is only a hint.
+    draw: [pixels, file-avif, file-png, bitmap, decode-avif, decode-png, phone-original, decode-note]
+    check: The photo is 46 KB as AVIF and 92 KB as JPEG, both 800 × 533. How do their decoded bitmaps compare?
+    answer: The same, about 1.7 MB each, 4 bytes for each of the 426,400 pixels; decoded memory depends only on width × height.
+    misconceptions:
+      - "A smaller file uses less memory on the page -> once decoded, every format costs about 4 bytes per pixel."
+task:
+  prompt: Draw the two ways a browser ends up with a format it can decode, a picture element with type sources and one URL negotiated from Accept, and mark the header the negotiated response must carry.
+  expects: [3, 4]

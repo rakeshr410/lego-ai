@@ -3,10 +3,10 @@ import { compactElements, fingerprint, freehandHeavy, serialise, unlabelledRatio
 import t from '../../i18n/messages/interview';
 import BoardOutline from './BoardOutline';
 import type { DrawOp } from '../../lib/server/interview/draw';
-import { NO_SYNC, Pen, type CursorPos, type PenElement } from '../../lib/board/pen';
+import { NO_SYNC, Pen, Pointer, VoiceCues, type CursorPos, type PenCueMessage, type PenElement, type PenSync } from '../../lib/board/pen';
 import type { Api, SceneElements } from './ExcalidrawCanvas';
 
-// The interview room's whiteboard (docs/interview/README.md, "Whiteboard"): the Excalidraw canvas
+// The interview room's whiteboard (docs/README.md, "Whiteboard"): the Excalidraw canvas
 // (ExcalidrawCanvas.tsx, loaded on demand) or the same board as a list (BoardOutline.tsx), saved to
 // the session as it settles. The room only compacts the scene and computes its fingerprint; the
 // server serialises it for the interviewer.
@@ -20,16 +20,30 @@ import type { Api, SceneElements } from './ExcalidrawCanvas';
 //
 // The model's drawings (the interviewer's, the coach's) are drawn by the pen (lib/board/pen, phase 5 of
 // coach-mode.md): one operation after another, a box growing from its corner and its label typed, an arrow
-// extending, a note written, with a cursor over the canvas where the pen is. In a voice lesson the pipeline
-// sends each drawing as the words before it have played, so the pen keeps time with the voice.
+// extending, a note written, with a cursor over the canvas where the pen is. In a voice lesson each drawing comes
+// with a reference, and the pen draws each of its operations on the voice's cues (lib/board/pen/cues.ts): the
+// outline in the voice's pause before the label, each word of the label as the voice says it.
+
+/** A word's share of the voice's time, when it gives a sentence at once (about three words a second). */
+const HEARD_WORD_MS = 320;
 
 export type BoardHandle = {
   /** Saves now, if anything changed. Resolves when the server has it (or the attempt failed). */
   flush: () => Promise<void>;
   /** Posts a PNG of the board for the stage that is ending. */
   exportStage: (stage: string) => Promise<void>;
-  /** Draws the interviewer's (or the coach's) drawing from a reply (server/interview/draw.ts) with the pen, as its own elements; queued until the canvas is up. */
-  draw: (ops: readonly DrawOp[]) => void;
+  /**
+   * Draws the interviewer's (or the coach's) drawing from a reply (server/interview/draw.ts) with the pen, as its
+   * own elements; queued until the canvas is up. With `pace` (a voice lesson), each operation waits for its cues;
+   * `instant` (the board a lesson opens with, drawn in earlier lessons) puts it there at once, without the pen.
+   */
+  draw: (ops: readonly DrawOp[], pace?: string, instant?: boolean) => void;
+  /** A voice cue for the pen (voice/bot/conductor.py). */
+  cue: (cue: PenCueMessage) => void;
+  /** The voice started (true) or stopped talking: the pen comes to what was written last, or leaves. */
+  speaking: (on: boolean) => void;
+  /** Words the voice just said: the pen hovers over what they name on the board (pen/pointer.ts). */
+  spoken: (text: string) => void;
 };
 
 type Props = {
@@ -41,7 +55,7 @@ type Props = {
   fill?: boolean;
   /** The save state's words, for a header that shows it (fill). */
   onStatus?: (text: string) => void;
-  /** Whose drawings the replies carry: the interviewer's (the default) or the coach's (docs/interview/coach-mode.md). */
+  /** Whose drawings the replies carry: the interviewer's (the default) or the coach's (docs/coach-mode.md). */
   author?: 'interviewer' | 'coach';
 };
 
@@ -95,6 +109,13 @@ function PenCursor({ pos }: { pos: CursorPos }) {
   );
 }
 
+/** Loads the board font's glyphs for this text (Excalidraw registers the font in pieces by character range). */
+async function fontsFor(text: string): Promise<void> {
+  const fonts = typeof document !== 'undefined' ? document.fonts : undefined;
+  if (!fonts?.load) return;
+  await Promise.race([fonts.load('20px Excalifont', text).catch(() => []), new Promise((r) => setTimeout(r, 1500))]);
+}
+
 const Canvas = lazy(() => {
   // Fonts come from this site (scripts/copy-excalidraw.mjs); set before the library's code runs.
   (window as unknown as { EXCALIDRAW_ASSET_PATH?: string }).EXCALIDRAW_ASSET_PATH = '/excalidraw/';
@@ -116,8 +137,13 @@ const InterviewBoard = forwardRef<BoardHandle, Props>(function InterviewBoard({ 
   const saved = useRef({ version: 0, fingerprint: '', at: 0 });
   const inflight = useRef<Promise<void> | null>(null);
   const dirty = useRef(false);
-  // The model's drawings waiting for the canvas (it loads on demand, and may be hidden).
-  const queued = useRef<DrawOp[]>([]);
+  // The model's drawings waiting for the canvas (it loads on demand, and may be hidden), each operation with its
+  // drawing's pace reference and its place in it.
+  const queued = useRef<{ op: DrawOp; pace?: string; i: number; instant?: boolean }[]>([]);
+  // The voice's cues for paced drawings; they may arrive before the canvas is up.
+  const cues = useRef(new VoiceCues());
+  const pointer = useRef(new Pointer());
+  const heardLater = useRef<ReturnType<typeof setTimeout>[]>([]);
   // The pen that draws them (lib/board/pen), made when the canvas is up; its queue keeps the operations in order.
   const pen = useRef<Pen | null>(null);
   // The last scene the board rendered state for: Excalidraw reports a change after every render of
@@ -145,22 +171,32 @@ const InterviewBoard = forwardRef<BoardHandle, Props>(function InterviewBoard({ 
       const id = find(label);
       return id && lib.ownedBy(api, id, author) ? id : null;
     };
-    const draw = (build: () => readonly PenElement[]) => void p.drawElements(build, NO_SYNC, { keepView: true });
-    for (const op of ops) {
-      if (op.op === 'box') draw(() => (find(op.label) ? [] : lib.buildBox(api, op.label, author, { kind: op.kind, group: op.group }).elements));
+    // The hand-drawn font's glyphs for these labels, before anything is measured: text measured in the fallback
+    // font is narrower, and the label is cut at both ends once the font arrives.
+    const texts = ops.map(({ op }) => ('label' in op && op.label) || ('text' in op && op.text) || '').filter(Boolean);
+    if (texts.length) void p.enqueue(() => fontsFor(texts.join(' ')), 'pen.fonts');
+    for (const { op, pace, i, instant } of ops) {
+      const sync: PenSync = pace ? cues.current.sync(pace, i) : NO_SYNC;
+      const draw = (build: () => readonly PenElement[]) => void p.drawElements(build, sync, { keepView: true, instant });
+      // The voice stopped before it reached this mark (the learner cut in): it is left undrawn.
+      const cut = () => !!sync.dropped?.();
+      // A mark the pen does not draw from elements waits for its cue in the queue first.
+      if (pace && (op.op === 'highlight' || op.op === 'erase' || op.op === 'clear' || op.op === 'rename')) void p.waitFor(sync);
+      if (op.op === 'box') draw(() => (find(op.label) ? [] : lib.buildBox(api, op.label, author, { kind: op.kind, group: op.group, at: op.at, size: op.size, tone: op.tone, dashed: op.dashed }, !!op.learner).elements));
+      else if (op.op === 'region') draw(() => (find(op.label) ? [] : lib.buildRegion(api, op.label, op.at, op.size, author, op.tone, op.dashed, !!op.learner).elements));
       else if (op.op === 'arrow')
         draw(() => {
           const from = find(op.from);
           const to = find(op.to);
           return from && to ? lib.buildArrow(api, from, to, op.label ?? '', author, { dashed: op.dashed, both: op.both }) : [];
         });
-      else if (op.op === 'note') draw(() => lib.buildNote(api, op.text, op.near ? find(op.near) : null, author));
-      else if (op.op === 'highlight') void p.highlight(() => find(op.target));
+      else if (op.op === 'note') draw(() => lib.buildNote(api, op.text, op.near ? find(op.near) : null, author, op.at, !!op.learner));
+      else if (op.op === 'highlight') void p.highlight(() => (cut() ? null : find(op.target)));
       else if (op.op === 'rename') {
         // The old box is erased where it stands and the new one drawn in its place.
         let at: { x: number; y: number; kind: 'box' | 'oval' | 'diamond'; group?: string } | null = null;
         void p.eraseElements(() => {
-          const id = own(op.target);
+          const id = cut() ? null : own(op.target);
           const box = id ? api.getSceneElements().find((e) => e.id === id) : null;
           if (!box) return [];
           const custom = (box.customData ?? {}) as { group?: string };
@@ -170,10 +206,10 @@ const InterviewBoard = forwardRef<BoardHandle, Props>(function InterviewBoard({ 
         draw(() => (at ? lib.buildBox(api, op.label, author, { kind: at.kind, group: at.group, at }).elements : []));
       } else if (op.op === 'erase')
         void p.eraseElements(() => {
-          const id = own(op.target);
+          const id = cut() ? null : own(op.target);
           return id ? lib.elementsOf(api, id) : [];
         });
-      else if (op.op === 'clear') void p.clear(() => lib.idsBy(api, author));
+      else if (op.op === 'clear') void p.clear(() => (cut() ? [] : lib.idsBy(api, author)));
     }
   }, [author]);
 
@@ -308,12 +344,45 @@ const InterviewBoard = forwardRef<BoardHandle, Props>(function InterviewBoard({ 
     [schedule],
   );
 
+  /** The writing on the board, in scene order (what the pen touched last, last). */
+  const writing = () => ((apiRef.current?.getSceneElements() ?? []) as unknown as PenElement[]).filter((e) => e.type === 'text' && !e.isDeleted && (e.originalText || e.text));
+
   useImperativeHandle(
     ref,
     () => ({
-      draw: (ops) => {
-        queued.current.push(...ops);
+      draw: (ops, pace, instant) => {
+        queued.current.push(...ops.map((op, i) => ({ op, pace, i, instant })));
         applyQueued();
+      },
+      cue: (cue) => cues.current.receive(cue),
+      speaking: (on) => {
+        heardLater.current.forEach(clearTimeout);
+        heardLater.current = [];
+        if (!on) return pen.current?.rest();
+        pointer.current.reset();
+        // Talking about what is on the board: the pen starts over the last thing written.
+        const last = writing().at(-1);
+        if (last) pen.current?.hover(last);
+      },
+      spoken: (text) => {
+        // A voice that times its words gives them one by one; one that times sentences gives a sentence as it
+        // starts: its words are heard at a speaking pace, so the pen reaches each thing as it is named.
+        const hear = (word: string) => {
+          const spots = writing();
+          const id = pointer.current.hear(word, spots.map((e) => ({ id: e.id, text: e.originalText || e.text || '' })));
+          const el = id ? spots.find((e) => e.id === id) : null;
+          if (el) pen.current?.hover(el);
+          else pen.current?.stay();
+        };
+        const said = text.split(/\s+/).filter(Boolean);
+        const start = heardLater.current.length * HEARD_WORD_MS;
+        said.forEach((word, i) => {
+          const later = setTimeout(() => {
+            heardLater.current = heardLater.current.filter((t) => t !== later);
+            hear(word);
+          }, start + i * HEARD_WORD_MS);
+          heardLater.current.push(later);
+        });
       },
       flush: async () => {
         if (settleTimer.current) clearTimeout(settleTimer.current);
@@ -354,12 +423,20 @@ const InterviewBoard = forwardRef<BoardHandle, Props>(function InterviewBoard({ 
         // A new canvas (the first, or one mounted again after a crash): a new pen over it.
         pen.current?.abort();
         pen.current = new Pen(lib.penHost(api), setCursor);
+        // A board that comes back with drawings on it opens showing all of them, clear of the toolbar.
+        if (api.getSceneElements().length) requestAnimationFrame(() => void lib.frameAll(api));
         applyQueued();
       });
     },
     [applyQueued],
   );
-  useEffect(() => () => pen.current?.abort(), []);
+  useEffect(
+    () => () => {
+      heardLater.current.forEach(clearTimeout);
+      pen.current?.abort();
+    },
+    [],
+  );
   const onPointer = useCallback((down: boolean) => {
     pointerDown.current = down;
   }, []);

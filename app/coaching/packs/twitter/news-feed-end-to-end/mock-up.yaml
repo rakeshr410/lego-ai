@@ -1,0 +1,73 @@
+# News feed interview, mock-up: a phone screen of tweets top to bottom and one tweet broken into its four parts. Only what the screen shows: no technical detail (loading, the API, sizes), which comes later.
+id: twitter/news-feed-end-to-end/mock-up
+title: Draw the feed
+source:
+  hash: "7563ed4c8194"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: twitter/news-feed-end-to-end/approach
+  assumes:
+    - The interview designs the client of Twitter's feed; the server is a black box.
+  carries:
+    - "The feed is tweets stacked top to bottom on the screen, the newest at the top, with more below as the reader scrolls."
+    - "A tweet shows an author row (profile pic, name, handle, time), the text, up to four images, and an action row with reply, retweet and like, and their counts."
+    - The mock-up is only what the screen looks like, the parts of one tweet; how it works is discussed later, from the requirements on.
+  terms:
+    - term: tweet
+      means: One Twitter post, short text with up to four optional images.
+    - term: TweetCard
+      means: The card on the screen that shows one tweet.
+board:
+  keep: [title]
+  elements:
+    - { id: mock-up, kind: region, label: "Mock-up", at: [1, 3], size: [20, 29] }
+    - { id: phone, kind: region, label: "Twitter phone", at: [2, 5], size: [18, 26], in: mock-up }
+    - { id: mock-header, kind: box, label: Twitter header, at: [3, 7], size: [16, 2], in: phone, tone: grey }
+    - { id: tweet-one, kind: region, label: "Tweet one, user 1", at: [3, 10], size: [16, 13], in: phone }
+    - { id: author-row, kind: box, label: "profile pic, name, handle, time", at: [4, 12], size: [14, 3], in: tweet-one, tone: blue }
+    - { id: tweet-text, kind: box, label: tweet text, at: [4, 15], size: [14, 2], in: tweet-one, tone: blue }
+    - { id: image-box, kind: box, label: "images, up to four", at: [4, 17], size: [14, 3], in: tweet-one, tone: blue }
+    - { id: action-row, kind: box, label: "reply, retweet, like, counts", at: [4, 20], size: [14, 3], in: tweet-one, tone: blue }
+    - { id: tweet-two, kind: box, label: "Tweet two, user 2", at: [3, 24], size: [16, 2], in: phone }
+    - { id: more-below, kind: box, label: "more tweets below", at: [3, 27], size: [16, 2], in: phone, dashed: true, tone: grey }
+  arrows: []
+beats:
+  - point: Start with a drawing of what the user sees, a starting point to agree on with the interviewer; the feed is a phone screen with the app's header and tweets stacked under it, the newest at the top.
+    kind: component
+    weight: core
+    teach:
+      - "Draw a phone frame with the Twitter header at the top and tweets stacked under it: user 1's tweet, then user 2's, and more below as the user scrolls."
+      - "Say what each part is for the user: the header names the app, each tweet is one card, the newest at the top, and the list carries on below."
+      - Only what the screen shows. No technical detail here (loading, pages, the API, sizes); that is discussed later, once the requirements are written.
+    draw: [mock-up, phone, mock-header, tweet-one, tweet-two, more-below]
+    check: What does the user see on the feed screen, top to bottom?
+    answer: The app's header, then tweets stacked one under another, the newest at the top, with more below as they scroll.
+  - point: "Zoom into one tweet and name its parts, top to bottom: the author row (profile pic, name, handle, time), the tweet's text, its images, and the action row with reply, retweet and like, and their counts."
+    kind: component
+    weight: core
+    teach:
+      - "Break user 1's tweet into its parts, top to bottom, saying what each shows the user."
+      - "The author row: who posted it, their profile pic, display name and handle, and how long ago. The text: what they wrote. The images: up to four photos with the tweet. The action row: reply, retweet and like, each with its count."
+      - Only the parts and what they show. How they are built and fed comes later; no technical detail here.
+    draw: [author-row, tweet-text, image-box, action-row]
+    check: What are the four parts of one tweet, top to bottom?
+    answer: The author row (profile pic, name, handle, time), the text, the images, and the action row with reply, retweet and like, and their counts.
+asks:
+  - ids: [mock-header, tweet-one, tweet-two, more-below]
+    beats: [1]
+    question: "Picture the Twitter home screen on a phone. What do you see, top to bottom? I'll draw it as you say it."
+    hints:
+      - What's at the very top of the screen?
+      - And what happens as you scroll past the first couple of tweets?
+  - ids: [author-row, tweet-text, image-box, action-row]
+    beats: [2]
+    question: "Now zoom into one tweet. What does it show, top to bottom?"
+    hints:
+      - Who posted it, and when?
+      - And what can you do with a tweet, right under it?
+task:
+  prompt: Draw the Twitter feed on a phone with two tweets, and break one into its four parts.
+  expects: [1, 2]

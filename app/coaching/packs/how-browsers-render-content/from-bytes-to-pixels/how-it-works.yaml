@@ -1,0 +1,178 @@
+# Each pipeline stage on Copperpot's page: decoding and tokens, tree construction, style, the layout tree, layout, paint to composite, and the first load on one clock.
+id: how-browsers-render-content/from-bytes-to-pixels/how-it-works
+title: Each stage and what it produces
+source:
+  hash: "b22d5a961117"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: how-browsers-render-content/from-bytes-to-pixels/key-idea
+  assumes:
+    - "Rendering is a chain of stages: parse, style, layout tree, layout, paint, raster, composite."
+    - Paint records drawing commands; raster turns them into pixels; compositing stacks the rasterized layers into the frame.
+    - Parsing, style, layout and paint run on the main thread; raster and compositing run on other threads.
+  carries:
+    - The HTML parser repairs markup as it builds the DOM (inserted html, head, body and tbody), never fails, and appends nodes while bytes still arrive.
+    - Selectors match the DOM the parser built, not the markup as written.
+    - Style gives every element a computed value for every property, from the cascade, inheritance or the initial value.
+    - "The layout tree differs from the DOM: display none makes no box, ::before makes one, display contents gives up its own, visibility hidden keeps it."
+    - Widths flow down from the parent and heights flow up from the content; layout's output is geometry.
+    - Paint order is not DOM order; raster works in tiles off the main thread and decodes images; moving a layer is recompositing, not repainting.
+    - The first frame cannot be drawn until the stylesheets in head have arrived.
+  terms:
+    - term: tokenizer
+      means: The state machine that reads characters and emits tokens, start tags, end tags, text, comments, to tree construction one at a time.
+    - term: tree construction
+      means: The parser step that places each token's node in the DOM, keeping a stack of open elements and repairing what the markup left out.
+    - term: cascade
+      means: The order that decides which competing declaration wins, origin and importance, then layers, then specificity, then order of appearance.
+    - term: reflow
+      means: A layout after the first one, rerun because something changed.
+    - term: paint order
+      means: The order paint records boxes in, backgrounds under borders under content, positioned boxes where their stacking context puts them.
+    - term: first contentful paint
+      means: The first frame showing text, an image, a non-blank canvas or an SVG from the DOM.
+board:
+  keep: [pipeline, bytes, dom-cssom, computed-styles, layout-tree, geometry, display-lists, tiles, frame, a-parse, a-style, a-boxes, a-layout, a-paint, a-raster, a-composite, copperpot, html-bytes, css-bytes, style-out, threads, main-stages, raster-stage, composite-stage, frame-clock, reruns, recolour, slide, rotate, untouched]
+  elements:
+    - { id: dom-tree, kind: region, label: DOM the parser builds, at: [2, 20], size: [44, 26] }
+    - { id: charset, kind: note, label: "meta charset in the first 1,024 bytes", at: [4, 23], in: dom-tree }
+    - { id: tokenizer, kind: note, label: tokens go to the tree one at a time, at: [4, 25], in: dom-tree }
+    - { id: main-product, kind: box, label: main (product), at: [16, 27], size: [16, 3], in: dom-tree, tone: blue }
+    - { id: p-price, kind: box, label: "price paragraph, £64", at: [4, 32], size: [12, 3], in: dom-tree, tone: blue }
+    - { id: p-stock, kind: box, label: stock paragraph, at: [18, 32], size: [12, 3], in: dom-tree, tone: blue }
+    - { id: table-specs, kind: box, label: specs table, at: [32, 32], size: [12, 3], in: dom-tree, tone: blue }
+    - { id: inserted, kind: note, label: "html, head, body: inserted", at: [4, 38], in: dom-tree }
+    - { id: tbody, kind: box, label: "tbody, around the row", at: [32, 41], size: [12, 3], in: dom-tree }
+    - { id: style-calc, kind: region, label: Style for the price paragraph, at: [73, 38], size: [42, 18] }
+    - { id: cascade, kind: note, label: "cascade: origin, layers, specificity, order", at: [75, 41], in: style-calc }
+    - { id: price-rule, kind: box, label: your price rule, at: [75, 43], size: [14, 5], in: style-calc, tone: blue }
+    - { id: font-size, kind: box, label: "font size: 24 px", at: [97, 43], size: [16, 2], in: style-calc }
+    - { id: colour-var, kind: box, label: "colour: rust, resolved", at: [97, 46], size: [16, 2], in: style-calc }
+    - { id: from-body, kind: box, label: inherited from body, at: [75, 49], size: [14, 2], in: style-calc, tone: blue }
+    - { id: font-inherit, kind: box, label: font family, at: [97, 49], size: [16, 2], in: style-calc }
+    - { id: ua-sheet, kind: box, label: "browser's own sheet", at: [75, 52], size: [14, 2], in: style-calc, tone: grey }
+    - { id: margin-ua, kind: box, label: "top margin: 24 px", at: [97, 52], size: [16, 2], in: style-calc }
+    - { id: boxes-vs-nodes, kind: region, label: DOM vs layout tree, at: [73, 58], size: [34, 18] }
+    - { id: size-guide, kind: box, label: "size guide, display none: no box", at: [75, 61], size: [30, 2], in: boxes-vs-nodes, tone: grey }
+    - { id: before-new, kind: box, label: "New badge, before: box, no node", at: [75, 64], size: [30, 2], in: boxes-vs-nodes, tone: blue }
+    - { id: swatch-row, kind: box, label: "swatch row, contents: children only", at: [75, 67], size: [30, 2], in: boxes-vs-nodes }
+    - { id: sold-out, kind: box, label: "sold-out note, hidden: box, unpainted", at: [75, 70], size: [30, 2], in: boxes-vs-nodes, tone: blue }
+    - { id: head-none, kind: note, label: "head: display none by default", at: [75, 73], in: boxes-vs-nodes }
+    - { id: layout-pass, kind: region, label: Layout on a 393 px phone, at: [48, 20], size: [20, 20] }
+    - { id: viewport-393, kind: box, label: viewport 393 px, at: [50, 23], size: [13, 3], in: layout-pass, tone: blue }
+    - { id: content-361, kind: box, label: product 361 px, at: [50, 34], size: [13, 3], in: layout-pass, tone: blue }
+    - { id: heights-up, kind: note, label: heights come up from the text, at: [50, 38], in: layout-pass }
+    - { id: paint-order, kind: region, label: "Paint, raster, composite", at: [2, 48], size: [41, 13] }
+    - { id: photo, kind: box, label: product photo, at: [4, 51], size: [14, 3], in: paint-order, tone: blue }
+    - { id: sticky-header, kind: box, label: sticky header, at: [27, 51], size: [14, 3], in: paint-order, tone: blue }
+    - { id: order-rule, kind: note, label: "backgrounds, then borders, then content", at: [4, 55], in: paint-order }
+    - { id: raster-tiles, kind: note, label: "raster: viewport tiles first, photo decoded", at: [4, 57], in: paint-order }
+    - { id: composite-move, kind: note, label: "move a layer: recomposite, no repaint", at: [4, 59], in: paint-order }
+    - { id: first-load, kind: region, label: First load on one clock, at: [2, 63], size: [66, 11] }
+    - { id: dom-done, kind: box, label: "DOM done at 126 ms", at: [4, 66], size: [14, 3], in: first-load, tone: blue }
+    - { id: css-arrives, kind: box, label: "main.css at 180 ms", at: [26, 66], size: [14, 3], in: first-load, tone: amber }
+    - { id: first-frame, kind: box, label: "first frame, about 233 ms", at: [52, 66], size: [14, 3], in: first-load, tone: green }
+    - { id: cached-css, kind: note, label: "stylesheet cached: first frame at 67 ms", at: [4, 70], in: first-load }
+    - { id: incremental, kind: note, label: "CSSOM early: paint as chunks land", at: [4, 72], in: first-load }
+  arrows:
+    - { id: to-price, from: main-product, to: p-price }
+    - { id: to-stock, from: main-product, to: p-stock }
+    - { id: to-table, from: main-product, to: table-specs }
+    - { id: wraps-row, from: table-specs, to: tbody, label: inserted }
+    - { id: sets-size, from: price-rule, to: font-size }
+    - { id: sets-colour, from: price-rule, to: colour-var }
+    - { id: inherits, from: from-body, to: font-inherit }
+    - { id: default-margin, from: ua-sheet, to: margin-ua }
+    - { id: minus-padding, from: viewport-393, to: content-361, label: minus padding }
+    - { id: painted-after, from: photo, to: sticky-header, label: recorded after }
+    - { id: blank-wait, from: dom-done, to: css-arrives, label: screen blank }
+    - { id: then-render, from: css-arrives, to: first-frame, label: "style, layout, paint" }
+beats:
+  - point: Bytes become characters through an encoding, and a tokenizer turns the characters into tokens that it hands to tree construction one at a time, without waiting for the whole file.
+    kind: mechanism
+    weight: core
+    teach:
+      - Before parsing, bytes need an encoding. The browser checks for a byte order mark, then a charset on the Content-Type header, then scans the start of the file for meta charset. Browsers are encouraged to look only in the first 1,024 bytes, so Copperpot puts it first in head; declared late, a wrongly guessed page may be decoded again from scratch.
+      - The tokenizer is a state machine. It emits a doctype, start tags with attributes, end tags, text and comments, and its mode changes as it goes, so a less-than sign means a tag in body text but plain text inside a textarea.
+      - Tokens go to tree construction as they are made, which is why the DOM can grow while the rest of the page is still downloading.
+    draw: [dom-tree, charset, tokenizer]
+    check: Why does Copperpot put meta charset as the first element in head?
+    answer: The browser looks for it only near the start of the file, the first 1,024 bytes; declared later, the page may be decoded with a guessed encoding and decoded again when the guess is wrong.
+  - point: Tree construction repairs the markup as it builds the DOM, inserting html, head, body and tbody and closing an open p when a new one starts, so selectors match the repaired tree, not the markup as written.
+    kind: mechanism
+    weight: core
+    teach:
+      - Tree construction keeps a stack of open elements and decides where each node goes. Copperpot's template never writes html, head, body or tbody, and leaves its paragraphs unclosed.
+      - Build the tree. The second p start tag closes the price paragraph, so price and stock are siblings. The table row gets a tbody wrapped around it.
+      - HTML parsing has no fatal errors; the standard defines a recovery for every mistake, unlike JSON or XML. Nodes are appended as tokens arrive, though a classic script without async or defer makes the parser stop and run it.
+    draw: [main-product, p-price, p-stock, table-specs, tbody, to-price, to-stock, to-table, wraps-row, inserted]
+    check: "Copperpot's stylesheet has table > tr { background: cream }, and the template writes <table><tr> with no tbody. Why is no row cream?"
+    answer: The parser inserted a tbody, so each tr is a child of tbody, not of table; selectors match the DOM, so the rule matches nothing.
+    misconceptions:
+      - "The DOM is the markup as written -> the parser inserts missing elements and closes open ones, and selectors match that repaired tree."
+      - "Bad HTML stops the page like bad JSON -> HTML parsing never fails; every mistake has a defined recovery."
+  - point: Style joins the DOM and the CSSOM, matching rules, ranking them by the cascade, filling in the rest by inheritance or initial values, and resolving relative values, so every element gets a value for every property.
+    kind: mechanism
+    weight: core
+    teach:
+      - The stylesheet becomes the CSSOM, a separate structure of rules. Style calculation finds the rules that match each element and ranks competing declarations by origin and importance, then layers, then specificity, then order.
+      - "Read p.price's values off the board. Its font size, 1.5rem with a 16 px root, resolves to 24 px; its colour comes from a custom property; its font family is inherited from body; its top margin of 1em comes from the browser's own stylesheet and is 24 px because em uses its own font size."
+      - Engines index rules and share styles between matching siblings, but the work still grows with the number of elements a change can affect, so a class toggled on body can cost more than the same class on one button.
+    draw: [style-calc, cascade, price-rule, font-size, colour-var, sets-size, sets-colour, from-body, font-inherit, inherits, ua-sheet, margin-ua, default-margin]
+    check: Copperpot's rule for p.price names only its font size and colour. Where do its font family and its top margin come from?
+    answer: The font family is inherited from its ancestors, main and body; the top margin comes from the browser's default stylesheet, 1em, which resolves to 24 px at its own font size.
+    misconceptions:
+      - "An element only has the properties its rules mention -> style gives it a value for every property, from inheritance or the initial value when nothing sets it."
+  - point: Layout works on a tree of boxes that differs from the DOM, display none makes no box for an element or its descendants, a ::before pseudo-element makes a box with no node, display contents gives up its own box, and visibility hidden keeps its box.
+    kind: rule
+    weight: core
+    teach:
+      - Layout never sees the DOM directly; it sees the layout tree built from the DOM and the computed styles. Go down Copperpot's examples.
+      - The closed size guide has display none, so neither it nor anything inside it gets a box, and head is display none by default. The badge's ::before adds a New box that is not in the DOM at all.
+      - The swatch row has display contents, so its buttons are laid out as children of main. The sold-out note with visibility hidden keeps its box, takes its space, and is simply not painted.
+    draw: [boxes-vs-nodes, size-guide, before-new, swatch-row, sold-out, head-none]
+    check: Which of these gets a box in the layout tree, a div with display none, the head element, or a paragraph with visibility hidden?
+    answer: Only the paragraph with visibility hidden; it still takes up space, it is just not drawn. display none removes the element and its subtree, and head is display none by default.
+    misconceptions:
+      - "visibility: hidden removes the box like display: none -> it keeps the box and its space; only painting is skipped."
+  - point: Layout works out each box's size and position, widths flowing down from the parent and heights up from the content, and its output, the geometry, is what paint and hit testing read.
+    kind: mechanism
+    weight: core
+    teach:
+      - Copperpot's test phone is 393 CSS pixels wide and main has 16 px of padding on each side, so the product block's content is 361 px wide. That width came down from above.
+      - Heights go the other way. The price paragraph is as tall as its line of text, which depends on the font, so a longer product name can push everything below it down.
+      - Because positions depend on what came before and sizes on what is inside, one change can move many boxes. Engines mark dirty boxes and skip clean subtrees; a layout after the first is often called a reflow.
+    draw: [layout-pass, viewport-393, content-361, minus-padding, heights-up]
+    check: On the 393 px phone, with 16 px of padding on main, how wide is the product block's content, and what decides the price paragraph's height?
+    answer: 361 px, the viewport width minus 2 × 16 of padding; its height comes from its line of text, which depends on the font.
+  - point: Paint records commands in paint order, not DOM order; raster runs them into tiles off the main thread and decodes images there; and layers that are already pixels can be moved by recompositing without repainting.
+    kind: mechanism
+    weight: core
+    teach:
+      - Paint walks the laid-out boxes and records commands. Backgrounds go under borders and borders under content, and positioned boxes go where their stacking context puts them, so the sticky header is recorded after the product photo it overlaps even though it comes first in the markup.
+      - Raster executes the commands into pixels, cutting large areas into tiles drawn in parallel on raster threads, often with GPU help, viewport tiles first. The hero photo is decoded here, so a slow decode does not freeze script or input.
+      - Some parts get layers of their own. Compositing stacks the layers with their offsets and opacities, so moving or fading a layer is recompositing, not repainting.
+    draw: [paint-order, photo, sticky-header, painted-after, order-rule, raster-tiles, composite-move]
+    check: Where are the hero photo's compressed bytes turned into pixels, and why does that matter for the main thread?
+    answer: In decode and raster, on separate threads; a large decode therefore does not hold up script or input on the main thread.
+    misconceptions:
+      - "Paint draws boxes in DOM order -> paint order puts backgrounds under borders under content, and positioned boxes where their stacking context says."
+      - "Paint happens on the GPU -> paint records commands on the main thread; raster, sometimes with GPU help, makes the pixels."
+  - point: On first load nothing can be drawn until the stylesheet arrives, so Copperpot's DOM is complete at 126 ms but the first frame waits for main.css at 180 ms and lands at about 233 ms; with the CSS cached it lands at about 67 ms.
+    kind: flow
+    weight: core
+    teach:
+      - Read the clock. The parser has finished the whole DOM at 126 ms, yet the screen stays blank, because style cannot run without the CSSOM and main.css only arrives at 180 ms.
+      - Then style, layout and paint run once over the whole page, and the first frame shows at about 233 ms. Parsing was not the bottleneck; the stylesheet was.
+      - With main.css already cached, the CSSOM is ready early, so the browser paints what it has and adds to it as chunks arrive. The header and price show at about 67 ms.
+    draw: [first-load, dom-done, css-arrives, first-frame, blank-wait, then-render, cached-css, incremental]
+    check: The DOM is complete at 126 ms, but the screen is blank until about 233 ms. Why?
+    answer: Style cannot run without the CSSOM, and main.css arrives only at 180 ms; without styles there is nothing to lay out or paint.
+    misconceptions:
+      - "The page appears as soon as the HTML is parsed -> the first frame also needs the stylesheets in head; until they arrive nothing is drawn."
+task:
+  prompt: Draw the DOM the parser builds for Copperpot's price, stock line and specs table, marking every element it inserted, then say which of display none, display contents and visibility hidden still leave the element a box.
+  expects: [2, 4]

@@ -4,7 +4,7 @@ import { expect, test as base, type APIRequestContext, type Page } from '@playwr
 type SeedTopic = { system: string; slug: string; title: string; content?: unknown[]; coachTips?: { target: string }[] };
 type Seed = { systems: { slug: string; name: string }[]; topics: SeedTopic[] };
 
-const seed = JSON.parse(readFileSync(new URL('../../cms/data/system-design.json', import.meta.url), 'utf8')) as Seed;
+const seed = JSON.parse(readFileSync(new URL('../../../lego/cms/data/system-design.json', import.meta.url), 'utf8')) as Seed;
 
 /** The first seeded topic with content: it is built as a reader page. */
 export const topic = (() => {

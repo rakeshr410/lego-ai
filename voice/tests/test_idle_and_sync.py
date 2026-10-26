@@ -9,6 +9,7 @@ from pipecat.frames.frames import (
     InputAudioRawFrame,
     TTSTextFrame,
     UserStartedSpeakingFrame,
+    UserStoppedSpeakingFrame,
 )
 from pipecat.observers.base_observer import FramePushed
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
@@ -60,6 +61,27 @@ async def test_idle_gate_arms_when_the_bot_stops_and_disarms_when_someone_speaks
     )
     assert seen[:3] == ["arm", "disarm", "disarm"]  # the second disarm is the end frame's
     assert not timer.armed
+
+
+async def test_a_cut_in_holds_the_lessons_next_move_until_the_learner_has_finished_and_a_while_after():
+    moves = []
+
+    async def on_rung(r):
+        pass
+
+    async def on_continue():
+        moves.append(1)
+
+    timer = IdleTimer([60], on_rung, on_continue=on_continue)
+    timer.self_drive = 1.5
+    gate = IdleGate(timer=timer)
+    armed = []
+    orig_arm = timer.arm
+    timer.arm = lambda extra=0.0: (armed.append(extra), orig_arm(extra))  # type: ignore[method-assign]
+    # The learner cuts in: they start, the voice stops for them (no move then), they finish.
+    frames = [UserStartedSpeakingFrame(), BotStoppedSpeakingFrame(), UserStoppedSpeakingFrame()]
+    await run_test(gate, frames_to_send=frames, expected_down_frames=None)
+    assert armed == [3.0] and moves == []
 
 
 class _P(FrameProcessor):

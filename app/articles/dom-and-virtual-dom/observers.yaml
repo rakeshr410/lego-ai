@@ -1,0 +1,959 @@
+# yaml-language-server: $schema=../../../../lego/content-kit/schema/topic.schema.json
+# provenance: ai-drafted by claude-opus-5-5 on 2026-10-26
+#
+# Concept topic in four sections: key-idea → mutation-observer → resize-observer → in-practice.
+# Running example (our own): Ledgerleaf, a fictional analytics notebook at ledgerleaf.example.
+# Ines is writing the page "Q3 churn review": 40 editable text blocks and 6 chart panels in a
+# two-column grid she resizes by dragging. Text blocks turn "# " and "## " into headings
+# (MutationObserver); each panel picks a full or compact toolbar from its own width and each chart
+# canvas sizes its bitmap from its rendered size (ResizeObserver); charts below the fold fetch their
+# data as they come near the viewport (IntersectionObserver, linked, not retaught); a third-party
+# support widget injects its launcher late (MutationObserver with a narrow config).
+# Shape: why observers replaced polling and per-event measuring, the shared shape and where each
+# observer delivers in the event loop (key-idea); MutationObserver options, records, microtask
+# delivery, the heading shortcut, the late widget, feedback loops and subtree cost (mutation-observer);
+# the four ways to react to size, boxes and entries, delivery after layout and before paint, the depth
+# rule and the loop error, the panel toolbars with hysteresis, canvas sizing, the flapping tile
+# (resize-observer); choosing a tool, one shared observer per kind, cleanup, the interview answer
+# (in-practice). Infinite-scroll sentinels belong to infinite-scroll-vs-pagination/infinite-scroll-mechanics;
+# measured row heights to virtualization/variable-heights; read/write ordering to
+# rendering-performance/layout-thrashing. Pixel and millisecond figures are illustrative
+# assumptions for Ledgerleaf unless a source is named next to them.
+catalogVersion: 5
+title: "Observers: watching the page without polling"
+shortTitle: Observers
+summary: "MutationObserver, ResizeObserver and IntersectionObserver let the browser tell you what changed, in batches, at fixed points in the frame, instead of you polling or measuring inside every scroll and resize event."
+group: core
+order: 4
+xp: 180
+difficulty: intermediate
+tags: [performance, editors]
+prerequisites: [the-dom-as-a-live-tree]
+related:
+  - events-and-delegation
+  - how-browsers-render-content/the-frame-and-the-event-loop
+  - rendering-performance/layout-thrashing
+  - infinite-scroll-vs-pagination/infinite-scroll-mechanics
+  - virtualization/variable-heights
+  - virtualization/windowing
+  - notion/block-editor
+  - google-docs/rich-text-editing
+  - pinterest/masonry-home-feed
+  - figma/infinite-canvas
+eyebrow: DOM and virtual DOM
+breadcrumb: [Core]
+lede: "For years the only way to know that an element had changed size, scrolled into view or gained a child was to keep asking: a timer that measured every 100 ms, or a scroll and resize handler that measured on every event. Observers turn the question around. You say once which elements you care about, and the browser, which already knows what it changed and already computed the layout, hands you a batch of answers at a fixed point in its work. Knowing when each of the three delivers, and what a callback must not do with the answer, is the whole skill."
+reviewStatus: draft
+author: rakeshr410
+provenance: ai-drafted
+sources:
+  - title: "DOM Standard: mutation observers (WHATWG)"
+    url: https://dom.spec.whatwg.org/#mutation-observers
+    note: "Records are queued per mutation and delivered from one queued microtask; observe() options and the TypeError rules; takeRecords() empties the queue; disconnect() stops observing and empties the queue."
+  - title: "MutationObserver.observe() (MDN)"
+    url: https://developer.mozilla.org/en-US/docs/Web/API/MutationObserver/observe
+    note: "Options childList, attributes, characterData, subtree, attributeFilter, attributeOldValue, characterDataOldValue; one of childList, attributes or characterData must end up true; subtree extends the others to every descendant."
+  - title: "MutationRecord (MDN)"
+    url: https://developer.mozilla.org/en-US/docs/Web/API/MutationRecord
+    note: "type, target, addedNodes, removedNodes, previousSibling, nextSibling, attributeName, attributeNamespace, oldValue."
+  - title: "Mutation events will be removed from Chrome (Chrome for Developers)"
+    url: https://developer.chrome.com/blog/mutation-events-deprecation
+    note: "The synchronous DOMNodeInserted / DOMSubtreeModified family hurt performance and was removed in Chrome 127 (2024); MutationObserver is the replacement."
+  - title: "Resize Observer (W3C Editor's Draft)"
+    url: https://drafts.csswg.org/resize-observer/
+    note: "Boxes content-box (default), border-box, device-pixel-content-box; observations gathered after layout at increasing depth; skipped observations raise an error event and are delivered next time."
+  - title: "ResizeObserver (MDN)"
+    url: https://developer.mozilla.org/en-US/docs/Web/API/ResizeObserver
+    note: "Callbacks run after layout and before paint; loops are cut off with 'ResizeObserver loop completed with undelivered notifications'; fires on observe when the element is rendered and not 0 × 0; Baseline since 2020."
+  - title: "ResizeObserverEntry (MDN)"
+    url: https://developer.mozilla.org/en-US/docs/Web/API/ResizeObserverEntry
+    note: "borderBoxSize, contentBoxSize and devicePixelContentBoxSize are arrays of { inlineSize, blockSize } (arrays for future fragmented boxes); contentRect is the older, content-box-only form."
+  - title: "ResizeObserver: it's like document.onresize for elements (web.dev)"
+    url: https://web.dev/articles/resize-observer
+    note: "Why per-element size observation was needed; what does and does not trigger an observation; avoiding loops by only changing descendants or deferring work."
+  - title: "HTML Standard: update the rendering (WHATWG)"
+    url: https://html.spec.whatwg.org/multipage/webappapis.html#update-the-rendering
+    note: "Order of the rendering steps: resize and scroll steps, animation frame callbacks, style and layout with resize observations, intersection observations, then paint."
+  - title: "IntersectionObserver (MDN)"
+    url: https://developer.mozilla.org/en-US/docs/Web/API/IntersectionObserver
+    note: "root, rootMargin, threshold set in the constructor; entries with isIntersecting and intersectionRatio; an entry is delivered on observe; Baseline since 2019."
+  - title: "Window: resize event (MDN)"
+    url: https://developer.mozilla.org/en-US/docs/Web/API/Window/resize_event
+    note: "Fires only on window, for the viewport; to watch an element's size use ResizeObserver."
+  - title: "CSS container queries (MDN)"
+    url: https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_containment/Container_size_and_style_queries
+    note: "Style a component from its container's size with no script; Baseline since 2023."
+  - title: "prosemirror-view DOMObserver (GitHub)"
+    url: https://github.com/ProseMirror/prosemirror-view/blob/master/src/domobserver.ts
+    note: "A production editor reading changes the browser made inside contenteditable back through a MutationObserver."
+tutorBrief: >-
+  Observers exist because the old answers were polling (setInterval measuring getBoundingClientRect
+  or offsetWidth) and per-event measuring (scroll and resize handlers): both run on the main thread,
+  both read layout (forcing it if anything is dirty), polling is late by up to its interval and works
+  when nothing changed. Observers are registered once; the engine tracks the change it already knows
+  about and delivers batches. Shared shape: new X(callback[, options]); observe(target[, options]);
+  unobserve(target) on ResizeObserver and IntersectionObserver only (MutationObserver has none);
+  disconnect(); takeRecords() on MutationObserver and IntersectionObserver only; callback(entries,
+  observer) receives an array. IntersectionObserver takes root, rootMargin, threshold in the
+  constructor; the others take options in observe(). Timing: MutationObserver records are created
+  synchronously per mutation and delivered in one microtask after the current script (before
+  rendering). ResizeObserver runs inside update the rendering after style and layout and before paint,
+  synchronously, and may loop. IntersectionObserver is computed in the rendering steps after layout and
+  its callback is queued as a task. MutationObserver options: childList (direct children),
+  attributes, characterData (Text/Comment data), subtree (extends the others to all descendants; it
+  does not conflict with childList, the lecture-style claim that it does is wrong), attributeFilter,
+  attributeOldValue, characterDataOldValue; at least one of childList/attributes/characterData must
+  be true (filter or oldValue options imply theirs) or observe throws TypeError. Records: type,
+  target, addedNodes, removedNodes, previousSibling, nextSibling, attributeName, oldValue. Writing
+  the same value still queues a record; a callback that writes into what it observes re-queues
+  itself in the same checkpoint and freezes the tab (microtasks drain fully). disconnect discards
+  pending records, so call takeRecords first if they matter. Predecessor: synchronous Mutation
+  Events, removed in Chrome 127. ResizeObserver: box content-box (default), border-box,
+  device-pixel-content-box; entries' contentBoxSize/borderBoxSize/devicePixelContentBoxSize are arrays
+  (one item today, reserved for fragments) of {inlineSize, blockSize}; inline is width in horizontal
+  writing modes and height in vertical ones (direction rtl changes nothing). Fires on observe when
+  rendered and not 0x0; not for position or transform changes. Depth rule: after delivery, layout
+  runs again and only targets deeper than the shallowest reported one are delivered; the rest wait a
+  frame and raise the window error 'ResizeObserver loop completed with undelivered notifications'
+  (older Chrome: 'loop limit exceeded'). Window resize fires on window only, at most once per frame
+  in current engines; its cost is that it ignores element sizes and handlers read layout. Container
+  queries style by container size with no script. Ledgerleaf: Ines's page has 40 text blocks and 6
+  panels. Old code polled 6 panel widths every 100 ms (60 reads/s). Heading shortcut: one
+  MutationObserver on the editor root, subtree + characterData, converts '# ' and '## ' blocks into
+  h1/h2 with replaceWith, guarded by isConnected; its own replaceWith makes childList records it does
+  not watch. Late support widget: childList on body only, disconnect when found. Panel toolbar:
+  compact below 360 px content width, full above 380 px (hysteresis band against the scrollbar
+  flapping 15 px), write only on change. Canvas: device-pixel-content-box, fallback contentBoxSize ×
+  devicePixelRatio (Safari lacks device-pixel-content-box). Flapping KPI tile: deciding on border-box
+  while the callback adds a 4 px border swings 146 ↔ 154 px every frame with a loop error; deciding
+  on content-box ends it. Debouncing a ResizeObserver callback delays the layout change; keep it
+  cheap and idempotent instead, debounce only expensive follow-up work like refetching data.
+
+components:
+  - key: block-editor
+    name: Block editor
+    tone: blue
+    kind: client
+    summary: The contenteditable page body with 40 text blocks; one MutationObserver turns typed markdown prefixes into headings.
+    owns: [MutationObserver, editor root]
+    talksTo: [page-model]
+  - key: page-model
+    name: Page model
+    tone: green
+    kind: client
+    summary: The notebook's blocks as data (id, type, text); saved to the server and the source of truth for collaborators.
+    owns: [blocks by id]
+    talksTo: []
+  - key: panel-grid
+    name: Panel grid
+    tone: orange
+    kind: client
+    summary: Lays out the 6 chart panels; one shared ResizeObserver picks each panel's toolbar and sizes each chart canvas.
+    owns: [ResizeObserver, toolbar mode per panel]
+    talksTo: [chart-loader]
+  - key: chart-loader
+    name: Chart loader
+    tone: purple
+    kind: client
+    summary: Fetches a chart's series when its panel comes within 600 px of the viewport, through one IntersectionObserver.
+    owns: [IntersectionObserver]
+    talksTo: []
+
+content:
+  # ────────────────────────────────────────────────────────────────── 1. The idea
+  - __component: sd.section
+    key: key-idea
+    title: The idea.
+    railLabel: The idea
+    intro: Stop asking the page whether something changed. Tell the browser what you care about and let it tell you, in a batch, at a point in the frame where the answer is already known.
+  - __component: sd.statement
+    key: observers-statement
+    text: An observer is a standing question the browser answers in batches at a fixed point in its work, so your code runs when something changed, never just in case.
+  - __component: sd.rich-text
+    key: observers-why
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Ledgerleaf's first version of the Q3 churn review page needed three facts that no event reported. Each chart panel had to know its own width, to switch its seven-button toolbar to icons when it got narrow. Charts further down had to know when they came near the screen, so their data was fetched only if Ines scrolled that far. And the text blocks had to notice when she typed '# ' at the start of a line, whatever produced the text: her keyboard, the spellchecker or a paste."
+      - type: paragraph
+        children:
+          - type: text
+            text: "The code did what code did before observers. A 100 ms interval read each panel's offsetWidth, six panels, sixty reads a second, whether or not anything had moved, and each read forced a layout if anything on the page had changed since the last frame. A scroll handler called getBoundingClientRect on every chart on every scroll event. Both ran on the main thread Ines was typing on, and the interval was still up to 100 ms late when a panel really did change."
+      - type: paragraph
+        children:
+          - type: text
+            text: "The browser already has these answers. It knows which nodes it inserted, because it inserted them. It computes every box's size and position in layout, once per frame. An observer is the API that hands you that knowledge instead of making you re-derive it: you register targets once, the browser records what changed while it works, and it calls you with a batch of entries. Nothing runs while nothing changes, and sizes and positions come from a layout the browser has already done, so reading them forces nothing."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Three observers cover the common UI cases. MutationObserver reports changes to the DOM tree itself: children added or removed, attributes changed, text edited. ResizeObserver reports changes to an element's box size. IntersectionObserver reports an element crossing into or out of the viewport or a scroll container. Two more share the same shape for other jobs, PerformanceObserver for timing entries and ReportingObserver for browser reports, but they are not about the page's layout."
+  - __component: sd.table
+    key: before-and-after
+    title: What Ledgerleaf did before, and what replaced it
+    columns:
+      - { label: Need, style: strong }
+      - { label: The old way, style: text }
+      - { label: What it cost, style: muted }
+      - { label: The observer, style: mono-strong }
+    rows:
+      - ['Panel toolbar follows panel width', 'setInterval every 100 ms reading offsetWidth on 6 panels; or a window resize handler', '60 layout reads a second, up to 100 ms late; the resize handler never ran when the sidebar collapsed, because the window did not change size', ResizeObserver]
+      - ['Fetch a chart when it nears the screen', 'scroll handler calling getBoundingClientRect on every chart', 'Work on every scroll event, layout forced if anything was dirty, on the thread that handles input', IntersectionObserver]
+      - ['React to text and nodes changing in the editor', 'Re-reading the block text after every keyup; older code used Mutation Events', 'Missed changes not caused by keys (paste, spellcheck, extensions); Mutation Events fired synchronously inside every DOM change and have been removed from Chrome', MutationObserver]
+  - __component: sd.component-diagram
+    key: ledgerleaf-observers
+    title: Who on Ledgerleaf's page listens to which observer
+    direction: LR
+    nodes:
+      - { key: n-browser-dom, title: DOM tree, details: [changed by typing, scripts and the editor], tone: gray }
+      - { key: n-browser-layout, title: Layout, details: [box sizes and positions, once per frame], tone: gray }
+      - { key: block-editor, details: ['MutationObserver: subtree + characterData'] }
+      - { key: page-model, details: [blocks as data] }
+      - { key: panel-grid, details: ['ResizeObserver: 6 panels, 6 canvases'] }
+      - { key: chart-loader, details: ["IntersectionObserver: rootMargin '600px 0px'"] }
+    edges:
+      - { from: n-browser-dom, to: block-editor, label: records (microtask) }
+      - { from: block-editor, to: page-model, label: block becomes heading }
+      - { from: n-browser-layout, to: panel-grid, label: sizes (before paint) }
+      - { from: n-browser-layout, to: chart-loader, label: intersections (task) }
+  - __component: sd.table
+    key: common-shape
+    title: One shape, three observers
+    columns:
+      - { label: Part, style: strong }
+      - { label: MutationObserver, style: text }
+      - { label: ResizeObserver, style: text }
+      - { label: IntersectionObserver, style: text }
+    rows:
+      - [Constructor, 'new MutationObserver(callback)', 'new ResizeObserver(callback)', 'new IntersectionObserver(callback, { root, rootMargin, threshold })']
+      - ['observe(target, options)', 'Options per target (what to watch); at least one of childList, attributes, characterData', 'Options per target: { box }', 'No options; the constructor fixed them for every target']
+      - ['callback(entries, observer)', 'MutationRecord[]: one per change, in order', 'ResizeObserverEntry[]: one per target whose size changed', 'IntersectionObserverEntry[]: one per target whose threshold state changed']
+      - ['unobserve(target)', 'Does not exist; disconnect and re-observe the others', Stops one target, Stops one target]
+      - ['disconnect()', 'Stops everything and discards undelivered records', Stops everything, Stops everything]
+      - ['takeRecords()', 'Returns and clears undelivered records', 'Does not exist', 'Returns and clears undelivered entries']
+      - [First callback, 'Only after the first change', 'On observe, if the element is rendered and not 0 × 0', 'On observe, always one entry with the current state']
+  - __component: sd.rich-text
+    key: shape-notes
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Two details in that shape do most of the work. First, one observer takes many targets. Ledgerleaf does not create six ResizeObservers for six panels; it creates one and calls observe six times, and a frame in which three panels change size produces one callback with three entries. Second, the callback always receives an array, because the browser batches: every change since the last delivery arrives together, and the code loops over the entries and checks entry.target to know which element each one is about."
+      - type: paragraph
+        children:
+          - type: text
+            text: "What differs most is when the callback runs. That is not a detail: it decides what the callback can safely do. A MutationObserver callback runs before the browser has drawn your change. A ResizeObserver callback runs after layout but before paint, so whatever it changes is in the same frame. An IntersectionObserver callback runs a little later, as its own task, so what it changes shows in the next frame at the earliest."
+  - __component: sd.timeline
+    key: one-frame-timeline
+    title: Where each observer is called during one frame
+    caption: "Illustrative timings on a 60 Hz screen (one frame every 16.7 ms). Ines types '#' and a space in a block while a panel's width changes. The order of the steps comes from the HTML Standard's update-the-rendering steps; the durations are made up."
+    axis: { unit: ms, from: 0, to: 20, step: 2 }
+    lanes:
+      - { key: l-main, label: Main thread }
+      - { key: l-obs, label: Observer callbacks }
+      - { key: l-screen, label: Screen }
+    spans:
+      - { lane: l-main, from: 1, to: 4, label: keydown and input task, tone: blue }
+      - { lane: l-obs, from: 4, to: 4.6, label: MutationObserver (microtask), tone: green }
+      - { lane: l-main, from: 9, to: 9.6, label: rAF callbacks, tone: blue }
+      - { lane: l-main, from: 9.6, to: 11.6, label: style and layout, tone: orange }
+      - { lane: l-obs, from: 11.6, to: 12.2, label: ResizeObserver, tone: green }
+      - { lane: l-main, from: 12.2, to: 12.8, label: layout again, tone: orange, style: hatched }
+      - { lane: l-main, from: 12.8, to: 13.2, label: intersection check, tone: purple }
+      - { lane: l-main, from: 13.2, to: 15, label: paint, tone: green }
+      - { lane: l-obs, from: 15.4, to: 15.9, label: IntersectionObserver (task), tone: purple }
+      - { lane: l-screen, from: 0, to: 16.7, label: previous frame, tone: gray, style: faded }
+      - { lane: l-screen, from: 16.7, to: 20, label: heading and new toolbar shown, tone: green }
+    marks:
+      - { lane: l-main, at: 1, label: keypress, kind: event }
+      - { lane: l-screen, at: 16.7, label: vsync, kind: tick }
+    arrows:
+      - { from: { lane: l-main, at: 4 }, to: { lane: l-obs, at: 4.1 }, label: script ends }
+      - { from: { lane: l-main, at: 11.6 }, to: { lane: l-obs, at: 11.7 }, label: sizes known }
+  - __component: sd.table
+    key: when-each-fires
+    title: When each observer delivers
+    columns:
+      - { label: Observer, style: mono-strong }
+      - { label: Delivered, style: text }
+      - { label: What that means for the callback, style: muted }
+    rows:
+      - [MutationObserver, 'In a microtask after the script that made the changes, before any rendering', 'It sees the DOM as your code left it, nothing drawn yet. Changes it makes are drawn in the same frame. Changes it makes to what it observes queue another microtask straight away']
+      - [ResizeObserver, 'Inside the rendering steps, right after style and layout, before paint', 'Sizes come from the layout just computed, so nothing is forced. Style it writes is laid out again and painted in the same frame, which is why it can loop']
+      - [IntersectionObserver, 'Computed in the rendering steps after layout; the callback is queued as a task', 'Positions are current, but the frame is usually painted before it runs; what it changes appears next frame. Fine for fetching and lazy work, not for pixel-exact effects']
+  - __component: sd.quiz
+    key: observers-quiz-idea
+    questions:
+      - question: Ledgerleaf's old code read six panels' offsetWidth every 100 ms. What is the main thing a ResizeObserver removes?
+        optionA: The need to know panel widths at all
+        optionB: Reads that run when nothing changed, may force layout, and lag by up to the interval
+        optionC: The panels' layout cost
+        optionD: The need for CSS
+        answer: B
+        explanation: The browser computes sizes in layout anyway. The observer reports changed sizes from that layout once per frame, so no work runs while nothing changes and no read forces an extra layout.
+      - question: Three panels change width in the same frame. With one ResizeObserver observing all six, what does the code receive?
+        optionA: Three callbacks with one entry each
+        optionB: One callback with three entries
+        optionC: One callback with six entries
+        optionD: Six callbacks
+        answer: B
+        explanation: Observers batch. One callback per delivery, with an entry for each target whose size changed since it was last reported.
+      - question: Which observer's callback runs before the browser has rendered the change that triggered it?
+        optionA: MutationObserver
+        optionB: ResizeObserver
+        optionC: IntersectionObserver
+        optionD: None of them
+        answer: A
+        explanation: MutationObserver delivers in a microtask right after the script that changed the DOM. ResizeObserver needs layout to have run, and IntersectionObserver is computed after layout and delivered in a later task.
+
+  # ────────────────────────────────────────────────────────────────── 2. MutationObserver
+  - __component: sd.section
+    key: mutation-observer
+    title: MutationObserver.
+    railLabel: MutationObserver
+    intro: It watches the tree itself, not the screen. You choose which kinds of change and how deep, and every change becomes a record delivered in one batch after your script finishes.
+  - __component: sd.subsection
+    key: what-it-watches
+    title: What it watches
+  - __component: sd.table
+    key: mo-options
+    title: The options passed to observe(target, options)
+    columns:
+      - { label: Option, style: mono-strong }
+      - { label: Reports, style: text }
+      - { label: Ledgerleaf example, style: muted }
+    rows:
+      - ['childList: true', 'Children of the target added or removed (direct children unless subtree is set)', 'A support widget appends its launcher to body']
+      - ['attributes: true', 'Any attribute of the target changing', 'A panel''s data-toolbar flips from full to compact']
+      - ['attributeFilter: [''class'', ''aria-expanded'']', 'Only the listed attributes; implies attributes', 'Watching only the attributes a feature cares about']
+      - ['attributeOldValue: true', 'Adds the previous value to each attributes record; implies attributes', 'Logging which toolbar mode a panel came from']
+      - ['characterData: true', 'The data of Text and Comment nodes changing (typing usually edits a Text node in place)', 'Ines types in a block']
+      - ['characterDataOldValue: true', 'Adds the previous text to each characterData record; implies characterData', 'Undo or diffing what the browser changed']
+      - ['subtree: true', 'Applies the other options to every descendant, not only the target', 'One observer on the editor root covers all 40 blocks']
+  - __component: sd.rich-text
+    key: mo-options-notes
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "The options combine; they do not compete. childList alone means the target's own children. Add subtree and it means children of any node below the target, so childList with subtree is the usual way to hear about nodes inserted anywhere in a region. If none of childList, attributes and characterData ends up true, observe throws a TypeError, because the observer would have nothing to report."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Every option you add is a promise from the browser to build a record for that kind of change, and the record is built at the moment of the change, inside whatever code made it. So the cost of an observer is roughly the number of records it causes. attributeFilter is the cheapest way to narrow attributes. subtree on a large region is the expensive option: on Ines's page, a renderer that rebuilds a 200-row table inside a panel would produce hundreds of childList records for an editor observer that only cares about text in blocks. Observe the smallest root that contains what you need."
+  - __component: sd.table
+    key: mo-records
+    title: What a MutationRecord carries
+    columns:
+      - { label: Field, style: mono-strong }
+      - { label: Set for, style: text }
+      - { label: Meaning, style: muted }
+    rows:
+      - [type, every record, "'childList', 'attributes' or 'characterData'"]
+      - [target, every record, 'For childList, the parent whose children changed; for attributes, the element; for characterData, the Text node itself, not its element']
+      - ['addedNodes / removedNodes', childList, 'NodeLists of the nodes inserted or removed by this one change']
+      - ['previousSibling / nextSibling', childList, 'Where the change happened among the parent''s children']
+      - [attributeName, attributes, 'Which attribute changed (attributeNamespace for namespaced ones)']
+      - [oldValue, 'attributes or characterData, when the matching OldValue option is set', 'The value before this change; read the current value from the node']
+  - __component: sd.rich-text
+    key: mo-timing
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Delivery follows the DOM Standard's rule: the first record for an observer queues one microtask, and later records join the same queue until it runs. So if a script inserts 30 nodes in a loop, the callback runs once, after the loop and the rest of that script, with 30 records, and before the browser renders. It never interrupts the code making the changes, which is exactly what the old Mutation Events did: they fired synchronously inside every insertion, could mutate the tree mid-operation, and made every DOM change slower on any page that registered one. Chrome removed them in version 127; anything still using DOMNodeInserted or DOMSubtreeModified needs to move to a MutationObserver."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Records are a log, not a diff. A node added and removed in the same script shows up as two records even though the end state is unchanged, and a record's oldValue tells you the value before that change, while the node itself already holds the latest value. Code that only needs the end state should usually treat records as a hint about where to look and then read the DOM."
+  - __component: sd.subsection
+    key: heading-shortcut
+    title: "Worked example: '# ' becomes a heading"
+  - __component: sd.rich-text
+    key: shortcut-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Ledgerleaf's page body is contenteditable, and each text block is a p with a data-block id. Typing '# ' at the start of a block should turn it into an h1, '## ' into an h2 and '### ' into an h3, the way block editors do. The editor needs to notice the text change wherever it came from, check the start of the block, and swap the element."
+      - type: paragraph
+        children:
+          - type: text
+            text: "One observer covers all 40 blocks: observe the editor root with subtree and characterData, not one observer per block. Typing into an existing text node edits it in place, which is a characterData record whose target is the Text node, so the code climbs to its block with parentElement.closest. Two practical details matter. Browsers often insert a no-break space (U+00A0) when you type a space at the end of editable text, so the pattern accepts both. And one batch can hold several records for the same block, so after replacing a block the code checks isConnected and skips records about blocks it already replaced."
+  - __component: sd.code
+    key: shortcut-code
+    title: Markdown heading shortcuts with one observer
+    snippets:
+      - label: heading-shortcuts.js
+        language: javascript
+        code: |
+          const LEVELS = { '#': 'h1', '##': 'h2', '###': 'h3' };
+          const PREFIX = /^(#{1,3})[  ]/; // typed spaces are often U+00A0
+
+          export function headingShortcuts(editorRoot, onConvert) {
+            const observer = new MutationObserver((records) => {
+              for (const record of records) {
+                if (record.type !== 'characterData') continue;
+                const block = record.target.parentElement?.closest('p[data-block]');
+                if (!block || !block.isConnected) continue; // already replaced in this batch
+
+                const match = PREFIX.exec(block.textContent);
+                if (!match) continue;
+
+                const heading = document.createElement(LEVELS[match[1]]);
+                heading.dataset.block = block.dataset.block;
+                heading.textContent = block.textContent.slice(match[0].length);
+                block.replaceWith(heading);   // a childList record: not observed, so no loop
+                placeCaretAtEnd(heading);
+                onConvert(block.dataset.block, heading.localName); // tell the page model
+              }
+            });
+            observer.observe(editorRoot, { subtree: true, characterData: true });
+            return () => observer.disconnect();
+          }
+
+          function placeCaretAtEnd(el) {
+            const range = document.createRange();
+            range.selectNodeContents(el);
+            range.collapse(false);
+            const selection = getSelection();
+            selection.removeAllRanges();
+            selection.addRange(range);
+          }
+  - __component: sd.sequence-diagram
+    key: shortcut-sequence
+    title: Ines types '## ' in a block
+    participants:
+      - { key: ines, label: Ines, tone: sand }
+      - { key: browser, label: Browser (contenteditable), tone: white }
+      - { key: block-editor }
+      - { key: page-model }
+    steps:
+      - { from: ines, to: browser, text: "types '#', '#', space" }
+      - { from: browser, to: browser, text: 'edits the Text node: 3 characterData records queued' }
+      - { kind: note, from: browser, text: 'The input task ends; the microtask checkpoint runs the observer once' }
+      - { from: browser, to: block-editor, text: 'callback([3 records])' }
+      - { from: block-editor, to: block-editor, text: "record 3: text starts with '##' + space → h2, replaceWith, caret to end" }
+      - { from: block-editor, to: page-model, text: 'block b-0412 is now h2' }
+      - { kind: note, from: block-editor, text: 'replaceWith made a childList record; the observer does not watch childList, so nothing is queued' }
+      - { kind: reply, from: browser, to: ines, text: next frame shows an empty h2 with the caret in it }
+  - __component: sd.rich-text
+    key: shortcut-model
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "In a production editor the callback does not leave the DOM as the source of truth. It translates what the browser did into an operation on the page model ('block b-0412 becomes h2') and lets the editor's renderer produce the heading, which is how collaborators and saving see the same change. Editors such as ProseMirror work this way: their view reads changes the browser made inside contenteditable through a MutationObserver and turns them into document transactions. Note also that a DOM swap made by script is not on the browser's native undo stack, which is another reason real editors keep their own history."
+  - __component: sd.subsection
+    key: late-widget
+    title: "Second use: a script you did not write"
+  - __component: sd.rich-text
+    key: late-widget-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Ledgerleaf embeds a third-party support chat. Its script appends a floating launcher button to body some time after load, and Ledgerleaf's own Feedback button has to move up when it appears so the two do not overlap. There is no event for 'another script added a node'. Polling the DOM for the launcher works and is wasteful; a MutationObserver with the narrowest possible config is the clean answer: childList on body only, no subtree, because the launcher is a direct child, and disconnect as soon as it is found."
+  - __component: sd.code
+    key: late-widget-code
+    title: Waiting for the support launcher
+    snippets:
+      - label: wait-for-launcher.js
+        language: javascript
+        code: |
+          export function whenLauncherAppears(callback) {
+            const existing = document.querySelector('#support-launcher');
+            if (existing) return callback(existing), () => {};
+
+            const observer = new MutationObserver((records) => {
+              for (const r of records) {
+                for (const node of r.addedNodes) {
+                  if (node.id === 'support-launcher') {
+                    observer.disconnect();       // one answer is all we need
+                    callback(node);
+                    return;
+                  }
+                }
+              }
+            });
+            observer.observe(document.body, { childList: true }); // body's own children only
+            return () => observer.disconnect();
+          }
+  - __component: sd.subsection
+    key: mo-pitfalls
+    title: What goes wrong
+  - __component: sd.table
+    key: mo-pitfalls-table
+    title: MutationObserver pitfalls
+    columns:
+      - { label: Pitfall, style: strong }
+      - { label: What happens, style: text }
+      - { label: Fix, style: muted }
+    rows:
+      - ['Writing into what you observe', 'The callback normalises every block it sees, for example setting textContent to a trimmed copy. That write makes a new record, which queues another microtask, which runs the callback again, forever. Microtasks drain completely before anything else, so the tab freezes: no input, no frames.', 'Write only when the value actually differs (writing the same text still makes a record); watch only the record types you do not produce; or disconnect, write, takeRecords() to drop your own records, then observe again']
+      - ['subtree on a big region', 'Every insertion, attribute flip and text edit anywhere below the root builds a record, even ones the callback ignores. A table renderer inside a panel can flood an editor observer with hundreds of records per update.', 'Observe the smallest root; set only the option types you read; use attributeFilter; skip records outside your blocks early']
+      - ['disconnect() drops pending records', 'Records queued by the last few changes are discarded and never delivered.', 'Call takeRecords() first and process them if they matter']
+      - ['Records hold nodes', 'Removed nodes stay reachable from a stored record and cannot be garbage collected.', 'Process records in the callback; do not keep them']
+      - ['Text node as target', 'characterData records point at the Text node, which has no closest() or dataset.', 'Go to record.target.parentElement first']
+      - ['Using it for your own keystrokes only', 'If the only changes you care about come from typing, beforeinput and input events say what the user intended before or after it happens.', 'Use input events for intent, a MutationObserver for changes from any source (IME, spellcheck, extensions, other scripts)']
+  - __component: sd.quiz
+    key: observers-quiz-mo
+    questions:
+      - question: "Ledgerleaf observes the editor root with { childList: true, subtree: true }. Which insertion is reported?"
+        optionA: Only nodes inserted as direct children of the root
+        optionB: Nodes inserted under any descendant of the root
+        optionC: None, because childList and subtree conflict
+        optionD: Only text changes
+        answer: B
+        explanation: subtree extends whatever else is watched to every descendant. childList with subtree reports children added or removed anywhere below the root.
+      - question: A script appends 30 rows in a loop inside an observed region. How is the observer's callback called?
+        optionA: 30 times, once during each append
+        optionB: Once, after that script finishes, with 30 records
+        optionC: Once at the next animation frame
+        optionD: Never; scripts' own changes are not observed
+        answer: B
+        explanation: Records are queued as the changes happen and delivered together in one microtask after the current script, before rendering.
+      - question: A callback watching characterData with subtree sets each block's text to a trimmed copy on every record. What happens?
+        optionA: Nothing; the browser ignores writes made by the callback
+        optionB: The callback's own writes create new records, it runs again, and the tab freezes
+        optionC: A stack overflow error is thrown after 1,000 calls
+        optionD: The writes are batched to the next frame
+        answer: B
+        explanation: Every write makes a record, even if the text is the same, and each delivery queues another microtask. The microtask queue drains completely, so input and rendering never get a turn.
+
+  # ────────────────────────────────────────────────────────────────── 3. ResizeObserver
+  - __component: sd.section
+    key: resize-observer
+    title: ResizeObserver.
+    railLabel: ResizeObserver
+    intro: It reports an element's box size after the browser has laid the page out, for any cause, in time to change things before the frame is painted.
+  - __component: sd.subsection
+    key: four-ways
+    title: Four ways to react to size
+  - __component: sd.table
+    key: size-tools
+    title: Choosing how to respond to a size change
+    columns:
+      - { label: Tool, style: mono-strong }
+      - { label: Watches, style: text }
+      - { label: Runs your JavaScript, style: text }
+      - { label: Use it when, style: muted }
+    rows:
+      - ['@media (width < 768px)', The viewport, 'No', 'The whole page changes layout at a breakpoint. Cheapest: the style engine handles it during style resolution']
+      - ['@container (width < 360px)', 'A container element you declare with container-type', 'No', 'A component restyles itself from the space it was given: hide labels, stack columns. No script at all']
+      - ['window resize event', The viewport only, 'Yes', 'Legacy code, or logic that truly depends on the window. It never fires when a sidebar collapses or a panel is dragged']
+      - [ResizeObserver, 'Any element''s content, border or device-pixel box', 'Yes', 'Script needs the number: canvas bitmap size, a chart''s tick count, measured row heights, state a component keeps']
+  - __component: sd.rich-text
+    key: size-tools-notes
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "The order of that table is also the order of preference. If the change is only visual, a media or container query does it with no script and no chance of a loop; Ledgerleaf could have hidden its toolbar labels with a container query alone. ResizeObserver is for when JavaScript needs the size: the chart library needs a pixel width to choose how many axis ticks fit, the canvas needs a bitmap size, a virtualized list needs each row's height."
+      - type: paragraph
+        children:
+          - type: text
+            text: "The window resize event is often blamed for being fired thousands of times. In current browsers it is dispatched from the rendering steps, so at most once per frame, and it fires on window, not by travelling through the tree. Its real problems are different: it only describes the window, so it misses every layout change that does not resize the window, and its handlers almost always read element sizes, which forces layout if anything else changed. ResizeObserver fixes both: it watches elements, and it hands over sizes the browser already computed."
+  - __component: sd.subsection
+    key: boxes-and-entries
+    title: Boxes and entries
+  - __component: sd.table
+    key: ro-boxes
+    title: "observe(target, { box }): which size counts as a change"
+    columns:
+      - { label: box, style: mono-strong }
+      - { label: Measures, style: text }
+      - { label: Fires when, style: muted }
+    rows:
+      - ["'content-box' (default)", 'The content area, inside padding and border, in CSS pixels', 'The content area changes. With box-sizing: content-box, adding padding or border does not change it; with box-sizing: border-box and a fixed width, it does, because padding eats into the content']
+      - ["'border-box'", 'Content plus padding plus border, in CSS pixels', 'The outer box changes, including from padding or border changes']
+      - ["'device-pixel-content-box'", 'The content area in physical device pixels, snapped the way the browser will rasterise it', 'The device-pixel size changes, including when zoom or devicePixelRatio changes. Made for sizing a canvas bitmap exactly; Chrome and Firefox support it, Safari does not']
+  - __component: sd.code
+    key: ro-entry
+    title: Reading an entry
+    snippets:
+      - label: entry fields
+        language: javascript
+        code: |
+          const observer = new ResizeObserver((entries) => {
+            for (const entry of entries) {
+              entry.target;                         // the observed element
+              const [box] = entry.contentBoxSize;    // an array; one item in every browser today
+              box.inlineSize;                        // width in a horizontal writing mode
+              box.blockSize;                         // height in a horizontal writing mode
+              entry.borderBoxSize[0];                // same shape, outer box
+              entry.devicePixelContentBoxSize?.[0];  // device pixels, where supported
+              entry.contentRect;                     // older DOMRect form, content box only
+            }
+          });
+          observer.observe(panel, { box: 'content-box' });
+  - __component: sd.rich-text
+    key: ro-entry-notes
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Two details of that entry trip people up. The sizes are arrays because the spec leaves room for elements that break into several fragments, such as content flowing across columns, each with its own box; today every browser reports exactly one item, so code reads index 0. And the names are logical, not physical: inlineSize is the size along the text direction. In a horizontal writing mode that is the width; in writing-mode: vertical-rl, as in vertical Japanese text, it is the height. Right-to-left direction does not swap them, because Arabic or Hebrew text still runs horizontally."
+      - type: paragraph
+        children:
+          - type: text
+            text: "What counts as a resize is also narrower than it sounds. Moving an element does not fire; neither does a transform such as scale(), because it changes how the box is drawn, not its laid-out size. An observation fires when you call observe on an element that is rendered with a non-zero size, so the first size arrives without a manual read, and an element that becomes display: none reports a size of 0 × 0."
+  - __component: sd.subsection
+    key: ro-timing-and-loop
+    title: After layout, before paint, and the loop error
+  - __component: sd.table
+    key: ro-depth-passes
+    title: One frame in which callbacks change sizes
+    columns:
+      - { label: Step, style: mono-strong }
+      - { label: The browser, style: text }
+      - { label: On Ines's page, style: muted }
+    rows:
+      - ['1', Runs style and layout, 'The grid is laid out with the panel she dragged now 340 px wide']
+      - ['2', 'Collects every observed element whose size changed since it was last reported, delivers them, and notes the shallowest depth in the tree among them', 'The panel (depth 6) is delivered; the callback switches it to the compact toolbar']
+      - ['3', Runs style and layout again, 'The compact toolbar is one row shorter, so the chart canvas inside the panel gets 40 px taller']
+      - ['4', 'Collects changed elements deeper than that shallowest depth, delivers them, and repeats from 3', 'The canvas (depth 8) is delivered in the same frame; its callback resizes the bitmap']
+      - ['5', 'Stops when nothing deeper changed. If something at the same depth or shallower still has an unreported change, it fires an error event on window and delivers that change next frame', 'Nothing left: one frame, painted with the final layout']
+  - __component: sd.rich-text
+    key: ro-loop-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Running before paint is ResizeObserver's advantage: when a callback adapts a component to its new size, the adapted version is what gets painted, with no frame of the wrong layout. It is also its risk, because a callback that changes sizes makes the browser lay out again. The depth rule guarantees the frame ends: each round only delivers elements deeper in the tree than the shallowest one just reported, so changes flow downward from a container to what is inside it, which is the normal direction of responsive layout."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Anything that breaks that direction, a callback that changes its own target's size or a parent's, is left over. The browser fires an error event with the message 'ResizeObserver loop completed with undelivered notifications' (older Chrome versions said 'ResizeObserver loop limit exceeded') and delivers the change in the next frame. Nothing throws in your code, but error trackers record it from window.onerror, and it means at least one frame was painted with a stale layout. Do not just filter it out of error reports; it usually points at a callback that does not settle."
+  - __component: sd.subsection
+    key: panel-toolbars
+    title: "Worked example: panel toolbars and canvases"
+  - __component: sd.rich-text
+    key: panel-toolbar-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Each of Ledgerleaf's six panels has a toolbar of seven labelled buttons that needs about 380 px; below that it switches to icons with an overflow menu. The first ResizeObserver version used a single threshold, compact below 360 px. It worked until someone tested on a laptop with classic 15 px scrollbars. At a panel width of 355 px the toolbar went compact, which made the panel one row shorter, which made the page short enough that the vertical scrollbar disappeared, which gave the grid 15 px more width, about 7 px for each of its two columns. The panel was now 362 px, no longer under 360, so the toolbar went back to full, the page grew, the scrollbar came back, and the cycle repeated every frame."
+      - type: paragraph
+        children:
+          - type: text
+            text: "The fix is hysteresis: go compact below 360 px but go back to full only above 380 px, so a nudge smaller than the 20 px band cannot flip the mode back. Combined with writing the attribute only when the mode changes, the callback settles after one change. (scrollbar-gutter: stable on the scroll container removes this particular trigger too, by reserving the scrollbar's space whether or not it shows.) The same observer is shared by all six panels, and a separate one sizes each chart's canvas from its device-pixel box so lines stay sharp at any zoom."
+  - __component: sd.code
+    key: panel-toolbar-code
+    title: One observer for six panels, one for their canvases
+    snippets:
+      - label: panel-toolbars.js
+        language: javascript
+        code: |
+          const COMPACT_BELOW = 360; // px of content width
+          const FULL_ABOVE = 380;    // the 20 px band absorbs a scrollbar appearing
+
+          const panelSizes = new ResizeObserver((entries) => {
+            for (const entry of entries) {
+              const width = entry.contentBoxSize[0].inlineSize;
+              const panel = entry.target;
+              const was = panel.dataset.toolbar ?? 'full';
+              const next = width < COMPACT_BELOW ? 'compact'
+                         : width > FULL_ABOVE ? 'full'
+                         : was;                          // inside the band: keep the mode
+              if (next !== was) panel.dataset.toolbar = next; // write only on a change
+            }
+          });
+
+          for (const panel of document.querySelectorAll('.panel')) {
+            panelSizes.observe(panel);
+          }
+      - label: chart-canvas.js
+        language: javascript
+        code: |
+          const charts = new Map(); // canvas element -> chart instance
+
+          const canvasSizes = new ResizeObserver((entries) => {
+            for (const entry of entries) {
+              const device = entry.devicePixelContentBoxSize?.[0];
+              const css = entry.contentBoxSize[0];
+              const width = device ? device.inlineSize
+                : Math.round(css.inlineSize * devicePixelRatio);  // Safari fallback
+              const height = device ? device.blockSize
+                : Math.round(css.blockSize * devicePixelRatio);
+              // The bitmap size is not the layout size (CSS sets width: 100%),
+              // so this write cannot trigger another observation.
+              entry.target.width = width;
+              entry.target.height = height;
+              charts.get(entry.target)?.draw();
+            }
+          });
+
+          export function trackCanvas(canvas, chart) {
+            charts.set(canvas, chart);
+            try {
+              canvasSizes.observe(canvas, { box: 'device-pixel-content-box' });
+            } catch {
+              canvasSizes.observe(canvas); // browsers without that box
+            }
+          }
+  - __component: sd.subsection
+    key: flapping-tile
+    title: "The trap: deciding on a size your callback changes"
+  - __component: sd.rich-text
+    key: flapping-tile-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Ledgerleaf's KPI tiles can be dragged smaller, and below 150 px they turn into round badges with a 4 px ring. A first draft observed each tile's border-box and, when it was under 150 px, set border-radius: 50% and a 4 px border. With the default box-sizing: content-box, the border adds 8 px to the border box. A tile dragged to 146 px became 154 px the moment it turned round, which is no longer under 150, so the next delivery removed the ring, which made it 146 px again."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Because the callback changes its own target, the depth rule cannot deliver the new size in the same frame, so every frame ends with the loop error and the tile alternates between square and round on screen. The callback must decide from a size its own write does not move. Observing the content box (unchanged by a border in content-box sizing), setting box-sizing: border-box so the ring eats into a fixed width, or adding hysteresis all make it settle. The general rule: a ResizeObserver callback should be idempotent, so the same size always produces the same writes, and it should never change the size it is reading."
+  - __component: sd.timeline
+    key: flapping-tile-timeline
+    title: The KPI tile, observed on its border box
+    caption: "Illustrative, on a 60 Hz screen. Ticks are frames. The tile's content width is fixed at 146 px; only the 4 px ring the callback adds and removes changes its border box."
+    axis: { unit: ms, from: 0, to: 84, step: 16.7 }
+    lanes:
+      - { key: l-size, label: Border-box width }
+      - { key: l-look, label: What is painted }
+      - { key: l-err, label: window error events }
+    spans:
+      - { lane: l-size, from: 0, to: 16.7, label: 146 px, tone: blue }
+      - { lane: l-size, from: 16.7, to: 33.4, label: 154 px, tone: orange }
+      - { lane: l-size, from: 33.4, to: 50.1, label: 146 px, tone: blue }
+      - { lane: l-size, from: 50.1, to: 66.8, label: 154 px, tone: orange }
+      - { lane: l-size, from: 66.8, to: 84, label: 146 px, tone: blue }
+      - { lane: l-look, from: 0, to: 16.7, label: square, tone: gray }
+      - { lane: l-look, from: 16.7, to: 33.4, label: round, tone: orange }
+      - { lane: l-look, from: 33.4, to: 50.1, label: square, tone: gray }
+      - { lane: l-look, from: 50.1, to: 66.8, label: round, tone: orange }
+      - { lane: l-look, from: 66.8, to: 84, label: square, tone: gray }
+    marks:
+      - { lane: l-err, at: 16.7, label: loop error, kind: error, verdict: error }
+      - { lane: l-err, at: 33.4, label: loop error, kind: error, verdict: error }
+      - { lane: l-err, at: 50.1, label: loop error, kind: error, verdict: error }
+      - { lane: l-err, at: 66.8, label: loop error, kind: error, verdict: error }
+    scenarios:
+      - name: Decide on the content box
+        note: "The callback reads contentBoxSize, which stays 146 px whether or not the ring is drawn. The tile turns round once and stays round; one delivery, no error."
+        spans:
+          - { lane: l-size, from: 0, to: 16.7, label: 146 px content, tone: blue }
+          - { lane: l-size, from: 16.7, to: 84, label: '146 px content (154 outer)', tone: green }
+          - { lane: l-look, from: 0, to: 16.7, label: square, tone: gray }
+          - { lane: l-look, from: 16.7, to: 84, label: round, tone: green }
+        marks:
+          - { lane: l-err, at: 16.7, label: no error, kind: ok, verdict: ok }
+  - __component: sd.rich-text
+    key: ro-other-uses
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Two other uses come up constantly in system design answers. A virtualized list with rows of unknown height observes each rendered row and caches its measured height by item id, so offsets are corrected from real sizes without any forced read (see unknown and changing heights). And a masonry or chart grid observes only its own container's width and derives column counts from it. A common instinct is to debounce the callback; usually that is a mistake. The callback already runs at most once per frame per target, and delaying it means frames painted with the old layout. Keep the callback cheap and idempotent, and debounce only the expensive work it triggers, such as refetching a chart's data at a new resolution once the drag has stopped."
+  - __component: sd.quiz
+    key: observers-quiz-ro
+    questions:
+      - question: A panel's width changes because the sidebar collapsed; the window did not change size. Which of these runs your JavaScript with the panel's new width?
+        optionA: window resize event
+        optionB: ResizeObserver on the panel
+        optionC: A media query
+        optionD: Both A and B
+        answer: B
+        explanation: The resize event only describes the window. ResizeObserver reports the element's own size, whatever caused it to change. Media queries run no script.
+      - question: "A tile observed with { box: 'border-box' } gets a 4 px border from its own callback whenever it is under 150 px. Its content box is 146 px. What happens?"
+        optionA: It turns round once and stays round
+        optionB: It alternates between square and round every frame and logs the loop error
+        optionC: The browser ignores style written by the callback
+        optionD: The border is applied after paint, so nothing visible happens
+        answer: B
+        explanation: The border makes the border box 154 px, which undoes the condition, and removing it makes 146 px again. A callback that changes its own target's size cannot settle within a frame, so the change waits and the error event fires each time.
+      - question: In writing-mode vertical-rl, what does entry.contentBoxSize[0].inlineSize measure?
+        optionA: The width
+        optionB: The height
+        optionC: The diagonal
+        optionD: It is always 0
+        answer: B
+        explanation: Inline size runs along the direction text flows. In vertical writing modes that is top to bottom, so inlineSize is the height.
+
+  # ────────────────────────────────────────────────────────────────── 4. In practice
+  - __component: sd.section
+    key: in-practice
+    title: In practice.
+    railLabel: In practice
+    intro: Pick the observer by the question you are asking, share one per kind, write only when something changes, and disconnect when the component goes away.
+  - __component: sd.table
+    key: choose-observer
+    title: Which tool answers which question
+    columns:
+      - { label: Question, style: strong }
+      - { label: Tool, style: mono-strong }
+      - { label: Why, style: muted }
+    rows:
+      - ['Should this restyle when its container narrows?', '@container', 'No script, no loop risk']
+      - ['What size is this element now, as a number my code needs?', ResizeObserver, 'Size from the layout already done, delivered before paint']
+      - ['Is this element on screen, or within 600 px of it?', IntersectionObserver, 'No scroll handler; one observer for many targets; rootMargin for the look-ahead']
+      - ['Did nodes, attributes or text change, possibly from code I do not own?', MutationObserver, 'Batched records after the script that changed them']
+      - ['What did the user just type, paste or delete?', 'beforeinput / input events', 'They carry the intent (inputType) and can be cancelled']
+      - ['Where exactly is the scroll position, every frame?', 'scroll event (passive) or a scroll-driven animation', 'Observers report threshold crossings, not continuous positions']
+  - __component: sd.subsection
+    key: intersection-brief
+    title: IntersectionObserver in one paragraph
+  - __component: sd.rich-text
+    key: intersection-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "The third observer answers 'is this element visible within a root, and by how much'. Its options belong to the constructor: root (the viewport by default, or a scroll container), rootMargin to grow or shrink that root, and threshold, the fraction or list of fractions of the target that must be visible for a change to be reported. Each entry has isIntersecting, intersectionRatio and target, and observing an element always produces one first entry with its current state. Ledgerleaf's chart loader observes all six panels with rootMargin '600px 0px' and fetches a chart's series the first time its panel comes within 600 px of the viewport, then unobserves it. The same machinery drives infinite-scroll sentinels, image lazy loading and 'seen' analytics; how a sentinel, its margin and one-request-at-a-time fit together is worked through in infinite scroll mechanics."
+  - __component: sd.code
+    key: chart-loader-code
+    title: Lazy chart data with one IntersectionObserver
+    snippets:
+      - label: chart-loader.js
+        language: javascript
+        code: |
+          const nearScreen = new IntersectionObserver((entries) => {
+            for (const entry of entries) {
+              if (!entry.isIntersecting) continue;
+              nearScreen.unobserve(entry.target);         // load once
+              loadSeries(entry.target.dataset.chartId);
+            }
+          }, { rootMargin: '600px 0px', threshold: 0 });
+
+          for (const panel of document.querySelectorAll('.panel[data-chart-id]')) {
+            nearScreen.observe(panel);
+          }
+  - __component: sd.subsection
+    key: cleanup
+    title: Sharing and cleaning up
+  - __component: sd.rich-text
+    key: cleanup-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "In a component framework the natural mistake is one observer per component instance: 6 panels, 6 ResizeObservers, 6 callbacks a frame. It works, but a shared observer with a Map from element to handler gives one callback per frame and one place to reason about loops. Each component registers on mount and unregisters on unmount. Unobserving matters: an element that has been removed from the page but is still in an observer's target list stays referenced by the observer and cannot be collected, and its handler keeps closures alive with it."
+  - __component: sd.code
+    key: shared-observer-code
+    title: One ResizeObserver shared by every component
+    snippets:
+      - label: use-element-size.js
+        language: javascript
+        code: |
+          import { useEffect, useRef, useState } from 'react';
+
+          const handlers = new Map(); // element -> (entry) => void
+          const shared = new ResizeObserver((entries) => {
+            for (const entry of entries) handlers.get(entry.target)?.(entry);
+          });
+
+          export function useElementWidth() {
+            const ref = useRef(null);
+            const [width, setWidth] = useState(0);
+            useEffect(() => {
+              const el = ref.current;
+              if (!el) return;
+              handlers.set(el, (entry) => {
+                const w = Math.round(entry.contentBoxSize[0].inlineSize);
+                setWidth((prev) => (prev === w ? prev : w)); // no re-render when unchanged
+              });
+              shared.observe(el);
+              return () => {                                   // on unmount
+                shared.unobserve(el);
+                handlers.delete(el);
+              };
+            }, []);
+            return [ref, width];
+          }
+  - __component: sd.table
+    key: practice-checklist
+    title: Habits that keep observers cheap
+    columns:
+      - { label: Habit, style: strong }
+      - { label: Why, style: text }
+    rows:
+      - ['One observer per kind and configuration, many targets', 'One callback per delivery, batched entries, less bookkeeping']
+      - ['Narrowest MutationObserver config on the smallest root', 'Records are built synchronously for every matching change, read or not']
+      - ['Write only when the derived value changes', 'Unchanged writes still make mutation records and can still trigger layout']
+      - ['Never change the size a ResizeObserver callback reads', 'It cannot settle in the frame: loop error and a flickering layout']
+      - ['Add hysteresis around size thresholds', 'Scrollbars and wrapping text nudge sizes back across a single threshold']
+      - ['unobserve on removal, disconnect on teardown', 'Observed elements and their handlers stay alive otherwise']
+      - ['Prefer CSS (container queries) when the change is only visual', 'No script, no loop, no frame of the wrong layout']
+      - ['Do not ship polyfills by default', 'All three are Baseline: MutationObserver for over a decade, IntersectionObserver since 2019, ResizeObserver since 2020']
+  - __component: sd.qa-reveal
+    key: interview-angle
+    title: Saying it in an interview
+    items:
+      - label: Design
+        question: "Your dashboard's chart widgets must adapt to the space they get. How do you know each widget's size?"
+        answer: "Restyling alone (hiding labels, stacking) goes in container queries. Where code needs the number, such as the chart's pixel width for tick density or the canvas bitmap, one shared ResizeObserver watches every widget. It reports content-box sizes after layout and before paint, so the adapted chart is in the same frame and nothing forces a layout. The callback writes only when a derived mode changes, with a hysteresis band around thresholds so a scrollbar cannot make it flap, and never changes the size it reads. Expensive work like refetching data at a new resolution is debounced, the layout response is not."
+      - label: Follow-up
+        question: The error tracker shows thousands of 'ResizeObserver loop completed with undelivered notifications'. Ignore it?
+        answer: "Not without a look. It means a callback changed the size of an element at or above the depth it was reported at, so the change was deferred to the next frame and a frame was painted with stale layout. Find callbacks that resize their own target or a parent, or toggle between two states. Make them idempotent, decide from a box their write does not change, or move the write into requestAnimationFrame if the one-frame delay is acceptable."
+      - label: Follow-up
+        question: How would an editor notice that a browser extension or spellcheck changed the document?
+        answer: "A MutationObserver on the editor root with subtree, childList and characterData. Records arrive in a microtask after whatever made the change, before the frame is drawn. The editor maps them back to operations on its model, or reverts what it does not accept. For the person's own typing, beforeinput and input events give the intent; the observer is the safety net for everything else. Keep the root as small as the editable region and ignore records the editor's own renderer caused."
+      - label: Follow-up
+        question: Why not just listen to scroll and check getBoundingClientRect for lazy loading?
+        answer: "Scroll can fire every frame while the person scrolls, the handler runs on the main thread, and each getBoundingClientRect may force layout. An IntersectionObserver computes intersections in the rendering steps from the layout already done, batches targets, and only calls you when a threshold is crossed. rootMargin gives the look-ahead so content is ready before it is visible."
+  - __component: sd.card-grid
+    key: where-it-shows-up
+    title: Where this shows up in system designs
+    columns: 2
+    cards:
+      - title: Block and rich-text editors
+        text: A MutationObserver on the editable root reads changes the browser made (IME, spellcheck, paste, extensions) back into the document model; input events carry the person's intent.
+      - title: Dashboards and canvases
+        text: One ResizeObserver per grid sizes every chart and canvas from its own box, with device-pixel sizes for sharp bitmaps; container queries handle the purely visual changes.
+      - title: Virtualized lists
+        text: Rows of unknown height are measured by a ResizeObserver as they render and cached by id, so offsets are corrected without forced reads.
+      - title: Feeds and media
+        text: IntersectionObserver with a generous rootMargin starts fetching the next page or the next image before it is visible, and reports what was actually seen for analytics.
+      - title: Third-party embeds
+        text: A narrow MutationObserver notices nodes injected by scripts you do not control and disconnects once it has its answer.
+      - title: Responsive components
+        text: Components adapt to the space they are given, not the window, so the same widget works in a sidebar, a modal and a full-width page.
+  - __component: sd.quiz
+    key: observers-quiz-practice
+    questions:
+      - question: A card component only needs to hide its labels when it is narrower than 300 px. What is the best first choice?
+        optionA: A ResizeObserver per card
+        optionB: A container query
+        optionC: A window resize handler
+        optionD: A MutationObserver on the card
+        answer: B
+        explanation: The change is purely visual and depends on the space the card gets, which is what container queries do, with no script and no loop risk.
+      - question: A panel component observes itself with a shared ResizeObserver but never unobserves on unmount. What is the cost?
+        optionA: None; observers forget removed elements immediately
+        optionB: The removed panel and its handler stay referenced, so they cannot be garbage collected
+        optionC: The page throws an error
+        optionD: The observer stops working for other panels
+        answer: B
+        explanation: The observer keeps the element in its target list and the handler map keeps the closure. Unobserve and delete the handler in the component's cleanup.
+      - question: Which question is an IntersectionObserver the wrong tool for?
+        optionA: Has this panel come within 600 px of the viewport?
+        optionB: Is at least half of this video visible?
+        optionC: What is the exact scroll offset on every frame?
+        optionD: Has the sentinel at the end of the list become visible?
+        answer: C
+        explanation: It reports threshold crossings, not continuous positions. A passive scroll listener or a scroll-driven animation fits a value needed every frame.
+  - __component: sd.split-list
+    key: observers-scope
+    leftLabel: This topic
+    leftItems:
+      - text: Why observers replaced polling and per-event measuring; their shared shape
+      - text: When MutationObserver, ResizeObserver and IntersectionObserver deliver in a frame
+      - text: MutationObserver options, records, feedback loops and cost
+      - text: ResizeObserver boxes, entries, the depth rule and the loop error
+      - text: Choosing a tool, sharing observers, cleanup
+    rightLabel: Elsewhere
+    rightItems:
+      - text: The event loop and the rendering steps in full
+        note: The frame and the event loop
+      - text: Batching reads before writes, forced layout
+        note: Forced layout and layout thrashing
+      - text: Sentinels, margins and loading the next page
+        note: Infinite scroll mechanics
+      - text: Measuring and caching row heights
+        note: Unknown and changing heights
+      - text: Listeners, bubbling and delegation
+        note: Events and delegation

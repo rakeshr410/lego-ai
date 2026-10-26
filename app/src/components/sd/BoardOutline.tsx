@@ -2,7 +2,7 @@ import { useState, type FormEvent } from 'react';
 import type { BoardGraph } from '../../lib/board/serialise';
 import t from '../../i18n/messages/interview';
 
-// The whiteboard as a list (docs/interview/README.md, "Whiteboard", accessibility): the same graph
+// The whiteboard as a list (docs/README.md, "Whiteboard", accessibility): the same graph
 // the interviewer reads, with its boxes and arrows, editable from the keyboard: add a box, connect
 // two, rename, delete. Ids in the graph are the serialiser's (n1, e1); `eid` is the element's.
 

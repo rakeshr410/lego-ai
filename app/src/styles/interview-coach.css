@@ -1,4 +1,4 @@
-/* Coach lesson (docs/interview/coach-mode.md): the syllabus rail in the room and on the end screen,
+/* Coach lesson (docs/coach-mode.md): the syllabus rail in the room and on the end screen,
    the continue controls, and the end screen's tally. On the tokens only. */
 
 .ivk-rail {
@@ -159,6 +159,9 @@
 }
 .ivk-tally__n.is-understood {
   color: var(--green);
+}
+.ivk-tally__n.is-explained {
+  color: var(--blue);
 }
 .ivk-tally__n.is-shaky {
   color: var(--gold);

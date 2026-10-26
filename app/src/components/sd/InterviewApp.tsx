@@ -24,7 +24,7 @@ type Overview = {
 
 type Props = { page: InterviewPage };
 
-/** The drill in the page's query (docs/interview/README.md, "Drills"): ?topic=<slug>[&section=<key>], or null for the whole interview. */
+/** The drill in the page's query (docs/README.md, "Drills"): ?topic=<slug>[&section=<key>], or null for the whole interview. */
 type Scope = { topic: string; section: string | null } | null;
 const scopeFromQuery = (search: string): Scope => {
   const q = new URLSearchParams(search);
@@ -32,10 +32,12 @@ const scopeFromQuery = (search: string): Scope => {
   return topic ? { topic, section: q.get('section') || null } : null;
 };
 const scopeQuery = (scope: Scope) => (scope ? `&topic=${encodeURIComponent(scope.topic)}${scope.section ? `&section=${encodeURIComponent(scope.section)}` : ''}` : '');
-/** A coach lesson (docs/interview/coach-mode.md) when the page's query says ?kind=coach; the mock interview otherwise. */
+/** A coach lesson (docs/coach-mode.md) when the page's query says ?kind=coach; the mock interview otherwise. */
 type Kind = 'interview' | 'coach';
 const kindFromQuery = (search: string): Kind => (new URLSearchParams(search).get('kind') === 'coach' ? 'coach' : 'interview');
 const kindQuery = (kind: Kind) => (kind === 'coach' ? '&kind=coach' : '');
+/** A playlist's lesson (docs/coaching.md): its page is its own, and the API is told which lesson. */
+const lessonQuery = (page: InterviewPage) => (page.course ? `&lesson=${encodeURIComponent(page.course.lesson)}` : '');
 
 async function call(path: string, method = 'GET', body?: unknown) {
   const res = await fetch(path, {
@@ -77,9 +79,9 @@ function usageOf(overview: Overview | null, scope: Scope, kind: Kind): string | 
 }
 
 /** The reader's interview state on this system (and drill), or why it can't be had. */
-async function fetchOverview(system: string, scope: Scope, kind: Kind): Promise<{ overview: Overview } | { error: string }> {
+async function fetchOverview(page: InterviewPage, scope: Scope, kind: Kind): Promise<{ overview: Overview } | { error: string }> {
   try {
-    const r = await call(`/api/interview?system=${encodeURIComponent(system)}${scopeQuery(scope)}${kindQuery(kind)}`);
+    const r = await call(`/api/interview?system=${encodeURIComponent(page.system.slug)}${scopeQuery(scope)}${kindQuery(kind)}${lessonQuery(page)}`);
     if (r.ok) return { overview: r.data as Overview };
     return { error: (r.data as { error?: string }).error ?? t('load.failed') };
   } catch {
@@ -88,7 +90,7 @@ async function fetchOverview(system: string, scope: Scope, kind: Kind): Promise<
 }
 
 export default function InterviewApp({ page: systemPage }: Props) {
-  // The overview, with the drill the URL named when it was fetched (docs/interview/README.md,
+  // The overview, with the drill the URL named when it was fetched (docs/README.md,
   // "Drills"): the HTML is the same for every scope, so the query is read once the island runs.
   const [overview, setOverview] = useState<(Overview & { scope: Scope; kind: Kind }) | null>(null);
   const [loadError, setLoadError] = useState('');
@@ -99,9 +101,10 @@ export default function InterviewApp({ page: systemPage }: Props) {
 
   useEffect(() => {
     let alive = true;
-    const scope = scopeFromQuery(window.location.search);
-    const kind = kindFromQuery(window.location.search);
-    void fetchOverview(systemPage.system.slug, scope, kind).then((r) => {
+    // A lesson's page is the coach's, on no drill.
+    const scope = systemPage.course ? null : scopeFromQuery(window.location.search);
+    const kind = systemPage.course ? 'coach' : kindFromQuery(window.location.search);
+    void fetchOverview(systemPage, scope, kind).then((r) => {
       if (!alive) return;
       if ('overview' in r) {
         setLoadError('');
@@ -111,10 +114,10 @@ export default function InterviewApp({ page: systemPage }: Props) {
     return () => {
       alive = false;
     };
-  }, [systemPage.system.slug, version]);
+  }, [systemPage, version]);
 
   const scope = overview?.scope ?? null;
-  const kind: Kind = overview?.kind ?? 'interview';
+  const kind: Kind = overview?.kind ?? (systemPage.course ? 'coach' : 'interview');
   // On a drill, the drill's projection; the system's page until the overview loads (and always on the whole interview).
   const page = (scope && overview?.page) || systemPage;
 
@@ -135,6 +138,8 @@ export default function InterviewApp({ page: systemPage }: Props) {
   const open = (s: SessionView, j: VoiceJoin | null = null) => {
     setJoin(j);
     setSession(s);
+    // The room replaces the landing in place: it opens at its top, not where the start button had the page scrolled.
+    window.scrollTo({ top: 0 });
   };
   // A concept system's page: drills only, nothing to start here. (A drill the server does not
   // have, a stale link: the overview's error says so in the card.)
@@ -159,6 +164,43 @@ export default function InterviewApp({ page: systemPage }: Props) {
   );
 }
 
+// The consent a reader gave, remembered in this browser by its version: the next lesson of a playlist shows the
+// same terms already agreed to (a new version asks again). A convenience only: the server checks the version.
+const consentKey = (version: string) => `iv-consent:${version}`;
+function agreedBefore(version: string | undefined): boolean {
+  if (!version) return false;
+  try {
+    return localStorage.getItem(consentKey(version)) === '1';
+  } catch {
+    return false;
+  }
+}
+// What the coach calls the learner, remembered in this browser for the next lesson (the server checks it).
+const NAME_KEY = 'iv-name';
+function rememberedName(): string {
+  try {
+    return localStorage.getItem(NAME_KEY) ?? '';
+  } catch {
+    return '';
+  }
+}
+function rememberName(name: string) {
+  try {
+    if (name) localStorage.setItem(NAME_KEY, name);
+    else localStorage.removeItem(NAME_KEY);
+  } catch {
+    // Private windows and blocked storage: the field is empty again next time.
+  }
+}
+
+function rememberConsent(version: string) {
+  try {
+    localStorage.setItem(consentKey(version), '1');
+  } catch {
+    // Private windows and blocked storage: the box is ticked again next time.
+  }
+}
+
 function SessionCard({ page, scope, kind, overview, loadError, onOpen }: { page: InterviewPage; scope: Scope; kind: Kind; overview: Overview | null; loadError: string; onOpen: (s: SessionView, join?: VoiceJoin | null) => void }) {
   // A voice build starts voice sessions of either kind (a lesson is spoken by the coach, phase 2 of coach-mode.md).
   const coach = kind === 'coach';
@@ -167,9 +209,15 @@ function SessionCard({ page, scope, kind, overview, loadError, onOpen }: { page:
   const [consenting, setConsenting] = useState(false);
   const [agreed, setAgreed] = useState(false);
   const [audioOptIn, setAudioOptIn] = useState(false);
+  const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const consentId = useId();
+  const consentVersion = overview ? (voiceBuild ? overview.voice?.consentVersion : overview.status.consentVersion) : undefined;
+  useEffect(() => {
+    if (agreedBefore(consentVersion)) setAgreed(true);
+  }, [consentVersion]);
+  useEffect(() => setName(rememberedName()), []);
 
   const open = async (id: string) => {
     setBusy(true);
@@ -189,15 +237,17 @@ function SessionCard({ page, scope, kind, overview, loadError, onOpen }: { page:
       setError(t('voice.micDenied'));
       return;
     }
-    const drill = scope ? { topic: scope.topic, section: scope.section ?? undefined } : {};
+    const drill = page.course ? { lesson: page.course.lesson } : scope ? { topic: scope.topic, section: scope.section ?? undefined } : {};
     const body =
       mode === 'voice'
-        ? { system: page.system.slug, ...drill, mode: 'voice', consent: overview.voice.consentVersion, audioOptIn, ...(coach ? { kind: 'coach' } : {}) }
-        : { system: page.system.slug, ...drill, consent: overview.status.consentVersion, ...(coach ? { kind: 'coach' } : {}) };
+        ? { system: page.system.slug, ...drill, mode: 'voice', consent: overview.voice.consentVersion, audioOptIn, ...(coach ? { kind: 'coach', name: name.trim() } : {}) }
+        : { system: page.system.slug, ...drill, consent: overview.status.consentVersion, ...(coach ? { kind: 'coach', name: name.trim() } : {}) };
     const r = await call('/api/interview', 'POST', body).catch(() => null);
     setBusy(false);
     if (r?.ok) {
       const data = r.data as { session: SessionView; join?: VoiceJoin };
+      rememberConsent(body.consent);
+      if (coach) rememberName(name.trim());
       onOpen(data.session, data.join ?? null);
     } else setError((r?.data as { error?: string } | undefined)?.error ?? t(coach ? 'coach.start.failed' : 'start.failed'));
   };
@@ -230,7 +280,7 @@ function SessionCard({ page, scope, kind, overview, loadError, onOpen }: { page:
   const { status, voice, current, past } = overview;
   if (!overview.signedIn) {
     const query = `${scopeQuery(scope)}${kindQuery(kind)}`;
-    const next = `/systems/${page.system.slug}/interview${query ? `?${query.slice(1)}` : ''}`;
+    const next = page.course?.href ?? `/systems/${page.system.slug}/interview${query ? `?${query.slice(1)}` : ''}`;
     return (
       <>
         <a className="iv-start" href={`/signin?next=${encodeURIComponent(next)}`}>
@@ -342,6 +392,13 @@ function SessionCard({ page, scope, kind, overview, loadError, onOpen }: { page:
         </ul>
         <p className="ivl-more">{t.rich('consent.more', { link: (text, key) => <a key={key} href="/legal/privacy">{text}</a> })}</p>
         <div className="ivl-agree">
+          {coach && (
+            <label className="ivl-name">
+              <span>{t('coach.name.label')}</span>
+              <input type="text" value={name} maxLength={30} autoComplete="given-name" onChange={(e) => setName(e.target.value)} />
+              <small>{t('coach.name.hint')}</small>
+            </label>
+          )}
           <label className="ivl-check">
             <input type="checkbox" checked={audioOptIn} onChange={(e) => setAudioOptIn(e.target.checked)} />
             <span>{t('consent.voice.optIn')}</span>

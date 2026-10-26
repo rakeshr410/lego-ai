@@ -1,0 +1,123 @@
+# Infinite scroll's idea: watch a marker at the end rather than the scroll, fetch while the reader is still a screen or two away, ask once, fail in place and say when the list is over.
+id: infinite-scroll-vs-pagination/infinite-scroll-mechanics/key-idea
+title: Loading before the end
+source:
+  hash: 2373bc43ea45
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: null
+  assumes:
+    - The page is a live tree of DOM nodes; appending a node adds it to what the browser styles, lays out and paints.
+  carries:
+    - Waiting for the reader to reach the last card makes every batch a visible wait; the request must start a screen or two earlier.
+    - A sentinel is an invisible element after the last card; an IntersectionObserver with a grown bottom margin reports when it comes within reach.
+    - The next batch is requested with the cursor from the previous answer.
+    - Only one request may be in flight; the observer's callback can fire again before the answer arrives.
+    - A failed batch keeps every card already shown and turns the footer into a Try again button.
+    - The list ends when the server returns no next cursor; the sentinel is removed and the footer says so.
+  terms:
+    - term: sentinel
+      means: A tiny invisible element placed right after the last card, whose only job is to be observed.
+    - term: IntersectionObserver
+      means: A browser API that calls back when an observed element enters or leaves a region around a root such as the viewport.
+    - term: rootMargin
+      means: How far the observer's region is grown beyond the root's own box before the test; Secondloop grows only the bottom, by 150%.
+    - term: cursor
+      means: The token the previous answer returned, sent with the next request to ask for the batch after it.
+    - term: batch
+      means: One page of results from the server; 24 cards on Secondloop.
+board:
+  keep: []
+  elements:
+    - { id: feed-page, kind: region, label: Just listed feed, at: [2, 2], size: [28, 36] }
+    - { id: viewport, kind: region, label: "Viewport, 780 px", at: [4, 5], size: [24, 11], in: feed-page, tone: blue, dashed: true }
+    - { id: card-18, kind: box, label: card 18, at: [6, 7], size: [20, 2], in: viewport }
+    - { id: card-19, kind: box, label: card 19, at: [6, 10], size: [20, 2], in: viewport }
+    - { id: card-20, kind: box, label: card 20, at: [6, 13], size: [20, 2], in: viewport }
+    - { id: card-24, kind: box, label: "card 24, last of batch 1", at: [6, 29], size: [20, 2], in: feed-page, tone: blue }
+    - { id: late-ask, kind: note, label: "ask at the end: a spinner every 24", at: [4, 35], in: feed-page }
+    - { id: margin-zone, kind: region, label: "grown margin, 1,170 px", at: [4, 17], size: [24, 11], in: feed-page, dashed: true }
+    - { id: card-21, kind: box, label: card 21, at: [6, 19], size: [20, 2], in: margin-zone }
+    - { id: card-22, kind: box, label: card 22, at: [6, 22], size: [20, 2], in: margin-zone }
+    - { id: card-23, kind: box, label: card 23, at: [6, 25], size: [20, 2], in: margin-zone }
+    - { id: sentinel, kind: box, label: "sentinel, 1 px", at: [6, 32], size: [20, 2], in: feed-page, tone: blue }
+    - { id: pager, kind: region, label: Pager, at: [34, 29], size: [24, 40] }
+    - { id: observer, kind: box, label: IntersectionObserver, at: [36, 32], size: [20, 2], in: pager, tone: blue }
+    - { id: in-flight, kind: diamond, label: request already out?, at: [36, 41], size: [20, 5], in: pager }
+    - { id: ignore-note, kind: note, label: "yes: drop the trigger", at: [47, 47], in: pager }
+    - { id: fetch-next, kind: box, label: fetch next 24, at: [36, 52], size: [20, 2], in: pager, tone: amber }
+    - { id: api, kind: oval, label: Secondloop API, at: [36, 62], size: [20, 3], in: pager, tone: amber }
+    - { id: cursor-note, kind: note, label: "asks after the last cursor", at: [36, 66], in: pager }
+    - { id: footer, kind: region, label: Bottom of the list, at: [2, 40], size: [30, 15] }
+    - { id: footer-loading, kind: box, label: Loading more, at: [4, 43], size: [10, 2], in: footer }
+    - { id: footer-error, kind: box, label: Try again button, at: [22, 43], size: [10, 2], in: footer, tone: red }
+    - { id: kept-note, kind: note, label: "cards kept, no retry loop", at: [4, 46], in: footer }
+    - { id: footer-end, kind: box, label: "That's all 59 lamps", at: [4, 49], size: [12, 2], in: footer, tone: grey }
+    - { id: end-note, kind: note, label: "no next cursor: sentinel removed", at: [4, 52], in: footer }
+  arrows:
+    - { id: watches, from: sentinel, to: observer, label: enters margin }
+    - { id: fetch-api, from: fetch-next, to: api, label: after cursor }
+    - { id: callback, from: observer, to: in-flight, label: callback }
+    - { id: go, from: in-flight, to: fetch-next, label: "no: go" }
+    - { id: fails, from: footer-loading, to: footer-error, label: batch fails }
+beats:
+  - point: If the app waits until the reader reaches the last card, every batch becomes a visible wait, so the next batch has to be requested while they are still a screen or two away.
+    kind: requirement
+    weight: core
+    teach:
+      - "User 1 is browsing Secondloop's Just listed on their phone. The first 24 cards came with the page, and nothing tells them that card 25 does not exist yet."
+      - Ask only when they reach card 24 and they get a spinner and half a second of network every 24 cards; a few of those and browsing turns into waiting.
+      - Ask while there is still a screen and a half below them, and the round trip happens while they are still reading.
+    draw: [feed-page, viewport, card-18, card-19, card-20, card-24, late-ask]
+    check: Why ask for the next batch while user 1 is still well above the last card rather than when they reach it?
+    answer: So the request and the rendering happen while they are still reading, and the next cards are already in place when they get there; asking at the end shows them a spinner every batch.
+  - point: Instead of watching the scroll, the app places an invisible sentinel after the last card and lets an IntersectionObserver, with its region grown 1.5 screens downward, report when the sentinel comes within reach.
+    kind: mechanism
+    weight: core
+    teach:
+      - Put a 1-pixel element right after card 24. It draws nothing; it only marks where the list ends.
+      - Register it with an IntersectionObserver whose region is the viewport grown downward by 150%, about 1,170 pixels on user 1's 780-pixel screen.
+      - When the sentinel crosses into that grown region the browser calls back, and the app asks for the next 24, sending the cursor from the previous answer.
+      - The sentinel only reports a position. Deciding whether to fetch belongs to the pager.
+    draw: [margin-zone, card-21, card-22, card-23, sentinel, pager, observer, watches, fetch-next, api, fetch-api, cursor-note]
+    check: What does the sentinel do, and what decides whether a request is sent?
+    answer: It is an invisible marker after the last card that the observer reports when it nears the viewport; the pager decides whether to fetch, using the cursor from the last answer.
+    misconceptions:
+      - "The sentinel fetches the next batch -> it only marks the end; the observer reports it and the pager decides."
+      - "You still need a scroll listener to notice the sentinel -> the observer reports it by itself; no scroll handler is involved."
+  - point: Only one request may be in flight, because the observer can call back again before the first answer arrives.
+    kind: rule
+    weight: core
+    teach:
+      - A round trip takes a few hundred milliseconds, and in that time the observer can report the sentinel again for the same end of the list.
+      - So the trigger goes through one check first. If a request is already out, the trigger is dropped; the server hears once per batch.
+    draw: [in-flight, callback, go, ignore-note]
+    check: The observer's callback fires again while batch 2 is still loading. What should happen, and why?
+    answer: Nothing; the pager ignores triggers while a request is in flight, otherwise the same batch would be requested twice.
+  - point: A failed batch must not cost the reader what they have seen; every card stays, the loading row becomes a Try again button, and nothing retries on its own.
+    kind: failure
+    weight: core
+    teach:
+      - On a weak connection batch 4 fails. The failure is about the next batch only, so all the cards above stay where they are.
+      - The footer, which said it was loading, now offers a real Try again button, and user 1 decides when to tap it.
+      - Clearing the list punishes them for the network, and retrying every second could hammer a server that is already struggling.
+    draw: [footer, footer-loading, footer-error, fails, kept-note]
+    check: The request for the next batch fails. What should happen to the 72 cards user 1 has already scrolled past, and to the footer?
+    answer: All 72 stay on screen; only the footer changes, from a loading row to a Try again button they can tap.
+    misconceptions:
+      - "Retry automatically until it works -> an automatic loop can hammer a struggling server; the reader taps to retry."
+  - point: The list has to know when it is over, so when the server sends no next cursor the sentinel is removed and the footer says the list is complete.
+    kind: rule
+    weight: core
+    teach:
+      - With the filter Lamps within 10 miles, the third batch holds only 11 cards and the answer has no next cursor.
+      - Stop observing, remove the sentinel and replace the footer with a plain line, That's all 59 lamps near you. A spinner that never stops would be a lie.
+    draw: [footer-end, end-note]
+    check: How does the list know it has reached the end, and what does it do then?
+    answer: The server returns no next cursor; the list stops observing, removes the sentinel and says in the footer that it is complete.
+task:
+  prompt: "Draw Secondloop's feed with the viewport, the grown margin below it and the sentinel after the last card, then the path from the observer to the request for the next 24, including the check that lets only one request out."
+  expects: [2, 3]

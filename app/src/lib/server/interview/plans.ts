@@ -2,12 +2,13 @@ import type { DerivedPlan } from '@arrowbox/content-kit';
 import { getSnapshot, type SnapshotDrill, type SnapshotInterview } from '../../content-snapshot';
 import { interviewSystemOpen } from '../../flags';
 import { FLAGS } from '../../sd';
+import { lessonPlan, type LessonInfo } from '../coaching/lessons';
 
 // A system's interview plan, from the content snapshot this server was built with (the same one
 // its pages came from): derived from the system's sections (ADR 0003), with its hand-written plan
 // merged in where one exists, and what the interviewer is grounded in: the tutor briefs of the
 // topics the plan draws on. Plans follow topics' publishing rule: a reviewed-only build serves a
-// plan only when every source topic is reviewed. A drill (docs/interview/README.md, "Drills") is
+// plan only when every source topic is reviewed. A drill (docs/README.md, "Drills") is
 // a topic's or one section's short plan, on the tracks that derive them.
 
 /** Which plan a session runs: the system's whole interview (null), or a topic's or one section's drill. */
@@ -21,6 +22,8 @@ export type Plan = {
   /** Key facts from the topics the plan draws on, by slug (topics with a tutor brief only). */
   briefs: { slug: string; title: string; brief: string }[];
   scope: PlanScope;
+  /** A playlist's lesson (coaching/lessons.ts): `system` is then the playlist. */
+  lesson?: LessonInfo;
 };
 
 const published = (i: Pick<SnapshotInterview, 'reviewStatus'>) => !FLAGS.reviewedOnly || i.reviewStatus === 'reviewed';
@@ -28,8 +31,12 @@ const published = (i: Pick<SnapshotInterview, 'reviewStatus'>) => !FLAGS.reviewe
 /** The same scope, or both the whole interview. */
 export const sameScope = (a: PlanScope | undefined, b: PlanScope | undefined) => (a?.topic ?? null) === (b?.topic ?? null) && (a?.section ?? null) === (b?.section ?? null);
 
-/** The system's published plan, or the published drill the scope names, or null. */
-export function getPlan(system: string, scope: PlanScope = null): Plan | null {
+/**
+ * The system's published plan, or the published drill the scope names, or, with `lesson`, that lesson
+ * of the playlist named by `system` (a coach session only), or null.
+ */
+export function getPlan(system: string, scope: PlanScope = null, lesson?: string | null): Plan | null {
+  if (lesson) return scope ? null : lessonPlan(system, lesson);
   // Early access: a system outside PUBLIC_INTERVIEW_SYSTEMS has no plan here, as it has no page.
   if (!interviewSystemOpen(system)) return null;
   const snapshot = getSnapshot();

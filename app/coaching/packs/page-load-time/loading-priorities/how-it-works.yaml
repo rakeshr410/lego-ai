@@ -1,0 +1,160 @@
+# Resource hints, priorities and fonts: discovery and rank, connection and fetch hints, fetchpriority, 103 Early Hints, and font-display with a matched fallback.
+id: page-load-time/loading-priorities/how-it-works
+title: Resource hints, priorities and fonts
+source:
+  hash: 1a6d93aa2969
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: page-load-time/critical-rendering-path/how-it-works
+  assumes:
+    - The critical rendering path is the blocking stylesheets and parser-blocking scripts the first paint waits for.
+    - Depth usually wins, because each round trip on a phone costs 100 to 200 ms.
+    - A file found only inside another file adds a link to the chain, and the preload scanner cannot see it.
+  carries:
+    - Every request has two clocks, when its URL is found and its rank in the queue once it is.
+    - preconnect warms DNS, TCP and TLS to another origin; dns-prefetch only does the lookup.
+    - preload moves discovery earlier for a file found late; it needs the right as, and crossorigin for fonts, or the file downloads twice.
+    - fetchpriority changes a request's rank, not when it is found; an img in the HTML wants fetchpriority, not preload.
+    - 103 Early Hints let a server send preconnect and preload while it is still building the HTML.
+    - "A font face goes through a block, a swap and a failure period; font-display sets their lengths, and no value avoids both invisible and changing text on a slow link."
+  terms:
+    - term: discovery
+      means: The moment the browser learns a file's URL and can request it.
+    - term: priority
+      means: The rank the browser gives a request, deciding which go first and how a shared connection is split.
+    - term: preload
+      means: A hint to fetch a file this page will use now, for files the preload scanner cannot see.
+    - term: fetchpriority
+      means: An attribute or fetch option, high, low or auto, that moves a known request up or down.
+    - term: block period
+      means: The time text that wants a web font is laid out with an invisible fallback.
+    - term: swap period
+      means: The time a visible fallback is drawn and still replaced if the web font arrives.
+board:
+  keep: [on-path, p-html, head-css, classic-script, first-paint, off-script, off-media, fcp-note, three-numbers, n-resources, n-bytes, n-depth, depth-demo, d-same, d-import, d-new, setup-note, chains, c-html, c-site, c-imported, chain-fix, scanner-blind, first-flight, flight-frame, f-head, f-css, f-above, f-below, inline-rule, p-finds, css-blocks, script-blocks, names, imports, next-trip]
+  elements:
+    - { id: two-clocks, kind: region, label: Two clocks per request, at: [1, 39], size: [42, 20] }
+    - { id: clock-found, kind: box, label: "found: early to late", at: [14, 42], size: [27, 3], in: two-clocks, tone: blue }
+    - { id: clock-rank, kind: box, label: "rank: high to low", at: [3, 46], size: [9, 11], in: two-clocks, tone: blue }
+    - { id: p-css, kind: box, label: head stylesheet, at: [14, 46], size: [12, 3], in: two-clocks, tone: green }
+    - { id: p-hero, kind: box, label: "hero image, raised later", at: [14, 50], size: [12, 3], in: two-clocks, tone: amber }
+    - { id: p-font, kind: box, label: font file, at: [29, 46], size: [12, 3], in: two-clocks, tone: red }
+    - { id: p-prefetch, kind: box, label: "prefetch, Lowest", at: [14, 54], size: [12, 3], in: two-clocks, tone: grey }
+    - { id: hints, kind: region, label: The hints, at: [45, 39], size: [42, 18] }
+    - { id: h-preconnect, kind: box, label: "preconnect: DNS, TCP, TLS", at: [47, 42], size: [18, 3], in: hints, tone: green }
+    - { id: h-dns, kind: box, label: "dns-prefetch: lookup only", at: [67, 42], size: [18, 3], in: hints, tone: grey }
+    - { id: h-preload, kind: box, label: "preload: fetch a late file", at: [47, 46], size: [18, 3], in: hints, tone: blue }
+    - { id: h-modulepreload, kind: box, label: "modulepreload: also compiles", at: [67, 46], size: [18, 3], in: hints, tone: blue }
+    - { id: h-fetchpriority, kind: box, label: "fetchpriority: rank only", at: [47, 50], size: [18, 3], in: hints, tone: amber }
+    - { id: h-prefetch, kind: box, label: "prefetch: next navigation", at: [67, 50], size: [18, 3], in: hints, tone: grey }
+    - { id: cors-note, kind: note, label: "fonts: add crossorigin or download twice", at: [47, 54], in: hints }
+    - { id: early-hints, kind: region, label: 103 Early Hints, at: [89, 39], size: [30, 18] }
+    - { id: e-103, kind: box, label: "103: preconnect, preload", at: [91, 42], size: [26, 3], in: early-hints, tone: green }
+    - { id: e-200, kind: box, label: "200 HTML, 200 ms later", at: [91, 50], size: [26, 3], in: early-hints, tone: blue }
+    - { id: e-safari, kind: note, label: "Safari: preconnect only", at: [91, 54], in: early-hints }
+    - { id: e-common, kind: note, label: hint what all versions need, at: [105, 54], in: early-hints }
+    - { id: font-face, kind: region, label: One font face while it loads, at: [1, 61], size: [62, 16] }
+    - { id: ff-declared, kind: box, label: declared, at: [3, 64], size: [9, 3], in: font-face, tone: grey }
+    - { id: ff-block, kind: box, label: "block: invisible text", at: [17, 64], size: [11, 3], in: font-face, tone: red }
+    - { id: ff-swap, kind: box, label: "swap: fallback shown", at: [35, 64], size: [11, 3], in: font-face, tone: amber }
+    - { id: ff-loaded, kind: box, label: web font in use, at: [52, 64], size: [9, 3], in: font-face, tone: green }
+    - { id: ff-failed, kind: box, label: "failure: fallback stays", at: [35, 72], size: [11, 3], in: font-face, tone: grey }
+    - { id: font-display, kind: region, label: font-display and the fallback, at: [65, 61], size: [54, 14] }
+    - { id: fd-swap, kind: box, label: "swap: tiny block, endless swap", at: [67, 64], size: [24, 3], in: font-display, tone: amber }
+    - { id: fd-block, kind: box, label: "block: about 3 s hidden", at: [93, 64], size: [24, 3], in: font-display, tone: red }
+    - { id: fd-optional, kind: box, label: "optional: no swap period", at: [67, 68], size: [24, 3], in: font-display, tone: green }
+    - { id: fd-auto, kind: box, label: "auto: the browser's choice", at: [93, 68], size: [24, 3], in: font-display, tone: grey }
+    - { id: fd-metrics, kind: note, label: "size-adjust and overrides: no shift", at: [67, 72], in: font-display }
+  arrows:
+    - { id: then-200, from: e-103, to: e-200, label: then }
+    - { id: ff-needed, from: ff-declared, to: ff-block, label: needed }
+    - { id: ff-timer, from: ff-block, to: ff-swap, label: timer ends }
+    - { id: ff-arrives, from: ff-swap, to: ff-loaded, label: arrives }
+    - { id: ff-gives-up, from: ff-swap, to: ff-failed, label: ends }
+beats:
+  - point: Every request has two clocks, when its URL is found and its rank once it is, and the browser's default ranks are a guess that is wrong for a few important files.
+    kind: mechanism
+    weight: core
+    teach:
+      - Discovery is when the browser learns a URL; priority is where the request stands in the queue, and over HTTP/2 and HTTP/3 how it shares the connection. Hints act on one clock or the other.
+      - "Chrome's defaults show the guesses. A stylesheet in the head is Highest and rightly so. An image starts Low until layout shows it is in view; a font is Highest but only requested once layout finds text that uses it; prefetch is Lowest by design."
+      - The values are not standardised; Chromium documents its own, and the other engines follow the same broad order.
+    draw: [two-clocks, clock-found, clock-rank, p-css, p-hero, p-font, p-prefetch]
+    check: Ferrymark's web font is requested at Highest priority, yet it arrives late. Which clock is the problem?
+    answer: Discovery; it is ranked high but only requested once layout finds text that uses it, often hundreds of milliseconds after the HTML.
+    misconceptions:
+      - "A Highest priority means a file arrives early -> rank only orders known requests; a file found late is still late."
+  - point: preconnect does the DNS, TCP and TLS work for another origin ahead of time and dns-prefetch only the lookup, and a preconnect only pays off for an origin the page uses straight away.
+    kind: rule
+    weight: core
+    teach:
+      - A fresh connection costs about three round trips with TLS 1.3, 300 ms on a 100 ms phone link. preconnect does all of it early; dns-prefetch does only the lookup, which is cheap enough to spread wider.
+      - It only helps for other origins, since the page's own already has the connection the HTML came over. A font host's preconnect needs crossorigin, because fonts are fetched in anonymous CORS mode and use a separate connection.
+      - A warm connection unused for about 10 seconds is closed, and each costs sockets and CPU, so two or three preconnects for critical origins is the usual ceiling.
+    draw: [hints, h-preconnect, h-dns]
+    check: Ferrymark adds a preconnect for its own origin and eight more for origins used later. What is wrong with that?
+    answer: Its own origin already has a connection, and preconnects to origins not used right away are closed after about 10 seconds while costing sockets and CPU; keep two or three for critical origins and use dns-prefetch for the rest.
+    misconceptions:
+      - "Preconnect to every origin the page might use -> each costs sockets and handshakes and is dropped after about 10 s unused; two or three is the ceiling."
+  - point: preload starts the fetch of a file the preload scanner cannot see, and it must carry the right as, and crossorigin for a font, or the browser cannot match it and downloads the file twice.
+    kind: rule
+    weight: core
+    teach:
+      - preload is for files found late, a font named only in CSS, an image set as a CSS background, a script another script injects. as tells the browser what kind of request it is, which priority to use and which cache entry the real use will look up.
+      - Preload only downloads. modulepreload also parses and compiles a module and puts it in the module map; prefetch is for the next navigation, at Lowest, same-site only, and Safari ignores it.
+    draw: [h-preload, h-modulepreload, h-prefetch, cors-note]
+    check: A team preloads Ferrymark's Keelson font without crossorigin. What happens?
+    answer: The preloaded copy is a different request from the real one, which fonts make in anonymous CORS mode, so the browser cannot match them and downloads the font twice.
+    misconceptions:
+      - "crossorigin only matters for fonts on other origins -> fonts are always fetched in CORS mode, so even a same-origin font preload needs it."
+      - "preload runs the script -> preload only downloads; modulepreload also parses and compiles a module."
+  - point: fetchpriority leaves discovery alone and changes the rank, so an image already in the HTML wants fetchpriority high, and only a file found late needs a preload.
+    kind: decision
+    weight: core
+    teach:
+      - Preload moves the first clock, discovery; fetchpriority moves the second, rank. They are easy to confuse.
+      - Ferrymark's harbour photo is an img near the top of the HTML, so the scanner finds it at once; what it lacks is rank. fetchpriority high starts it at High instead of waiting for layout to promote it.
+      - A low value helps too. Three card photos marked low leave Chrome's Medium head start for the first five large images, so the hero gets through. If everything is high, nothing is.
+    draw: [h-fetchpriority]
+    check: The hero is an img tag near the top of the HTML. What single hint helps it most, and why not a preload?
+    answer: fetchpriority high on the img; the scanner already finds it early, so a preload adds nothing, while the hint lifts its rank from Low or Medium to High from the start.
+    misconceptions:
+      - "Preload the hero image -> an img in the HTML is found early anyway; it needs rank, which is fetchpriority."
+  - point: With 103 Early Hints a server sends preconnect and preload links while it is still building the HTML, so the browser uses the idle wait.
+    kind: mechanism
+    weight: supporting
+    teach:
+      - Today's sailings page is built per request, so the connection sits idle for a few hundred milliseconds. The server or CDN sends a 103 carrying Link headers, then the real 200 when ready.
+      - Browsers act on preconnect and preload in a 103; Safari acts on preconnect but not preload. The hints go out before the page is known, so they should name what every version needs, the stylesheet, the heading font, the image CDN.
+    draw: [early-hints, e-103, e-200, then-200, e-safari, e-common]
+    check: What does a 103 Early Hints response let the browser do, and what should it name?
+    answer: Act on preconnect and preload links while the server is still building the HTML; it should name things every version of the page needs.
+  - point: A font face goes through a block period of invisible text, a swap period of visible fallback, and a failure period where the fallback stays, and font-display sets how long the first two last.
+    kind: mechanism
+    weight: core
+    teach:
+      - The timer starts when layout first needs the face. In the block period the text takes space but is invisible; in the swap period the fallback is drawn and replaced when the file lands; in the failure period the browser keeps the fallback.
+      - swap has an almost zero block period and an endless swap. block has a short block period, which the spec suggests is about 3 seconds, so it is a recommendation, not a fixed number. optional has a tiny block period and no swap, so a font that misses it waits for the next page. auto is the browser's choice; Chromium and Firefox behave like block.
+      - Hidden text is FOIT and a change of face is FOUT. No value avoids both on a slow link; preload the face so it usually lands before the first paint.
+    draw: [font-face, ff-declared, ff-block, ff-needed, ff-swap, ff-timer, ff-loaded, ff-arrives, ff-failed, ff-gives-up, font-display, fd-swap, fd-block, fd-optional, fd-auto]
+    check: Which font-display value can leave the fallback on screen for the whole page view even if the font arrives a second later, and why?
+    answer: optional; it has a tiny block period and no swap period, so a font that misses that window goes straight to failure for this view, and the downloaded file helps the next page.
+    misconceptions:
+      - "Every browser hides text for exactly 3 s -> 3 s is the spec's suggestion for a short block period; auto leaves it to the browser."
+      - "swap avoids every flash -> it trades invisible text for a change of face when the font lands."
+  - point: A change of face moves nothing when the fallback is declared as its own font face over a local font with size-adjust and the line-box overrides set to the web font's metrics.
+    kind: rule
+    weight: core
+    teach:
+      - Text shifts at the swap when the fallback's letters are wider or narrower or its line box taller or shorter, so lines rewrap and everything below moves.
+      - Declare a fallback face over local Arial with size-adjust for width and ascent, descent and line-gap overrides for the line box; the numbers come from the fonts' metric tables. Safari supports size-adjust but not the overrides as of 2026.
+      - Ship WOFF2 and subset each face with unicode-range; a preload fetches its URL regardless, so preload only the first screen's subset.
+    draw: [fd-metrics]
+    check: Why does a swap from Arial to Keelson make the text below jump, and what removes the jump?
+    answer: The two fonts have different widths and line heights, so lines rewrap; a fallback face over Arial with size-adjust and the ascent, descent and line-gap overrides matched to Keelson keeps the box the same.
+task:
+  prompt: Draw the two clocks of a request and put preload and fetchpriority on the clock each one moves, then draw a font face's block, swap and failure periods and mark where swap and optional differ.
+  expects: [1, 3, 4, 6]

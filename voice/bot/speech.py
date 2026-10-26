@@ -30,7 +30,7 @@ CLOSING = {
 }
 
 
-# A coach lesson (docs/interview/coach-mode.md) ends on its summary, not on feedback.
+# A coach lesson (docs/coach-mode.md) ends on its summary, not on feedback.
 CLOSING_COACH = {
     "time": "That's all the time we have for this lesson. Thank you; what you understood is summed up in the room.",
     "turns": "That's as far as this lesson goes. Thank you; what you understood is summed up in the room.",

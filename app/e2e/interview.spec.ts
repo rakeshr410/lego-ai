@@ -2,11 +2,11 @@ import AxeBuilder from '@axe-core/playwright';
 import type { Page } from '@playwright/test';
 import { expect, readableTopics, test } from './fixtures';
 
-// The mock interview (P3-11, docs/interview/README.md), end to end against the mocked Anthropic
-// API (e2e/mock-anthropic.mjs). Which half runs depends on the build under test:
+// The mock interview (P3-11, docs/README.md), end to end against the mocked Anthropic API
+// (e2e/mock-anthropic.mjs), through the edge router with the main site (playwright.config.ts).
+// Which half runs depends on the build under test:
 //
-//   PUBLIC_INTERVIEW_ENABLED unset (the default build): the site shows no trace of it. No page, no
-//   API, no entry point on the reader.
+//   PUBLIC_INTERVIEW_ENABLED unset (the default build): no page and no API.
 //   PUBLIC_INTERVIEW_ENABLED=true (build and test with it): sign up, open the system's interview
 //   from the reader, consent, answer, move on, end, read the feedback, delete the session.
 //
@@ -32,15 +32,12 @@ async function noSeriousAxe(page: Page, label: string) {
 test.describe('mock interview, flag off (the default build)', () => {
   test.skip(ON, 'this build has PUBLIC_INTERVIEW_ENABLED=true');
 
-  test('has no page, no API and no entry point', async ({ page, request, signIn }) => {
-    await signIn(); // the reader page is for signed-in readers (src/lib/gated.ts)
+  // This app's half: no page and no API. That the main site's reader pages offer no entry point
+  // is the main site's own spec (lego/web/e2e/interview-links.spec.ts).
+  test('has no page and no API', async ({ request, signIn }) => {
+    await signIn();
     expect((await request.get(interviewPath)).status()).toBe(404);
-    expect((await request.get(`${readerPath}/interview`)).status()).toBe(404);
     expect((await request.get(`/api/interview?system=${SYSTEM}`)).status()).toBe(404);
-    await page.goto(readerPath);
-    await expect(page.locator('.rd-rail')).toHaveCount(1);
-    await expect(page.getByText('Mock interview', { exact: true })).toHaveCount(0);
-    await expect(page.locator(`a[href*="interview"]`)).toHaveCount(0);
   });
 });
 
@@ -146,7 +143,7 @@ test.describe('the interview room page’s policy', () => {
   const BOARD = process.env.PUBLIC_INTERVIEW_BOARD_ENABLED === 'true';
 
   // The whiteboard's canvas creates a worker from a blob URL: its page, and only its page, allows
-  // that (roomCsp, docs/interview/README.md "Whiteboard"); a build without the board keeps the
+  // that (roomCsp, docs/README.md "Whiteboard"); a build without the board keeps the
   // site's policy everywhere.
   test(`allows a blob worker on the room page ${BOARD ? 'with' : 'and nowhere else without'} the board`, async ({ request }) => {
     const res = await request.get(interviewPath);

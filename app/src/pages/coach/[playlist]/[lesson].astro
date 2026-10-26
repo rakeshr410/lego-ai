@@ -1,0 +1,20 @@
+---
+import AppLayout from '../../../layouts/AppLayout.astro';
+import InterviewApp from '../../../components/sd/InterviewApp';
+import { getLessonPages, type InterviewPage } from '../../../lib/interview.node';
+import t from '../../../i18n/messages/interview';
+
+// One lesson of a coaching playlist (docs/coaching.md): its landing page and the room, the coach's
+// (InterviewApp with the lesson's page: the coach teaches it on the whiteboard). Behind
+// PUBLIC_INTERVIEW_ENABLED: with the flag off no page is built.
+export async function getStaticPaths() {
+  const pages = await getLessonPages();
+  return pages.map((page) => ({ params: { playlist: page.course!.playlist, lesson: page.course!.lesson }, props: { page } }));
+}
+
+const { page } = Astro.props as { page: InterviewPage };
+---
+
+<AppLayout title={t('lesson.meta.title', { lesson: page.title, playlist: page.system.name })} description={t('lesson.meta.description', { minutes: page.minutes, title: page.title })} noindex>
+  <InterviewApp client:load page={page} />
+</AppLayout>

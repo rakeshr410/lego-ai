@@ -1,0 +1,107 @@
+# News feed interview, application state: what each component reads, written as one nested tweet, then normalized into a store written as JSON that grows key by key: tweets, users and images by id, reply ids on open, and the feed's order. Where it is stored is the next pack.
+id: twitter/news-feed-end-to-end/application-state
+title: Derive the state, then normalize it
+source:
+  hash: "078e05404c52"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: twitter/news-feed-end-to-end/components
+  assumes:
+    - "A TweetCard shows an author row, text, up to four images and counts; FeedList shows the tweets in order."
+    - Reply threads are out of scope; the feed shows counts only.
+  carries:
+    - "State is derived from the components: FeedList reads the tweets in order; a TweetCard reads one tweet: author name and avatar, text, time, images, counts."
+    - "The store is normalized: tweets, users and images by id, each stored once; a tweet refers to its author and images by id."
+    - "Reply ids by tweet are filled only when a thread opens."
+    - "The order lives in feed ids, newest first by created time then id; the feed also holds the cursor, a status and pending ids."
+  terms:
+    - term: normalized store
+      means: A store where each record is kept once in a map by id, and records refer to each other by id instead of nesting.
+    - term: feed ids
+      means: The feed's order as a list of tweet ids, newest first by created time and then id.
+board:
+  keep: [title, mock-up, phone, mock-header, tweet-one, author-row, tweet-text, image-box, action-row, tweet-two, more-below, requirements, fr-heading, fr-newest, fr-endless, fr-images, fr-new, fr-end, nfr-heading, nfr-devices, nfr-network, nfr-load, nfr-js, nfr-cpu, nfr-tasks, nfr-inp, nfr-stable, nfr-offline, components, c-feed-screen, c-feed-list, c-tweet-card, c-author, c-text, c-image, c-actions, c-store, c-client, c-live, c-cache, screen-holds-list, list-holds-card, list-reads-store, store-calls-client]
+  elements:
+    - { id: state, kind: region, label: "State", at: [1, 34], size: [57, 18] }
+    - { id: naive, kind: region, label: "what a TweetCard reads", at: [2, 36], size: [18, 6], in: state, tone: red }
+    - { id: need-tweet, kind: note, label: "tweet: { text, time, images,", at: [3, 38], in: naive }
+    - { id: need-author, kind: note, label: "author: { name, avatar },", at: [5, 39], in: naive }
+    - { id: need-counts, kind: note, label: "replies, retweets, likes }", at: [5, 40], in: naive }
+    - { id: naive-note, kind: note, label: author copied into every tweet, at: [2, 43], in: state, tone: red }
+    - { id: feed-store, kind: region, label: "Feed Store, normalized", at: [31, 36], size: [26, 14], in: state, tone: amber }
+    - { id: js-open, kind: note, label: "{ tweets: {", at: [32, 38], in: feed-store }
+    - { id: js-tweet, kind: note, label: "t1: { text, time, replies, retweets, likes,", at: [34, 39], in: feed-store }
+    - { id: js-tweet-refs, kind: note, label: "authorId: u1, imageIds: [i1] } },", at: [36, 40], in: feed-store }
+    - { id: js-users, kind: note, label: "users: { u1: { name, handle, avatar } },", at: [33, 41], in: feed-store }
+    - { id: js-images, kind: note, label: "images: { i1: { url, width, height } },", at: [33, 42], in: feed-store }
+    - { id: js-replies, kind: note, label: "replyIds: { t1: [] },  on open", at: [33, 43], in: feed-store }
+    - { id: js-feed, kind: note, label: "feed: { ids: [t1, t2, t3],", at: [33, 44], in: feed-store }
+    - { id: js-meta, kind: note, label: "cursor: c2, status: idle,", at: [35, 45], in: feed-store }
+    - { id: js-pending, kind: note, label: "pending: [t9, t10] } }", at: [35, 46], in: feed-store }
+    - { id: order-note, kind: note, label: "ids newest first, by created time, then id", at: [32, 48], in: feed-store }
+  arrows:
+    - { id: normalize, from: naive, to: feed-store, label: normalize }
+beats:
+  - point: "Derive the state from the components, not from the API: walk the tree and ask what each one reads. FeedList reads the tweets in order; a TweetCard reads one tweet, its author's name and avatar, the text and time, the images and the counts."
+    kind: component
+    weight: core
+    teach:
+      - "Start from the components we just drew, not from a store shape. Walk the tree: FeedList needs the tweets, in order. Each TweetCard needs one tweet."
+      - "Write what one card reads as JSON, a key at a time: the tweet's text, time and images for TweetText and ImageBox; the author with name and avatar for AuthorRow; the reply, retweet and like counts for ActionRow."
+    draw: [state, naive, need-tweet, need-author, need-counts]
+    check: Where do you start when deciding the client's state?
+    answer: From the components; walk the tree and write down what each one reads.
+  - point: "Kept as the card reads it, the state is a list of nested tweets with the author inside each; the same author is copied into every tweet they wrote, so a new avatar means updating every copy, and finding one tweet means a scan."
+    kind: failure
+    weight: supporting
+    teach:
+      - "A list of these works for one screen. But user 1 wrote ten of the tweets, so user 1 is copied ten times."
+      - "A new avatar means finding and updating every copy, and finding one tweet means scanning the list."
+    draw: [naive-note]
+    check: In the nested shape, what does it cost when an author changes their avatar?
+    answer: Every tweet that author wrote holds a copy of the author, so each must be found and updated.
+  - point: "Normalize what the components read: every record gets an id and nested objects become ids (first normal form), every field lives on the record it depends on (second), which gives tweets, users and images keyed by id, each read in constant time."
+    kind: decision
+    weight: core
+    teach:
+      - "So normalize it. Open the store as JSON and add one key at a time. Tweets by id: t1 keeps its own fields, text, time and its reply, retweet and like counts, and points to its author and images by id."
+      - "Users by id: u1 with name, handle and avatar, stored once. Images by id: url, width and height. That is first normal form, nested objects become ids, and second, each field lives on its own record."
+      - User 1's new avatar is now one write under users, and every card that shows them reads it from there.
+    draw: [feed-store, normalize, js-open, js-tweet, js-tweet-refs, js-users, js-images]
+    check: An author changes their avatar. In the normalized store, how many records change?
+    answer: One, the user under users; every card showing that author reads it from there.
+    misconceptions:
+      - "Normalizing means a full database schema -> on the client, records by id with fields on their own record are enough."
+  - point: "Replies are not loaded with the feed: a replyIds key maps a tweet id to its reply ids, filled only when the reader opens that tweet's thread, since the feed shows only counts."
+    kind: component
+    weight: supporting
+    teach:
+      - "Add one more key, replyIds by tweet. It stays empty until the reader opens a thread; the card only shows the count."
+    draw: [js-replies]
+    check: When does replyIds get filled for a tweet?
+    answer: Only when the reader opens that tweet's reply thread.
+  - point: "The feed's order is not a property of any tweet, so it gets its own key: feed, with ids newest first, sorted by created time then id, the next cursor, a status, and the pending ids the new-tweets pill counts."
+    kind: component
+    weight: core
+    teach:
+      - "Last key: feed. Its ids hold the order, newest first, sorted by created time and then id, so two tweets in the same millisecond keep a fixed order."
+      - "Beside the ids: the cursor for the next page, the status (idle, loading, error or end), and pending, the new tweets the pill counts. Close the store."
+      - "The list reads only feed ids; each card looks its tweet up by id."
+    draw: [js-feed, js-meta, js-pending, order-note]
+    check: Where does the order of the feed live, and why there?
+    answer: In feed ids, newest first by created time then id; order belongs to the feed, not to a tweet.
+    misconceptions:
+      - "Each tweet stores its position -> positions shift whenever tweets arrive; the order is one list of ids on the feed."
+asks:
+  - ids: [need-tweet, need-author, need-counts]
+    beats: [1]
+    question: "Walk the components: what does one TweetCard need to read? Name the fields and I'll write them as JSON."
+    hints:
+      - Look at the author row on the mock-up. What does it show?
+      - And the action row, under the images?
+task:
+  prompt: "Write the Feed Store for Twitter as JSON: tweets, users and images by id, reply ids on open, and the feed with its ids, cursor, status and pending ids."
+  expects: [3, 4, 5]

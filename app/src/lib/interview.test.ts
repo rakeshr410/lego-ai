@@ -1,13 +1,12 @@
-import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
-import { buildSnapshot } from './content-snapshot.node';
+import { buildSnapshot, snapshotPaths } from './content-snapshot.node';
 import { drillList, toInterviewPage } from './interview.node';
 
 // What an interview page is given of its plan (P3-11): the candidate-facing fields only.
 
 vi.spyOn(console, 'warn').mockImplementation(() => {});
-const snapshot = buildSnapshot(join(fileURLToPath(new URL('../../../', import.meta.url)), 'content'));
+const snapshot = buildSnapshot(snapshotPaths(fileURLToPath(new URL('../../', import.meta.url))).contentDir);
 const entry = snapshot.interviews.find((i) => i.system === 'instagram')!;
 const topics = new Map(snapshot.topics.filter((t) => t.system === 'instagram').map((t) => [t.slug, t]));
 const topicOf = (slug: string) => {
@@ -44,7 +43,7 @@ describe('toInterviewPage', () => {
   });
 });
 
-// Drills (docs/interview/README.md, "Drills"): a topic's and each section's short plan, on the
+// Drills (docs/README.md, "Drills"): a topic's and each section's short plan, on the
 // tracks that opt in (tracks.yaml interviewDrills: the agentic track); a page lists them topic by
 // topic, each topic's sections under it.
 describe('drills', () => {

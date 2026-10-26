@@ -1,0 +1,114 @@
+# The box model's idea: four rectangles per element, where their size comes from, and normal flow's two moves.
+id: formatting-contexts-and-css-positioning/box-model-and-normal-flow/key-idea
+title: Four rectangles per element
+source:
+  hash: f3453b74201a
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: null
+  assumes: []
+  carries:
+    - "Every element is laid out as four nested rectangles: content, padding, border, margin."
+    - By default width sizes the content box; box-sizing border-box makes it size the border box.
+    - A box's size comes from its content, its own properties and its containing block.
+    - Normal flow stacks block boxes and wraps inline content into lines.
+  terms:
+    - term: content box
+      means: The innermost rectangle, holding text and child boxes; width sizes it by default.
+    - term: border box
+      means: Content plus padding plus border; what the reader sees as the element's edge.
+    - term: containing block
+      means: The rectangle a box is measured against; for a box in flow, its parent's content box.
+    - term: normal flow
+      means: Layout with no flex, grid, floats or positioning; blocks stack, inline content wraps.
+board:
+  keep: []
+  elements:
+    - { id: card, kind: region, label: One card as boxes, at: [2, 1], size: [40, 23] }
+    - { id: content-box, kind: box, label: content box, at: [10, 12], size: [24, 4], tone: blue }
+    - { id: padding-box, kind: region, label: padding box, at: [8, 9], size: [28, 9] }
+    - { id: border-box, kind: region, label: border box, at: [6, 6], size: [32, 14] }
+    - { id: margin-box, kind: region, label: margin box, at: [4, 3], size: [36, 19], in: card, dashed: true }
+    - { id: margin-outside, kind: note, label: "margin: outside the width, always", at: [44, 4] }
+    - { id: content-box-sum, kind: note, label: "border box: 320 + 2 × 16 + 2 × 1 = 354", at: [44, 7] }
+    - { id: border-box-rule, kind: note, label: "border-box: content 320 − 32 − 2 = 286", at: [44, 10] }
+    - { id: width-rule, kind: note, label: "content box: width 320", at: [44, 13] }
+    - { id: size-inputs, kind: region, label: "A box's size comes from", at: [66, 1], size: [52, 9] }
+    - { id: own-content, kind: box, label: its content, at: [68, 4], size: [14, 3], in: size-inputs }
+    - { id: own-props, kind: box, label: its own properties, at: [84, 4], size: [14, 3], in: size-inputs }
+    - { id: containing-block, kind: box, label: its containing block, at: [100, 4], size: [16, 3], in: size-inputs, tone: blue }
+    - { id: normal-flow, kind: region, label: Normal flow, at: [66, 12], size: [52, 21] }
+    - { id: parent-block, kind: region, label: parent block, at: [68, 15], size: [24, 16], in: normal-flow, tone: blue }
+    - { id: block-1, kind: box, label: heading block, at: [70, 18], size: [20, 3], in: parent-block, tone: blue }
+    - { id: block-2, kind: box, label: list block, at: [70, 26], size: [20, 3], in: parent-block, tone: blue }
+    - { id: line-boxes, kind: region, label: inline content, at: [94, 15], size: [22, 16], in: normal-flow }
+    - { id: line-1, kind: box, label: line box 1, at: [96, 18], size: [18, 3], in: line-boxes }
+    - { id: line-2, kind: box, label: line box 2, at: [96, 26], size: [18, 3], in: line-boxes }
+  arrows:
+    - { id: stack, from: block-1, to: block-2, label: stacks }
+    - { id: wrap, from: line-1, to: line-2, label: wraps }
+beats:
+  - point: Before painting, the browser turns every element into a box made of four nested rectangles, content, padding, border and margin.
+    kind: mechanism
+    weight: core
+    teach:
+      - Start from Slatework's task card. Layout does not see a card; it sees a rectangle, and in fact four, one inside the other.
+      - Name them from the inside out as you draw them, content for the title and children, then padding, then the border the reader sees as the card's edge, then the margin that keeps neighbours away.
+    draw: [card, content-box, padding-box, border-box, margin-box]
+    check: Name the four rectangles of a box, from the inside out.
+    answer: Content, padding, border, margin; the margin is the outermost and only spaces the box from its neighbours.
+    misconceptions:
+      - "The margin is part of the box's background -> the margin is transparent space outside the border; the background stops at the border box."
+  - point: By default, width sets only the content box, so padding and border are added outside it and the card grows wider than the number declared.
+    kind: rule
+    weight: core
+    teach:
+      - The design file says 320 pixels wide with 16 of padding and a 1-pixel border, and the developer types exactly that. The card shows up 354 pixels wide and sticks out of its column.
+      - Nothing is broken. The default box-sizing, content-box, reads width as the content's width, then adds both paddings and both borders on the outside. Work the sum out loud.
+    draw: [width-rule, content-box-sum]
+    check: "A card has width: 300px, padding: 20px, border: 2px and the default box-sizing. How wide is its border box?"
+    answer: 344 pixels, 300 of content plus 2 × 20 of padding plus 2 × 2 of border.
+    misconceptions:
+      - "width includes the padding -> only under box-sizing: border-box; by default it is the content alone."
+  - point: "box-sizing: border-box makes width size the border box, so padding and border eat into the content; margin is outside the width either way."
+    kind: rule
+    weight: core
+    teach:
+      - Switch the same card to border-box. Now 320 is the border box, the edge the reader sees, and the content gets what is left, 320 minus 32 of padding minus 2 of border, 286.
+      - Point out what neither value touches. The margin sits outside the border box under both, so it never counts towards the width.
+    draw: [border-box-rule, margin-outside]
+    check: "Under box-sizing: border-box, what happens to the content area when you add more padding?"
+    answer: It shrinks; the border box stays at the declared width and the padding is taken from the content.
+    misconceptions:
+      - "border-box also counts the margin -> margin is outside the box under both values."
+  - point: A box's size comes from three inputs, its content, its own properties, and its containing block, and a block box with width auto fills its containing block.
+    kind: mechanism
+    weight: core
+    teach:
+      - Three things decide a box's size. What is inside it, which mostly sets its height. Its own properties, width, height, padding, border, margin and box-sizing. And its containing block, usually the parent's content box.
+      - A block box told nothing about its width fills the width its containing block offers. Its text decides how tall it gets, not how wide.
+    draw: [size-inputs, own-content, own-props, containing-block]
+    check: "In normal flow, what decides how wide a block box with width: auto becomes?"
+    answer: The inline size of its containing block, minus its own margins, borders and padding; its text only decides its height.
+    misconceptions:
+      - "A block is as wide as its text -> that is an inline box; a block with width auto fills its containing block."
+  - point: Normal flow has two moves, block-level boxes stack one under the other, and inline content runs along a line and wraps onto the next.
+    kind: mechanism
+    weight: core
+    teach:
+      - Once the boxes exist they have to be placed. With no flex, grid, floats or positioning, the browser uses normal flow.
+      - Block-level boxes go one under the other, each as wide as the parent allows. Inline content such as text, links and chips runs along a line and, when it runs out of room, wraps onto a new line underneath.
+    draw: [normal-flow, parent-block, block-1, block-2, stack, line-boxes, line-1, line-2, wrap]
+    check: In normal flow, what happens to the next block-level box, and to text that runs out of room on its line?
+    answer: The next block goes underneath the previous one at the full width; the text wraps onto a new line below.
+  - point: Two quirks of normal flow explain most spacing that doesn't match the mockup, percentages measured against the parent's width, and vertical margins that merge instead of adding up.
+    kind: rule
+    weight: supporting
+    teach:
+      - Name the two quirks and promise them for the next part. A percentage is measured against the containing block's width, and two vertical margins that touch merge into one instead of adding.
+task:
+  prompt: Draw one card as its four rectangles, label them, and write how wide its border box is for width 300px, padding 20px and border 2px with the default box-sizing.
+  expects: [1, 2]

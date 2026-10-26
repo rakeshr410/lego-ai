@@ -1,0 +1,72 @@
+# News feed interview, storage: where the state lives. Only payloads near the reader stay in memory, older pages go to IndexedDB, and each other kind of state has its own place: Cache Storage, sessionStorage, localStorage, component state.
+id: twitter/news-feed-end-to-end/storage
+title: Where the state is kept
+source:
+  hash: "39c1ef25e88c"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: twitter/news-feed-end-to-end/application-state
+  assumes:
+    - "The Feed Store keeps tweets, users and images by id, and the order in feed ids."
+    - "The last 100 tweets must be readable offline; no more than 25 cards are mounted."
+  carries:
+    - "Payloads within three pages of the reader stay in memory; older pages go to IndexedDB in idle time and come back a screen before they are needed."
+    - "Cache Storage for the shell and images, sessionStorage for the scroll anchor, localStorage only for small preferences, component state for press and hover."
+  terms:
+    - term: window
+      means: The range of feed ids whose full payloads are held in memory, three pages on each side of the reader.
+    - term: offload
+      means: Writing payloads outside the window to IndexedDB and dropping them from memory.
+board:
+  keep: [title, mock-up, phone, mock-header, tweet-one, author-row, tweet-text, image-box, action-row, tweet-two, more-below, requirements, fr-heading, fr-newest, fr-endless, fr-images, fr-new, fr-end, nfr-heading, nfr-devices, nfr-network, nfr-load, nfr-js, nfr-cpu, nfr-tasks, nfr-inp, nfr-stable, nfr-offline, components, c-feed-screen, c-feed-list, c-tweet-card, c-author, c-text, c-image, c-actions, c-store, c-client, c-live, c-cache, screen-holds-list, list-holds-card, list-reads-store, store-calls-client, state, naive, need-tweet, need-author, need-counts, naive-note, feed-store, js-open, js-tweet, js-tweet-refs, js-users, js-images, js-replies, js-feed, js-meta, js-pending, order-note, normalize]
+  elements:
+    - { id: storage, kind: region, label: "Storage", at: [1, 60], size: [57, 24] }
+    - { id: strip, kind: region, label: the feed in pages of 10, at: [2, 62], size: [55, 8], in: storage }
+    - { id: idb, kind: oval, label: "IndexedDB, older pages", at: [3, 64], size: [11, 5], in: strip, tone: amber }
+    - { id: window, kind: region, label: "window, three pages each side", at: [21, 64], size: [28, 6], in: strip, dashed: true }
+    - { id: pages-before, kind: box, label: pages 4 to 6, at: [22, 66], size: [8, 3], in: window }
+    - { id: page-reader, kind: box, label: "page 7, reader here", at: [31, 66], size: [8, 3], in: window, tone: green }
+    - { id: pages-after, kind: box, label: pages 8 to 10, at: [40, 66], size: [8, 3], in: window }
+    - { id: pages-unloaded, kind: box, label: not loaded, at: [51, 66], size: [6, 3], in: strip, dashed: true, tone: grey }
+    - { id: cache-storage, kind: box, label: Cache Storage, at: [2, 72], size: [12, 2], in: storage, tone: blue }
+    - { id: cache-note, kind: note, label: "the app shell and images, kept by the service worker", at: [15, 72], in: storage }
+    - { id: session-storage, kind: box, label: sessionStorage, at: [2, 75], size: [12, 2], in: storage, tone: blue }
+    - { id: session-note, kind: note, label: "the scroll anchor, for this tab only", at: [15, 75], in: storage }
+    - { id: local-storage, kind: box, label: localStorage, at: [2, 78], size: [12, 2], in: storage, tone: blue }
+    - { id: local-note, kind: note, label: "theme and text size only, it blocks the thread", at: [15, 78], in: storage }
+    - { id: component-state, kind: box, label: component state, at: [2, 81], size: [12, 2], in: storage, tone: blue }
+    - { id: component-note, kind: note, label: "pressed and hover, lost when the card unmounts", at: [15, 81], in: storage }
+  arrows:
+    - { id: offload, from: window, to: idb, label: offload }
+beats:
+  - point: "Keep runtime state small: ids are tiny, payloads grow, so only payloads within three pages of the reader stay in memory; pages that leave this window are written to IndexedDB in idle time and dropped, and read back a screen before the reader scrolls back to them."
+    kind: mechanism
+    weight: core
+    teach:
+      - "The store's shape is settled; now where it lives. Draw the feed as pages of 10. Five thousand ids are well under 100 KB; it is the payloads that grow. The reader is on page 7, so pages 4 to 10 stay in memory, three on each side."
+      - "As the reader moves on, a page that falls out of the window is written to IndexedDB in idle time and dropped from memory. Scrolling back, it is read back a screen early. Pages past the cursor are not loaded yet."
+      - "The same disk copy serves the offline requirement."
+    draw: [storage, strip, idb, window, pages-before, page-reader, pages-after, pages-unloaded, offload]
+    check: The reader is on page 8 and page 11 arrives. What happens to page 4?
+    answer: It falls out of the window, is written to IndexedDB in idle time and dropped from memory; it is read back if the reader scrolls back toward it.
+  - point: "Each other kind of state has its place: Cache Storage for the shell and images, sessionStorage for the scroll anchor, localStorage only for tiny preferences because it is synchronous, and component state for press and hover."
+    kind: rule
+    weight: core
+    teach:
+      - "Cache Storage: the service worker keeps the app shell and the images there. sessionStorage: the scroll anchor, for this tab's back navigation."
+      - "localStorage is synchronous and strings only, so a large write blocks the thread: theme and text size, never feed data. Component state: pressed and hover, lost harmlessly when the card unmounts."
+    draw: [cache-storage, cache-note, session-storage, session-note, local-storage, local-note, component-state, component-note]
+    check: Why offload pages to IndexedDB rather than localStorage?
+    answer: localStorage is synchronous and stores only strings, so large reads and writes block the UI thread; IndexedDB is asynchronous and stores structured records.
+    misconceptions:
+      - "localStorage is fine for feed pages -> its synchronous calls cause long tasks while scrolling; it is for a few small preferences."
+asks:
+  - ids: [cache-storage, session-storage, local-storage, component-state]
+    beats: [2]
+    question: "Besides the tweets themselves, what else does the app keep, and where in the browser would you keep each?"
+    hints:
+      - Think of the app shell and the images, and where the reader had scrolled to.
+      - And small preferences, like the theme, or a button being pressed?

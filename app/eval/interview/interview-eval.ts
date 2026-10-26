@@ -12,6 +12,7 @@ import { feedbackRequest, feedbackSchema, parseFeedback, stageMarker } from '../
 import type { Session, Turn, TurnMeta } from '../../src/lib/server/interview/sessions';
 import { costOf, MODELS } from '../../src/lib/server/llm-gateway';
 import { GOLDENS, type Golden, type GoldenTag, type GoldenTurn } from './goldens';
+import { snapshotPaths } from '../../src/lib/content-snapshot.node';
 
 // The interview eval (design section 8, "Eval harness"): the golden transcripts replayed through
 // the director, the evaluator's rules and the grader. Offline (always, in `npm test`): the
@@ -57,7 +58,8 @@ export function evalOptions(env: Record<string, string | undefined>): EvalOption
 // ---------------------------------------------------------------------------------------
 // Plans and sessions from the goldens
 
-const contentDir = fileURLToPath(new URL('../../../content', import.meta.url));
+// lego's content/ (CONTENT_DIR overrides it), where the build reads it too.
+const contentDir = snapshotPaths(fileURLToPath(new URL('../../', import.meta.url))).contentDir;
 let catalogCache: ReturnType<typeof loadContent>['catalog'] | null = null;
 const catalog = () => (catalogCache ??= loadContent(contentDir).catalog);
 

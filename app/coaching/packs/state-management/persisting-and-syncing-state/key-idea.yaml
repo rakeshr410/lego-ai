@@ -1,0 +1,104 @@
+# State that outlives the page: pick its home by who must see it again, a link recipient, this device later, or another tab now, and know each home's cost.
+id: state-management/persisting-and-syncing-state/key-idea
+title: State that outlives the page
+source:
+  hash: b00992dbbbc0
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: null
+  assumes:
+    - Each home keeps state for a different time; component state ends on unmount, a shared store on reload, the URL survives reloads and links.
+    - Server state is a cache of the server's truth, refetched rather than copied.
+  carries:
+    - Everything held only in a tab's memory is gone on reload.
+    - The home for persisted state is chosen by who must see it again, a link recipient, this device later, or another tab right now.
+    - State anyone with the address should see goes in the URL, which is public and limited in length.
+    - State for this person on this device goes in storage, which outlives the code that wrote it.
+    - Tabs share storage but not memory, so keeping them in step needs a signal, not just a place to write.
+  terms:
+    - term: sessionStorage
+      means: Synchronous string storage for one tab, about 5 MiB per origin, kept across reloads of that tab.
+    - term: localStorage
+      means: Synchronous string storage for the browser profile, about 5 MiB per origin, kept after a restart and visible to other tabs.
+    - term: IndexedDB
+      means: Asynchronous storage for the browser profile that keeps structured values, with a large shared quota.
+board:
+  keep: []
+  elements:
+    - { id: who-sees, kind: region, label: Who must see it again?, at: [2, 2], size: [56, 33] }
+    - { id: tab-memory, kind: region, label: "tab memory: gone on reload", at: [4, 5], size: [26, 8], in: who-sees, tone: red }
+    - { id: filters-example, kind: box, label: filters, at: [6, 8], size: [10, 3], in: tab-memory }
+    - { id: cart-example, kind: box, label: "cart, 3 plants", at: [18, 8], size: [10, 3], in: tab-memory }
+    - { id: who-link, kind: box, label: a friend with the link, at: [4, 16], size: [22, 3], in: who-sees }
+    - { id: home-query, kind: box, label: URL query string, at: [34, 16], size: [20, 3], in: who-sees, tone: amber }
+    - { id: url-cost, kind: note, label: "URL: public, limited length", at: [34, 20], in: who-sees }
+    - { id: who-device, kind: box, label: "this shopper, this device", at: [4, 22], size: [22, 3], in: who-sees }
+    - { id: home-device, kind: box, label: device storage, at: [34, 22], size: [20, 3], in: who-sees, tone: amber }
+    - { id: storage-cost, kind: note, label: "storage: outlives the code that wrote it", at: [34, 26], in: who-sees }
+    - { id: who-tab, kind: box, label: "another open tab, now", at: [4, 28], size: [22, 3], in: who-sees }
+    - { id: home-signal, kind: box, label: a signal between tabs, at: [34, 28], size: [20, 3], in: who-sees, tone: blue }
+    - { id: tabs-cost, kind: note, label: "tabs: shared storage, separate memory", at: [34, 32], in: who-sees }
+    - { id: homes, kind: region, label: Where state lives, at: [60, 2], size: [58, 29] }
+    - { id: row-url, kind: box, label: "URL: anyone with the link", at: [62, 5], size: [24, 3], in: homes, tone: amber }
+    - { id: row-server, kind: box, label: "server: every signed-in device", at: [90, 5], size: [26, 3], in: homes, tone: amber }
+    - { id: profile, kind: region, label: "browser profile, this device", at: [62, 10], size: [54, 19], in: homes }
+    - { id: one-tab, kind: region, label: one tab, at: [64, 13], size: [24, 14], in: profile }
+    - { id: row-memory, kind: box, label: "memory: lost on reload", at: [66, 16], size: [20, 3], in: one-tab, tone: grey }
+    - { id: row-session, kind: box, label: "sessionStorage: about 5 MiB", at: [66, 21], size: [20, 3], in: one-tab, tone: amber }
+    - { id: row-local, kind: box, label: "localStorage: about 5 MiB, strings", at: [92, 16], size: [22, 3], in: profile, tone: amber }
+    - { id: row-idb, kind: box, label: "IndexedDB: large, async, structured", at: [92, 21], size: [22, 3], in: profile, tone: amber }
+  arrows:
+    - { id: link-gets, from: who-link, to: home-query, label: filtered view }
+    - { id: device-gets, from: who-device, to: home-device, label: guest cart }
+    - { id: tab-gets, from: who-tab, to: home-signal, label: cart change }
+beats:
+  - point: Everything a page holds in JavaScript is gone on reload, so for each piece of state that must survive, the home is chosen by who must see it again.
+    kind: rule
+    weight: core
+    teach:
+      - A Mossgrove shopper narrows the catalogue to low-light, pet-safe plants under $40, cheapest first, and puts a Snake plant and two Bird's-nest ferns in the cart. All of it sits in the tab's memory; a reload resets the filters and empties the cart unless something wrote them down.
+      - Not every piece needs the same rescue. Ask who will look for it next, someone the link is sent to, this shopper on this device later, or another tab right now. The answer picks the home.
+    draw: [who-sees, tab-memory, filters-example, cart-example, homes, profile, one-tab, row-memory]
+    check: The shopper reloads the catalogue. Which of their filters and cart lines survive if nothing was written outside memory?
+    answer: None. Memory belongs to the tab's JavaScript, so a reload resets the filters and empties the cart unless they were written to the URL, storage or the server.
+  - point: A view anyone with the address should see, such as the filtered catalogue, belongs in the URL, which is public and has a practical length limit.
+    kind: decision
+    weight: core
+    teach:
+      - The filtered view should come back for anyone who opens the address, the shopper after a reload and a friend the shopper sends it to. The URL is the only home a shared link carries.
+      - The cost is that the URL is public and only safe up to about 8000 characters, and it holds strings. Put in it what you would be happy for a stranger with the link to see.
+    draw: [who-link, home-query, link-gets, url-cost, row-url]
+    check: The shopper sends a friend a link to the low-light, pet-safe plants under $40. Where must those filters live for the friend to see the same view?
+    answer: In the URL's query string, because the link is all the friend receives; memory and the shopper's storage stay on the shopper's device.
+    misconceptions:
+      - "Put the cart in the URL so it survives a reload -> a friend opening the link would inherit the cart; it belongs to this shopper on this device."
+  - point: State this person needs again on this device, such as the guest cart, belongs in device storage, which outlives the code that wrote it.
+    kind: decision
+    weight: core
+    teach:
+      - The cart should come back for this shopper next week on this device, but a friend opening the link must not get it, so it goes in device storage.
+      - Compare the homes. sessionStorage is one tab's. localStorage is the profile's, survives a restart and is seen by other tabs; both take about 5 MiB per origin of strings, synchronously. IndexedDB is the profile's too, asynchronous, with structured values and a large shared quota. The server reaches every device the person signs in on, at the price of a round trip.
+      - Storage keeps strings or cloned objects long after the release that wrote them, so a new build will meet data in last month's shape.
+    draw: [who-device, home-device, device-gets, storage-cost, row-session, row-local, row-idb, row-server]
+    check: Why does Mossgrove keep the guest cart in localStorage rather than sessionStorage or the URL?
+    answer: The cart must come back for this shopper on this device after the tab closes, which sessionStorage does not do, and it must not travel with a shared link, which the URL would do.
+    misconceptions:
+      - "localStorage can store objects as they are -> it stores strings only, synchronously; IndexedDB keeps structured values, asynchronously."
+      - "sessionStorage is shared by every tab -> it belongs to a single tab."
+  - point: Open tabs share storage but not memory, so keeping another tab in step needs a signal between tabs, not only a place to write.
+    kind: mechanism
+    weight: core
+    teach:
+      - The shopper has the product page open in a second tab. When a fern leaves the cart in the first, the badge in the second should drop at once.
+      - Writing to storage is not enough. Each tab keeps its own copy in memory, so two tabs can each believe they hold the latest cart until one is told to look again.
+    draw: [who-tab, home-signal, tab-gets, tabs-cost]
+    check: Two Mossgrove tabs show the cart, and the shopper removes a fern in one. Why does writing the cart to localStorage alone not update the other tab's badge?
+    answer: The other tab keeps its own cart in memory and does not reread storage by itself; it needs a signal that the cart changed.
+    misconceptions:
+      - "Tabs share the cart because they share localStorage -> they share storage, not memory, so each holds its own copy until told to read again."
+task:
+  prompt: "For Mossgrove's shopper, draw who must see each piece again and its home: the filtered view, the guest cart, and the badge in a second open tab, with the cost of each home."
+  expects: [2, 3, 4]

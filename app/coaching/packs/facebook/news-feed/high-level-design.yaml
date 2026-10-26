@@ -1,0 +1,143 @@
+# News feed high-level design: the components, data flowing one way through the store, and the session's four stories (first page, next page, new posts, a failed like).
+id: facebook/news-feed/high-level-design
+title: Components and how data moves
+source:
+  hash: 0e87aaed5c5b
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: facebook/news-feed/requirements-exploration
+  assumes:
+    - Ranking is a server black box; the client shows ordered pages fast, pages smoothly, keeps the reader's place and makes likes instant.
+    - New posts are announced by a pill and never inserted under the reader.
+    - An end sentinel watched by an IntersectionObserver asks for the next page before the reader reaches the end.
+    - Server-sent events carry one-way notices from server to page over HTTP, and the browser reconnects with Last-Event-ID.
+  carries:
+    - "Data flows one way: Feed Service fetches, Feed Store normalises and holds state, FeedList renders ids."
+    - The first page arrives in the server-rendered HTML; the store hydrates from it.
+    - The sentinel entering a 150% margin asks the store to load more; repeats are ignored while loading.
+    - Live Updates holds an SSE stream; new post ids wait in the store's pending ids until the pill is pressed.
+    - PostCard sends like intents to the store, which shows the like at once and restores the confirmed state if the request fails.
+  terms:
+    - term: Feed Store
+      means: The client store holding posts, users and media by id, each tab's feed, and like intents; the only caller of Feed Service.
+    - term: Feed Service
+      means: The client module that makes the HTTP calls (CSRF, 10 s timeout, one safe retry) and returns a typed result or error.
+    - term: Live Updates
+      means: The client module that holds the SSE stream of new-post notices, with a polling fallback.
+    - term: pending ids
+      means: New post ids held in the store, counted by the pill, not yet in the list.
+    - term: confirmed state
+      means: A post's like count and liked flag as the server last returned them.
+board:
+  keep: [feed-scope, scope-client, scope-server, scope-out, assume-pages, assume-device, functional, fr-first, fr-more, fr-pill, fr-like, fr-tabs, fr-back, fr-offline, non-functional, nfr-load, nfr-input, nfr-scroll, nfr-stable, nfr-access]
+  elements:
+    - { id: mockup, kind: region, label: The feed as the reader sees it, at: [31, 1], size: [19, 32] }
+    - { id: mock-tabs, kind: box, label: Top and Recent tabs, at: [33, 4], size: [16, 2], in: mockup }
+    - { id: mock-pill, kind: box, label: 2 new posts, at: [36, 7], size: [10, 2], in: mockup, tone: blue }
+    - { id: mock-post, kind: region, label: one post, at: [33, 10], size: [16, 12], in: mockup }
+    - { id: mock-author, kind: box, label: "avatar, name, time", at: [34, 12], size: [14, 2], in: mock-post }
+    - { id: mock-text, kind: note, label: "text, See more", at: [34, 15], in: mock-post }
+    - { id: mock-media, kind: box, label: photo or video, at: [34, 17], size: [14, 3], in: mock-post, tone: grey }
+    - { id: mock-counts, kind: note, label: "24 likes, 3 comments", at: [34, 20], in: mock-post }
+    - { id: mock-next, kind: box, label: next post, at: [33, 23], size: [16, 3], in: mockup, tone: grey }
+    - { id: mock-sentinel, kind: box, label: end sentinel, at: [33, 27], size: [16, 2], in: mockup }
+    - { id: mock-footer, kind: note, label: "footer: loading, offline, end", at: [33, 30], in: mockup }
+    - { id: browser, kind: region, label: Browser, at: [53, 1], size: [52, 33] }
+    - { id: feed-page, kind: region, label: "Feed page, Top and Recent", at: [55, 3], size: [48, 8], in: browser }
+    - { id: feed-list, kind: box, label: FeedList, at: [57, 5], size: [13, 3], in: feed-page, tone: blue }
+    - { id: new-posts-pill, kind: box, label: NewPostsPill, at: [72, 5], size: [13, 3], in: feed-page, tone: blue }
+    - { id: post-card, kind: box, label: PostCard, at: [87, 5], size: [14, 3], in: feed-page, tone: blue }
+    - { id: sentinel-note, kind: note, label: "sentinel 150% ahead: load more", at: [65, 9], in: feed-page }
+    - { id: end-note, kind: note, label: "no next cursor: end footer", at: [90, 9], in: feed-page }
+    - { id: feed-store, kind: oval, label: Feed Store, at: [57, 16], size: [32, 4], in: browser, tone: amber }
+    - { id: feed-service, kind: box, label: Feed Service, at: [94, 17], size: [11, 3], in: browser, tone: blue }
+    - { id: ssr-note, kind: note, label: first 10 posts in the HTML, at: [57, 22], in: browser, tone: green }
+    - { id: like-rollback, kind: note, label: "like fails: back to 24, Retry", at: [90, 22], in: browser, tone: red }
+    - { id: live-updates, kind: box, label: Live Updates, at: [76, 26], size: [13, 3], in: browser, tone: blue }
+    - { id: pending-note, kind: note, label: "new ids wait in pending, list stays put", at: [56, 27], in: browser, tone: amber }
+    - { id: offline-note, kind: note, label: "offline: keep posts, retry when online", at: [56, 31], in: browser }
+    - { id: error-map, kind: note, label: "expired cursor: fresh first page", at: [78, 31], in: browser }
+    - { id: server, kind: box, label: "Server (ranking)", at: [112, 16], size: [8, 14], tone: grey }
+  arrows:
+    - { id: mock-split, from: mockup, to: feed-page, label: split }
+    - { id: store-to-page, from: feed-store, to: feed-page, label: state }
+    - { id: store-service, from: feed-store, to: feed-service, label: calls, both: true }
+    - { id: service-server, from: feed-service, to: server, label: HTTP }
+    - { id: load-more, from: feed-list, to: feed-store, label: load more }
+    - { id: server-stream, from: server, to: live-updates, label: new posts }
+    - { id: add-pending, from: live-updates, to: feed-store, label: pending }
+    - { id: like-toggled, from: post-card, to: feed-store, label: like }
+beats:
+  - point: Start from the page the reader sees, two tabs, a pill that floats over the list, post cards with an author header, text, media and counts, and a sentinel at the end, then give each part a component.
+    kind: component
+    weight: supporting
+    teach:
+      - Sketch the feed on the left as the reader sees it. The Top and Recent tabs, a pill floating over the list when new posts are waiting, and one post card, avatar, name and time on top, then the text with See more, the media, then the like and comment counts.
+      - Under the cards an invisible end sentinel, and the footer that says loading, offline or the end.
+      - Each part becomes a component on the right, the list FeedList, each card PostCard with its AuthorHeader and MediaBox inside, the pill NewPostsPill. The mock-up is how you check nothing on screen is left without an owner.
+    draw: [mockup, mock-tabs, mock-pill, mock-post, mock-author, mock-text, mock-media, mock-counts, mock-next, mock-sentinel, mock-footer]
+    check: Which component owns the new-posts pill, and why is it drawn floating over the list rather than in it?
+    answer: NewPostsPill; it is an overlay so new posts can wait behind it without pushing the list down.
+  - point: Data flows one way, Feed Service fetches from the server, Feed Store normalises and holds the state, and the feed page renders what the store gives it.
+    kind: component
+    weight: core
+    teach:
+      - Draw the browser and, inside it, the feed page with its two tabs. FeedList is the scrolling list, PostCard one post.
+      - Below them the Feed Store, the one place state lives. It hands the page ids, a status and a pending count. Under it Feed Service, which does the HTTP calls with a CSRF token, a 10 s timeout and one safe retry, and returns a typed result or an error.
+      - The server on the right is the ranking black box. Point out the direction, requests go down through the store, data comes back up through it; the page never talks to the network.
+    draw: [browser, feed-page, mock-split, feed-list, post-card, feed-store, store-to-page, feed-service, store-service, server, service-server]
+    check: Which component is allowed to call Feed Service, and what does the page receive?
+    answer: Only Feed Store calls Feed Service; the page gets ids, a status and a pending count from the store and renders them.
+    misconceptions:
+      - "Each card fetches its own data -> the store fetches through Feed Service and cards render from the store by id."
+  - point: The first ten posts arrive inside the server-rendered HTML, and the next page is asked for when the end sentinel enters a margin of 150% ahead of the viewport.
+    kind: flow
+    weight: core
+    teach:
+      - On a normal visit the HTML already holds the first ten posts plus the same data as JSON, so the store hydrates from it with the next cursor, c1, and nothing waits on a fetch. A skeleton only shows on client navigation with an empty store or a tab opened for the first time.
+      - As the reader scrolls, the sentinel enters a margin about one and a half screens ahead. FeedList asks the store to load more; the store ignores repeats while it is already loading and fetches with c1.
+      - The page comes back with posts, users and c2. Ids already shown are dropped before the rest are appended. A null next cursor means the end, the sentinel goes and the footer says so.
+    draw: [ssr-note, sentinel-note, load-more, end-note]
+    check: The sentinel fires twice in quick succession while page 2 is loading. How many requests go out, and why?
+    answer: One; the store ignores load-more while its status is already loading more.
+    misconceptions:
+      - "The first page is fetched by the client after load -> it is rendered on the server into the HTML; the store hydrates from it."
+  - point: New-post notices arrive over a server-sent event stream held by Live Updates, and their ids wait in the store's pending list while the pill shows a count, so the list does not move.
+    kind: flow
+    weight: core
+    teach:
+      - Live Updates opens the stream when the page starts. When the server ranks in two new posts it sends a new_posts event with their ids.
+      - Live Updates passes the ids to the store, which puts them in pending, not in the list. The pill shows 2 new posts and the reader's post stays exactly where it was.
+      - Only pressing the pill prepends them, skipping any already shown, and moves the reader to the top.
+    draw: [live-updates, server-stream, add-pending, new-posts-pill, pending-note]
+    check: A new_posts event arrives while the reader is mid-feed. Which state changes?
+    answer: Only the pending ids (and their prefetched data); the ordered list and the scroll position stay as they were.
+    misconceptions:
+      - "New ids go straight to the front of the list -> they wait in pending until the reader presses the pill."
+  - point: PostCard sends a like intent to the store, which shows the like at once and, if the request fails, restores the confirmed state and offers Retry.
+    kind: flow
+    weight: core
+    teach:
+      - The reader likes Mira's post, which has 24 likes. The card sends likeToggled to the store, and the store shows it liked with 25 in the same frame while the request goes out.
+      - The POST fails with 503, again after one retry. The store goes back to the confirmed state, not liked and 24, rather than subtracting one, and a toast offers Retry.
+      - The card does not call the endpoint itself. Virtualisation can unmount it mid-request; the store outlives it, knows the confirmed state and owns the rollback.
+    draw: [like-toggled, like-rollback]
+    check: Why does PostCard send like intents to the store instead of calling the like endpoint itself?
+    answer: The card can be unmounted mid-request by virtualisation, while the store outlives it, knows the confirmed state, coalesces taps and owns the rollback.
+    misconceptions:
+      - "On failure, subtract one from the count -> restore the last confirmed state, so repeated taps and retries cannot leave it off by one."
+  - point: Each failure has an owner and a recovery, an expired cursor fetches a fresh first page and drops posts already shown, and offline keeps the loaded posts and retries when the network returns.
+    kind: failure
+    weight: supporting
+    teach:
+      - A 410 cursor_expired keeps what is on screen, fetches a fresh first page, drops ids already shown and appends the rest. A 429 counts down the server's wait in the footer, then retries once.
+      - A timeout or offline keeps the posts, says offline in the footer and retries when the browser fires online. A 401 opens a login modal over the feed and retries after sign-in.
+    draw: [offline-note, error-map]
+    check: Loading page 4 returns 410 cursor_expired. What does the client do with the posts already shown?
+    answer: Keeps them, fetches a fresh first page, drops ids already in the list and appends the rest.
+task:
+  prompt: Draw the browser with the feed page, FeedList, PostCard, Feed Store, Feed Service and Live Updates, plus the server, and label the arrows for loading a page, a new-posts notice and a like.
+  expects: [2, 3, 4, 5]

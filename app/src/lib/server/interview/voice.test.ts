@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Plan } from './plans';
 import { interviewerSystem, replyRequest, SPOKEN_STYLE } from './prompt';
+import { snapshotPaths } from '../../content-snapshot.node';
 
 // The voice room's server side (design section 6): a Pro reader's voice session, the Daily room
 // and the pipeline it is given (both vendors faked at fetch), the pipeline's lease and turns, its
@@ -34,7 +35,8 @@ const { store } = vi.hoisted(() => {
   return { store };
 });
 
-const contentDir = fileURLToPath(new URL('../../../../../content', import.meta.url));
+// lego's content/ (CONTENT_DIR overrides it), where the build reads it too.
+const contentDir = snapshotPaths(fileURLToPath(new URL('../../../../', import.meta.url))).contentDir;
 const { catalog } = loadContent(contentDir);
 const record = catalog.interviews.find((i) => i.system === 'instagram')!;
 const login = catalog.topics.find((t) => t.system === 'instagram' && t.slug === 'email-and-password-login')!;
@@ -159,6 +161,10 @@ describe('starting a voice session', () => {
     expect(pipeline.auth).toBe(`Bearer ${SECRET}`);
     expect(pipeline.body).toMatchObject({ sid: session.id, room: { url: join.url, token: 'tok-bot' }, language: 'en-IN', audioOptIn: false, plannedMinutes: 45 });
     expect(typeof pipeline.body.attach).toBe('string');
+    // The candidate's token bounds when they may join; it never ejects them mid-lesson (the room's expiry does).
+    const tokens = calls.filter((c) => c.url.endsWith('/meeting-tokens')).map((c) => c.body.properties as Record<string, unknown>);
+    expect(tokens.find((t) => t.user_id === session.id)).toMatchObject({ is_owner: false, eject_at_token_exp: false });
+    expect(tokens.find((t) => t.user_id === 'bot')).toMatchObject({ is_owner: true, eject_at_token_exp: true });
     expect(store.map.get(voiceMonthKey(PRO.documentId))).toBe('1');
     expect(store.map.get(voiceMinutesKey(PRO.documentId))).toBe('45');
     // The month's text sessions are not touched.
@@ -230,6 +236,8 @@ describe('starting a voice session', () => {
 describe('the pipeline', () => {
   it('attaches once per token, with a new epoch, and gets the opener to speak', async () => {
     const { session } = await start();
+    // Before any pipeline takes the session the room's own controls wait for the voice too (the voice speaks first).
+    await expect(svc.reply(PRO.documentId, session.id, 'typed')).rejects.toMatchObject({ code: 'voice_live', status: 409 });
     const t = token(session.id);
     const view = await voice.attachPipeline(session.id, t, 'task-1');
     expect(view).toMatchObject({ epoch: 1, seq: 0, stageIndex: 0, resumed: false, closed: null, exchangesLeft: 90 });
@@ -379,6 +387,20 @@ describe('the pipeline', () => {
     expect((await svc.readSession(PRO.documentId, id)).turns.at(-1)!.text).toBe('Who are the users, —');
   });
 
+  it('matches the words that played word by word: the voice reports them without the reply’s punctuation', async () => {
+    const full = 'Here is the feed — stories, top to bottom. Each story has an author row, then its text.';
+    expect(voice.heardPart(full, 'Here is the feed stories top to bottom Each')).toBe('Here is the feed — stories, top to bottom. Each');
+    expect(voice.heardPart(full, 'here is the Feed, stories')).toBe('Here is the feed — stories,');
+    // All of it heard, nothing heard, or other words: no cut.
+    expect(voice.heardPart(full, full)).toBeNull();
+    expect(voice.heardPart(full, '')).toBeNull();
+    expect(voice.heardPart(full, 'Something else entirely said here')).toBeNull();
+    const { id, epoch } = await attached();
+    await voice.pipelineTurn(id, { epoch, seq: 1 }, 'Mobile web first.', {});
+    await voice.pipelinePlayed(id, { epoch }, 'who are the users');
+    expect((await svc.readSession(PRO.documentId, id)).turns.at(-1)!.text).toBe('Who are the users, —');
+  });
+
   it('charges the speech its heartbeats report, to the session and both days, and renews the lease', async () => {
     const { id, epoch } = await attached();
     const a = await voice.pipelineHeartbeat(id, { epoch }, { sttSeconds: 60, ttsChars: 1000, degraded: [] });
@@ -524,7 +546,7 @@ describe('parking and ending', () => {
   });
 });
 
-describe('a voice coach lesson (docs/interview/coach-mode.md, phase 2)', () => {
+describe('a voice coach lesson (docs/coach-mode.md, phase 2)', () => {
   it('drives itself: the pipeline attaches to a self-drive, asks for each move as a continue, gets its drawing, takes the spoken answer in sequence, and trims a cut move', async () => {
     const { session } = await voice.startVoiceSession(PRO, 'instagram', VOICE_CONSENT_VERSION, false, null, 'coach');
     expect(session).toMatchObject({ kind: 'coach', mode: 'voice' });
@@ -548,6 +570,12 @@ describe('a voice coach lesson (docs/interview/coach-mode.md, phase 2)', () => {
     const [body] = create.mock.calls.at(-1)!;
     expect(body.system[0].text).toContain('You are the coach');
     expect(body.system[0].text).toContain('This lesson is spoken aloud');
+    // Cut after its first words: the turn keeps what was heard, and the coach reads back only that, not its drawing.
+    await voice.pipelinePlayed(session.id, { epoch: view.epoch }, 'welcome');
+    const trimmed = JSON.parse(store.map.get(`interview:session:${session.id}`)!).turns.at(-1);
+    expect(trimmed.text).toBe('Welcome. —');
+    expect(trimmed.meta.interrupted).toBe(true);
+    expect(trimmed.meta.said).toBeUndefined();
     // The learner's words are a spoken turn in sequence, answered by the coach; the lease counts it.
     create.mockResolvedValueOnce(message('Right, phones first.'));
     const spoken = await voice.pipelineTurn(session.id, { epoch: view.epoch, seq: 1 }, 'Mobile web first, on phones.', {});

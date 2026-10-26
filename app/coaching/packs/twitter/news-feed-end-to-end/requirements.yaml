@@ -1,0 +1,122 @@
+# News feed interview, requirements: the functional and non-functional lists written next to the mock-up, each non-functional line with a number the performance sections are checked against, and what is named but not designed.
+id: twitter/news-feed-end-to-end/requirements
+title: Two short lists, each with a number
+source:
+  hash: "3241195f1acf"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: twitter/news-feed-end-to-end/mock-up
+  assumes:
+    - "A feed is tweets top to bottom, newest first, loaded as the reader goes, with no end."
+    - "A TweetCard is an author row, text, an image box sized before the image arrives, and an action row with counts."
+    - Requirements are frozen once written; the components are drawn after the requirements.
+  carries:
+    - "Functional: newest first with counts; endless, no duplicates or gaps; images only, up to four; new tweets announced within about 10 s behind a pill; the end is announced."
+    - "Non-functional, one metric a line: phones to desktops, 360 to 1440 px; LCP less than 2.5 s on a slow phone network; first load below 300 KB; initial JavaScript no more than 100 KB."
+    - "Non-functional: no more than 25 cards mounted; no task longer than 50 ms while scrolling; INP less than 200 ms; CLS below 0.1; offline, the last 100 tweets readable."
+    - "Named, not designed: posting, reply threads, video and polls, ranking; accessibility of the virtual list is the first stretch topic."
+  terms:
+    - term: functional requirement
+      means: What the feed does.
+    - term: non-functional requirement
+      means: How well it must do it on real devices and networks, stated with a number that can be checked.
+    - term: LCP
+      means: Largest Contentful Paint, when the largest piece of content shows; good is 2.5 s or less.
+    - term: INP
+      means: Interaction to Next Paint, how long a tap or key takes to show its result; good is 200 ms or less.
+    - term: CLS
+      means: Cumulative Layout Shift, how much content jumps under the reader; good is 0.1 or less.
+board:
+  keep: [title, mock-up, phone, mock-header, tweet-one, author-row, tweet-text, image-box, action-row, tweet-two, more-below]
+  elements:
+    - { id: requirements, kind: region, label: Requirements, at: [60, 3], size: [52, 23] }
+    - { id: fr-heading, kind: note, label: Functional, at: [61, 6], in: requirements }
+    - { id: fr-newest, kind: note, label: "newest first, author, text, images, counts", at: [61, 8], in: requirements }
+    - { id: fr-endless, kind: note, label: "endless, next page early, no repeats", at: [61, 10], in: requirements }
+    - { id: fr-images, kind: note, label: "images only, up to four per tweet", at: [61, 12], in: requirements }
+    - { id: fr-new, kind: note, label: "new tweets in about 10 s, behind a pill", at: [61, 14], in: requirements }
+    - { id: fr-end, kind: note, label: "the feed says when it reaches the end", at: [61, 16], in: requirements }
+    - { id: nfr-heading, kind: note, label: "Non-functional", at: [90, 6], in: requirements }
+    - { id: nfr-devices, kind: note, label: "phones to desktops, 360 to 1440 px", at: [90, 8], in: requirements }
+    - { id: nfr-network, kind: note, label: "LCP should be less than 2.5 s", at: [90, 10], in: requirements }
+    - { id: nfr-load, kind: note, label: "first load should be below 300 KB", at: [90, 12], in: requirements }
+    - { id: nfr-js, kind: note, label: "JavaScript no more than 100 KB", at: [90, 14], in: requirements }
+    - { id: nfr-cpu, kind: note, label: "no more than 25 cards mounted", at: [90, 16], in: requirements }
+    - { id: nfr-tasks, kind: note, label: "no task longer than 50 ms", at: [90, 18], in: requirements }
+    - { id: nfr-inp, kind: note, label: "INP should be less than 200 ms", at: [90, 20], in: requirements }
+    - { id: nfr-stable, kind: note, label: "CLS should stay below 0.1", at: [90, 22], in: requirements }
+    - { id: nfr-offline, kind: note, label: "offline, last 100 tweets readable", at: [90, 24], in: requirements }
+  arrows: []
+  lists:
+    - { id: fr-list, in: requirements, at: [61, 8], step: 2, slots: 9, width: 28, items: [fr-newest, fr-endless, fr-images, fr-new, fr-end] }
+    - { id: nfr-list, in: requirements, at: [90, 8], step: 2, slots: 9, width: 22, items: [nfr-devices, nfr-network, nfr-load, nfr-js, nfr-cpu, nfr-tasks, nfr-inp, nfr-stable, nfr-offline] }
+beats:
+  - point: "Functional requirements say what the feed does: tweets newest first, each with its author, time, text, images and counts, and an endless list whose next page loads before the reader reaches the end, with no duplicates and no gaps."
+    kind: requirement
+    weight: core
+    teach:
+      - "Write two short lists beside the mock-up, functional on the left, each line a numbered fact. Read them off the mock-up: tweets render top to bottom, newest first, each with author, time, text, images and reply, retweet and like counts."
+      - The feed is endless. The next page is already loading before the reader gets to the end, and nothing repeats or goes missing between pages.
+    draw: [requirements, fr-heading, fr-newest, fr-endless]
+    check: What does endless mean as a requirement, beyond the list having no end?
+    answer: The next page loads before the reader reaches the end, with no duplicates and no gaps between pages.
+  - point: "Images are the only media, up to four a tweet; new tweets posted while reading are announced within about 10 seconds and appear only when the reader asks; and the feed says when it reaches the end."
+    kind: requirement
+    weight: core
+    teach:
+      - Images only, up to four per tweet. Video, polls and link previews are out of scope for this round.
+      - New tweets posted while the reader scrolls are announced within about 10 seconds behind a pill, and come into the list only when the reader presses it. They are never inserted above the reader.
+      - When the available tweets run out, the feed says so instead of spinning.
+    draw: [fr-images, fr-new, fr-end]
+    check: Two new tweets are posted while the reader is halfway down the feed. What should the reader see?
+    answer: A pill announcing them within about 10 seconds; the list does not move, and the tweets appear only when the reader presses the pill.
+    misconceptions:
+      - "New tweets should be inserted at the top as they arrive -> inserting moves the list under the reader; they wait behind a pill."
+  - point: "Non-functional requirements say how well the feed must work, one metric a line, each tied to its target by less than, below or no more than: phones to desktops, LCP less than 2.5 s, first load below 300 KB, JavaScript no more than 100 KB."
+    kind: metric
+    weight: core
+    teach:
+      - "Write one metric per line and say how it relates to its number: less than, below, no more than. Never just the metric and a number."
+      - "It works from phones to desktops, 360 to 1440 pixels wide. LCP should be less than 2.5 seconds, so the main content shows quickly. The first load should be below 300 KB. JavaScript no more than 100 KB."
+      - Keep each to its line and one short sentence on what it protects; no more detail than the board shows.
+    draw: [nfr-heading, nfr-devices, nfr-network, nfr-load, nfr-js]
+    check: Why give each non-functional requirement a number?
+    answer: So each performance idea later can be checked against something, and you can say which requirement it serves.
+  - point: "The endless list must stay smooth: no more than 25 cards mounted, no task longer than 50 ms, INP less than 200 ms, CLS below 0.1; and offline, the last 100 tweets stay readable."
+    kind: metric
+    weight: core
+    teach:
+      - "No more than 25 cards mounted, however far the reader scrolls. No task longer than 50 milliseconds while scrolling. INP should be less than 200 milliseconds, so a tap answers quickly."
+      - "CLS should stay below 0.1, so nothing jumps under the reader. Offline, the last 100 tweets stay readable."
+      - Each line, then one short sentence on what it means for the reader; no extra numbers.
+    draw: [nfr-cpu, nfr-tasks, nfr-inp, nfr-stable, nfr-offline]
+    check: Which line is the reason the design keeps the number of cards on the page fixed?
+    answer: No more than 25 cards mounted; the list is endless and phones are the target.
+  - point: "Commit to what you can finish, the feed screen, client state and the one endpoint, live new tweets, the three performance buckets and offline reading, and name the rest: posting, reply threads, video, ranking."
+    kind: rule
+    weight: supporting
+    teach:
+      - "Say the scope out loud: committed are the feed screen with its list and card, the client state and the one feed endpoint, new tweets arriving while reading, network, rendering and JavaScript performance, and reading offline."
+      - "Named but not designed: posting a tweet (its own design), reply threads (the feed shows counts only), video, polls and link previews, and ranking (this feed is chronological). Say them, and move on."
+      - "If the interviewer asks about video halfway through: out of scope for this round, the image box would generalize to it, and keep going."
+    check: The interviewer asks about video halfway through. What fits the plan?
+    answer: Say it is out of scope for this round, explain the image box would generalize to it, and keep going; requirements are frozen.
+asks:
+  - list: fr-list
+    beats: [1, 2]
+    question: "What do you think the feed should do? Tell me one at a time, and I'll write them down."
+    hints:
+      - Think about what happens as you keep scrolling down.
+      - And when someone you follow tweets while you're reading?
+  - list: nfr-list
+    beats: [3, 4]
+    question: "Now, how well should it work? Name a quality, and a number if you have one in mind."
+    hints:
+      - Think about the phone it runs on, and the network it's on.
+      - And how it should feel while you scroll and tap.
+task:
+  prompt: Write the functional and non-functional lists beside the mock-up as numbered lines of text, one short line each, with a measurable number on every non-functional line.
+  expects: [1, 2, 3, 4, 5]

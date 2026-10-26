@@ -1,0 +1,126 @@
+# The DOM's idea: HTML is parsed once into a tree of objects, that tree is the page, writes are drawn later, and geometry reads may force work now.
+id: dom-and-virtual-dom/the-dom-as-a-live-tree/key-idea
+title: A live tree
+source:
+  hash: fba8f72323bf
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: null
+  assumes:
+    - After the DOM or CSS changes, the browser recalculates style, lays out, paints and composites to draw the next frame.
+    - Reading a layout value such as a height right after a write can make the browser lay out early, inside the script.
+  carries:
+    - The HTML string is parsed once into a tree of objects; from then on that tree is the page.
+    - The tree holds Element nodes and Text nodes, including the whitespace between tags; children lists elements, childNodes every node.
+    - Changing a node's property changes the page; the redraw waits for the next rendering opportunity, so many writes in one task are drawn in one pass.
+    - Writes are deferred, but a geometry read has to bring style and layout up to date before it can answer.
+  terms:
+    - term: DOM
+      means: The tree of live objects the browser builds from the HTML; scripts and the renderer both read it.
+    - term: node
+      means: One object in the tree, such as the Document, an Element for a tag, or a Text node for a run of characters.
+    - term: text node
+      means: A node holding characters only, including the line breaks and spaces between tags.
+    - term: rendering opportunity
+      means: The point after the current task ends when the browser updates style, layout and paint for the next frame.
+board:
+  keep: []
+  elements:
+    - { id: three-forms, kind: region, label: "One row, three forms", at: [2, 1], size: [56, 9] }
+    - { id: html-source, kind: box, label: HTML source, at: [4, 4], size: [12, 3], in: three-forms, tone: grey }
+    - { id: dom-objects, kind: box, label: DOM objects, at: [25, 4], size: [12, 3], in: three-forms, tone: blue }
+    - { id: pixels, kind: box, label: Pixels, at: [44, 4], size: [12, 3], in: three-forms }
+    - { id: oat-tree, kind: region, label: The Oat milk row as nodes, at: [2, 12], size: [58, 28] }
+    - { id: list-node, kind: box, label: "list (ul), 200 rows", at: [21, 15], size: [20, 3], in: oat-tree, tone: blue }
+    - { id: li-node, kind: box, label: "Oat milk row (li)", at: [10, 20], size: [42, 3], in: oat-tree, tone: blue }
+    - { id: ws-text, kind: box, label: whitespace text, at: [4, 25], size: [10, 3], in: oat-tree, tone: grey }
+    - { id: tick-input, kind: box, label: checkbox, at: [15, 25], size: [10, 3], in: oat-tree, tone: blue }
+    - { id: name-input, kind: box, label: name input, at: [26, 25], size: [10, 3], in: oat-tree, tone: blue }
+    - { id: stepper, kind: box, label: stepper (div), at: [37, 25], size: [10, 3], in: oat-tree, tone: blue }
+    - { id: remove-btn, kind: box, label: remove button, at: [48, 25], size: [10, 3], in: oat-tree, tone: blue }
+    - { id: output-node, kind: box, label: output, at: [37, 30], size: [10, 3], in: oat-tree, tone: blue }
+    - { id: text-two, kind: box, label: "text: 2", at: [37, 35], size: [10, 3], in: oat-tree, tone: amber }
+    - { id: child-count, kind: note, label: "children: 4, child nodes: 9", at: [4, 31], in: oat-tree }
+    - { id: write-read, kind: region, label: "Writes wait, some reads don't", at: [2, 42], size: [53, 15] }
+    - { id: write-op, kind: box, label: set the quantity text to 3, at: [4, 45], size: [20, 3], in: write-read, tone: green }
+    - { id: next-frame, kind: box, label: "next frame: one pass", at: [31, 45], size: [20, 3], in: write-read, tone: green }
+    - { id: read-op, kind: box, label: getBoundingClientRect, at: [4, 50], size: [20, 3], in: write-read, tone: red }
+    - { id: layout-now, kind: box, label: "style and layout, right now", at: [31, 50], size: [20, 3], in: write-read, tone: red }
+    - { id: batch-note, kind: note, label: "ten writes in one task: drawn once", at: [4, 54], in: write-read }
+  arrows:
+    - { id: parse-once, from: html-source, to: dom-objects, label: parsed once }
+    - { id: drawn, from: dom-objects, to: pixels, label: drawn }
+    - { id: list-li, from: list-node, to: li-node }
+    - { id: li-ws, from: li-node, to: ws-text }
+    - { id: li-tick, from: li-node, to: tick-input }
+    - { id: li-name, from: li-node, to: name-input }
+    - { id: li-stepper, from: li-node, to: stepper }
+    - { id: li-remove, from: li-node, to: remove-btn }
+    - { id: stepper-output, from: stepper, to: output-node }
+    - { id: output-text, from: output-node, to: text-two }
+    - { id: write-defer, from: write-op, to: next-frame, label: deferred }
+    - { id: read-forces, from: read-op, to: layout-now, label: forces }
+beats:
+  - point: The HTML is read once, parsed into a tree of objects, and then discarded; from that moment the tree, not the markup, is what the browser draws.
+    kind: mechanism
+    weight: core
+    teach:
+      - "Start with Basketry's Saturday shop page. The server sends a string; the parser turns it into objects and its job is done."
+      - Name the three forms of one row on the board. The source is read once by the parser and never changes after; the DOM is what scripts and the renderer use; the pixels are the painted frame user 1 looks at.
+      - "So view-source still shows the original markup even after the page has changed: it shows the string, not the tree."
+    draw: [three-forms, html-source, dom-objects, pixels, parse-once, drawn]
+    check: After Basketry's page has loaded and a script has changed a row, which of the three forms has changed and which has not?
+    answer: The DOM and, at the next frame, the pixels have changed; the HTML source has not, because it was only read once by the parser.
+    misconceptions:
+      - "The browser keeps re-reading the HTML -> the parser reads it once; afterwards the page is the object tree."
+  - point: Each tag becomes an Element node in a tree under the Document, so a list of 200 rows is 200 li objects, each holding its checkbox, name field, stepper and remove button as child objects.
+    kind: component
+    weight: core
+    teach:
+      - Draw the Oat milk row from the list down. The list holds 200 li objects; this li holds four element children, the checkbox, the name input, the stepper and the remove button.
+      - The stepper in turn holds its own children, and the browser draws whatever these objects currently say.
+    draw: [oat-tree, list-node, li-node, list-li, tick-input, name-input, stepper, remove-btn, li-tick, li-name, li-stepper, li-remove]
+    check: What does the browser actually keep for each of the 200 rows on the shopping list?
+    answer: An li Element object in the tree, with child objects for its checkbox, name field, stepper and remove button.
+  - point: Runs of characters become Text nodes, including the whitespace between tags, which is why a row with 4 child elements has 9 child nodes.
+    kind: rule
+    weight: core
+    teach:
+      - The quantity 2 is not part of the output element; it is a Text node inside it, and it is the only node a +1 has to change.
+      - The line breaks and spaces between the tags in the markup became Text nodes too. children lists element children only, 4 here; childNodes lists every direct child node, 9, so the row's first child is a whitespace Text node.
+    draw: [output-node, stepper-output, text-two, output-text, ws-text, li-ws, child-count]
+    check: Why does row.childNodes.length read 9 when the row has only 4 child elements?
+    answer: The whitespace between the tags was kept as Text nodes, and childNodes counts every direct child node, while children counts only elements.
+    misconceptions:
+      - "childNodes counts every descendant -> it lists direct children only, but text nodes as well as elements."
+  - point: The tree is live, so setting a property edits the page itself, but the redraw is deferred to the next rendering opportunity and many writes in one task are drawn in one pass.
+    kind: mechanism
+    weight: core
+    teach:
+      - "Set the Oat milk output's text to 3. That is not an edit to a copy; it is the page."
+      - Nothing is drawn at that moment. The browser notes the change and, once the current task ends, works out styles, positions and pixels together for the next frame.
+      - So ten writes in one task cost one pass of drawing, not ten.
+    draw: [write-read, write-op, next-frame, write-defer, batch-note]
+    check: "Basketry's script sets the Oat milk output's textContent to '3'. When does user 1 see the new number?"
+    answer: At the browser's next rendering opportunity, after the current task finishes; the object changes at once but drawing is deferred.
+    misconceptions:
+      - "The screen redraws on every write -> writes are only noted; the browser recomputes and paints once at the next frame."
+  - point: Writes are deferred but some reads are not; asking a node for its size or position makes the browser bring style and layout up to date before your script continues.
+    kind: rule
+    weight: core
+    teach:
+      - Now go the other way and ask the output how big it is with getBoundingClientRect. That answer cannot come from notes about pending changes.
+      - If anything changed since the last frame, the browser runs style and layout right there, inside your script, while the person waits.
+      - Reading a data attribute or querying the tree is different, it is plain object state and needs no layout.
+    draw: [read-op, layout-now, read-forces]
+    check: "Which of these can force style and layout before the script continues: qty.textContent = '3', row.dataset.id, qty.getBoundingClientRect(), row.querySelector('output')?"
+    answer: Only getBoundingClientRect, because a geometry read must answer from up-to-date layout; the write is deferred and the other two read plain object state.
+    misconceptions:
+      - "Reads are always free -> a read of size or position can force style and layout to run immediately."
+      - "Querying the tree with querySelector forces layout -> finding nodes reads the tree, not the layout."
+task:
+  prompt: Draw the Oat milk row as a tree of nodes, from the li down to the Text node holding its quantity, and mark which node a +1 changes and when the new number reaches the screen.
+  expects: [2, 3, 4]

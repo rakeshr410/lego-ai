@@ -1,8 +1,9 @@
-# interview-voice
+# voice
 
-The mock interview's voice service (design section 6; [docs/interview/README.md](../docs/interview/README.md),
+The mock interview's voice service (design section 6; [docs/README.md](../docs/README.md),
 "Voice"). One Pipecat pipeline per voice session: Daily carries the audio, Deepgram transcribes, Cartesia
-speaks. The **web tier owns the session**: the transcript, the prompt, the director, every model call, the
+speaks. The **web tier owns the session** (here "the web" is lego-ai's `app/`, the interview's own
+server; the main site, lego/web, only signs readers in): the transcript, the prompt, the director, every model call, the
 quota and the budget. This service posts each spoken turn to the web's internal routes, speaks the reply as
 it streams back, and reports its usage in heartbeats. It keeps no state of its own beyond the pipelines it
 is running.
@@ -20,7 +21,7 @@ Daily room ◀──audio── DailyTransport.output ◀─ Cartesia TTS ◀─
 
 | Route | What |
 |---|---|
-| `POST /sessions` | `{sid, attach, room: {url, token}, language, audioOptIn, plannedMinutes, kind, turnStopSecs?}`: starts a pipeline, 202 `{task}`; 503 when this task has no slot. `kind` is `interview` or `coach` (a lesson, docs/interview/coach-mode.md: the bot is "Coach", its closing lines differ); `turnStopSecs` overrides `VOICE_TURN_STOP_SECS` for the session (a lesson sends 3) |
+| `POST /sessions` | `{sid, attach, room: {url, token}, language, audioOptIn, plannedMinutes, kind, turnStopSecs?}`: starts a pipeline, 202 `{task}`; 503 when this task has no slot. `kind` is `interview` or `coach` (a lesson, docs/coach-mode.md: the bot is "Coach", its closing lines differ); `turnStopSecs` overrides `VOICE_TURN_STOP_SECS` for the session (a lesson sends 3) |
 | `GET /sessions/{sid}` | 200 `{running, task}` while this task runs the session's pipeline, 404 otherwise: the web asks before trusting a lease on a rejoin, so a crashed or restarted service is replaced at once |
 | `DELETE /sessions/{sid}` | stops the session's pipeline (the candidate ended the voice part) |
 | `GET /health` | up |
@@ -56,7 +57,7 @@ Daily room ◀──audio── DailyTransport.output ◀─ Cartesia TTS ◀─
 
 | Variable | Default | What |
 |---|---|---|
-| `INTERVIEW_WEB_URL` | `http://web.internal:4321` | the web tier on the private network |
+| `INTERVIEW_WEB_URL` | `http://ai.internal:4322` | the interview's web tier (lego-ai's `app/`) on the private network |
 | `INTERVIEW_VOICE_SECRET` | | the bearer, both ways (32+ characters; the same value the web has) |
 | `VOICE_STT`, `VOICE_TTS` | `deepgram`, `cartesia` | who transcribes (`deepgram`, `sarvam`, `smallest`) and who speaks (`cartesia`, `sarvam`, `smallest`); bot/vendors.py. Deepgram and Cartesia serve from the US, Sarvam and Smallest from India (about 0.2 s less on each leg from Mumbai or Bengaluru) |
 | `DEEPGRAM_API_KEY`, `CARTESIA_API_KEY`, `SARVAM_API_KEY`, `SMALLEST_API_KEY` | | the chosen vendors' keys (the Daily key is the web's: it mints the bot's room token) |
@@ -84,12 +85,12 @@ Daily room ◀──audio── DailyTransport.output ◀─ Cartesia TTS ◀─
 uv venv --python 3.12 .venv && uv pip install --python .venv/bin/python -e '.[dev]'
 .venv/bin/python -m pytest -q
 .venv/bin/ruff check .
-INTERVIEW_WEB_URL=http://localhost:4321 INTERVIEW_VOICE_SECRET=… DEEPGRAM_API_KEY=… CARTESIA_API_KEY=… .venv/bin/python -m app.main
+INTERVIEW_WEB_URL=http://localhost:4322 INTERVIEW_VOICE_SECRET=… DEEPGRAM_API_KEY=… CARTESIA_API_KEY=… .venv/bin/python -m app.main
 ```
 
 The tests fake the web at httpx's mock transport and run the processors through Pipecat's own test harness;
-nothing reaches a vendor. The docker-compose `voice` profile at the repository root runs the service beside
-the web with `INTERVIEW_VOICE_URL=http://voice:7860`.
+nothing reaches a vendor. The docker-compose `voice` profile at the lego-ai root runs the service beside
+the app with `INTERVIEW_VOICE_URL=http://voice:7860`.
 
 ## Latency
 
@@ -131,4 +132,4 @@ Measured 2026-10-24: `VOICE_STT=sarvam` (saaras:v3-realtime under the pipeline's
 or two words of each sentence (`LOG_LEVEL=DEBUG` prints each shaped final as `voice heard:`), so it is
 not used; `VOICE_TTS=sarvam` starts speaking 0.2 to 0.6 s after the first token, Cartesia 0.4 to 0.9 s.
 The model's leg moves the same way with the web's `LLM_PROVIDER=bedrock` (Claude in Amazon Bedrock from
-ap-south-1; web/.env.example).
+ap-south-1; app/.env.example).

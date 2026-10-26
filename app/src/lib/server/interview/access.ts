@@ -3,7 +3,7 @@ import { serverEnv } from '../env';
 import { getStore } from '../store';
 import { fail } from './service';
 
-// Early access (docs/interview/README.md "Rollout"; design phase 3). While an allowlist is set, only
+// Early access (docs/README.md "Rollout"; design phase 3). While an allowlist is set, only
 // the readers on it, and staff, may start a mock interview; everyone else sees the landing with an
 // early-access note (InterviewStatus.reason 'access'). The list is INTERVIEW_ALLOWLIST (emails,
 // comma-separated) plus the store's (`interview:allowlist`, a JSON array of emails written by

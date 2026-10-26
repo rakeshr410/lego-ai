@@ -1,0 +1,110 @@
+# Windowing's idea: the data can be as long as it likes, the DOM holds only the rows in view plus a margin, one tall empty element keeps the scrollbar, and rows are rebound as the reader scrolls.
+id: virtualization/windowing/key-idea
+title: The DOM holds the view, not the data
+source:
+  hash: 85e1c1d6d508
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: null
+  assumes:
+    - Every node in the DOM is styled and laid out, so a bigger tree makes every later change cost more.
+    - Infinite scroll only appends, so a long list keeps growing in the DOM unless it is windowed.
+  carries:
+    - Mounting one row element per item makes the tree, the memory and every later change scale with the data.
+    - A windowed list keeps all items in a JavaScript array and mounts only the rows that overlap the viewport, plus an overscan on each side.
+    - One empty spacer as tall as the whole list keeps the scrollbar, Page Down and dragging as if every row existed.
+    - On scroll, the range is recomputed and rows that leave one end are rebound to the lines entering at the other.
+    - What is not mounted is invisible to the browser, so find-in-page misses it and search has to run over the data.
+  terms:
+    - term: windowing
+      means: Rendering only the rows that intersect the viewport, plus a margin, while the rest of the list exists only as data.
+    - term: overscan
+      means: The extra rows mounted above and below the visible ones, 10 on each side in Logscope.
+    - term: spacer
+      means: An empty element as tall as the full list, so the scroll container scrolls as far as if every row were there.
+    - term: mounted range
+      means: The first and last line that currently exist as row elements.
+board:
+  keep: []
+  elements:
+    - { id: everything, kind: region, label: Every line mounted, at: [2, 2], size: [45, 10] }
+    - { id: all-rows, kind: box, label: "250,000 row elements", at: [4, 5], size: [22, 3], in: everything, tone: red }
+    - { id: heavy, kind: note, label: "1.5 million elements, over 0.5 GB", at: [28, 6], in: everything }
+    - { id: frozen, kind: note, label: seconds frozen; every change pays again, at: [4, 9], in: everything }
+    - { id: pane, kind: region, label: "Log pane, 760 px", at: [31, 22], size: [24, 10], tone: green, dashed: true }
+    - { id: visible, kind: box, label: 38 visible lines, at: [33, 24], size: [20, 6], in: pane, tone: green }
+    - { id: above-unmounted, kind: box, label: "lines above: not mounted", at: [32, 16], size: [22, 2], tone: grey, dashed: true }
+    - { id: below-unmounted, kind: box, label: "lines below: not mounted", at: [32, 36], size: [22, 2], tone: grey, dashed: true }
+    - { id: logscope-data, kind: region, label: LogStore (JS array), at: [2, 20], size: [26, 21] }
+    - { id: store, kind: oval, label: "250,000 lines", at: [4, 24], size: [22, 5], in: logscope-data, tone: amber }
+    - { id: cheap-store, kind: note, label: "a few dozen MB, nothing drawn", at: [4, 30], in: logscope-data }
+    - { id: overscan-above, kind: box, label: "overscan above: 10", at: [32, 19], size: [22, 2], tone: blue }
+    - { id: overscan-below, kind: box, label: "overscan below: 10", at: [32, 33], size: [22, 2], tone: blue }
+    - { id: mounted-count, kind: note, label: "58 rows, about 350 elements", at: [30, 41] }
+    - { id: spacer, kind: region, label: "spacer, 5,000,000 px", at: [30, 14], size: [26, 26], dashed: true }
+    - { id: recycle-note, kind: note, label: top rows return at the bottom, at: [30, 43] }
+    - { id: store-search, kind: box, label: "own search: 141 matches", at: [4, 34], size: [22, 3], in: logscope-data, tone: amber }
+    - { id: jump, kind: note, label: "jump: set scrollTop to the line", at: [4, 38], in: logscope-data }
+    - { id: find-miss, kind: note, label: "Ctrl F: 1 of 141", at: [46, 41] }
+    - { id: blank-band, kind: note, label: "fling: blank for a frame", at: [46, 43] }
+  arrows:
+    - { id: binds, from: store, to: visible, label: 58 lines }
+beats:
+  - point: Mounting one row per line asks the browser for a tree that grows with the data, so 250,000 log lines become about 1.5 million elements, a frozen tab and a cost that every later change pays again.
+    kind: failure
+    weight: core
+    teach:
+      - It is 2 a.m. and user 1 opens Logscope on an outage. The query returns 250,000 lines, and the first version appended a row per line, each row a handful of elements.
+      - That is about one and a half million elements. The tab locked up for seconds, memory went past half a gigabyte, and every filter, highlight or hover afterwards paid again for the size of the tree.
+    draw: [everything, all-rows, heavy, frozen]
+    check: Why does rendering every one of user 1's 250,000 lines hurt even after the first frame?
+    answer: The DOM holds about 1.5 million elements, so every later change, a filter, a highlight or a hover, pays again for the size of the tree, not just the first render.
+  - point: The pane only shows 38 lines, so the app keeps all lines in a JavaScript array and mounts only the rows that overlap the visible part, plus 10 above and 10 below, 58 rows in all.
+    kind: mechanism
+    weight: core
+    teach:
+      - The pane is 760 pixels tall and a line is 20, so user 1 sees 38 lines at a time. The other 249,962 do nothing for them.
+      - Keep every line in LogStore, an array that costs a few dozen megabytes and no rendering at all. Mount only the rows whose positions overlap the visible pane, and ten more on each side.
+      - That is 58 row elements, a few hundred elements in total, whatever the query returned.
+    draw: [pane, visible, above-unmounted, below-unmounted, logscope-data, store, cheap-store, overscan-above, overscan-below, binds, mounted-count]
+    check: User 1's pane is 760 pixels tall, lines are 20 pixels and the overscan is 10 rows on each side. How many row elements are mounted?
+    answer: "58: 760 ÷ 20 = 38 visible lines, plus 10 above and 10 below."
+    misconceptions:
+      - "Windowing throws the off-screen data away -> every line stays in the JavaScript array; only the row elements are limited."
+  - point: One empty spacer as tall as the whole list, 250,000 × 20 = 5,000,000 pixels, keeps the scrollbar, Page Down and dragging behaving as if every line were there.
+    kind: component
+    weight: core
+    teach:
+      - A scroll container scrolls only as far as its content is tall. With 58 rows inside, the scrollbar would end after 58 rows.
+      - So the pane gets one empty element 5,000,000 pixels tall. The thumb is as small, and dragging lands where it would, as if all 250,000 lines were mounted, for the cost of one element.
+    draw: [spacer]
+    check: Why does a windowed list need an empty element as tall as the whole list?
+    answer: The scroll container only scrolls as far as its content is tall; without the spacer the scrollbar would end after the few mounted rows.
+  - point: As the reader scrolls, the new scroll offset decides the new first and last line, and the rows that slide out of one end are moved to the other and given the incoming lines' text.
+    kind: mechanism
+    weight: core
+    teach:
+      - When user 1 scrolls, the pane reports its new offset and a quick calculation picks the new first and last line.
+      - The rows that left the top are moved to the bottom and handed the text of the lines coming into view. Nothing new has to be built.
+      - She sees a list that opens at once and scrolls smoothly, whether the query returned two hundred lines or two hundred thousand.
+    draw: [recycle-note]
+    check: User 1 scrolls down a few lines. What happens to the rows that leave the top of the mounted range?
+    answer: They are moved to the bottom and rebound to the lines entering the range, with those lines' text; no new rows are created.
+  - point: Lines that are not mounted do not exist for the browser, so find-in-page misses them and a fast fling can show a blank band for a frame; search has to run over the store and jump by setting the scroll offset.
+    kind: failure
+    weight: core
+    teach:
+      - User 1 presses Ctrl+F for pool exhausted. The browser searches the DOM, which holds 58 lines, and finds 1 match out of the 141 in the query.
+      - Logscope's own search runs over LogStore, finds all 141, and jumps to the last one by setting scrollTop so line 183,907 sits mid-pane; the window is recomputed around it.
+      - A hard fling while a filter update runs can also outrun the rows. The browser keeps scrolling, the range is from an older offset, and the bottom shows empty space until the next frame catches up.
+    draw: [store-search, jump, find-miss, blank-band]
+    check: Why does the browser's find bar miss most matches in a windowed list, and how does Logscope find them?
+    answer: Find-in-page searches the DOM, which holds only the mounted rows; Logscope searches the data in LogStore and scrolls to a match by setting scrollTop.
+    misconceptions:
+      - "Ctrl+F still sees the whole list -> it searches the DOM, and the DOM holds only the mounted window."
+task:
+  prompt: Draw Logscope's pane with the data store beside it, the spacer, the 38 visible lines and the overscan above and below, and write how many rows are mounted out of 250,000.
+  expects: [2, 3]

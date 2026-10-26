@@ -1,0 +1,136 @@
+# Stacking, how it works: the paint order inside one context, what starts a context, settling who is on top, and the top layer.
+id: formatting-contexts-and-css-positioning/stacking-contexts-and-the-top-layer/how-it-works
+title: Stacking contexts and the top layer
+source:
+  hash: 00b242c039fa
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: formatting-contexts-and-css-positioning/positioning-and-containing-blocks/how-it-works
+  assumes:
+    - "An absolute box measures against the padding box of its nearest positioned ancestor, or the initial containing block if there is none."
+    - "A fixed box uses the viewport unless an ancestor with a transform, filter, contain or similar captures it; such an ancestor captures absolute boxes too."
+    - A clipping ancestor cuts a positioned box only if the box's containing block is the clipper or below it.
+  carries:
+    - "A stacking context paints its members in seven fixed steps, and paints each child context as one unit in its slot."
+    - "A box that is a context through transform, opacity or filter paints at step 6, like positioned z-index 0."
+    - "z-index works on positioned boxes and flex or grid items; auto starts no context, any integer does."
+    - "Two boxes are compared through the members of their nearest shared context, so an inner z-index never beats an outer one."
+    - "The top layer paints after the whole root context, in order of arrival, with the viewport as containing block and no ancestor clipping or fading it."
+    - A stacking context is part of the CSS paint order, not the same thing as a compositor layer.
+  terms:
+    - term: stacking context
+      means: A box whose descendants are painted together, in their own order, as one unit in the parent context.
+    - term: level 0
+      means: "Paint step 6: positioned boxes with z-index auto or 0, and contexts made by transform, opacity and the like, in tree order."
+    - term: top layer
+      means: A list the browser keeps beside the stacking tree, painted after the whole root context, last added on top.
+    - term: "::backdrop"
+      means: A viewport-sized pseudo-element painted directly under each top-layer entry.
+board:
+  keep: [walk-rules, cb-gp, cb-parent, rule-abs, gp-padding, abs-against, card-spec, padding-cb, content-cb, static-half, abs-half, fixed-rules, rule-fixed, vp-window, rule-capture, fixed-normal, fixed-captured, menu-walk, cb-viewport, cb-shell, cb-board, cb-column, cb-card, cb-body, cb-more, cb-menu, vp-shell, shell-board, board-column, column-card, card-body-edge, body-more, more-menu-edge, toast-shell, undo-toast, toast-cb, sticky-needs, board-wrap]
+  elements:
+    - { id: paint-order, kind: region, label: Paint order in one context, at: [66, 2], size: [52, 26] }
+    - { id: step-1, kind: box, label: "1. its own background and borders", at: [68, 5], size: [48, 2], in: paint-order, tone: grey }
+    - { id: step-2, kind: box, label: "2. negative z-index contexts", at: [68, 8], size: [48, 2], in: paint-order }
+    - { id: step-3, kind: box, label: "3. in-flow blocks: sidebar, columns", at: [68, 11], size: [48, 2], in: paint-order, tone: blue }
+    - { id: step-4, kind: box, label: "4. non-positioned floats", at: [68, 14], size: [48, 2], in: paint-order }
+    - { id: step-5, kind: box, label: "5. inline content: headings, links", at: [68, 17], size: [48, 2], in: paint-order }
+    - { id: step-6, kind: box, label: "6. z auto or 0, level-0 contexts: card A, card B", at: [68, 20], size: [48, 2], in: paint-order, tone: green }
+    - { id: step-7, kind: box, label: "7. positive z-index: top bar at 10", at: [68, 23], size: [48, 2], in: paint-order }
+    - { id: starts-context, kind: region, label: What starts a stacking context, at: [66, 30], size: [52, 19] }
+    - { id: sc-positioned, kind: box, label: "relative/absolute: z not auto", at: [68, 33], size: [24, 3], in: starts-context, tone: blue }
+    - { id: sc-fixed, kind: box, label: "fixed or sticky: always", at: [93, 33], size: [24, 3], in: starts-context, tone: blue }
+    - { id: sc-item, kind: box, label: "flex/grid item: z not auto", at: [68, 37], size: [24, 3], in: starts-context, tone: blue }
+    - { id: sc-opacity, kind: box, label: opacity below 1, at: [93, 37], size: [24, 3], in: starts-context, tone: red }
+    - { id: sc-transform, kind: box, label: "transform, filter, will-change", at: [68, 41], size: [24, 3], in: starts-context, tone: red }
+    - { id: sc-isolate, kind: box, label: "isolation: isolate", at: [93, 41], size: [24, 3], in: starts-context, tone: green }
+    - { id: static-z, kind: note, label: "z-index on a plain static block: no effect", at: [68, 45], in: starts-context }
+    - { id: not-a-layer, kind: note, label: "a context is not a compositor layer", at: [68, 47], in: starts-context, tone: grey }
+    - { id: who-on-top, kind: region, label: Menu against top bar, at: [66, 51], size: [52, 15] }
+    - { id: root-context, kind: box, label: root context (html), at: [81, 53], size: [20, 3], in: who-on-top, tone: grey }
+    - { id: card-a, kind: box, label: "card A: transform, step 6", at: [68, 61], size: [22, 3], in: who-on-top, tone: blue }
+    - { id: top-bar-10, kind: box, label: "top bar: z-index 10, step 7", at: [94, 61], size: [22, 3], in: who-on-top, tone: green }
+    - { id: menu-9999, kind: note, label: menu z 9999 ranks only inside card A, at: [68, 65], in: who-on-top, tone: red }
+    - { id: top-layer, kind: region, label: "Top layer, bottom to top", at: [66, 68], size: [52, 11] }
+    - { id: tl-toast-1, kind: box, label: Link copied, at: [68, 71], size: [11, 3], in: top-layer }
+    - { id: tl-backdrop, kind: box, label: "::backdrop", at: [80, 71], size: [11, 3], in: top-layer, tone: grey }
+    - { id: tl-drawer, kind: box, label: card drawer, at: [92, 71], size: [11, 3], in: top-layer, tone: blue }
+    - { id: tl-toast-2, kind: box, label: Moved to Review, at: [104, 71], size: [11, 3], in: top-layer }
+    - { id: tl-order, kind: note, label: "last added paints on top; z-index ignored", at: [68, 75], in: top-layer }
+    - { id: tl-escape, kind: note, label: "viewport CB; no ancestor clips or fades it", at: [90, 75], in: top-layer }
+    - { id: tl-inert, kind: note, label: "toast 2 is above the drawer, but inert", at: [68, 77], in: top-layer, tone: red }
+  arrows:
+    - { id: member-a, from: root-context, to: card-a, label: member }
+    - { id: member-bar, from: root-context, to: top-bar-10, label: member }
+beats:
+  - point: "A stacking context paints its members in seven fixed steps, from its own background through negative z-index, blocks, floats, inline content and level 0 to positive z-index, and each child context is painted whole in its slot."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Walk Slatework's root context bottom to top: the page background, any negative z-index contexts, in-flow blocks such as the sidebar and the columns, floats, inline content like column headings, then level 0, then positive z-index, the top bar at 10."
+      - Card A and card B are transformed, and a box that is a context through something other than z-index, a transform, opacity below 1, a filter, paints at step 6 as if it were positioned with z-index 0. So the cards sit above every plain block and below anything with a positive z-index.
+      - A context is one unit. Everything in card A is painted, in its own seven steps, at card A's slot, and nothing inside can be interleaved with card B or the top bar, however large its numbers.
+    draw: [paint-order, step-1, step-2, step-3, step-4, step-5, step-6, step-7]
+    check: A card is transformed but has no z-index. Where in its parent context's paint order does it land?
+    answer: At step 6, level 0, in tree order with positioned boxes of z-index auto or 0; above plain blocks and inline content, below positive z-index.
+    misconceptions:
+      - "A negative z-index can slide a box under its parent context's background -> it goes under the parent's in-flow content, never under the context's own background."
+  - point: "z-index only works on positioned boxes and flex or grid items; auto means level 0 with no new context, any integer including 0 starts one, and many other properties start a context on their own."
+    kind: rule
+    weight: core
+    teach:
+      - On a plain static block z-index does nothing, the other classic reason it seems ignored. Slatework's cards are flex items, so they can take a z-index without being positioned.
+      - "relative and absolute start a context only with a z-index other than auto. fixed and sticky always do. So do opacity below 1, any transform, filter, clip-path or mask, will-change naming one of them, contain layout or paint, container-type, and an animation that fills forwards on one of these."
+      - "isolation: isolate does nothing but start one, the deliberate way. Putting it on the board means nothing inside can ever be compared with the shell's header or toasts, and small local numbers are enough."
+    draw: [starts-context, sc-positioned, sc-fixed, sc-item, sc-opacity, sc-transform, sc-isolate, static-z]
+    check: "Does position: relative on its own start a stacking context? What about position: sticky?"
+    answer: Relative does only together with a z-index other than auto; sticky, like fixed, always does, even with z-index auto.
+    misconceptions:
+      - "position: relative creates a stacking context -> only with a z-index other than auto; on its own it starts none."
+      - "z-index: 0 is the same as auto -> 0 sets level 0 and starts a context; auto starts none."
+  - point: "To settle who is on top, find the nearest context both boxes share and compare the two members of it that contain them; the inner z-index is not in that comparison."
+    kind: rule
+    weight: core
+    teach:
+      - "Four moves. List the contexts above each box. Find the nearest one they share, here the root. Take the member of it that holds each box, card A for the menu and the bar itself for the top bar. Compare those by the paint steps."
+      - Card A is a transformed context at step 6; the top bar has z-index 10, step 7. The bar wins and paints over everything inside card A, the menu's z-index of 9999 included.
+      - "Only three things change the result: make the menu a member of the shared context by removing what made card A a context, raise card A itself, or take the menu out of the tree."
+    draw: [who-on-top, root-context, card-a, top-bar-10, member-a, member-bar, menu-9999]
+    check: The More menu has z-index 9999 inside card A, which has a transform. The top bar has z-index 10. Which paints on top, and why does raising the menu's number not help?
+    answer: The top bar; the comparison is between card A, level 0 at step 6, and the bar at step 7 in the root context. The menu's 9999 only ranks it inside card A.
+    misconceptions:
+      - "A higher z-index always wins -> numbers compare only inside one context; the menu's 9999 never meets the top bar's 10."
+  - point: "The top layer is a list beside the stacking tree, painted after the whole root context in order of arrival; z-index is ignored, ancestors cannot clip or fade its entries, and their containing block is the viewport."
+    kind: mechanism
+    weight: core
+    teach:
+      - An element in the top layer paints as if it were a sibling of html, so no ancestor's context can hold it down. overflow and opacity on ancestors stop affecting it, and its containing block becomes the viewport rather than a transformed parent. It stays where it was in the DOM, so selectors, inheritance and events work as before.
+      - "Only the browser adds entries, when a page asks: showModal on a dialog, a popover shown with popover auto or manual, requestFullscreen. Each entry gets a ::backdrop painted right beneath it, which is what dims the page behind a modal."
+      - Order is arrival. Open the More menu as an auto popover, then a manual Link copied toast. Opening the card drawer with showModal first closes the open auto menu, then adds the drawer and its backdrop above the older toast, which is now dimmed.
+    draw: [top-layer, tl-toast-1, tl-backdrop, tl-drawer, tl-order, tl-escape]
+    check: Two popovers are open in the top layer, and the first has z-index 9999. Which paints on top?
+    answer: The second; z-index is ignored in the top layer, where the element added last paints on top.
+    misconceptions:
+      - "z-index orders top-layer elements -> it is ignored; arrival order decides."
+  - point: A toast shown while the modal drawer is open arrives after it and paints above it, but sits outside the modal, so it is inert.
+    kind: flow
+    weight: supporting
+    teach:
+      - "Show Moved to Review while the drawer is open. It lands last in the list, above the drawer, but showModal made the rest of the document inert, so the toast cannot be clicked or focused. A manual popover suits toasts, it never closes other popovers and ignores Esc."
+    draw: [tl-toast-2, tl-inert]
+    check: A manual toast is shown while a modal dialog is open. Where does it paint, and can the user click it?
+    answer: Above the dialog, since it arrived later, but it is inert outside the modal, so it cannot be clicked or focused.
+  - point: A stacking context decides paint order in the CSS model, while a compositor layer is an engine's private choice of what to rasterise separately; they often appear together but do not map one to one.
+    kind: rule
+    weight: supporting
+    teach:
+      - will-change transform both starts a context and asks for a layer, which is why the two get confused. Slatework's archived cards at opacity 0.6 are contexts usually painted into their parent's layer, and a box can get a layer just for overlapping one, with no change to stacking. Layering bugs are about contexts; layers are covered in Layers and compositing.
+    draw: [not-a-layer]
+    check: Is every stacking context its own compositor layer?
+    answer: No; a context sets paint order in the CSS model, a layer is an engine's choice of what to rasterise apart, and the two do not map one to one.
+task:
+  prompt: "Draw the root context with card A (transformed, holding the More menu at z-index 9999) and the top bar at z-index 10, mark the paint step each member lands in, and write which paints on top and one fix."
+  expects: [1, 3]

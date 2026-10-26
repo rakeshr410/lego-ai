@@ -5,7 +5,7 @@ import { expect, it } from 'vitest';
 import { GOLDENS } from './goldens';
 import { evalOptions, formatLive, replay, runLive } from './interview-eval';
 
-// The interview eval (docs/interview/README.md, "Eval"). `npm run eval:interview` runs the offline
+// The interview eval (docs/README.md, "Eval"). `npm run eval:interview` runs the offline
 // replay (stub mode, no API calls); with INTERVIEW_EVAL_MODE=live and ANTHROPIC_API_KEY it also
 // runs the real evaluator on every golden turn and the real grader on every golden transcript,
 // under a spend cap, and fails below the gates. Settings (env):

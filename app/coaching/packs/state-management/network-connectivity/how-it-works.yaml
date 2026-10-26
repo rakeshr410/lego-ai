@@ -1,0 +1,164 @@
+# Knowing the state: navigator.onLine and its events, real request outcomes, the ping probe, captive portals, probing on a backoff, and link quality with hysteresis.
+id: state-management/network-connectivity/how-it-works
+title: Knowing the connection
+source:
+  hash: "b7de319ddbdb"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: state-management/network-connectivity/key-idea
+  assumes:
+    - "Five situations: online, slow, flaky, offline, and connected but cut off."
+    - "One ConnectivityMonitor owns the state (status online, slow, checking or offline; since; lastOkAt; rolling RTT; saveData; pendingWrites) and every screen reads it."
+    - Checking sits between Online and Offline so one failed request does not change the screen.
+  carries:
+    - "navigator.onLine false is reliable and moves the monitor to Offline at once; true only means some interface is up, so the online event starts Checking."
+    - "Any HTTP response, even a 404 or a 5xx, proves the path works; only a TypeError or a timeout counts against it, and two in a row start Checking."
+    - "The probe, GET /api/ping with no-store and a 4 s timeout, must return 204 with a header only Stallhand sets, or the monitor says Offline."
+    - Over HTTPS a captive portal makes fetch fail exactly like no network, so the app cannot tell them apart and the banner says both.
+    - "While Offline the monitor probes after 2, 4, 8, 16 and then every 30 s, jittered; the online event, coming back into view and Retry probe at once."
+    - "Link quality comes from the app's own rolling RTT: Slow above 1,000 ms, back to Online below 600 ms; the Network Information API is a Chromium-only extra."
+  terms:
+    - term: probe
+      means: "A tiny request, GET /api/ping, sent only when in doubt, whose specific answer proves Stallhand itself replied."
+    - term: captive portal
+      means: A network that diverts requests to its own sign-in page until the person accepts its terms.
+    - term: hysteresis
+      means: Two thresholds, one to enter a state and a lower one to leave it, so a value near the line does not flip back and forth.
+    - term: effectiveType
+      means: "The Network Information API's rough class of link, slow-2g, 2g, 3g or 4g, from recent RTT and throughput; Chromium only."
+board:
+  keep: [situations, sit-online, sit-slow, sit-flaky, sit-offline, sit-cutoff, bars-note, looks-same, offline-actions, act-sale, out-queue, act-refund, out-disabled, act-orders, out-aged, on-return, sale-queues, refund-off, orders-cached, one-owner, monitor, reads-banner, reads-list, reads-buttons, publishes, to-list, to-buttons, conn-state, f-status, f-since, f-lastok, f-rtt, f-savedata, f-pending, stale-note, owns]
+  elements:
+    - { id: monitor-states, kind: region, label: "ConnectivityMonitor's four states", at: [2, 36], size: [68, 22] }
+    - { id: st-online, kind: box, label: Online, at: [20, 39], size: [9, 3], in: monitor-states, tone: green }
+    - { id: st-offline, kind: box, label: Offline, at: [40, 50], size: [12, 3], in: monitor-states, tone: red }
+    - { id: ev-offline, kind: box, label: offline event, at: [58, 50], size: [10, 3], in: monitor-states }
+    - { id: st-checking, kind: box, label: Checking, at: [20, 50], size: [9, 3], in: monitor-states, tone: blue }
+    - { id: ev-online, kind: box, label: online event, at: [4, 50], size: [9, 3], in: monitor-states }
+    - { id: any-response, kind: note, label: "any response, even 404 or 503, proves the path", at: [4, 55], in: monitor-states }
+    - { id: st-probe, kind: box, label: probe GET /api/ping, at: [40, 39], size: [12, 3], in: monitor-states, tone: blue }
+    - { id: st-slow, kind: box, label: Slow, at: [4, 39], size: [8, 3], in: monitor-states }
+    - { id: portal-path, kind: region, label: "The café's sign-in page", at: [2, 60], size: [66, 17] }
+    - { id: phone, kind: box, label: "User 1's phone", at: [4, 63], size: [9, 3], in: portal-path, tone: blue }
+    - { id: cafe-wifi, kind: box, label: café Wi-Fi, at: [22, 63], size: [9, 3], in: portal-path }
+    - { id: signin-page, kind: box, label: sign-in page, at: [37, 63], size: [9, 3], in: portal-path, tone: red }
+    - { id: api-unreached, kind: box, label: Stallhand API, at: [56, 63], size: [10, 3], in: portal-path, tone: grey, dashed: true }
+    - { id: tls-fails, kind: box, label: "over HTTPS: TLS fails, a TypeError", at: [33, 69], size: [14, 3], in: portal-path, tone: red }
+    - { id: plain-200, kind: box, label: "plain HTTP: its own 200 page", at: [51, 69], size: [14, 3], in: portal-path, tone: grey }
+    - { id: wording-note, kind: note, label: "banner: if on public Wi-Fi, you may need to sign in", at: [4, 74], in: portal-path }
+    - { id: probe-backoff, kind: region, label: Probing while offline, at: [72, 36], size: [42, 14] }
+    - { id: p0, kind: box, label: 0 s, at: [74, 39], size: [4, 3], in: probe-backoff, tone: red }
+    - { id: p2, kind: box, label: 2 s, at: [80, 39], size: [4, 3], in: probe-backoff, tone: red }
+    - { id: p6, kind: box, label: 6 s, at: [87, 39], size: [4, 3], in: probe-backoff, tone: red }
+    - { id: p14, kind: box, label: 14 s, at: [96, 39], size: [4, 3], in: probe-backoff, tone: red }
+    - { id: p30, kind: box, label: 30 s, at: [108, 39], size: [4, 3], in: probe-backoff, tone: red }
+    - { id: doubling, kind: note, label: "waits double from 2 s to a 30 s cap, jittered", at: [74, 43], in: probe-backoff }
+    - { id: trigger, kind: box, label: "online event, in view, or Retry", at: [74, 45], size: [14, 3], in: probe-backoff }
+    - { id: probe-now, kind: box, label: probe at once, at: [96, 45], size: [9, 3], in: probe-backoff, tone: green }
+    - { id: link-quality, kind: region, label: How good is the link, at: [72, 52], size: [34, 22] }
+    - { id: last-ten, kind: box, label: last 10 round trips, at: [74, 59], size: [10, 3], in: link-quality, tone: amber }
+    - { id: band-slow, kind: box, label: "over 1,000 ms: Slow", at: [90, 55], size: [14, 3], in: link-quality, tone: red }
+    - { id: band-hold, kind: box, label: "600 to 1,000 ms: keep the label", at: [90, 59], size: [14, 3], in: link-quality, dashed: true }
+    - { id: band-online, kind: box, label: "under 600 ms: Online", at: [90, 63], size: [14, 3], in: link-quality, tone: green }
+    - { id: net-info, kind: box, label: "effective type, Chromium only", at: [74, 67], size: [12, 3], in: link-quality, tone: grey }
+    - { id: no-flap, kind: note, label: "a gap, so the label cannot flap", at: [90, 67], in: link-quality }
+    - { id: five-g, kind: note, label: "3g above 270 ms, even on 5G", at: [74, 71], in: link-quality }
+  arrows:
+    - { id: at-once, from: ev-offline, to: st-offline, label: at once }
+    - { id: starts-check, from: ev-online, to: st-checking, label: probe }
+    - { id: two-failures, from: st-online, to: st-checking, label: two failures }
+    - { id: sends-probe, from: st-checking, to: st-probe, label: sends }
+    - { id: probe-ok, from: st-probe, to: st-online, label: 204 and header }
+    - { id: probe-fails, from: st-probe, to: st-offline, label: no answer }
+    - { id: https-request, from: phone, to: cafe-wifi, label: HTTPS request }
+    - { id: diverted, from: cafe-wifi, to: signin-page, label: diverted }
+    - { id: never-reached, from: signin-page, to: api-unreached, label: never reached, dashed: true }
+    - { id: to-tls, from: signin-page, to: tls-fails }
+    - { id: to-plain, from: signin-page, to: plain-200, dashed: true }
+    - { id: retry-timer, from: st-offline, to: st-checking, label: retry timer }
+    - { id: wait-2, from: p0, to: p2 }
+    - { id: wait-4, from: p2, to: p6 }
+    - { id: wait-8, from: p6, to: p14 }
+    - { id: wait-16, from: p14, to: p30 }
+    - { id: skip-wait, from: trigger, to: probe-now, label: skip the wait }
+    - { id: slow-online, from: st-slow, to: st-online, label: RTT average, both: true }
+    - { id: averaged, from: last-ten, to: band-hold, label: average }
+beats:
+  - point: "navigator.onLine false is reliable, so the offline event moves the monitor to Offline at once; true only means some network interface is up, so the online event starts Checking, never Online."
+    kind: mechanism
+    weight: core
+    teach:
+      - "navigator.onLine is a boolean, and the window fires offline and online when it flips. false means no network at all: Wi-Fi off, airplane mode, no data. That is trustworthy."
+      - true means only that an interface is up; in Chrome and Safari, that a local network or router is reachable. It says nothing about the internet, let alone Stallhand.
+      - "In the crowded hall the phone stays attached to the cell, so onLine is true for the whole outage and no offline event fires. In the café the Wi-Fi counts as a network. A banner driven only by the offline event shows nothing in either case."
+      - So the events are triggers, not verdicts. Draw the states as you name them.
+    draw: [monitor-states, st-online, st-offline, ev-offline, at-once, st-checking, ev-online, starts-check]
+    check: The online event fires as user 1's phone joins the café Wi-Fi. Why doesn't Stallhand go straight to Online?
+    answer: "onLine true only means an interface is up, not that Stallhand is reachable; the event moves the monitor to Checking, and only a probe answered by Stallhand makes it Online."
+    misconceptions:
+      - "Listen for the offline event and show a banner -> in a crowded cell or behind a portal onLine stays true and the event never fires."
+      - "navigator.onLine true means the internet works -> it only means some interface or router is reachable."
+  - point: "The real evidence is the app's own traffic: any HTTP response, even a 404 or a 5xx, proves the path works, only a TypeError or a timeout counts against it, and two failures in a row start Checking."
+    kind: rule
+    weight: core
+    teach:
+      - Every request goes through the request layer, which reports its outcome to the monitor. A 200, a 404 or a 401 all came back across the network, so each updates lastOkAt and feeds the round-trip time into the average.
+      - "A 5xx also proves the path: the server is unwell, which gets its own message, 'Stallhand is having trouble', not the offline banner."
+      - Only fetch rejecting with a TypeError, no response at all, or a timeout counts against the connection. One can be noise on a mobile link, so it takes two in a row.
+    draw: [two-failures, any-response]
+    check: "A request to Stallhand returns 503. What does the monitor conclude about connectivity?"
+    answer: "The path works, since a response came back; it updates lastOkAt and RTT. The server is having trouble, which is a different message, not Offline."
+    misconceptions:
+      - "Any error status means offline -> any response, even 5xx, proves the network path; only no response or a timeout counts."
+      - "One failed request means offline -> it takes two in a row, then a probe, before the screen changes."
+  - point: "In Checking the monitor sends a probe, GET /api/ping with cache no-store and a 4 s timeout, and only a 204 carrying a header only Stallhand sets means Online; anything else means Offline."
+    kind: mechanism
+    weight: core
+    teach:
+      - "no-store so no cache can answer for the server; 4 seconds because the probe is tiny and an answer that slow is no answer."
+      - "The answer must be 204 with x-stallhand set to 1. A network that answers on the server's behalf, a proxy's error page or a portal over plain HTTP, then counts as a failure."
+      - Draw the probe between Checking and the two ways out.
+    draw: [st-probe, sends-probe, probe-ok, probe-fails]
+    check: Why does the probe insist on a 204 with an x-stallhand header instead of accepting any 2xx?
+    answer: "So a reply from something other than Stallhand, a proxy or a portal on plain HTTP, cannot make the app believe it is online; only Stallhand sets that status and header."
+  - point: "Over HTTPS a Wi-Fi sign-in page cannot impersonate Stallhand: the TLS handshake fails and fetch rejects like no network at all, so the app cannot tell the two apart and the banner says both."
+    kind: failure
+    weight: core
+    teach:
+      - "Draw the request path in the café. The phone sends an HTTPS request, the café Wi-Fi diverts it to its sign-in page, and Stallhand is never reached."
+      - "Over plain HTTP the portal would answer 200 with its own page, which is why the probe checks the header. Over HTTPS, all Stallhand uses, the portal cannot present Stallhand's certificate, so TLS fails and fetch throws a TypeError."
+      - "Operating systems spot portals with their own plain-HTTP probes; a web app usually cannot. So the banner adds: if you are on public Wi-Fi, you may need to sign in."
+    draw: [portal-path, phone, cafe-wifi, https-request, signin-page, diverted, api-unreached, never-reached, tls-fails, to-tls, plain-200, to-plain, wording-note]
+    check: "Behind the café's sign-in page, what does Stallhand's HTTPS probe actually see, and what does the banner say?"
+    answer: "A TypeError, because the TLS handshake fails, exactly as with no network; the monitor stays Offline and the banner suggests signing in to public Wi-Fi rather than claiming to know."
+    misconceptions:
+      - "The app can detect the portal and say so for sure -> over HTTPS it only sees a network error, the same as no signal."
+  - point: "While Offline the monitor keeps probing on a backoff, after 2, 4, 8 and 16 seconds and then every 30, each jittered; the online event, the app coming back into view and the Retry button probe at once."
+    kind: flow
+    weight: core
+    teach:
+      - Draw the failed probes on a line with growing gaps. Each wait doubles up to a 30 second cap, and each is randomised a little.
+      - "Three things skip the wait: the online event, the page becoming visible again, and user 1 tapping Retry on the banner. Without them, a phone that got signal back one second into a 30 second wait would sit offline 29 seconds longer than it needs to."
+    draw: [retry-timer, probe-backoff, p0, p2, wait-2, p6, wait-4, p14, wait-8, p30, wait-16, doubling, trigger, probe-now, skip-wait]
+    check: "The monitor has been Offline for a minute and is waiting 30 s for its next probe. User 1 unlocks their phone. What happens?"
+    answer: "Becoming visible triggers a probe at once instead of waiting out the timer; a 204 with the header brings it back to Online."
+    misconceptions:
+      - "Probe every second while offline -> that wastes battery and requests; back off, and let the events and Retry cut the wait."
+  - point: "Working is not usable: the app measures link quality from its own rolling average of the last 10 round trips, Slow above 1,000 ms and back to Online only below 600 ms; the Network Information API is a Chromium-only extra."
+    kind: metric
+    weight: core
+    teach:
+      - "Chromium exposes navigator.connection: effectiveType slow-2g, 2g, 3g or 4g, from recent round-trip time and throughput, not the radio, so a link over 270 ms reads 3g even on a 5G phone. rtt and downlink are rounded, saveData mirrors the person's choice. Safari and Firefox lack it."
+      - So Stallhand times its own requests and keeps a rolling average of the last 10. Above 1,000 ms the status becomes Slow; it returns to Online only below 600 ms.
+      - "The gap is hysteresis. With one threshold, an average wandering around a second would flip the label every few requests, and image sizes and the poll rate would flap with it."
+    draw: [st-slow, slow-online, link-quality, last-ten, band-slow, band-hold, band-online, averaged, net-info, five-g, no-flap]
+    check: "The rolling RTT wanders between 700 and 1,100 ms. Why use 1,000 ms to enter Slow but 600 ms to leave it?"
+    answer: "So the status, and everything that reacts to it, does not flap on a link near one threshold; between 600 and 1,000 ms it keeps whatever it was."
+    misconceptions:
+      - "effectiveType 4g means a fast link everywhere -> it is Chromium only, rounded, and describes recent traffic, so measure your own requests."
+task:
+  prompt: "Draw ConnectivityMonitor's states and what moves it between them: the two browser events, two failed requests, the probe and its answer, the retry timer, and the round-trip average that separates Slow from Online."
+  expects: [1, 2, 3, 5, 6]

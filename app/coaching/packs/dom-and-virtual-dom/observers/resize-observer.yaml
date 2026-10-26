@@ -1,0 +1,161 @@
+# ResizeObserver: the four ways to react to size, the boxes and the entry, delivery after layout and before paint with the depth rule and the loop error, the panel toolbar with hysteresis, canvas sizing, and the flapping tile.
+id: dom-and-virtual-dom/observers/resize-observer
+title: Watching sizes
+source:
+  hash: "920629b8eac0"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: dom-and-virtual-dom/observers/mutation-observer
+  assumes:
+    - ResizeObserver reports changes to an element's box size; one observer takes many targets and calls back with an array of entries.
+    - A ResizeObserver callback runs after style and layout and before paint, so what it writes is painted in the same frame.
+    - A callback that writes into what it observes can keep calling itself.
+  carries:
+    - Prefer a media or container query when the change is only visual; use ResizeObserver when script needs the number.
+    - "observe takes a box: content-box (the default), border-box, or device-pixel-content-box; the entry's sizes are arrays of inline and block size."
+    - After each delivery layout runs again and only deeper targets are delivered in the same frame; a change at the same depth or above waits a frame and fires the loop error.
+    - Thresholds need a hysteresis band and writes only on a change, or a nudge such as a scrollbar flips the mode back and forth.
+    - A ResizeObserver callback must be idempotent and must never change the size it reads.
+  terms:
+    - term: content box
+      means: The area inside padding and border; what ResizeObserver measures by default.
+    - term: border box
+      means: Content plus padding plus border.
+    - term: inline size
+      means: The size along the direction text runs; the width in horizontal writing, the height in vertical writing.
+    - term: depth rule
+      means: Within one frame, each round of delivery only reports targets deeper in the tree than the shallowest one just reported.
+    - term: loop error
+      means: "The window error event 'ResizeObserver loop completed with undelivered notifications', fired when a size change is left for the next frame."
+    - term: hysteresis
+      means: Using two thresholds, one to switch and another to switch back, so a small nudge cannot flip the state back.
+board:
+  keep: [new-way, your-code, the-browser, batch-callback, observe-once, on-change, three-kinds, mo-kind, ro-kind, io-kind, shape, shape-new, shape-observe, shape-entries, shape-stop, frame, lane-main, lane-callbacks, input-task, mo-delivery, style-layout, ro-delivery, paint-step, io-delivery, page-tree, body-node, editor-root, text-node, mo-flow, observer-box, mo-callback, mo-record, self-loop, loop-write, loop-record]
+  elements:
+    - { id: four-ways, kind: region, label: Four ways to react to size, at: [61, 35], size: [58, 7] }
+    - { id: media-query, kind: box, label: "media query, no script", at: [63, 37], size: [12, 3], in: four-ways, tone: green }
+    - { id: container-query, kind: box, label: "container query, no script", at: [77, 37], size: [13, 3], in: four-ways, tone: green }
+    - { id: window-resize, kind: box, label: window resize event, at: [92, 37], size: [12, 3], in: four-ways, tone: grey }
+    - { id: ro-any-element, kind: box, label: ResizeObserver on any element, at: [106, 37], size: [12, 3], in: four-ways, tone: blue }
+    - { id: boxes-entry, kind: region, label: Boxes and the entry, at: [61, 44], size: [26, 16] }
+    - { id: border-box, kind: region, label: border box, at: [63, 47], size: [22, 8], in: boxes-entry, tone: blue }
+    - { id: content-box, kind: box, label: "content box, the default", at: [65, 49], size: [18, 3], in: border-box, tone: blue }
+    - { id: entry-sizes, kind: note, label: entry gives inline and block size, at: [63, 56], in: boxes-entry }
+    - { id: device-pixels, kind: note, label: device pixel box for canvas bitmaps, at: [63, 58], in: boxes-entry }
+    - { id: depth-rounds, kind: region, label: "After layout, before paint", at: [89, 44], size: [30, 11] }
+    - { id: panel-depth, kind: box, label: "panel, depth 6", at: [91, 47], size: [10, 3], in: depth-rounds, tone: blue }
+    - { id: canvas-depth, kind: box, label: "canvas, depth 8", at: [108, 47], size: [10, 3], in: depth-rounds, tone: blue }
+    - { id: deeper-only, kind: note, label: "only deeper targets, same frame", at: [91, 51], in: depth-rounds }
+    - { id: loop-error, kind: note, label: "own size or a parent, loop error next frame", at: [91, 53], in: depth-rounds }
+    - { id: kpi-tile, kind: region, label: KPI tile on its border box, at: [89, 57], size: [30, 9] }
+    - { id: tile-small, kind: box, label: "146 px, ring added", at: [91, 60], size: [10, 3], in: kpi-tile, tone: red }
+    - { id: tile-big, kind: box, label: "154 px, ring removed", at: [108, 60], size: [10, 3], in: kpi-tile, tone: red }
+    - { id: content-fix, kind: note, label: decide on the content box, at: [91, 64], in: kpi-tile }
+    - { id: toolbar, kind: region, label: Panel toolbar and the scrollbar, at: [61, 68], size: [57, 12] }
+    - { id: tb-compact, kind: box, label: "panel 355 px, compact toolbar", at: [63, 70], size: [14, 3], in: toolbar, tone: blue }
+    - { id: tb-shorter, kind: box, label: "page shorter, scrollbar gone", at: [86, 70], size: [14, 3], in: toolbar, tone: red }
+    - { id: tb-full, kind: box, label: "panel 362 px, full toolbar", at: [86, 76], size: [14, 3], in: toolbar, tone: blue }
+    - { id: tb-taller, kind: box, label: "page taller, scrollbar back", at: [63, 76], size: [14, 3], in: toolbar, tone: red }
+    - { id: band, kind: box, label: "hysteresis band, 360 to 380", at: [103, 72], size: [14, 3], in: toolbar, tone: green }
+    - { id: write-on-change, kind: note, label: write only on a change, at: [103, 76], in: toolbar }
+  arrows:
+    - { id: deeper-same-frame, from: panel-depth, to: canvas-depth, label: same frame }
+    - { id: tile-flaps, from: tile-small, to: tile-big, label: each frame, both: true }
+    - { id: compact-shrinks, from: tb-compact, to: tb-shorter, label: panel shorter }
+    - { id: wider-again, from: tb-shorter, to: tb-full }
+    - { id: full-grows, from: tb-full, to: tb-taller, label: panel taller }
+    - { id: narrow-again, from: tb-taller, to: tb-compact }
+beats:
+  - point: There are four ways to react to size, in order of preference, a media query and a container query that run no script, the window resize event that only sees the window, and ResizeObserver for when script needs an element's size as a number.
+    kind: decision
+    weight: core
+    teach:
+      - If the change is only visual, a media query on the viewport or a container query on the space a component was given does it in the style engine, no script and no chance of a loop. Ledgerleaf could hide its toolbar labels with a container query alone.
+      - The window resize event fires on window, at most once a frame in current browsers. Its real problems are that it only describes the window, so it misses a sidebar collapsing or a panel being dragged, and its handlers read element sizes, which can force layout.
+      - ResizeObserver is for when JavaScript needs the number, a chart's pixel width for its axis ticks, a canvas bitmap size, a virtualized list's row heights. It watches any element and hands over sizes already computed.
+    draw: [four-ways, media-query, container-query, window-resize, ro-any-element]
+    check: The sidebar collapses and every panel gets wider, but the window keeps its size. Which of the four runs your JavaScript with a panel's new width?
+    answer: Only ResizeObserver on the panel; the resize event describes the window, and media and container queries run no script.
+    misconceptions:
+      - "The resize event's problem is that it fires thousands of times -> it fires at most once a frame now; the problem is that it only sees the window and its handlers force layout."
+  - point: observe takes a box, the content box by default, the border box, or the device-pixel content box, and each entry gives arrays of inline and block size, where inline size is the width in horizontal writing.
+    kind: mechanism
+    weight: core
+    teach:
+      - Draw the border box around the content box. The default content box is the area inside padding and border; border-box adds both; device-pixel-content-box is the content area in physical pixels, for sizing a canvas exactly.
+      - The entry has target, and contentBoxSize, borderBoxSize and devicePixelContentBoxSize, each an array, because the spec leaves room for elements split into fragments. Every browser reports one item today, so read index 0.
+      - The names are logical. inlineSize runs along the text, the width in horizontal writing and the height in vertical-rl; right-to-left text does not swap them.
+      - It fires once on observe if the element is rendered and not zero by zero; moving an element or a transform does not fire, and display none reports zero by zero.
+    draw: [boxes-entry, border-box, content-box, entry-sizes]
+    check: In writing-mode vertical-rl, what does contentBoxSize index 0's inlineSize measure, and why is contentBoxSize an array at all?
+    answer: The height, because inline size runs along the text direction; it is an array so an element split into fragments could report one box per fragment, though browsers report one today.
+    misconceptions:
+      - "A transform: scale() fires a resize -> transforms change how the box is drawn, not its laid-out size; only layout size changes are reported."
+  - point: ResizeObserver runs after layout and before paint, and if callbacks change sizes the browser lays out again and delivers only targets deeper in the tree than the shallowest one just reported, so changes flow from a container down to what is inside it within one frame.
+    kind: flow
+    weight: core
+    teach:
+      - User 1 drags a panel to 340 pixels. Layout runs, the panel at depth 6 is delivered, and its callback switches it to the compact toolbar.
+      - The browser lays out again. The compact toolbar is a row shorter, so the chart canvas inside the panel, at depth 8, gets 40 pixels taller. It is deeper, so it is delivered in the same frame and its callback resizes the bitmap.
+      - Nothing deeper changed, so the frame is painted with the final layout. Running before paint is the gain, no frame of the wrong layout.
+    draw: [depth-rounds, panel-depth, canvas-depth, deeper-same-frame, deeper-only]
+    check: The panel's callback makes the canvas inside it 40 pixels taller. Is the canvas's new size delivered this frame or the next, and why?
+    answer: This frame; after the panel at depth 6 was delivered, layout runs again and targets deeper than depth 6, like the canvas at depth 8, are delivered in the same frame.
+  - point: A change that breaks the downward direction, a callback resizing its own target or a parent, is left for the next frame and fires the window error 'ResizeObserver loop completed with undelivered notifications', which means a frame was painted with stale layout.
+    kind: failure
+    weight: core
+    teach:
+      - The depth rule is what guarantees the frame ends. Anything at the same depth or shallower that still has an unreported change is held back.
+      - The browser then fires an error event on window with that message, older Chrome said loop limit exceeded, and delivers the change next frame. Nothing throws in your code, but error trackers pick it up from window.onerror.
+      - Do not just filter it out of the reports; it usually points at a callback that never settles.
+    draw: [loop-error]
+    check: The error tracker shows the ResizeObserver loop message thousands of times. What does it tell you?
+    answer: Some callback changed the size of an element at or above the depth it was reported at, so the change was deferred and a frame was painted with stale layout; look for callbacks that resize their own target or a parent, or flip between two states.
+    misconceptions:
+      - "The loop error is harmless noise to filter -> it means at least one frame was painted with the wrong layout, usually from a callback that does not settle."
+  - point: Ledgerleaf's panel toolbar flipped every frame on one threshold, because going compact made the page shorter, the scrollbar vanished and the panel grew past the threshold; a band, compact below 360 and full only above 380, and writing only on a change make it settle.
+    kind: failure
+    weight: core
+    teach:
+      - Each panel's seven labelled buttons need about 380 pixels; below that it shows icons with an overflow menu. The first version went compact below 360.
+      - On a laptop with classic 15 pixel scrollbars, a panel at 355 went compact, the panel got a row shorter, the page got short enough that the scrollbar vanished, and the grid gained about 7 pixels per column. At 362 it went back to full, the page grew, the scrollbar came back, and round it went every frame.
+      - The fix is hysteresis. Go compact below 360, back to full only above 380, keep the mode inside the band, and write the attribute only when the mode changes. scrollbar-gutter stable on the scroll container removes this trigger too.
+    draw: [toolbar, tb-compact, tb-shorter, compact-shrinks, tb-full, wider-again, tb-taller, full-grows, narrow-again, band, write-on-change]
+    check: With the band, a panel at 355 pixels goes compact and the vanishing scrollbar makes it 362. What happens next?
+    answer: Nothing; 362 is inside the 360 to 380 band, so the panel keeps the compact mode and the callback writes nothing.
+    misconceptions:
+      - "Debouncing the callback fixes flapping -> it only delays it and paints frames with the old layout; the fix is a band and writing only on a change."
+  - point: Each chart's canvas is observed on its device-pixel content box and its bitmap sized from that, with content size times devicePixelRatio as the fallback, and since the bitmap size is not its layout size the write cannot loop.
+    kind: mechanism
+    weight: supporting
+    teach:
+      - A canvas's bitmap is separate from its laid-out size. CSS makes it 100 percent wide; the callback sets width and height to the device-pixel size so lines stay sharp at any zoom.
+      - Chrome and Firefox support device-pixel-content-box; Safari does not, so observe with it inside a try, fall back to the content box, and multiply by devicePixelRatio.
+      - Setting the bitmap size does not change the layout size, so it cannot cause another observation.
+    draw: [device-pixels]
+    check: Why can the canvas callback set the canvas's width and height without starting a loop?
+    answer: Those set the bitmap's size, not its laid-out size, which CSS fixes at 100 percent of the panel, so the observed box does not change.
+  - point: A callback must never decide on a size its own write changes, like the KPI tile that on its border box gains a 4 pixel ring below 150 pixels and flips between 146 and 154 every frame; deciding on the content box makes it settle.
+    kind: failure
+    weight: core
+    teach:
+      - Below 150 pixels the KPI tiles turn into round badges with a 4 pixel ring. The draft observed the border box; with the default content-box sizing the ring adds 8 pixels, so a tile at 146 became 154 the moment it turned round, and the next delivery took the ring away again.
+      - The callback changes its own target, so the depth rule cannot settle it in the frame. Every frame ends with the loop error and the tile alternates square and round.
+      - Decide on the content box, which the ring does not change, or use border-box sizing so the ring eats into a fixed width, or add a band. The rule is that the same size always produces the same writes, and the callback never moves the size it reads.
+    draw: [kpi-tile, tile-small, tile-big, tile-flaps, content-fix]
+    check: The tile's content box is 146 pixels and the callback adds a 4 pixel border when the border box is under 150. What happens, and what single change fixes it?
+    answer: It flips every frame, 146 to 154 and back, with the loop error each time; observing and deciding on the content box, which stays 146 either way, makes it turn round once and stay round.
+  - point: Do not debounce a ResizeObserver callback; it already runs at most once a frame per target, so keep it cheap and idempotent and debounce only the expensive work it starts, like refetching a chart at a new resolution.
+    kind: rule
+    weight: supporting
+    teach:
+      - Debouncing the callback means frames painted with the old layout while the drag goes on.
+      - Keep the layout response immediate and cheap. Debounce what is costly, such as refetching a chart's data at the new resolution once user 1 stops dragging. A virtualized list uses the same observer to measure rows of unknown height and cache them by id.
+    check: User 1 is dragging a panel wider. What should be debounced, and what should not?
+    answer: The toolbar and canvas response should not be debounced; only expensive follow-up work, like refetching data at the new resolution, should wait until the drag stops.
+task:
+  prompt: Draw the panel toolbar loop with one 360 pixel threshold, from compact to the vanishing scrollbar and back, then add the 360 to 380 band and show where the loop stops.
+  expects: [5, 7]

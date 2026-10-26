@@ -1,0 +1,159 @@
+# How the HTTP versions work: handshake round trips, twelve requests on each version, where head-of-line blocking lives, and one GET on each wire.
+id: client-server-protocols/http-versions/how-it-works
+title: Connections, streams and blocking
+source:
+  hash: 2c9f60db2e84
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: client-server-protocols/http-versions/key-idea
+  assumes:
+    - HTTP/1.1 carries one exchange at a time per connection, so browsers open about six per origin and the rest queue.
+    - HTTP/2 interleaves every request as frames on numbered streams over one TCP connection.
+    - Over TCP one lost packet stalls every HTTP/2 stream behind it; HTTP/3 on QUIC stalls only the stream that lost it.
+  carries:
+    - A new TCP + TLS 1.3 connection gives the first response byte after 3 round trips, a new QUIC connection after 2, a resumed one with 0-RTT after 1.
+    - 0-RTT data can be replayed, so only safe requests such as GET may ride in it.
+    - Once a connection is open, every version costs one round trip per request, so reusing a warm connection matters most.
+    - Head-of-line blocking lives at the HTTP layer in 1.1, in TCP's byte order under HTTP/2, and only inside one stream on QUIC.
+    - HTTP/2 and HTTP/3 send the same request as lowercase pseudo-header fields, compressed with HPACK or QPACK.
+  terms:
+    - term: TLS handshake
+      means: The exchange that agrees the encryption keys; over TCP it follows TCP's own handshake, in QUIC it is merged into the transport's.
+    - term: 0-RTT
+      means: Sending the request in the very first flight on a resumed connection, before the handshake finishes; it can be replayed.
+    - term: pseudo-header field
+      means: A field such as :method or :path that replaces HTTP/1.1's request line and Host header in HTTP/2 and HTTP/3.
+    - term: HPACK / QPACK
+      means: The header compressors of HTTP/2 and HTTP/3; both index fields already sent, QPACK tolerates out-of-order streams.
+board:
+  keep: [semantics, lot-requests, same-get, rfc-9110, h1, h1-conns, h1-c1, h1-c2, h1-c6, h1-queue, h1-rule, h2, h2-conn, h2-js, h2-photo, h2-json, h2-stall, h3, h3-conn, h3-js, h3-photo, h3-json, h3-stall, h3-ready, h3-udp, all-busy, one-order, own-order]
+  elements:
+    - { id: handshakes, kind: region, label: "New connection, 40 ms round trip", at: [2, 27], size: [56, 18] }
+    - { id: tcp-hs, kind: box, label: TCP handshake, at: [4, 30], size: [14, 3], in: handshakes, tone: grey }
+    - { id: tls-hs, kind: box, label: TLS 1.3 handshake, at: [22, 30], size: [14, 3], in: handshakes, tone: grey }
+    - { id: get-tcp, kind: box, label: "GET: first byte 120 ms", at: [40, 30], size: [14, 3], in: handshakes, tone: red }
+    - { id: quic-hs, kind: box, label: QUIC + TLS 1.3 in one exchange, at: [4, 34], size: [32, 3], in: handshakes, tone: green }
+    - { id: get-quic, kind: box, label: "GET: first byte 80 ms", at: [40, 34], size: [14, 3], in: handshakes, tone: green }
+    - { id: zero-rtt, kind: box, label: "resumed, 0-RTT: 40 ms", at: [4, 38], size: [14, 3], in: handshakes, tone: green }
+    - { id: warm-conn, kind: box, label: "open connection: one round trip per request", at: [22, 38], size: [32, 3], in: handshakes, tone: blue }
+    - { id: replay, kind: note, label: "0-RTT can be replayed: GET yes, bid POST no", at: [4, 42], in: handshakes }
+    - { id: too-early, kind: note, label: "unsure server: 425 Too Early", at: [28, 42], in: handshakes }
+    - { id: twelve, kind: region, label: "Twelve requests, warm connections", at: [60, 27], size: [58, 16] }
+    - { id: h1-waves, kind: box, label: "HTTP/1.1: first six", at: [62, 30], size: [14, 3], in: twelve, tone: blue }
+    - { id: h1-wave2, kind: box, label: "next six: Queueing", at: [80, 30], size: [16, 3], in: twelve, tone: amber }
+    - { id: h1-last, kind: box, label: last at 120 ms, at: [100, 30], size: [14, 3], in: twelve, tone: red }
+    - { id: h2-wave, kind: box, label: "HTTP/2: all twelve at once", at: [62, 35], size: [34, 3], in: twelve, tone: blue }
+    - { id: h2-last, kind: box, label: last at 82 ms, at: [100, 35], size: [14, 3], in: twelve, tone: green }
+    - { id: pipelining, kind: note, label: "1.1 pipelining is off: proxies mishandled it", at: [62, 40], in: twelve }
+    - { id: stream-limit, kind: note, label: "HTTP/2: servers should allow 100+ streams", at: [86, 40], in: twelve }
+    - { id: hol, kind: region, label: Where head-of-line blocking lives, at: [2, 47], size: [56, 24] }
+    - { id: hol-def, kind: note, label: "head of line: the front of a queue holds the rest", at: [4, 50], in: hol }
+    - { id: tcp-order, kind: region, label: "TCP: one byte order for every stream", at: [4, 52], size: [52, 6], in: hol, tone: blue }
+    - { id: tcp-lost, kind: box, label: packet 4 lost, at: [6, 54], size: [16, 3], in: tcp-order, tone: red }
+    - { id: tcp-held, kind: box, label: packets 5 to 12 held, at: [28, 54], size: [26, 3], in: tcp-order, tone: red }
+    - { id: quic-order, kind: region, label: "QUIC: packets name their stream", at: [4, 59], size: [52, 6], in: hol, tone: blue }
+    - { id: quic-lost, kind: box, label: lot.json packet 4 lost, at: [6, 61], size: [16, 3], in: quic-order, tone: red }
+    - { id: quic-held, kind: box, label: only lot.json waits, at: [28, 61], size: [14, 3], in: quic-order, tone: amber }
+    - { id: quic-free, kind: box, label: other 11 finish, at: [44, 61], size: [10, 3], in: quic-order, tone: green }
+    - { id: h1-loss, kind: box, label: "1.1: only connection 3 stalls", at: [4, 66], size: [20, 3], in: hol, tone: blue }
+    - { id: icons-late, kind: box, label: icons.svg done at 170 ms, at: [32, 66], size: [22, 3], in: hol, tone: red }
+    - { id: wire, kind: region, label: One GET on each wire, at: [60, 47], size: [58, 17] }
+    - { id: h1-text, kind: box, label: GET /api/lots/118 HTTP/1.1, at: [62, 50], size: [22, 3], in: wire }
+    - { id: pseudo, kind: box, label: "method, scheme, authority, path", at: [92, 50], size: [24, 3], in: wire }
+    - { id: priority, kind: note, label: "priority: urgency 0 to 7, default 3", at: [62, 55], in: wire }
+    - { id: hpack, kind: box, label: "HTTP/2: HPACK table", at: [80, 57], size: [16, 3], in: wire, tone: amber }
+    - { id: qpack, kind: box, label: "HTTP/3: QPACK table", at: [100, 57], size: [16, 3], in: wire, tone: amber }
+    - { id: table-saves, kind: note, label: a repeated cookie costs a few bytes, at: [80, 61], in: wire }
+    - { id: qpack-why, kind: note, label: copes with streams out of order, at: [100, 61], in: wire }
+  arrows:
+    - { id: then-tls, from: tcp-hs, to: tls-hs, label: then }
+    - { id: then-get, from: tls-hs, to: get-tcp, label: then }
+    - { id: quic-then, from: quic-hs, to: get-quic, label: then }
+    - { id: h1-then, from: h1-waves, to: h1-wave2, label: then }
+    - { id: h1-ends, from: h1-wave2, to: h1-last, label: ends }
+    - { id: h2-ends, from: h2-wave, to: h2-last, label: ends }
+    - { id: tcp-gap, from: tcp-lost, to: tcp-held, label: blocks }
+    - { id: quic-gap, from: quic-lost, to: quic-held, label: blocks }
+    - { id: h1-gap, from: h1-loss, to: icons-late, label: one fewer }
+    - { id: becomes, from: h1-text, to: pseudo, label: becomes }
+    - { id: to-hpack, from: pseudo, to: hpack }
+    - { id: to-qpack, from: pseudo, to: qpack }
+beats:
+  - point: Over TCP a new connection pays a round trip for TCP's handshake and another for TLS 1.3 before the request goes out, while QUIC does both in one, so with a 40 ms round trip the first byte lands at 120 ms versus 80 ms.
+    kind: metric
+    weight: core
+    teach:
+      - Before any response byte, a new connection must learn that both ends are there and agree on keys. Over TCP these happen one after the other, SYN and SYN-ACK, then TLS 1.3's hello and reply.
+      - With Gavelry's 40 ms round trip on 4G, that is two round trips of setup and a third for the GET itself, first byte at 120 ms.
+      - QUIC's first packet already carries the TLS hello, so the connection is keyed after one round trip and the answer arrives at 80 ms.
+    draw: [handshakes, tcp-hs, tls-hs, then-tls, get-tcp, then-get, quic-hs, get-quic, quic-then]
+    check: With a 40 ms round trip, when does the first response byte arrive on a brand-new TCP + TLS 1.3 connection, and on a new QUIC connection?
+    answer: 120 ms on TCP + TLS (one round trip each for TCP, TLS and the request) and 80 ms on QUIC, which merges transport and TLS setup into one round trip.
+    misconceptions:
+      - "The three-way handshake is TLS's -> SYN, SYN-ACK is TCP's handshake; TLS 1.3 adds its own round trip on top."
+      - "HTTP/3 has no handshake -> QUIC still does one, with TLS folded into it, so it costs one round trip instead of two."
+  - point: A resumed connection can send a GET in its very first flight (0-RTT), but that flight can be replayed, so only safe requests may use it; once a connection is open any version costs one round trip per request.
+    kind: rule
+    weight: core
+    teach:
+      - A browser that visited before holds a resumption ticket, and with it QUIC sends the request in the first flight, so the answer lands at 40 ms.
+      - The catch is that someone who captured that flight can send it again and the server may act twice. So only safe methods such as GET go in early data; a server that is unsure answers 425 Too Early and the client retries after the handshake.
+      - Gavelry's GET for the lot page may ride in 0-RTT; the POST that leaves an absentee bid must not.
+      - And note the warm case. On an already open connection every version costs one round trip per request, which is why reusing one connection matters more than how it started.
+    draw: [zero-rtt, replay, too-early, warm-conn]
+    check: Why may the browser send GET /api/lots/118 as 0-RTT data but not POST /api/absentee-bids?
+    answer: 0-RTT data can be replayed; replaying a GET is harmless, but replaying a bid would place it twice.
+    misconceptions:
+      - "0-RTT is free speed for any request -> the first flight can be replayed, so a POST that places a bid must wait for the full handshake."
+  - point: Fetching twelve requests on warm connections, HTTP/1.1 sends two waves of six and finishes at 120 ms, while HTTP/2 sends all twelve as streams and finishes by 82 ms.
+    kind: metric
+    weight: core
+    teach:
+      - Take twelve of the lot page's requests, each needing a 40 ms round trip and about 20 ms of transfer.
+      - On HTTP/1.1 a connection is reused but carries one exchange at a time, and pipelining stays off because proxies mishandled it. Six go out, six queue, which DevTools shows as Queueing or Stalled. The second wave ends at 120 ms.
+      - On HTTP/2 all twelve leave at once on one connection and their frames interleave, so they finish between 60 and 82 ms. There is no six-connection limit; the server says how many streams it accepts, and at least 100 is recommended.
+    draw: [twelve, h1-waves, pipelining, h1-wave2, h1-then, h1-last, h1-ends, h2-wave, h2-last, h2-ends, stream-limit]
+    check: Why does the twelfth request finish at 120 ms on HTTP/1.1 but by 82 ms on HTTP/2?
+    answer: On 1.1 only six connections exist, so requests 7 to 12 wait for the first wave to finish; on HTTP/2 all twelve are streams on one connection from the start and their frames interleave.
+    misconceptions:
+      - "HTTP/1.1 opens a new connection per request -> connections are persistent and reused, but each carries one exchange at a time."
+  - point: Head-of-line blocking lives at the HTTP layer in 1.1, in TCP's single ordered byte stream under HTTP/2, and only inside the affected stream on QUIC, because QUIC packets say which stream they carry.
+    kind: mechanism
+    weight: core
+    teach:
+      - Head-of-line blocking means the front of a queue holds up everything behind it. HTTP/2 removed HTTP's queue but TCP is one numbered sequence of bytes and the kernel hands them over only in order. TCP has no idea streams exist.
+      - Walk the loss. Packet 4, part of lot.json, disappears at 50 ms and is resent at 110 ms. Over TCP packets 5 to 12 sit in the buffer and app.js and the photo stop too.
+      - QUIC tags every packet with its stream and offset and reassembles each stream separately, so only the later lot.json packets wait and the other eleven responses finish on time.
+    draw: [hol, hol-def, tcp-order, tcp-lost, tcp-held, tcp-gap, quic-order, quic-lost, quic-held, quic-gap, quic-free]
+    check: Packet 4, part of lot.json, is lost. Over HTTP/2 the photo's bytes in packets 5 and 6 have already arrived. Why can't the browser use them?
+    answer: TCP releases bytes only in order and does not know about streams, so everything after the gap is held until packet 4 is resent; on QUIC the photo's packets would be released at once.
+    misconceptions:
+      - "HTTP/2 multiplexing removed head-of-line blocking -> it removed it at the HTTP layer; TCP's in-order delivery still stalls every stream on a loss."
+  - point: On HTTP/1.1 the same loss stalls only connection 3, so the rest of the page loses just one connection from the queue, which is why several 1.1 connections can cope with loss better than one HTTP/2 connection.
+    kind: failure
+    weight: supporting
+    teach:
+      - Replay the loss on HTTP/1.1. Only connection 3, carrying lot.json, stalls; the others carry on.
+      - At 60 ms five connections free up for six queued requests, so icons.svg has to wait for connection 3 and finishes at 170 ms. That isolation is the one thing several 1.1 connections do better.
+    draw: [h1-loss, icons-late, h1-gap]
+    check: In the HTTP/1.1 loss, why does icons.svg wait until 110 ms when the other queued requests start at 60?
+    answer: Only five connections are free at 60 ms for six queued requests, and the sixth must wait for connection 3, which is stuck on lot.json's lost packet.
+  - point: HTTP/2 and HTTP/3 send the same GET as lowercase pseudo-header fields compressed against a table of fields already sent, HPACK for HTTP/2 and QPACK for HTTP/3, because HPACK assumes in-order delivery.
+    kind: mechanism
+    weight: core
+    teach:
+      - The request line and Host header become four pseudo-header fields, method, scheme, authority and path, and all field names are lowercase.
+      - The list is compressed against a table of what the connection already sent, so the second request's long cookie costs a few bytes of index.
+      - HPACK expects header blocks in the order they were sent, which only a single ordered stream guarantees. Once QUIC delivers streams independently, HTTP/3 needs QPACK, which copes with that.
+      - The priority field carries an urgency from 0, most urgent, to 7, default 3, plus i for responses useful in pieces.
+    draw: [wire, h1-text, pseudo, becomes, hpack, to-hpack, table-saves, qpack, to-qpack, qpack-why, priority]
+    check: Why does HTTP/3 use QPACK instead of HPACK?
+    answer: HPACK relies on header blocks arriving in order, which independent QUIC streams do not guarantee; QPACK is built to tolerate out-of-order streams.
+    misconceptions:
+      - "HTTP/2 headers are sent as plain text like 1.1 -> they become pseudo-header fields plus lowercase fields, compressed with HPACK."
+task:
+  prompt: Draw one packet of lot.json being lost on HTTP/2 and on HTTP/3, show which responses wait in each, and write when the first byte arrives on a new TCP + TLS 1.3 connection and on a new QUIC connection with a 40 ms round trip.
+  expects: [1, 4]

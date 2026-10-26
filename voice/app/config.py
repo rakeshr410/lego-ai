@@ -32,9 +32,10 @@ def _float_or_none(name: str) -> float | None:
 class Settings:
     """Everything the service reads from the environment, once at start."""
 
-    # The web tier: its origin on the private network and the shared bearer (both directions).
+    # The interview's web tier (lego-ai's app/, which owns the session): its origin on the private
+    # network and the shared bearer (both directions).
     web_url: str = field(
-        default_factory=lambda: os.environ.get("INTERVIEW_WEB_URL", "http://web.internal:4321").rstrip("/")
+        default_factory=lambda: os.environ.get("INTERVIEW_WEB_URL", "http://ai.internal:4322").rstrip("/")
     )
     secret: str = field(default_factory=lambda: os.environ.get("INTERVIEW_VOICE_SECRET", ""))
     # The speech vendors (bot/vendors.py): who transcribes and who speaks. Deepgram and Cartesia serve

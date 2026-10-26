@@ -1,0 +1,154 @@
+# Formatting contexts, how it works: what opens a BFC, its three effects, blockified items, the min-width auto trap, and contain.
+id: formatting-contexts-and-css-positioning/formatting-contexts/how-it-works
+title: What starts a context and what it contains
+source:
+  hash: fcc653aaebde
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: formatting-contexts-and-css-positioning/formatting-contexts/key-idea
+  assumes:
+    - A box is placed by the formatting context its parent runs, and lays out its children by the context it runs itself.
+    - Most block boxes continue the context they sit in; a new context is a wall the outside sees as one rectangle.
+    - "Flex and grid containers are always walls; display: flow-root builds one for block content and does nothing else."
+    - Touching vertical margins of blocks in normal flow collapse to the larger one.
+  carries:
+    - "Many properties open a BFC as a side effect; only display: flow-root does nothing else, and overflow: clip opens none."
+    - "overflow hidden, auto or scroll makes a box a scroll container that clips its content, menus included."
+    - "A new BFC contains its floats, sits beside floats outside it, and stops margins collapsing through its edge."
+    - "Flex and grid items are blockified; float and vertical-align do nothing to them, and each item starts a new context."
+    - "A flex item's automatic minimum width is its min-content size, so an unbreakable string stops it shrinking."
+    - "min-width: 0 or overflow-wrap: anywhere lowers that floor; in grid, minmax(0, 1fr) does."
+    - "contain: layout also makes a containing block for absolute and fixed descendants and a stacking context."
+  terms:
+    - term: min-content size
+      means: The narrowest a box can get with every soft wrap opportunity taken, usually its longest unbreakable run.
+    - term: max-content size
+      means: The width a box's content takes with no wrapping at all.
+    - term: automatic minimum
+      means: "What min-width: auto means on a flex item along the main axis: its content-based minimum, in practice its min-content."
+    - term: scroll container
+      means: A box with overflow hidden, auto or scroll; it clips what overflows and may scroll.
+board:
+  keep: [four-contexts, ctx-block, blk-one, blk-two, ctx-inline, line-full, line-wrap, ctx-flex, flex-item-1, flex-item-2, main-axis, ctx-grid, cell-1, cell-2, cell-3, cell-4, root-bfc, app-shell, top-bar, sidebar, board, column, task-card, card-header, card-body, attachment-row, activity, comment, avatar, comment-text, walls, same-bfc, flow-root, opt-in, always-walls]
+  elements:
+    - { id: triggers, kind: region, label: What opens a BFC, at: [2, 43], size: [58, 18] }
+    - { id: trig-flow-root, kind: box, label: "flow-root: new BFC, nothing else", at: [4, 46], size: [26, 3], in: triggers, tone: green }
+    - { id: trig-overflow, kind: box, label: "overflow hidden, auto, scroll: clips", at: [4, 49], size: [26, 3], in: triggers, tone: red }
+    - { id: trig-clip, kind: box, label: "overflow clip: clips, no BFC", at: [4, 52], size: [26, 3], in: triggers, tone: grey }
+    - { id: trig-out, kind: box, label: "float, absolute, fixed, inline-block", at: [32, 46], size: [26, 3], in: triggers }
+    - { id: trig-items, kind: box, label: flex or grid item (not a container), at: [32, 49], size: [26, 3], in: triggers, tone: blue }
+    - { id: trig-contain, kind: box, label: "contain: layout, paint, content, strict", at: [32, 52], size: [26, 3], in: triggers }
+    - { id: trig-also, kind: note, label: "also: table cells, multicol, container-type, html", at: [4, 56], in: triggers }
+    - { id: contain-why, kind: note, label: "why: the browser relayouts less", at: [34, 56], in: triggers }
+    - { id: contain-cb, kind: note, label: "contain layout: BFC, containing block, stacking", at: [4, 58], in: triggers }
+    - { id: effects, kind: region, label: Three effects of a new BFC, at: [62, 42], size: [56, 18] }
+    - { id: ines-before, kind: region, label: "Before: avatar hangs 12 below", at: [64, 45], size: [25, 8], in: effects, tone: red }
+    - { id: avatar-hangs, kind: box, label: avatar 40, at: [65, 47], size: [6, 3], in: ines-before }
+    - { id: ines-line, kind: box, label: "User 1: 36 tall", at: [71, 47], size: [17, 2], in: ines-before }
+    - { id: next-pushed, kind: box, label: "next entry, pushed", at: [71, 49], size: [17, 2], in: ines-before }
+    - { id: ines-after, kind: region, label: "After: flow-root", at: [96, 45], size: [22, 13], in: effects, tone: green }
+    - { id: comment-fixed, kind: region, label: "comment: 56 tall", at: [97, 47], size: [19, 6], in: ines-after }
+    - { id: avatar-held, kind: box, label: avatar inside, at: [98, 49], size: [6, 3], in: comment-fixed }
+    - { id: ines-line-fixed, kind: box, label: "User 1: one line", at: [104, 49], size: [11, 2], in: comment-fixed }
+    - { id: next-in-place, kind: box, label: "next entry, in place", at: [97, 54], size: [19, 2], in: ines-after }
+    - { id: float-owner, kind: note, label: a float belongs to the BFC it was laid out in, at: [64, 55], in: effects }
+    - { id: effect-contain, kind: note, label: "new BFC: holds floats, sits beside them, stops margins", at: [64, 57], in: effects }
+    - { id: blockify, kind: region, label: Flex and grid items become blocks, at: [2, 63], size: [58, 16] }
+    - { id: bl-row, kind: region, label: a flex row, at: [4, 66], size: [54, 7], in: blockify, tone: blue }
+    - { id: bl-inline, kind: box, label: "span: now a block", at: [6, 69], size: [16, 3], in: bl-row }
+    - { id: bl-ignored, kind: box, label: "chip: float ignored", at: [24, 69], size: [16, 3], in: bl-row }
+    - { id: bl-text, kind: box, label: "loose text: anonymous item", at: [42, 69], size: [14, 3], in: bl-row }
+    - { id: bl-inline-flex, kind: note, label: "inline-flex becomes flex", at: [4, 74], in: blockify }
+    - { id: bl-absolute, kind: note, label: "absolute child: not an item", at: [30, 74], in: blockify }
+    - { id: bl-new-bfc, kind: note, label: "each plain item: a new BFC, sealed", at: [4, 76], in: blockify, tone: green }
+    - { id: trap, kind: region, label: "The min-width: auto trap", at: [62, 62], size: [44, 16] }
+    - { id: row-icon, kind: box, label: icon 16, at: [64, 65], size: [6, 3], in: trap, tone: grey }
+    - { id: row-link, kind: box, label: "file link: min-content 504", at: [70, 65], size: [26, 3], in: trap, tone: red }
+    - { id: row-size, kind: box, label: "2.4 MB: 44", at: [96, 65], size: [8, 3], in: trap, tone: grey }
+    - { id: row-spill, kind: note, label: "row 224, needs 580: spills 356", at: [64, 69], in: trap, tone: red }
+    - { id: item-floor, kind: note, label: "flex item floor: min-content", at: [82, 69], in: trap }
+    - { id: min-content, kind: note, label: "min-content: every wrap taken", at: [64, 71], in: trap }
+    - { id: fix-min-width, kind: note, label: "min-width 0: link gets 148", at: [64, 73], in: trap, tone: green }
+    - { id: fix-anywhere, kind: note, label: "overflow-wrap anywhere: fits", at: [84, 73], in: trap, tone: green }
+    - { id: break-word, kind: note, label: "break-word: no help here", at: [64, 75], in: trap }
+    - { id: grid-fix, kind: note, label: "grid: minmax(0, 1fr) keeps tracks equal", at: [84, 75], in: trap, tone: green }
+  arrows:
+    - { id: ines-fix, from: ines-before, to: ines-after, label: flow-root }
+beats:
+  - point: "Many properties open a block formatting context as a side effect of their real job; only display: flow-root does nothing else, and overflow: clip opens none at all."
+    kind: rule
+    weight: core
+    teach:
+      - Read the list with its side effects. flow-root seals the box's contents and leaves it a block in its parent's flow, nothing more.
+      - overflow hidden, auto or scroll also opens one, but makes the box a scroll container that clips, which is how a fix for a leaking float turns into a cut-off dropdown a week later. overflow clip clips the same way yet starts no BFC, a trap if you used it to contain a float.
+      - Floats, absolute and fixed boxes and inline-blocks open one; so does any flex or grid item, unless the item is itself a flex, grid or table container, which then starts that kind of context instead.
+    draw: [triggers, trig-flow-root, trig-overflow, trig-clip, trig-out, trig-items, trig-also]
+    check: "Which of these does not create a new block formatting context: display flow-root, overflow auto, overflow clip, float left?"
+    answer: "overflow: clip; it clips without being a scroll container and opens no BFC. Any overflow value other than visible and clip does."
+    misconceptions:
+      - "overflow: hidden is the clean way to contain floats -> it works but also clips, catching menus and tooltips; flow-root contains floats with no other effect."
+  - point: "A new BFC changes three things: it contains its floats, it sits beside floats outside it instead of running under them, and margins stop collapsing through its edge."
+    kind: mechanism
+    weight: core
+    teach:
+      - A float belongs to the BFC it was laid out in, not to its parent element. A block holding only a float has nothing in flow, so its automatic height ignores the float, and later blocks run underneath while only their lines get shorter.
+      - "User 1's comment is one line, 36 tall, and their 40-pixel avatar starts 8 down, so it hangs 12 below and pushes the next entry's first line right. flow-root on the comment makes it a BFC root, it grows to 56, and everything after moves down 20."
+      - "flow-root on the long comment's paragraph too, and its border box is placed beside the avatar, so the third line no longer wraps underneath. And a child's top margin can no longer collapse through the parent."
+    draw: [effects, float-owner, ines-before, avatar-hangs, ines-line, next-pushed, ines-after, comment-fixed, avatar-held, ines-line-fixed, next-in-place, ines-fix, effect-contain]
+    check: "A comment is 36 pixels tall and holds a floated 40-pixel avatar and one line of text. Which change makes it tall enough with no other side effect: overflow hidden, display flow-root, overflow clip, or clear both on the avatar?"
+    answer: "display: flow-root; its BFC's automatic height includes the float. overflow hidden also works but clips, overflow clip opens no BFC, and clear on the float itself does not grow the parent."
+    misconceptions:
+      - "A float belongs to its parent element, so the parent grows around it -> it belongs to the BFC it was laid out in; an ordinary parent's height ignores it."
+  - point: "A flex or grid container blockifies its children: an inline display computes to block, float and vertical-align do nothing, and each plain item starts a new block formatting context."
+    kind: rule
+    weight: core
+    teach:
+      - The container lays its children out with its own algorithm, so their outer display stops mattering. inline becomes block, inline-flex becomes flex, inline-grid becomes grid, and loose text directly inside gets an anonymous item.
+      - float and clear no longer take an item out of flow, vertical-align does nothing, and an absolute child is not an item at all.
+      - Each plain item is a new BFC, which is why a Slatework card in a flex column contains its floats with no help. The container is sealed too, floats outside do not reach in and its margins never collapse with its items'.
+    draw: [blockify, bl-row, bl-inline, bl-inline-flex, bl-ignored, bl-absolute, bl-text, bl-new-bfc]
+    check: A chip with float left sits directly inside a flex row. What does the float do?
+    answer: Nothing; the item stays in flow and the flex container places it.
+    misconceptions:
+      - "float still pulls a flex item to one side -> float and clear are ignored on flex and grid items."
+  - point: "On a flex item, min-width auto means a floor at its min-content size, so a file name with no break opportunities refuses to shrink and the row overflows its card."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Flex and grid ask each item two sizes. min-content is how narrow it can get with every soft wrap taken; max-content is how wide it is with no wrapping."
+      - In block layout min-width defaults to 0, but on a flex item along the main axis auto means a floor at the content-based minimum, in practice the min-content size. flex-shrink can never go below it.
+      - "Slatework's attachment row is 224 wide, a 16 icon, two 8 gaps, a 44 size label, and the link between them. The file name is joined by underscores with no space or hyphen, so its min-content is the whole 504. The row needs 580 and spills 356 out of the card."
+    draw: [trap, row-icon, row-link, row-size, row-spill, min-content, item-floor]
+    check: A 224-pixel flex row holds one item with a 504-pixel file name that has no spaces or hyphens. Why does the row overflow even though the item may shrink?
+    answer: The item's automatic minimum is its min-content size, the whole 504-pixel name, and flex-shrink never takes it below that floor.
+    misconceptions:
+      - "Flex items never shrink -> they shrink, but not below their automatic minimum, which is the min-content size."
+  - point: "min-width: 0 or overflow-wrap: anywhere lowers the floor, overflow-wrap: break-word does not, and grid has the same floor because 1fr means minmax(auto, 1fr)."
+    kind: rule
+    weight: core
+    teach:
+      - "min-width: 0 removes the floor and the link shrinks to what is left, 224 minus 16, 8, 8 and 44, so 148; add ellipsis to truncate it or let it wrap."
+      - "overflow-wrap: anywhere puts break opportunities between characters, so min-content falls to about one glyph. break-word wraps the same way when painting but is ignored when min-content is computed, so alone it fixes nothing. overflow hidden also zeroes the floor, at the price of clipping."
+      - "Grid hides the same floor in 1fr, short for minmax(auto, 1fr), so a 4-column board widens the column holding the long name. That is the swollen Review column; minmax(0, 1fr) keeps the tracks equal."
+    draw: [fix-min-width, fix-anywhere, break-word, grid-fix]
+    check: "A board uses grid-template-columns: repeat(4, 1fr) and one card holds an unbreakable 600-pixel string. What happens to its column, and what keeps the four equal?"
+    answer: "It grows to fit the card's minimum and the other three shrink to share what is left, because 1fr is minmax(auto, 1fr); minmax(0, 1fr) keeps them equal."
+    misconceptions:
+      - "overflow-wrap: break-word fixes the overflowing flex item -> it is ignored for min-content, so the floor stays at 504; use min-width 0 or overflow-wrap anywhere."
+  - point: "contain: layout states the wall directly and brings a bundle, a new BFC, a containing block for absolute and fixed descendants, and a stacking context; its reason is performance."
+    kind: rule
+    weight: supporting
+    teach:
+      - It promises that nothing inside affects layout outside and the reverse, so the browser can relayout less when the subtree changes. paint adds clipping; content is layout, paint and style; strict adds size containment and needs an explicit size.
+      - On a Slatework card it would also capture the card's fixed children and start a stacking context, which the next lesson shows can move a menu or a toast.
+    draw: [trig-contain, contain-cb, contain-why]
+    check: What does contain layout give a box besides a new block formatting context?
+    answer: A containing block for absolute and fixed descendants, and a new stacking context.
+    misconceptions:
+      - "contain: layout skips rendering off-screen content -> that is content-visibility, a separate property."
+task:
+  prompt: "Draw Slatework's 224-pixel attachment row, a 16 icon, two 8 gaps, a 44 size label and a 504-pixel unbreakable file link, then write how far it spills and how wide the link gets with min-width: 0."
+  expects: [4, 5]

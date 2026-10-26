@@ -1,4 +1,4 @@
-// Excalidraw's fonts for the interview whiteboard (docs/interview/README.md, "Whiteboard").
+// Excalidraw's fonts for the interview whiteboard (docs/README.md, "Whiteboard").
 //
 // The canvas (components/sd/ExcalidrawCanvas.tsx) loads its fonts from this site, not from
 // Excalidraw's CDN: window.EXCALIDRAW_ASSET_PATH points at /excalidraw/, and this script copies

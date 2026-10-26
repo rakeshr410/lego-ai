@@ -1,0 +1,1347 @@
+# yaml-language-server: $schema=../../../../lego/content-kit/schema/topic.schema.json
+# provenance: ai-drafted by claude-opus-5-5 on 2026-10-26
+#
+# A whole frontend system design interview for the Twitter news feed, run section by section on
+# one whiteboard: approach, mock-up, requirements, application state, API, then the three
+# performance buckets (network, rendering, JavaScript) and the wrap-up.
+# Running example: Twitter's web feed (the user asked for the real name). Its internals here are illustrative, not how Twitter is built.
+# (pages and /api on the same origin, images on img.twitter.example behind a CDN). Its tweets
+# are short posts with up to four images. Every size, count and timing for Twitter is an
+# illustrative assumption for the exercise, not a measurement of any real product.
+# The main-site topic twitter/home-timeline designs the backend that fills this feed; this one is the
+# client interview walkthrough, chronological and time-boxed.
+catalogVersion: 5
+title: Designing a news feed, end to end
+shortTitle: News feed interview
+summary: "A 40-minute frontend design interview for the Twitter feed, board section by board section: mock-up, requirements, normalized state, storage, one cursor-paged endpoint, new tweets over server-sent events, then network, rendering and JavaScript performance."
+group: read
+order: 5
+xp: 260
+wireframe: feed
+difficulty: intermediate
+tags: [feeds, pagination, virtualization, performance, networking, images, offline, realtime]
+related:
+  - home-timeline
+  - what-is-frontend-system-design/what-strong-answers-show
+  - state-management/normalized-client-store
+  - infinite-scroll-vs-pagination/offset-vs-cursor
+  - client-server-protocols/polling-and-server-sent-events
+  - api-architectural-styles/graphql-on-the-client
+  - virtualization/windowing
+  - network-performance/request-shaping
+  - media-rendering/image-formats-and-delivery
+  - rendering-performance/compositor-animations
+  - javascript-performance/long-tasks-and-inp
+  - network-performance/service-worker-caching
+eyebrow: Design
+breadcrumb: [Feed, Interview walkthrough]
+lede: "You have about forty minutes and one whiteboard to design the web feed of Twitter, a short-post social app. This walkthrough runs the interview the way a strong candidate runs it: draw a mock-up, commit to requirements you can finish, design the client state and the one endpoint the feed needs, then spend the rest of the time on network, rendering and JavaScript performance, each idea tied back to a requirement on the board."
+reviewStatus: draft
+author: rakeshr410
+provenance: ai-drafted
+sources:
+  - title: Feed pattern (WAI-ARIA Authoring Practices Guide, W3C)
+    url: https://www.w3.org/WAI/ARIA/apg/patterns/feed/
+    note: role feed and article, aria-posinset, aria-setsize and aria-busy for an endless list.
+  - title: Intersection Observer API (MDN)
+    url: https://developer.mozilla.org/en-US/docs/Web/API/Intersection_Observer_API
+    note: The sentinels at the top and bottom of the virtual list, and rootMargin to load ahead.
+  - title: Using server-sent events (MDN)
+    url: https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events/Using_server-sent_events
+    note: EventSource, automatic reconnection with Last-Event-ID, and the warning that over HTTP/1.1 each stream uses one of the browser's six connections per domain.
+  - title: "RFC 9113: HTTP/2"
+    url: https://www.rfc-editor.org/rfc/rfc9113
+    note: Multiplexed streams on one connection; SETTINGS_MAX_CONCURRENT_STREAMS, recommended to be no smaller than 100.
+  - title: HTTP compression (MDN)
+    url: https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/Compression
+    note: Content negotiation with Accept-Encoding, Vary, and not recompressing images.
+  - title: Minify and compress network payloads with Brotli (web.dev)
+    url: https://web.dev/articles/codelab-text-compression-brotli
+    note: Brotli quality levels and build-time versus on-the-fly compression.
+  - title: "<script>: the Script element (MDN)"
+    url: https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Elements/script
+    note: defer, async, type=module and nomodule.
+  - title: Image file type and format guide (MDN)
+    url: https://developer.mozilla.org/en-US/docs/Web/Media/Guides/Formats/Image_types
+    note: AVIF, WebP and JPEG, their support, and serving fallbacks with picture and source type.
+  - title: A new image format for the Web (WebP, Google for Developers)
+    url: https://developers.google.com/speed/webp
+    note: Lossy WebP images are 25 to 34 percent smaller than comparable JPEGs at equivalent quality.
+  - title: Responsive images (MDN)
+    url: https://developer.mozilla.org/en-US/docs/Web/HTML/Guides/Responsive_images
+    note: srcset with width descriptors and sizes.
+  - title: font-display (MDN)
+    url: https://developer.mozilla.org/en-US/docs/Web/CSS/@font-face/font-display
+    note: The block period of about 3 s under block and auto, and the swap, fallback and optional strategies.
+  - title: Cumulative Layout Shift (web.dev)
+    url: https://web.dev/articles/cls
+    note: Good is 0.1 or less; reserve space for images with width and height or aspect-ratio.
+  - title: Interaction to Next Paint (web.dev)
+    url: https://web.dev/articles/inp
+    note: Good is 200 ms or less; long tasks over 50 ms delay interactions.
+  - title: Largest Contentful Paint (web.dev)
+    url: https://web.dev/articles/lcp
+    note: Good is 2.5 s or less at the 75th percentile.
+  - title: Lighthouse performance scoring and throttling (Chrome for Developers)
+    url: https://developer.chrome.com/docs/lighthouse/performance/performance-scoring
+    note: The mobile run simulates a slow 4G connection (about 1.6 Mbps, 150 ms round trip) on a mid-range phone.
+  - title: Animation performance and frame rate (MDN)
+    url: https://developer.mozilla.org/en-US/docs/Web/Performance/Guides/Animation_performance_and_frame_rate
+    note: transform and opacity can skip layout and paint; animating layout properties costs a reflow per frame.
+  - title: Window.requestIdleCallback() (MDN)
+    url: https://developer.mozilla.org/en-US/docs/Web/API/Window/requestIdleCallback
+    note: Work in idle periods, with a timeout; not supported in Safari, so a fallback is needed.
+  - title: Using IndexedDB (MDN)
+    url: https://developer.mozilla.org/en-US/docs/Web/API/IndexedDB_API/Using_IndexedDB
+    note: Asynchronous, structured, indexed client storage.
+  - title: Storage quotas and eviction criteria (MDN)
+    url: https://developer.mozilla.org/en-US/docs/Web/API/Storage_API/Storage_quotas_and_eviction_criteria
+    note: localStorage is about 5 MiB per origin; IndexedDB and Cache Storage share a quota that is a share of the disk and differs by browser.
+  - title: Service Worker API (MDN)
+    url: https://developer.mozilla.org/en-US/docs/Web/API/Service_Worker_API
+    note: A worker that intercepts the page's requests; responses are kept in Cache Storage (the Cache API), not in IndexedDB.
+  - title: content-visibility (MDN)
+    url: https://developer.mozilla.org/en-US/docs/Web/CSS/content-visibility
+    note: The browser skips rendering offscreen content while it stays in the DOM; pair it with contain-intrinsic-size.
+tutorBrief: >-
+  Interview walkthrough for Twitter's web feed (the design is illustrative, not how Twitter is
+  really built; images on an image CDN). The interview is 35 to 45
+  minutes; the plan is about 40: 2 min to restate and ask, 4 for the mock-up, 5 for requirements
+  (commit point at minute 11), 3 for the components, 5 for state, 6 for the API, 12 for performance
+  (network 4, rendering 5, JavaScript 3), 3 to recap, the rest as buffer. The board has six sections, in
+  this order: mock-up, requirements, components, state, API, performance (network, rendering, JS); each
+  section's frame is drawn when it begins, not before. The component diagram comes after the requirements,
+  never before them. Commit only to what can be
+  finished on the board. Mock-up: tweets top to bottom, newest first; each TweetCard has an
+  author row (avatar, name, handle, time), text, an image box and an action row (reply, retweet,
+  like, with counts). Components: FeedScreen, FeedList (virtual list), TweetCard, Feed Store, Feed
+  Client, Live Channel, Offline Cache (service worker plus IndexedDB), Image CDN, Feed API (black
+  box). Functional: newest first, endless, images the only media (up to 4 per tweet), new tweets
+  announced within about 10 s behind a pill and never inserted under the reader, counts shown.
+  Non-functional: phones 360 px to desktops 1440 px; LCP 2.5 s or less on Lighthouse mobile
+  throttling (about 1.6 Mbps, 150 ms RTT); first load 300 KB or less transferred; initial JS 100 KB
+  or less compressed; 25 or fewer cards mounted; no long task over 50 ms while scrolling; INP 200 ms
+  or less; CLS 0.1 or less; offline, the shell opens and the last 100 tweets with 480 w images are
+  readable. State: normalized (first and second normal form): tweetsById, usersById,
+  attachmentsById, attachmentIdsByTweet, replyIdsByTweet (replies load only when a thread
+  opens); the order lives in feed.ids, newest first by createdAt then id; feed also holds nextCursor,
+  status, a window (first and last index in memory) and pendingIds (cap 50). Payloads within 3 pages
+  of the viewport stay in memory; the rest are written to IndexedDB in idle time and read back when
+  the reader scrolls back. localStorage only for small preferences (it is synchronous and strings
+  only, about 5 MiB); sessionStorage for the scroll anchor. API: GET
+  /api/tweets?limit=10&cursor=<opaque>, same-origin session cookie, never a token in the URL.
+  Limit follows the viewport (about two screens: 6 on a phone, 10 on desktop). Cursor, not offset,
+  because new tweets at the top shift offsets and cause duplicates. Response: tweets, users,
+  attachments (with width, height, alt, placeholder colour), nextCursor (null at the end). New
+  tweets: server-sent events on GET /api/tweets/stream (one-way, built-in reconnect with
+  Last-Event-ID), plus plain GETs for paging; short polling and long polling rejected (radio wakeups,
+  wasted requests, latency), WebSocket rejected (two-way not needed, stateful infrastructure). SSE
+  works over HTTP/1.1 too but then uses one of six connections per host; over HTTP/2 it is one
+  stream. REST over GraphQL for this client (small read-heavy surface, HTTP caching, no client cache
+  library in the bundle). Network: HTTP/2 or HTTP/3; route-level bundle split; one modern build
+  (type=module) and a legacy build only if analytics show old browsers; defer analytics until after
+  load; Brotli for static text precompressed at quality 11 (typically 15 to 20 percent smaller than
+  gzip, which itself removes about 70 to 80 percent of text), gzip as fallback, never recompress
+  images; CDN for static files and images with long-lived immutable cache headers on hashed names;
+  AVIF then WebP with a JPEG fallback via picture or Accept negotiation at the image service; srcset
+  480, 960, 1440 widths from the image service; fonts WOFF2, subset, font-display swap or optional,
+  preload the one used above the fold. Rendering: a constant number of nodes via virtualization: two
+  sentinels watched by IntersectionObserver with a 1-screen rootMargin, a pool of about 20 recycled
+  card nodes positioned with transform translateY, y(n) = y(n-1) + h(n-1) + gap, heights measured with
+  ResizeObserver and cached by id, container height set to the sum so the scrollbar is right; flat
+  single-class selectors; animate only transform and opacity; reserve image boxes from width and
+  height (aspect-ratio); a skeleton in the initial HTML. Accessibility caveat: keep DOM order equal
+  to visual order when recycling, and use the feed pattern (aria-posinset, aria-setsize -1, aria-busy).
+  JavaScript: never block the UI thread (no task over 50 ms); workers for heavy work (search index,
+  image decoding), not for parsing a 12 KB page; requestIdleCallback with a setTimeout fallback for
+  Safari; IndexedDB not localStorage; service worker with cache-first for hashed assets and images
+  and network-first for the feed, falling back to IndexedDB; ship less JS. Wrap-up: stream updates
+  by buffering SSE events and applying them once per animation frame; minimize runtime state by
+  normalizing and offloading. Stretch topics if time is left: accessibility of the virtual list,
+  then cache invalidation.
+components:
+  - key: feed-screen
+    name: FeedScreen
+    tone: blue
+    summary: Route shell for the home feed. Ships a skeleton in the initial HTML, hosts the list and the new-tweets pill, and restores the reading position.
+    owns: [scroll anchor, pill visibility]
+    talksTo: [feed-list, feed-store]
+  - key: feed-list
+    name: FeedList
+    tone: green
+    summary: "The virtual list: two sentinels, a pool of recycled card nodes placed with transforms, a measured height per tweet and a container sized to the whole list."
+    owns: [node pool, measured heights, visible range]
+    talksTo: [feed-screen, tweet-card, feed-store]
+  - key: tweet-card
+    name: TweetCard
+    tone: white
+    summary: "One tweet: author row, text, image box sized before the image arrives, and the action row with counts. Reads its tweet by id; never fetches."
+    owns: [press and hover state]
+    talksTo: [feed-list, feed-store]
+  - key: feed-store
+    name: Feed Store
+    tone: orange
+    summary: Normalized entities by id, the ordered list of tweet ids with its cursor, the in-memory window, and pending new ids.
+    owns: [entities by id, feed ids, window, pending ids]
+    talksTo: [feed-list, tweet-card, feed-client, live-channel, offline-cache]
+  - key: feed-client
+    name: Feed Client
+    tone: purple
+    summary: The only caller of GET /api/tweets. Sends the cursor and a limit sized to the viewport, times out, retries a GET once and hands pages to the store.
+    owns: [in-flight request]
+    talksTo: [server, feed-store]
+  - key: live-channel
+    name: Live Channel
+    tone: yellow
+    summary: Holds the EventSource for new-tweet notices, buffers them and passes ids to the store at most once per frame.
+    owns: [EventSource, last event id]
+    talksTo: [server, feed-store]
+  - key: offline-cache
+    name: Offline Cache
+    tone: sand
+    summary: "The service worker and IndexedDB together: the app shell and images in Cache Storage, tweet pages in IndexedDB, both readable with no network."
+    owns: [Cache Storage, IndexedDB tweets]
+    talksTo: [feed-store, media-cdn, server]
+  - key: media-cdn
+    name: Image CDN
+    tone: gray
+    summary: An image service behind a CDN. Returns each image at the requested width and in the best format the browser accepts.
+    owns: [image variants]
+    talksTo: [tweet-card, offline-cache]
+  - key: server
+    name: Feed API
+    tone: gray
+    summary: Black box. Stores tweets, serves pages behind an opaque cursor and pushes new-tweet notices.
+    owns: [tweets, cursors, event log]
+    talksTo: [feed-client, live-channel]
+content:
+  # ────────────────────────────────────────────────────────────────── 1. Approach
+  - __component: sd.section
+    key: approach
+    title: Running the interview.
+    railLabel: Approach
+    intro: "A frontend design interview lasts 35 to 45 minutes. That is enough to design one screen well and nowhere near enough to design everything a feed could do. The skill being tested is choosing what to draw, drawing it in a sensible order, and finishing."
+  - __component: sd.rich-text
+    key: approach-why
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "The prompt is short: design the news feed of Twitter, where people post tweets, short posts with optional photos, and read a feed of the people they follow. The design is ours, not how Twitter is really built. You are designing the client, the part that runs in the browser. The server is a black box with a contract you get to propose."
+      - type: paragraph
+        children:
+          - type: text
+            text: "The biggest risk in a time-boxed design is over-committing. If you promise video, replies, ranking, offline posting and accessibility in the first five minutes, you will spend the last ten minutes apologising for what is missing. A smaller list that is fully drawn reads far better than a long list with half of it blank. So commit only to what you can finish on the board, say out loud what you are leaving out, and keep a list of stretch topics for the end."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Carry the plan in your head and say it out loud once: a mock-up, the requirements, the components, the client state, where it is stored, the API, how new tweets arrive live, and performance split into network, rendering and JavaScript. Each is a section of this article, and each takes a fixed slice of the clock. Draw a section's frame only when you reach it, titled with its slice of the clock, so the board fills in the order you worked and never shows empty boxes waiting for later. Requirements come straight after the mock-up: you draw the components once you know what they must do."
+  - __component: sd.card-grid
+    key: board-columns
+    title: The board, in the order you fill it
+    columns: 3
+    cards:
+      - title: 1. Mock-up
+        text: A rough feed with three or four tweets, one broken into its parts. It makes the requirements concrete.
+      - title: 2. Requirements
+        text: Functional (what the feed does) and non-functional (devices, network, CPU and memory, offline), each with a number you can check. Written as numbered lines.
+      - title: 3. Components
+        text: The component diagram, drawn once the requirements are known. The UI tree from the mock-up, and the store, client, live channel and offline cache behind it.
+      - title: 4. State
+        text: The client store, normalized by id, with the order of the feed as a list of ids and a rule for what stays in memory.
+      - title: 5. API
+        text: One endpoint for pages, cursor pagination, the response shape, and the channel that brings new tweets.
+      - title: 6. Performance
+        text: Three buckets, network, rendering and JavaScript, each item tied back to a requirement it serves.
+      - title: Parking lot
+        text: A corner for stretch topics you name but do not draw yet, such as accessibility of the virtual list and cache invalidation.
+  - __component: sd.timeline
+    key: interview-time-box
+    title: A 40-minute plan for the feed interview
+    caption: "Minutes from the start. The commit point at minute 11 is when the requirements stop growing; the check at minute 25 is when you should be leaving the API. The last few minutes are buffer for the interviewer's questions and one stretch topic."
+    axis: { unit: min, from: 0, to: 45, step: 5 }
+    lanes:
+      - { key: board, label: Board section, kind: process }
+      - { key: talk, label: What you are doing, kind: client }
+    spans:
+      - { lane: board, from: 0, to: 2, label: prompt, tone: gray }
+      - { lane: board, from: 2, to: 6, label: mock-up, tone: blue }
+      - { lane: board, from: 6, to: 11, label: requirements, tone: green }
+      - { lane: board, from: 11, to: 14, label: components, tone: sand }
+      - { lane: board, from: 14, to: 19, label: state, tone: orange }
+      - { lane: board, from: 19, to: 25, label: API, tone: purple }
+      - { lane: board, from: 25, to: 29, label: network, tone: yellow }
+      - { lane: board, from: 29, to: 34, label: rendering, tone: yellow }
+      - { lane: board, from: 34, to: 37, label: JS, tone: yellow }
+      - { lane: board, from: 37, to: 40, label: recap, tone: gray }
+      - { lane: board, from: 40, to: 45, label: buffer, tone: white, style: outline }
+      - { lane: talk, from: 0, to: 11, label: scope and commit, tone: sand }
+      - { lane: talk, from: 11, to: 25, label: design the data path, tone: sand }
+      - { lane: talk, from: 25, to: 37, label: optimize against the requirements, tone: sand }
+      - { lane: talk, from: 37, to: 45, label: "summarize, take questions", tone: sand }
+    marks:
+      - { at: 11, label: requirements frozen, kind: deadline }
+      - { at: 25, label: leave the API by now, kind: deadline }
+  - __component: sd.rich-text
+    key: approach-time-box
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Two habits keep the clock honest. First, glance at the time at each section boundary and say where you are: \"requirements are done, moving to the components\". Second, when a question pulls you deep (Map or plain object? which virtualization library?), give a one-line answer, note it in the parking lot, and move on. Interviewers usually care more about whether you know the fundamentals behind a library than which one you would install, so be ready to explain what it would do for you."
+  - __component: sd.quiz
+    key: approach-quiz
+    title: Quick check
+    questions:
+      - question: Five minutes in, you are tempted to add video, polls and reply threads to the requirements. What is the better move?
+        optionA: Add them all; a fuller list shows more ambition
+        optionB: Keep the list to what you can finish, name the rest as out of scope, and park the most interesting one as a stretch topic
+        optionC: Ask the interviewer to pick the requirements for you
+        optionD: Skip requirements and start drawing components
+        answer: B
+        explanation: A complete design of a smaller scope reads better than a half-drawn large one. Naming what is out of scope shows you saw it.
+      - question: When do you draw a section's frame on the board?
+        optionA: All of them in the first minute, so the board shows the whole plan
+        optionB: When you reach that section, titled with its slice of the clock
+        optionC: Never; frames waste time
+        optionD: At the end, around what you drew
+        answer: B
+        explanation: The plan lives in your head and is said once. Frames drawn as you reach them keep the board in the order you worked, with no empty boxes waiting for later.
+      - question: At minute 27 you are still discussing pagination. What does the time box suggest?
+        optionA: Finish the API in a sentence or two and move to performance, which still has three buckets to cover
+        optionB: Stay on pagination until it is perfect
+        optionC: Go back and redo the mock-up
+        optionD: Stop and ask for more time
+        answer: A
+        explanation: The plan leaves the API by minute 25. Performance is a large part of what a feed interview is scored on.
+  # ────────────────────────────────────────────────────────────────── 2. Mock-up
+  - __component: sd.section
+    key: mock-up
+    title: Mock-up.
+    railLabel: Mock-up
+    intro: "Start with a drawing, not a list. Four boxes stacked top to bottom are enough to make the requirements that follow concrete, and later to name every component of the feed."
+  - __component: sd.rich-text
+    key: mock-up-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "A news feed is a list of tweets rendered one after another, top to bottom. Two properties make it a design problem rather than a page: the tweets load as the reader goes, and there is no end. Draw three or four tweets, label them T1 to T4, and draw an arrow down the side to say the list continues. Then zoom into one tweet and break it into its parts."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Each tweet has an author row (avatar, display name, handle and relative time), the text, an optional image box, and an action row with reply, retweet and like, and their counts. That breakdown will become the component tree once the requirements are written, and it tells you what data each card needs, which you will reuse in the state section. Stop drawing here: the requirements come next."
+  - __component: sd.screen
+    key: twitter-feed-mock-up
+    title: The Twitter feed, as drawn in the first minutes
+    alt: "The Twitter home feed in a phone frame: a header with the app name, then four tweets stacked top to bottom. Each has an avatar, name, handle and time, a line of text, and an action row with reply, retweet and like counts; two tweets carry an image. The tabs label the parts of one tweet and then show the footer loading more."
+    frame: phone
+    url: twitter.example/home
+    screen:
+      type: collection
+      layout: feed
+      title: Twitter
+      items:
+        - key: t1
+          title: User 1
+          subtitle: "@user1 · 4 min"
+          avatar: User 1
+          text: Low tide this morning. The whole bay was mirrors.
+          media: { ratio: 0.75, kind: image, state: loaded }
+          counts:
+            - { key: replies, label: Replies, value: "3" }
+            - { key: retweets, label: Retweets, value: "4" }
+            - { key: likes, label: Like, value: "18", on: false }
+        - key: t2
+          title: User 2
+          subtitle: "@user2 · 12 min"
+          avatar: User 2
+          text: Shipping the new build tonight. Fingers crossed.
+          counts:
+            - { key: replies, label: Replies, value: "1" }
+            - { key: retweets, label: Retweets, value: "0" }
+            - { key: likes, label: Like, value: "7", on: false }
+        - key: t3
+          title: Northfield Bakery
+          subtitle: "@northfieldbakes · 31 min"
+          avatar: Northfield Bakery
+          text: Rye loaves are out of the oven until 2 pm.
+          media: { ratio: 0.5625, kind: image, state: blur }
+          counts:
+            - { key: replies, label: Replies, value: "9" }
+            - { key: retweets, label: Retweets, value: "11" }
+            - { key: likes, label: Like, value: "42", on: false }
+        - key: t4
+          title: Lin Okafor
+          subtitle: "@linok · 1 h"
+          avatar: Lin Okafor
+          text: Anyone else's train stuck outside the station?
+          counts:
+            - { key: replies, label: Replies, value: "6" }
+            - { key: retweets, label: Retweets, value: "1" }
+            - { key: likes, label: Like, value: "2", on: false }
+      footer: more
+    states:
+      - name: Tweets, top to bottom
+        note: "Newest first. The list continues below T4 for as long as the reader scrolls; the footer is where the next page is requested."
+        state:
+          highlight: item:t1
+      - name: Parts of a tweet
+        note: "One TweetCard is an author row, the text, an image box and an action row. The image box has its final size before the image arrives, because the API sends the image's width and height."
+        state:
+          highlight: item:t3
+          annotations:
+            - { target: item:t3, text: "author row · text · image box (sized from width and height) · actions" }
+      - name: Loading more
+        note: "The reader is near the end of what is loaded. The next page is already on its way, and the footer shows a spinner only if it has not arrived."
+        state:
+          highlight: footer
+          collection:
+            footer: loading
+    callouts:
+      - { region: item:t1, label: "One tweet: a TweetCard", component: tweet-card }
+      - { region: item:t1:count:likes, label: Action row with counts, component: tweet-card }
+      - { region: footer, label: "End of the loaded list: where the next page is requested", component: feed-list }
+  - __component: sd.quiz
+    key: mock-up-quiz
+    title: Quick check
+    questions:
+      - question: What are the two properties that make a news feed a design problem rather than a plain page?
+        optionA: It has images and buttons
+        optionB: It needs a login and a header
+        optionC: Tweets load as the reader goes, and the list has no end
+        optionD: It is rendered on the server
+        answer: C
+        explanation: Dynamic loading and an unbounded list drive almost every later decision, from pagination to virtualization to memory.
+      - question: Why break one tweet into an author row, text, image box and action row on the mock-up?
+        optionA: It is the component tree and the list of data each card needs, both of which the later sections reuse
+        optionB: Interviewers grade drawing skills
+        optionC: So you can skip the state section
+        optionD: Each part will be its own page
+        answer: A
+        explanation: The parts become components, and their fields become the entities in the state section.
+      - question: The mock-up draws the image box at its final size before the image loads. Which later requirement does that serve?
+        optionA: Offline support
+        optionB: Layout stability, since nothing shifts when the image arrives
+        optionC: Cursor pagination
+        optionD: Server-sent events
+        answer: B
+        explanation: Knowing the width and height up front lets the card reserve the box, which keeps CLS near zero.
+  # ────────────────────────────────────────────────────────────────── 3. Requirements
+  - __component: sd.section
+    key: requirements
+    title: Requirements.
+    railLabel: Requirements
+    intro: "Two short numbered lists, written in plain text right after the mock-up. Functional requirements say what the feed does. Non-functional requirements say how well it must do it on the devices and networks people actually use, and each gets a number so the performance column can be checked against it."
+  - __component: sd.subsection
+    key: functional
+    title: Functional requirements
+    railLabel: Functional
+  - __component: sd.checklist
+    key: functional-checklist
+    idPrefix: FR-
+    items:
+      - text: Tweets render top to bottom, newest first, each with its author, time, text, images and reply, retweet and like counts.
+      - text: The feed is endless. The next page loads before the reader reaches the end, with no duplicates and no gaps.
+      - text: Images are the only media type. A tweet carries up to four.
+        note: video, polls and link previews are out of scope
+      - text: New tweets that are posted while the reader is scrolling are announced within about 10 seconds and appear only when the reader asks for them.
+      - text: When the end of the available tweets is reached, the feed says so.
+  - __component: sd.subsection
+    key: non-functional
+    title: Non-functional requirements
+    railLabel: Non-functional
+  - __component: sd.requirement-table
+    key: non-functional-table
+    rows:
+      - area: Mobile and desktop
+        requirement: Most social reading happens on phones, so the feed works on both, with one responsive layout.
+        targets: [360 px to 1440 px wide, touch and keyboard]
+        note: Budgets are set for a mid-range Android phone.
+      - area: Network efficiency
+        requirement: The first tweets are readable quickly on a slow mobile connection, and scrolling does not waste data.
+        targets: [LCP ≤ 2.5 s, first load ≤ 300 KB transferred, initial JS ≤ 100 KB compressed]
+        note: Lighthouse mobile throttling, about 1.6 Mbps and 150 ms round trip, cold cache.
+      - area: CPU and memory
+        requirement: The endless list does not slow the phone down or grow memory without bound.
+        targets: [≤ 25 cards in the DOM, no long task > 50 ms while scrolling, INP ≤ 200 ms]
+        note: Measured after scrolling through 500 tweets.
+      - area: Layout stability
+        requirement: Nothing jumps under the reader, whether an image loads or new tweets arrive.
+        targets: [CLS ≤ 0.1]
+      - area: Offline
+        requirement: On a plane or a train, the tweets already loaded can still be read.
+        targets: [app shell opens offline, last 100 tweets readable, their images at 480 px width]
+  - __component: sd.metric-row
+    key: requirement-assumptions
+    title: Assumptions for the exercise
+    items:
+      - { label: Tweets per page, value: "6 to 10", caption: about two screens }
+      - { label: Page on the wire, value: "≈ 3 KB", caption: "10 tweets of JSON, Brotli" }
+      - { label: Cards mounted, value: "≤ 25", caption: whatever the session length }
+      - { label: Kept for offline, value: "100", caption: newest tweets seen }
+  - __component: sd.split-list
+    key: requirements-scope
+    leftLabel: Committed
+    leftItems:
+      - text: The feed screen, its list and its card
+      - text: Client state and the one feed endpoint
+      - text: New tweets arriving while reading
+      - text: Network, rendering and JavaScript performance
+      - text: Reading offline
+    rightLabel: Named, not designed
+    rightItems:
+      - text: Posting a tweet
+        note: the composer is its own design
+      - text: Reply threads
+        note: the feed shows counts only
+      - text: Video, polls and link previews
+      - text: Ranking
+        note: this feed is chronological
+      - text: Accessibility of the virtual list
+        note: parked as the first stretch topic
+  - __component: sd.quiz
+    key: requirements-quiz
+    title: Quick check
+    questions:
+      - question: Why give each non-functional requirement a number such as LCP ≤ 2.5 s or ≤ 25 cards in the DOM?
+        optionA: Numbers look more professional
+        optionB: So each performance idea later can be checked against something, and you can say which requirement it serves
+        optionC: The interviewer will run a benchmark
+        optionD: Numbers replace the functional requirements
+        answer: B
+        explanation: "\"Network efficient\" cannot be checked. \"First load ≤ 300 KB on a slow 4G profile\" can, and it tells you which optimizations matter."
+      - question: Which requirement is the reason the design needs a constant number of DOM nodes?
+        optionA: Mobile and desktop
+        optionB: Offline
+        optionC: CPU and memory, because the list is endless and phones are the target
+        optionD: Images are the only media
+        answer: C
+        explanation: An endless list rendered naively grows the DOM and memory with every page. The CPU and memory budget rules that out.
+      - question: The interviewer asks about video. What fits the plan?
+        optionA: Say video is out of scope for this round, explain the image box would generalize to it, and keep going
+        optionB: Redesign the card around video right away
+        optionC: Refuse to discuss it
+        optionD: Add it to the functional list at minute 20
+        answer: A
+        explanation: Requirements are frozen at the commit point. Acknowledge, show how the design would extend, and stay on the clock.
+  # ────────────────────────────────────────────────────────────────── 4. Components
+  - __component: sd.section
+    key: components
+    title: Components.
+    railLabel: Components
+    intro: "With the mock-up drawn and the requirements written, draw what the feed is made of. The UI tree comes straight from the mock-up; the parts behind it come from the requirements."
+  - __component: sd.rich-text
+    key: components-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "The breakdown of one tweet is the component tree. FeedScreen is the shell for the home route: it ships a skeleton in its HTML, hosts the list and the new-tweets pill, and restores the reading position. FeedList is the virtual list inside it, with two sentinels and a pool of recycled nodes. Each tweet is a TweetCard, built from AuthorRow, TweetText, ImageBox and ActionRow."
+      - type: paragraph
+        children:
+          - type: text
+            text: "The requirements explain what sits behind the UI. Endless loading needs a Feed Store that holds every entity by id and the feed's ids in order, and a Feed Client that is the only caller of the tweets endpoint. New tweets within about 10 seconds need a Live Channel. Reading offline needs an Offline Cache, the service worker plus IndexedDB. Cards read their tweet from the store by id and never fetch; outside the browser are the Image CDN and the Feed API, a black box."
+  - __component: sd.component-diagram
+    key: feed-components
+    title: What the mock-up turns into
+    direction: TB
+    groups:
+      - { key: browser, label: Browser, tone: sand }
+      - { key: feed-screen, parent: browser, sublabel: "/home · skeleton in the HTML · new-tweets pill" }
+    nodes:
+      - key: feed-list
+        parent: feed-screen
+        details: [two sentinels, pool of recycled nodes]
+      - key: tweet-card
+        parent: feed-screen
+        parts:
+          - { name: AuthorRow, caption: avatar · name · time }
+          - { name: TweetText }
+          - { name: ImageBox, caption: size reserved }
+          - { name: ActionRow, caption: reply · retweet · like }
+      - key: feed-store
+        parent: browser
+        details: ["entities by id", "feed.ids, newest first"]
+      - key: feed-client
+        parent: browser
+        details: [GET /api/tweets]
+      - key: live-channel
+        parent: browser
+        details: [EventSource]
+      - key: offline-cache
+        parent: browser
+        details: [service worker, IndexedDB]
+      - key: media-cdn
+        details: [width and format per request]
+      - key: server
+        details: [black box]
+    edges:
+      - { from: feed-list, to: feed-store, label: "ids in range · loadMore()" }
+      - { from: tweet-card, to: feed-store, label: tweet by id }
+      - { from: feed-store, to: feed-client, label: fetch next page }
+      - { from: feed-client, to: server, label: "GET /api/tweets" }
+      - { from: server, to: live-channel, label: new-tweet events }
+      - { from: live-channel, to: feed-store, label: pending ids }
+      - { from: feed-store, to: offline-cache, label: offload pages }
+      - { from: tweet-card, to: media-cdn, label: "img srcset" }
+  - __component: sd.quiz
+    key: components-quiz
+    title: Quick check
+    questions:
+      - question: Why draw the component diagram after the requirements rather than straight after the mock-up?
+        optionA: Components are not part of a frontend interview
+        optionB: The requirements decide what sits behind the UI, such as a live channel for new tweets and an offline cache
+        optionC: The interviewer draws it
+        optionD: It saves ink
+        answer: B
+        explanation: The UI tree comes from the mock-up, but the store, client, live channel and offline cache exist because of requirements.
+      - question: Does a TweetCard fetch its own tweet?
+        optionA: Yes, each card calls the API
+        optionB: No; it reads its tweet by id from the Feed Store, and only the Feed Client calls the server
+        optionC: Yes, through the Live Channel
+        optionD: No; the server pushes each card's HTML
+        answer: B
+        explanation: The store owns the data, the client fetches pages for it, and cards read by id.
+  # ────────────────────────────────────────────────────────────────── 5. Application state
+  - __component: sd.section
+    key: application-state
+    title: Application state.
+    railLabel: State
+    intro: "The client store comes after the components. Phones have little memory and the feed never ends, so the shape matters: each thing is stored once, by id; the feed's order is a separate list of ids; and only the part of the feed near the reader stays in memory."
+  - __component: sd.subsection
+    key: normalize
+    title: Normalize, then order by id
+  - __component: sd.rich-text
+    key: normalize-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "The naive store is the server's response kept as it arrived: an array of tweets, each with its author object, its images and its replies nested inside. Finding one tweet means scanning the array; updating an author's avatar means touching every tweet they wrote; and nested replies make every tweet heavy even though the feed only shows a count."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Normalizing fixes that, using the same ideas as database normal forms. First normal form: every field is atomic and every record has a primary key, so nested objects become references by id. Second normal form: every field depends on its record's key, so an author's name lives on the user, not on each tweet. In a client store that gives a few maps keyed by id, each read in constant time, and a few lookup maps from a tweet to the ids that belong to it. A third normal form step is rarely worth it on the client."
+      - type: paragraph
+        children:
+          - type: text
+            text: "The feed's order is not a property of any tweet, so it gets its own list: feed.ids, newest first, sorted by created time and then by id so two tweets posted in the same millisecond still have a fixed order. That is why each tweet needs a createdAt field. The virtual list reads only this list and a range of it; the cards look up their tweet by id. Whether the maps are plain objects or Map instances is a detail to answer in one line, not a design decision."
+  - __component: sd.data-model
+    key: feed-state-model
+    title: Twitter's feed state, from response to store
+    caption: "Column 1 is what the endpoint returns. Column 2 is the store: entities by id, lookups from a tweet to its parts, and the feed list that holds the order. Column 3 is what is kept off the JavaScript heap."
+    groups:
+      - key: response
+        step: "01"
+        label: GET /api/tweets response
+        column: 1
+        handoff: ↓ Feed Client hands it to the store
+        types:
+          - name: TweetsPage
+            fields:
+              - { name: tweets, type: "Tweet[]", note: newest first }
+              - { name: users, type: "Record<UserId, User>" }
+              - { name: attachments, type: "Record<AttachmentId, Attachment>" }
+              - { name: nextCursor, type: string, optional: true, note: null at the end }
+      - key: entities
+        step: "02"
+        label: "Feed Store: entities"
+        column: 2
+        types:
+          - name: Tweet
+            comment: One per id. No nested objects.
+            fields:
+              - { name: id, type: TweetId }
+              - { name: authorId, type: UserId }
+              - { name: text, type: string }
+              - { name: createdAt, type: ISO string, note: orders the feed }
+              - { name: replyCount, type: int }
+              - { name: retweetCount, type: int }
+              - { name: likeCount, type: int }
+          - name: User
+            fields:
+              - { name: id, type: UserId }
+              - { name: name, type: string }
+              - { name: handle, type: string }
+              - { name: avatarUrl, type: url }
+          - name: Attachment
+            comment: Images only. Size known up front.
+            fields:
+              - { name: id, type: AttachmentId }
+              - { name: url, type: url, note: image service base URL }
+              - { name: width, type: int }
+              - { name: height, type: int }
+              - { name: alt, type: string }
+              - { name: placeholder, type: string, note: dominant colour }
+      - key: lookups
+        step: "02"
+        label: "Feed Store: lookups and order"
+        column: 2
+        types:
+          - name: FeedStore
+            fields:
+              - { name: tweetsById, type: "Record<TweetId, Tweet>" }
+              - { name: usersById, type: "Record<UserId, User>" }
+              - { name: attachmentsById, type: "Record<AttachmentId, Attachment>" }
+              - { name: attachmentIdsByTweet, type: "Record<TweetId, AttachmentId[]>" }
+              - { name: replyIdsByTweet, type: "Record<TweetId, TweetId[]>", note: "replies are tweets; filled when a thread opens" }
+              - { name: feed, type: Feed }
+          - name: Feed
+            comment: The order lives here, not on tweets.
+            fields:
+              - { name: ids, type: "TweetId[]", note: newest first }
+              - { name: nextCursor, type: string, optional: true }
+              - { name: status, type: FeedStatus }
+              - { name: window, type: "{ first, last }", note: indexes held in memory }
+              - { name: pendingIds, type: "TweetId[]", note: "new, not shown yet; max 50" }
+          - name: FeedStatus
+            values: [idle, loading, error, end]
+      - key: offheap
+        step: "03"
+        label: Off the heap
+        column: 3
+        types:
+          - name: IndexedDB tweets
+            keyword: store
+            comment: Payloads outside the window.
+            fields:
+              - { name: key, type: TweetId }
+              - { name: value, type: "Tweet + its users and attachments" }
+              - { name: index byCreatedAt, type: ISO string }
+          - name: Cache Storage
+            keyword: store
+            comment: Written by the service worker.
+            fields:
+              - { name: app shell, type: "HTML, JS, CSS, fonts" }
+              - { name: images, type: 480 w variants }
+          - name: sessionStorage
+            keyword: store
+            fields:
+              - { name: scrollAnchor, type: "{ tweetId, offsetPx }" }
+    flows:
+      - { from: response, to: [entities, lookups], label: normalize by id }
+      - { from: lookups, to: [offheap], label: offload outside the window }
+  - __component: sd.quiz
+    key: application-state-quiz
+    title: Quick check
+    questions:
+      - question: Where does the order of the feed live in this store?
+        optionA: In a position field on each tweet
+        optionB: In feed.ids, a list of tweet ids sorted newest first by createdAt and then id
+        optionC: In the DOM order of the cards
+        optionD: In IndexedDB only
+        answer: B
+        explanation: Order is a property of the feed, not of a tweet. The list of ids is small, and the virtual list reads a range of it.
+      - question: An author changes their avatar. With a normalized store, how many records change?
+        optionA: One, the user in usersById, and every card that shows them re-renders from it
+        optionB: Every tweet they wrote
+        optionC: None until the page is reloaded
+        optionD: The whole feed is refetched
+        answer: A
+        explanation: Second normal form puts the avatar on the user, not on each tweet, so one write updates every place it appears.
+  - __component: sd.section
+    key: storage
+    title: Storage.
+    railLabel: Storage
+    intro: "The store's shape is settled; where its data lives is a separate question. Only the part of the feed near the reader stays in memory, older pages go to disk, and each kind of state has the storage that suits it."
+  - __component: sd.subsection
+    key: memory-window
+    title: Keep runtime state small
+  - __component: sd.rich-text
+    key: memory-window-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "A list of ids is tiny: 5,000 tweet ids are well under 100 KB. The payloads are what grow. The store keeps full payloads in memory only for tweets within three pages of the viewport, a sliding window over feed.ids. As the reader scrolls on, pages that fall out of the window are written to IndexedDB in idle time and dropped from the in-memory maps, which lets the garbage collector reclaim them. If the reader scrolls back, the store reads those pages back from IndexedDB, asynchronously, a screen before they are needed."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Think of it as sharding the store across two places: the JavaScript heap for the hot part, the disk for the cold part. The same split serves the offline requirement, since the newest tweets the reader saw are already on disk."
+  - __component: sd.strip
+    key: feed-ids-window
+    title: feed.ids, 120 tweets in 12 pages of 10
+    caption: "Each segment is one page of 10 tweets. Only a few cards are in the DOM; payloads near them are in memory; older pages are on disk. The window slides as the reader scrolls."
+    unit: item
+    legend:
+      - { key: mounted, label: Mounted in the DOM, tone: green }
+      - { key: memory, label: Payloads in memory, tone: blue }
+      - { key: disk, label: In IndexedDB only, tone: sand, pattern: hatched }
+      - { key: unloaded, label: Not loaded yet, tone: gray, pattern: dotted }
+    rows:
+      - key: ids
+        label: feed.ids
+        size: 120
+        segments:
+          - { key: p1, label: p1, width: 10, state: disk }
+          - { key: p2, label: p2, width: 10, state: disk }
+          - { key: p3, label: p3, width: 10, state: disk }
+          - { key: p4, label: p4, width: 10, state: memory }
+          - { key: p5, label: p5, width: 10, state: memory }
+          - { key: p6, label: p6, width: 10, state: memory }
+          - { key: p7, label: p7, width: 10, state: mounted, note: the reader is here }
+          - { key: p8, label: p8, width: 10, state: memory }
+          - { key: p9, label: p9, width: 10, state: memory }
+          - { key: p10, label: p10, width: 10, state: memory }
+          - { key: p11, label: p11, width: 10, state: unloaded }
+          - { key: p12, label: p12, width: 10, state: unloaded }
+    markers:
+      - { row: ids, at: 30, label: window.first, kind: pointer }
+      - { row: ids, at: 100, label: "window.last · nextCursor", kind: head }
+    steps:
+      - name: Reading page 7
+        note: "Pages 4 to 10 are in memory, three on each side of the reader. Pages 1 to 3 were offloaded to IndexedDB as the reader passed them."
+      - name: Page 11 arrives
+        note: "The reader moved to page 8. Page 11 loads, and page 4 falls out of the window: it is written to IndexedDB and dropped from memory."
+        marks: { ids.p4: disk, ids.p7: memory, ids.p8: mounted, ids.p11: memory }
+        markers:
+          - { row: ids, at: 40, label: window.first, kind: pointer }
+          - { row: ids, at: 110, label: "window.last · nextCursor", kind: head }
+      - name: Scrolling back up
+        note: "The reader turns back toward page 5. Page 3 is read back from IndexedDB a screen before it is needed, and page 10 leaves memory at the far end."
+        marks: { ids.p3: memory, ids.p4: memory, ids.p5: mounted, ids.p7: memory, ids.p10: disk }
+        markers:
+          - { row: ids, at: 20, label: window.first, kind: pointer }
+          - { row: ids, at: 90, label: window.last, kind: head }
+  - __component: sd.table
+    key: where-state-lives
+    title: Where each kind of state lives
+    showHeader: true
+    columns:
+      - { label: State, style: strong }
+      - { label: Where }
+      - { label: Why, style: muted }
+    rows:
+      - ["Feed order (all ids loaded)", In memory, "Small, read on every scroll frame"]
+      - ["Tweet, user and attachment payloads near the viewport", In memory, Read on every render of a card]
+      - ["Payloads outside the window", IndexedDB, "Asynchronous, structured, indexed by createdAt; does not block the UI thread"]
+      - ["Images and the app shell", Cache Storage via the service worker, "Responses, cached as responses; serves the offline requirement"]
+      - [Scroll anchor, sessionStorage, "Tiny, needed only for this tab's back navigation"]
+      - ["Theme, text size", localStorage, "Tiny and read once at start; synchronous and strings only, about 5 MiB, so never for feed data"]
+      - ["Pressed, hover, expanded text", Component state, Local to one card and lost harmlessly when it unmounts]
+  - __component: sd.quiz
+    key: storage-quiz
+    title: Quick check
+    questions:
+      - question: Why offload pages outside the window to IndexedDB rather than localStorage?
+        optionA: localStorage is wiped on every reload
+        optionB: IndexedDB is faster to type
+        optionC: localStorage is synchronous and strings only, so large reads and writes block the UI thread; IndexedDB is asynchronous and stores structured records
+        optionD: IndexedDB is the only storage the service worker can read
+        answer: C
+        explanation: Feed pages are large and written often while scrolling. Synchronous storage would cause long tasks; IndexedDB does not.
+  # ────────────────────────────────────────────────────────────────── 6. API
+  - __component: sd.section
+    key: api
+    title: API.
+    railLabel: API
+    intro: "The API needs less than it seems: one endpoint to read pages of tweets, and a rule for how pages are addressed. Everything else in the feed is reads of what that endpoint returned; new tweets come on a channel of their own, the next section."
+  - __component: sd.subsection
+    key: one-endpoint
+    title: One endpoint for pages
+  - __component: sd.endpoint
+    key: get-tweets
+    method: GET
+    path: /api/tweets?limit=10&cursor=c_8f2a
+    summary: "Returns the next page of the reader's feed, newest first. `limit` follows the viewport: about two screens of cards, 6 on a phone and 10 on a desktop, so a tall screen does not need two requests to fill. `cursor` is opaque and is left out for the first page, which starts from now. The session cookie identifies the reader; an access token never goes in the URL, where it would end up in logs and history. `nextCursor` is null at the end."
+    requestHeaders:
+      - "Accept: application/json"
+    requestCredentials: same-origin cookies
+    responses:
+      - label: Page
+        status: "200"
+        body:
+          tweets:
+            - id: t_9121
+              authorId: u_14
+              text: Low tide this morning. The whole bay was mirrors.
+              createdAt: 2026-10-26T07:52:10Z
+              attachmentIds: [a_301]
+              replyCount: 3
+              retweetCount: 4
+              likeCount: 18
+          users:
+            u_14: { id: u_14, name: User 1, handle: user1, avatarUrl: "https://img.twitter.example/a/u_14" }
+          attachments:
+            a_301: { id: a_301, url: "https://img.twitter.example/i/a_301", width: 1600, height: 1200, alt: Wet sand reflecting the sky at low tide, placeholder: "#9fb4c2" }
+          nextCursor: c_8f31
+        alsoSets: "Cache-Control: private, no-store"
+        note: Ten tweets of this shape are about 12 KB of JSON and about 3 KB with Brotli.
+      - label: Last page
+        status: "200"
+        body:
+          tweets: []
+          users: {}
+          attachments: {}
+          nextCursor: null
+        note: FeedList removes the bottom sentinel and the footer says there are no more tweets.
+  - __component: sd.decision
+    key: offset-or-cursor
+    title: How pages are addressed
+    options:
+      - name: Opaque cursor (the last tweet's createdAt and id, encoded by the server)
+        chosen: true
+        pros:
+          - New tweets at the top do not shift later pages, so nothing repeats or goes missing
+          - The server resumes from an index position instead of counting rows
+          - Also works to resume where the reader stopped on a later visit
+        cons:
+          - No jumping to page N, which a feed never needs
+          - Cursors can expire, so the client needs a refetch path
+      - name: Offset and limit (?offset=20&limit=10)
+        chosen: false
+        pros:
+          - Simple to build and debug
+          - Can jump to any page
+        cons:
+          - Five new tweets at the top push five old ones into the next page, so the reader sees them twice
+          - Large offsets get slower for the database
+  - __component: sd.subsection
+    key: rest-or-graphql
+    title: REST or GraphQL for this client
+  - __component: sd.table
+    key: rest-graphql-questions
+    title: Questions that decide it, answered for Twitter's feed
+    showHeader: true
+    columns:
+      - { label: Question, style: strong }
+      - { label: Leans to }
+      - { label: Twitter, style: muted }
+    rows:
+      - [How big is the app?, "Small: REST", "One screen, one read endpoint"]
+      - [Is there a public API?, "Yes: REST", "Not here"]
+      - ["Mostly reads, with a small team?", "Yes: REST, using HTTP caching", "Yes, the feed is read-only"]
+      - [Do client and server share types closely?, "Yes: GraphQL fits", "Partly"]
+      - [Does tens of KB of client library matter?, "Yes: REST", "Yes, initial JS is capped at 100 KB"]
+      - ["Many shapes of the same object, or several live sources to unify?", "Yes: GraphQL", "No, one shape and one stream"]
+  - __component: sd.rich-text
+    key: rest-graphql-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Adopting GraphQL on the client is more than a query language. It usually brings a client library, its normalized cache, and a second state layer to keep in sync with the server, and that costs bundle size and team time. It pays off in large apps with many screens asking for different shapes of the same objects, or where one subscription interface can hide several transports. Twitter's feed has one shape and one stream, so plain REST is the better fit; say that GraphQL is a reasonable alternative if the app grows."
+  - __component: sd.quiz
+    key: api-quiz
+    title: Quick check
+    questions:
+      - question: Five new tweets are posted while the reader is on page 2. With offset pagination, what happens on page 3?
+        optionA: Nothing; offsets are stable
+        optionB: The request fails
+        optionC: The five oldest tweets of page 2 shift into page 3, so the reader sees them twice
+        optionD: Page 3 skips five tweets
+        answer: C
+        explanation: New items at the top push every later item down by five positions. A cursor anchored on the last tweet seen does not move.
+      - question: Why does the limit depend on the viewport?
+        optionA: So one request fills about two screens, whether the reader has a phone or a large monitor
+        optionB: Servers reject large limits
+        optionC: Small limits make the cursor shorter
+        optionD: It is required by HTTP/2
+        answer: A
+        explanation: A fixed small limit leaves a tall desktop half empty after one request; a fixed large one wastes data on phones.
+  - __component: sd.section
+    key: live-updates
+    title: New tweets, live.
+    railLabel: Live
+    intro: "Pages are read with plain GETs. Tweets posted while the reader is scrolling need a channel of their own, and the choice is between short polling, long polling, a WebSocket and server-sent events."
+  - __component: sd.subsection
+    key: new-tweets-channel
+    title: How new tweets reach the client
+  - __component: sd.choice-list
+    key: transport-choices
+    items:
+      - label: Short polling (GET every few seconds)
+        used: false
+        note: "Simplest to build, but each poll is a full request that usually finds nothing, and on a phone each one wakes the cellular radio, which then stays in a high-power state for several seconds. Battery and data for little news."
+      - label: Long polling (the server holds each request open until there is news, often up to about 30 s)
+        used: false
+        note: Fewer empty responses, but every message costs a new request with its headers, and there is a gap while the next request is set up.
+      - label: WebSocket
+        used: false
+        note: "Fast and two-way, but the feed never sends anything back on this channel. It needs stateful infrastructure (sticky connections, its own reconnect and replay logic) for a one-way trickle of notices."
+      - label: Server-sent events for notices, plus plain GETs for pages
+        used: true
+        note: "One long response the server streams events down. Data-efficient, one-way as needed, and the browser reconnects by itself and sends Last-Event-ID so missed events can be replayed. Paging stays on ordinary GETs, so scrolling never waits on the stream."
+  - __component: sd.rich-text
+    key: sse-http2-note
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Server-sent events are plain HTTP and do not require HTTP/2. But over HTTP/1.1 every open stream holds one of the roughly six connections a browser allows per host, so a reader with several Twitter tabs can starve the page of connections. Over HTTP/2 the stream is one of many multiplexed on a single connection, which is one more reason the network column starts with HTTP/2."
+  - __component: sd.endpoint
+    key: get-tweets-stream
+    method: GET
+    path: /api/tweets/stream
+    summary: "A server-sent event stream opened with `new EventSource('/api/tweets/stream')`. It carries ids, not payloads: the client fetches the tweets when the reader presses the pill. A comment line every 25 s keeps proxies from closing the idle response."
+    requestHeaders:
+      - "Accept: text/event-stream"
+      - "Last-Event-ID: 5521"
+    requestCredentials: same-origin cookies
+    requestNote: The browser adds Last-Event-ID only when it reconnects by itself.
+    responses:
+      - label: new_tweets event
+        status: "200"
+        body:
+          event: new_tweets
+          id: "5522"
+          data: { tweetIds: [t_9140, t_9141], count: 2 }
+        note: The store adds unseen ids to pendingIds (at most 50) and the pill shows the count. The list does not move.
+  - __component: sd.sequence-diagram
+    key: first-page-and-new-tweets
+    title: First page, next page, then two new tweets
+    autonumber: true
+    participants:
+      - { key: reader, label: Reader, tone: sand }
+      - { key: feed-list }
+      - { key: feed-store }
+      - { key: feed-client }
+      - { key: live-channel }
+      - { key: server }
+    steps:
+      - { from: reader, to: feed-list, text: open /home }
+      - { from: feed-store, to: feed-client, text: "fetch(limit 6, no cursor)" }
+      - { from: feed-client, to: server, text: "GET /api/tweets?limit=6" }
+      - { kind: reply, from: server, to: feed-client, text: "200 tweets · users · attachments · nextCursor c1" }
+      - { kind: reply, from: feed-client, to: feed-store, text: normalize and append ids }
+      - { from: live-channel, to: server, text: "open GET /api/tweets/stream" }
+      - { from: reader, to: feed-list, text: scroll }
+      - { kind: note, from: feed-list, text: bottom sentinel enters the one-screen margin }
+      - { from: feed-list, to: feed-store, text: "loadMore()" }
+      - { from: feed-client, to: server, text: "GET /api/tweets?limit=6&cursor=c1" }
+      - { kind: reply, from: server, to: feed-client, text: "200 · nextCursor c2" }
+      - { from: server, to: live-channel, text: "event new_tweets { 2 ids }" }
+      - { from: live-channel, to: feed-store, text: add to pendingIds }
+      - { kind: note, from: feed-store, text: pill shows 2 new tweets; the list stays put }
+  - __component: sd.quiz
+    key: live-updates-quiz
+    title: Quick check
+    questions:
+      - question: Why server-sent events rather than a WebSocket for new tweets?
+        optionA: WebSockets cannot carry JSON
+        optionB: The channel is one-way, and SSE gives reconnection and Last-Event-ID replay over plain HTTP without stateful socket infrastructure
+        optionC: SSE is the only option that works on phones
+        optionD: WebSockets require GraphQL
+        answer: B
+        explanation: The client never sends on this channel. SSE matches the need and comes with reconnect built in.
+  # ────────────────────────────────────────────────────────────────── 7. Network performance
+  - __component: sd.section
+    key: network-performance
+    title: Network performance.
+    railLabel: Network
+    intro: "The last band is performance, split into three buckets. Network comes first: how few bytes, over how few trips, reach the phone before the first tweets show. Each item serves the network-efficiency requirement (LCP ≤ 2.5 s, first load ≤ 300 KB, initial JS ≤ 100 KB)."
+  - __component: sd.deep-dive
+    key: network-deep-dive
+    targets:
+      - { label: LCP, value: ≤ 2.5 s }
+      - { label: First load, value: ≤ 300 KB }
+      - { label: Initial JS, value: ≤ 100 KB compressed }
+    items:
+      - name: HTTP/2 (or HTTP/3)
+        risk: "Over HTTP/1.1 a browser opens at most about six connections per host, each with its own handshake, and requests queue behind them."
+        approach: "Serve everything over HTTP/2: many requests multiplex as streams on one connection (servers commonly allow 100 or more at once), headers are compressed, and the SSE stream is just another stream. HTTP/3 removes TCP head-of-line blocking on lossy mobile links."
+        owners: [server, media-cdn]
+      - name: Split the bundle
+        risk: One bundle carries code for every route and feature, and the phone parses all of it before the feed works.
+        approach: "Split by route and by feature: the feed route loads its list and card; the composer, settings and image viewer load on demand. With HTTP/2, several smaller files cost little extra."
+        owners: [feed-screen]
+      - name: Modern build first
+        risk: Transpiling everything to ES5 adds polyfills and longer code that modern browsers do not need.
+        approach: "Ship one modern build loaded with type=module. Add a legacy nomodule build only if analytics show visitors on old browsers; in 2026 most audiences do not need one."
+        owners: [feed-screen]
+      - name: Defer what is not critical
+        risk: Analytics, chat widgets and A/B scripts compete with the feed's own code during first load.
+        approach: "Load the app with defer, and load analytics after the load event or in idle time. Nothing third-party sits in the critical path."
+        owners: [feed-screen]
+      - name: Compress text
+        risk: "JavaScript, CSS, HTML and JSON are sent at full size."
+        approach: "Brotli for static text, precompressed at build time at its top quality (11), which typically comes out 15 to 20 percent smaller than gzip; gzip removes about 70 to 80 percent of text on its own and is the fallback. Compress API JSON on the fly at a lower level. Never recompress JPEG, WebP, AVIF or WOFF2: they are already compressed."
+        owners: [server, media-cdn]
+      - name: Serve from a CDN
+        risk: Every asset comes from the origin server, far from many readers.
+        approach: "Static files and images come from a CDN close to the reader. Hashed file names get Cache-Control: public, max-age=31536000, immutable, so repeat visits download nothing for them."
+        owners: [media-cdn]
+      - name: Modern image formats
+        risk: JPEGs are much larger than they need to be at the same quality.
+        approach: "Serve AVIF, then WebP, with JPEG as the fallback: picture with source type elements, or Accept-header negotiation at the image service with Vary: Accept. Lossy WebP is typically 25 to 34 percent smaller than JPEG; AVIF is often smaller again."
+        owners: [media-cdn, tweet-card]
+      - name: The right size per screen
+        risk: A 360 px phone downloads a 1,600 px photo.
+        approach: "The image service resizes on request (?w=480). Cards use srcset with 480, 960 and 1,440 widths and sizes matching the column, and the browser picks one. Images below the fold use loading=lazy; the first tweet's image gets fetchpriority=high."
+        owners: [media-cdn, tweet-card]
+      - name: Fonts
+        risk: "With the default font-display, most browsers hide text for up to about 3 s while a custom font downloads."
+        approach: "WOFF2, subset to the scripts used, font-display: swap (or optional for body text on slow networks), and preload only the one face used above the fold. System fonts are the cheapest choice of all."
+        owners: [feed-screen]
+  - __component: sd.table
+    key: image-bytes
+    title: "One 4:3 photo in a tweet, as sent to a 360 px phone (illustrative)"
+    showHeader: true
+    columns:
+      - { label: Variant, style: strong }
+      - { label: Bytes, style: mono }
+      - { label: Note, style: muted }
+    rows:
+      - ["Original JPEG, 1,600 px", "≈ 380 KB", What gets sent with no image service]
+      - [JPEG at 960 px, "≈ 140 KB", "Right width for a 2x phone screen, old format"]
+      - [WebP at 960 px, "≈ 100 KB", About a quarter to a third smaller than the JPEG]
+      - [AVIF at 960 px, "≈ 70 KB", Often smaller again at the same visual quality]
+      - [AVIF at 480 px, "≈ 25 KB", "The variant kept for offline reading"]
+  - __component: sd.quiz
+    key: network-quiz
+    title: Quick check
+    questions:
+      - question: Which of these should not be compressed with Brotli or gzip by the server?
+        optionA: The JavaScript bundle
+        optionB: The JSON of a page of tweets
+        optionC: AVIF and WebP images
+        optionD: The CSS file
+        answer: C
+        explanation: Image formats are already compressed. Running them through gzip or Brotli costs CPU and saves almost nothing, and can make them larger.
+      - question: What does HTTP/2 change for a page that loads 40 small files?
+        optionA: They multiplex as streams on one connection instead of queuing behind about six HTTP/1.1 connections
+        optionB: Files are merged into one on the server
+        optionC: It removes the need for a CDN
+        optionD: It compresses images
+        answer: A
+        explanation: Multiplexing is why splitting a bundle into several files is cheap over HTTP/2.
+      - question: A phone 360 px wide shows a tweet image full width. What should the card request?
+        optionA: The original 1,600 px JPEG, scaled by CSS
+        optionB: A width chosen by the browser from srcset (about 720 to 960 px on a 2x screen), in AVIF or WebP when supported
+        optionC: Always the 480 px variant
+        optionD: A PNG for quality
+        answer: B
+        explanation: srcset and sizes let the browser pick the right width for its screen density; format negotiation picks the smallest format it can decode.
+  # ────────────────────────────────────────────────────────────────── 8. Rendering performance
+  - __component: sd.section
+    key: rendering-performance
+    title: Rendering performance.
+    railLabel: Rendering
+    intro: "The second bucket is what the browser does with the tweets once they arrive. The rule that matters most for an endless list is a constant number of DOM nodes, so memory and style and layout costs stay flat however long the reader scrolls. That serves the CPU-and-memory requirement (≤ 25 cards in the DOM)."
+  - __component: sd.subsection
+    key: virtual-list
+    title: Virtualization, as drawn on the board
+  - __component: sd.rich-text
+    key: virtual-list-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Draw the viewport as a frame over the tweets, and put two sentinels in the list: one just above the first mounted card and one just below the last. An IntersectionObserver watches both, with a root margin of about one screen, so it fires before the reader actually gets there. When the bottom sentinel comes into range, the list mounts the next tweets and, if the store has no more, asks for the next page. When the top sentinel comes into range on the way back up, it does the same in reverse."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Instead of creating new card elements, FeedList keeps a pool of about 20 and recycles them: the cards that have scrolled well out of view at the top are given new tweets and moved to the bottom. Each card is taken out of the normal flow with absolute positioning and placed with a transform, so moving one does not reflow its neighbours. The position of each card is the one before it plus that card's height plus the gap. Heights vary, so each card is measured once it renders, and its height is cached by tweet id; a ResizeObserver catches cards that change size later, for example when text is expanded, and the positions below it are recomputed. Finally, the container is given the total height of all tweets, measured or estimated, so the scrollbar is the right size even though most of the list does not exist."
+  - __component: sd.code
+    key: virtual-list-code
+    title: Placing recycled cards
+    snippets:
+      - label: FeedList layout pass
+        language: javascript
+        code: |
+          // y(n) = y(n-1) + h(n-1) + gap, using measured heights where known
+          let y = 0;
+          for (let i = 0; i < ids.length; i++) {
+            top[i] = y;
+            y += (heights.get(ids[i]) ?? ESTIMATE_PX) + GAP_PX;
+          }
+          container.style.height = `${y}px`; // keeps the scrollbar honest
+
+          for (const node of mountedNodes) {
+            node.style.transform = `translateY(${top[node.index]}px)`;
+          }
+  - __component: sd.screen
+    key: virtual-window
+    title: Twitter's list after 120 tweets
+    alt: "A list of tweets 40 to 47 out of 120 loaded. Only a window of six cards is mounted; the tweets outside it are empty space inside the container. The second tab shows the window after scrolling further, with a recycled card moved to the bottom."
+    frame: phone
+    url: twitter.example/home
+    screen:
+      type: collection
+      layout: list
+      title: Home, 120 tweets loaded
+      items:
+        - { key: w1, title: "Tweet 40 · User 1", meta: 40 of 120, text: "Empty space (measured 412 px)" }
+        - { key: w2, title: "Tweet 41 · User 2", meta: 41 of 120, text: "Mounted, above the viewport" }
+        - { key: w3, title: "Tweet 42 · Northfield Bakery", meta: 42 of 120, text: "Mounted, in view" }
+        - { key: w4, title: "Tweet 43 · Lin Okafor", meta: 43 of 120, text: "Mounted, in view" }
+        - { key: w5, title: "Tweet 44 · User 1", meta: 44 of 120, text: "Mounted, in view" }
+        - { key: w6, title: "Tweet 45 · Priya Shah", meta: 45 of 120, text: "Mounted, below the viewport" }
+        - { key: w7, title: "Tweet 46 · User 2", meta: 46 of 120, text: "Mounted, below the viewport" }
+        - { key: w8, title: "Tweet 47 · Lin Okafor", meta: 47 of 120, text: "Empty space (estimated 380 px)" }
+    states:
+      - name: Reading tweet 43
+        note: "Cards 41 to 46 are in the DOM, each placed with translateY. Everything else is height inside the container. The mock draws six cards; Twitter's pool holds about 20."
+        state:
+          highlight: window
+          collection:
+            window: { first: w2, last: w7, note: 6 of 120 tweets in the DOM }
+      - name: Scrolled further
+        note: "The bottom sentinel came into range. The card that held tweet 41 is recycled: it gets tweet 47, is measured at 402 px, and moves to the bottom with a new transform. Tweet 41's height stays in the cache."
+        state:
+          highlight: item:w8
+          collection:
+            window: { first: w3, last: w8, note: one node recycled from top to bottom }
+            items:
+              update:
+                w2: { text: "Empty space (measured 388 px)" }
+                w8: { text: "Mounted, recycled node, measured 402 px" }
+    callouts:
+      - { region: window, label: The pool of mounted cards, component: feed-list }
+      - { region: item:w4, label: "One card, placed with translateY", component: tweet-card }
+  - __component: sd.subsection
+    key: rendering-list
+    title: The rest of the rendering list
+  - __component: sd.deep-dive
+    key: rendering-deep-dive
+    targets:
+      - { label: Cards in the DOM, value: ≤ 25 }
+      - { label: Frame budget, value: 16 ms }
+      - { label: CLS, value: ≤ 0.1 }
+    items:
+      - name: Constant number of nodes
+        risk: After 500 tweets a naive list holds tens of thousands of elements; style, layout and memory all grow and scrolling stutters.
+        approach: The virtual list above. The DOM holds the pool and two sentinels whatever the session length, so memory use stays flat.
+        owners: [feed-list]
+      - name: Flat selectors
+        risk: Long descendant selectors make each style recalculation do more matching across every element.
+        approach: "One class per element (a naming scheme such as BEM) and no deep chains. On its own this rarely costs much in modern engines; it matters because it multiplies with element count, which virtualization already caps."
+        owners: [tweet-card]
+      - name: No reflow on movement
+        risk: Moving cards or animating with top, height or margin forces layout on every frame.
+        approach: "Move and animate only with transform and opacity, which can skip layout and paint and run on the compositor. Use will-change sparingly, on elements that really animate."
+        owners: [feed-list, tweet-card]
+      - name: Reserved image boxes
+        risk: An image arrives and pushes the text and the cards below it down.
+        approach: "Set width and height (or aspect-ratio) from the attachment's dimensions, and fill the box with the placeholder colour until the image decodes."
+        owners: [tweet-card]
+      - name: Loading placeholders in the HTML
+        risk: The reader stares at a blank page while the JavaScript downloads.
+        approach: "Put a skeleton of three card-shaped placeholders in the initial HTML, the same height as real cards, so swapping them shifts nothing."
+        owners: [feed-screen]
+      - name: Accessibility of a recycled list
+        risk: "Screen readers follow DOM order. A recycled node moved to the bottom by a transform can sit first in the DOM while showing tweet 47, and readers lose their place."
+        approach: "Keep DOM order equal to visual order by moving the recycled node in the DOM too, follow the feed pattern (role=feed, articles with aria-posinset, aria-setsize=-1 while more can load, aria-busy during loads), and keep the focused card mounted. Some large feeds trade some of the reflow savings for this by re-rendering a small window of 10 to 20 items in order."
+        owners: [feed-list]
+  - __component: sd.quiz
+    key: rendering-quiz
+    title: Quick check
+    questions:
+      - question: How does the virtual list keep the scrollbar the right size when most tweets are not in the DOM?
+        optionA: It renders invisible copies of every tweet
+        optionB: It sets the container's height to the sum of all measured or estimated heights plus gaps
+        optionC: It hides the scrollbar
+        optionD: It uses position sticky
+        answer: B
+        explanation: The container is as tall as the whole list would be, so the scroll range is right while only the pool exists.
+      - question: Why are recycled cards placed with transform rather than top?
+        optionA: transform can skip layout and paint and be handled by the compositor, so moving a card does not reflow the page
+        optionB: top is not supported on absolutely positioned elements
+        optionC: transform makes the text sharper
+        optionD: top cannot take pixel values
+        answer: A
+        explanation: Changing top is a layout change. A transform moves the already-painted card.
+      - question: Cards have different heights. How does the list place tweet n?
+        optionA: Every card is forced to the same height
+        optionB: By its index times a fixed height
+        optionC: The previous card's position plus its measured (or estimated) height plus the gap, with heights cached by tweet id
+        optionD: The browser places it automatically in normal flow
+        answer: C
+        explanation: Positions are a running sum. Measuring and caching heights by id makes them exact once a card has been seen.
+  # ────────────────────────────────────────────────────────────────── 9. JavaScript performance and wrap-up
+  - __component: sd.section
+    key: javascript-performance
+    title: JavaScript performance, and wrapping up.
+    railLabel: JavaScript
+    intro: "The third bucket is the main thread. Everything the reader does (scrolling, tapping like, opening a tweet) waits for it, so the rule of thumb is never to block it: keep every task under 50 ms, push heavy work elsewhere, and ship less code to begin with. Then recap the board."
+  - __component: sd.deep-dive
+    key: javascript-deep-dive
+    targets:
+      - { label: Longest task while scrolling, value: < 50 ms }
+      - { label: INP, value: ≤ 200 ms }
+    items:
+      - name: Keep the UI thread free
+        risk: One long task (normalizing a large page, writing to storage) delays the next frame and the reader's next tap.
+        approach: "Do as little as possible per task and make the rest asynchronous. Apply a page to the store in one update, render only the cards in the window, and split any loop that might run long into chunks that yield back to the browser."
+        owners: [feed-store, feed-list]
+      - name: Web Workers for heavy work
+        risk: CPU-heavy jobs on the main thread freeze scrolling.
+        approach: "Move genuinely heavy work to a worker: building a search index over cached tweets, decoding or resizing images before upload. Parsing a 12 KB page is not heavy; the cost of copying it to and from a worker would outweigh the gain."
+        owners: [offline-cache]
+      - name: Idle callbacks
+        risk: Background chores such as offloading pages run at the worst moment, mid-scroll.
+        approach: "Schedule them with requestIdleCallback and a timeout, so they run when the browser has nothing else to do. Safari does not support it, so fall back to setTimeout there."
+        owners: [feed-store]
+      - name: Asynchronous storage
+        risk: localStorage reads and writes are synchronous and block the thread.
+        approach: "IndexedDB for anything sizeable, as in the state section. localStorage only for a few small preferences read once at start."
+        owners: [feed-store, offline-cache]
+      - name: A service worker for offline and repeat visits
+        risk: With no network the app does not even open, and every visit redownloads the shell.
+        approach: "The service worker sits between the page and the network. Hashed assets and images are cache-first from Cache Storage; the feed endpoint is network-first, and when offline the store renders the tweets saved in IndexedDB. A new deploy installs a new worker and new hashed files."
+        owners: [offline-cache]
+      - name: Ship less JavaScript
+        risk: "Every kilobyte of JavaScript is downloaded, then parsed and compiled, and on a mid-range phone the parse and compile cost is large."
+        approach: "The network section's route splitting and modern build, plus checking each dependency's cost before adding it. The 100 KB initial budget is enforced in CI."
+        owners: [feed-screen]
+  - __component: sd.subsection
+    key: wrap-up
+    title: Wrapping up
+  - __component: sd.rich-text
+    key: wrap-up-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Two questions often come up at the end. The first is how to update the UI from a stream. Whether it carries new-tweet notices or the tokens of a generated answer, events arrive in bursts; rendering on every event wastes frames. Live Channel buffers what arrives and applies it to the store once per animation frame (requestAnimationFrame), so many events cost one render. For new tweets, applying means updating the pill's count, never inserting above the reader. For streamed text, it means appending the buffered chunk, so the text grows smoothly instead of flickering."
+      - type: paragraph
+        children:
+          - type: text
+            text: "The second is what minimizing runtime state means. It is both halves of the state section: store less in memory by normalizing (no duplicated authors, no nested replies), and keep less in memory by offloading payloads outside the window to IndexedDB, where they cost disk instead of RAM."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Then recap the board in a minute, section by section, and name what you would do next with more time. For a virtual list the strongest stretch topic is accessibility; cache invalidation for the offline copy (how stale tweets and edited counts are refreshed) is the next."
+  - __component: sd.card-grid
+    key: finished-board
+    title: The finished board
+    columns: 3
+    cards:
+      - title: Mock-up
+        text: "Tweets top to bottom, newest first. TweetCard = author row, text, image box, action row."
+      - title: Requirements
+        text: "Newest first, endless, images only, new tweets behind a pill. Phones and desktops; LCP ≤ 2.5 s; ≤ 300 KB; ≤ 25 cards; CLS ≤ 0.1; offline reading."
+      - title: State
+        text: "Entities by id; feed.ids newest first; a window of payloads in memory; the rest in IndexedDB."
+      - title: API
+        text: "GET /api/tweets?limit&cursor, opaque cursor, REST. New tweets over server-sent events."
+      - title: Network
+        text: "HTTP/2, split and modern bundles, defer extras, Brotli, CDN, AVIF/WebP, srcset sizes, swap fonts."
+      - title: Rendering and JS
+        text: "Virtual list with recycled nodes and transforms; flat CSS; reserved boxes; skeleton. Nothing over 50 ms; workers, idle time, IndexedDB, a service worker, less JS."
+  - __component: sd.quiz
+    key: javascript-quiz
+    title: Quick check
+    questions:
+      - question: Twenty new-tweet events arrive within a second. How should Live Channel update the UI?
+        optionA: Re-render the feed once per event
+        optionB: Insert each new tweet at the top as it arrives
+        optionC: Buffer the events and apply them to the store once per animation frame, updating the pill's count
+        optionD: Ignore events while the reader scrolls
+        answer: C
+        explanation: Batching per frame turns a burst into one render, and the pill keeps the reader's position still.
+      - question: Where does the service worker keep the responses it caches for offline use?
+        optionA: In Cache Storage (the Cache API); structured feed data lives in IndexedDB
+        optionB: In localStorage
+        optionC: In cookies
+        optionD: In sessionStorage
+        answer: A
+        explanation: The Cache API stores request and response pairs. IndexedDB holds the normalized tweets the store reads back.
+      - question: Which job is worth moving to a Web Worker?
+        optionA: Parsing one 12 KB page of tweets
+        optionB: Building a search index over thousands of cached tweets
+        optionC: Setting a card's transform
+        optionD: Reading feed.ids
+        answer: B
+        explanation: Workers pay off for heavy CPU work. Small jobs cost more to copy across than they save, and DOM work must stay on the main thread.

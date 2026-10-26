@@ -1,0 +1,123 @@
+# Layout thrashing's idea: writes only mark layout dirty, a geometry read after a write forces layout now, and a loop that alternates them pays a layout per item.
+id: rendering-performance/layout-thrashing/key-idea
+title: When layout runs early
+source:
+  hash: "5501f5296cd9"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: null
+  assumes:
+    - "Rendering is a chain of stages: parse, style, layout tree, layout, paint, raster, composite."
+    - Parsing, style, layout and paint run on the main thread; raster and compositing run on other threads.
+    - The first read after a DOM change forces one layout; later reads reuse it as long as nothing is written between them.
+  carries:
+    - Layout is lazy; a write only marks what changed, and the browser normally lays out once, before the next frame.
+    - A geometry read such as getBoundingClientRect after a write forces style and layout right then, inside the script.
+    - A loop that alternates writes and geometry reads forces one layout per item; that is layout thrashing.
+    - The fix is to reorder the same work, every read first, then the writes.
+  terms:
+    - term: dirty
+      means: Marked as changed since the last layout, with nothing recomputed yet.
+    - term: forced layout
+      means: A layout the browser runs inside a script because a read needs geometry that a write has made stale.
+    - term: layout thrashing
+      means: Alternating writes and geometry reads in a loop, so every turn forces a full layout.
+    - term: frame budget
+      means: The time between screen refreshes, 16.7 ms at 60 Hz, that all of a frame's work must fit in.
+board:
+  keep: []
+  elements:
+    - { id: lazy, kind: region, label: Layout is lazy, at: [2, 1], size: [58, 13] }
+    - { id: write-class, kind: box, label: "write: add a class", at: [4, 4], size: [12, 3], in: lazy, tone: green }
+    - { id: dirty-marks, kind: box, label: dirty marks, at: [23, 4], size: [12, 3], in: lazy }
+    - { id: frame-layout, kind: box, label: "next frame: one layout", at: [44, 4], size: [14, 3], in: lazy }
+    - { id: writes-cheap, kind: note, label: "a write is cheap: nothing recomputed yet", at: [4, 9], in: lazy }
+    - { id: colour-key, kind: note, label: "green: a write, blue: a read, red: costly layout", at: [4, 11], in: lazy }
+    - { id: forced, kind: region, label: Read after write, at: [62, 1], size: [45, 17] }
+    - { id: gap-added, kind: box, label: gap-before added, at: [64, 4], size: [14, 3], in: forced, tone: green }
+    - { id: rect-read, kind: box, label: getBoundingClientRect, at: [85, 4], size: [20, 3], in: forced, tone: blue }
+    - { id: forced-now, kind: box, label: "style and layout, right now", at: [85, 13], size: [20, 3], in: forced, tone: red }
+    - { id: read-clean, kind: note, label: "read with nothing pending: cheap", at: [64, 13], in: forced }
+    - { id: drop-loop, kind: region, label: "Drop-gap loop, per move", at: [2, 16], size: [51, 19] }
+    - { id: card-1, kind: box, label: "card 1: add, read, remove", at: [4, 19], size: [26, 2], in: drop-loop }
+    - { id: card-2, kind: box, label: "card 2: add, read, remove", at: [4, 25], size: [26, 2], in: drop-loop }
+    - { id: card-rest, kind: box, label: 48 more cards, at: [4, 31], size: [26, 2], in: drop-loop }
+    - { id: fifty-layouts, kind: note, label: "50 forced layouts: about 20 ms a move", at: [32, 19], in: drop-loop }
+    - { id: frame-due, kind: note, label: "a frame is 16.7 ms: half are missed", at: [32, 21], in: drop-loop }
+    - { id: fix, kind: region, label: "Read first, then write", at: [55, 19], size: [50, 16] }
+    - { id: drag-start-read, kind: box, label: "drag start: read 50 rects", at: [57, 22], size: [20, 3], in: fix, tone: blue }
+    - { id: midpoints, kind: oval, label: cached midpoints, at: [83, 22], size: [20, 3], in: fix }
+    - { id: move-write, kind: box, label: "pointermove: one write", at: [83, 30], size: [20, 3], in: fix, tone: green }
+    - { id: per-move, kind: note, label: "per move: no reads, one write", at: [57, 30], in: fix }
+    - { id: under-ms, kind: note, label: "under 1 ms: the gap follows the pointer", at: [57, 32], in: fix }
+  arrows:
+    - { id: marks, from: write-class, to: dirty-marks, label: marks }
+    - { id: settled-by, from: dirty-marks, to: frame-layout, label: settled by }
+    - { id: then-read-rect, from: gap-added, to: rect-read, label: then read }
+    - { id: forces, from: rect-read, to: forced-now, label: forces }
+    - { id: next-card, from: card-1, to: card-2, label: next }
+    - { id: next-cards, from: card-2, to: card-rest, label: next }
+    - { id: keeps, from: drag-start-read, to: midpoints, label: keeps }
+    - { id: compares, from: move-write, to: midpoints, label: compares }
+beats:
+  - point: Layout is lazy, a write such as a class change only marks what changed, and the browser normally works out the geometry once, just before it draws the next frame.
+    kind: mechanism
+    weight: core
+    teach:
+      - Start with what a write really does. Adding a class or changing a style recomputes nothing; the browser notes that something is dirty and moves on, so the write itself is cheap.
+      - The bill is paid later, once, when the browser gets ready to draw the next frame. Many writes in one task still mean one layout.
+    draw: [lazy, write-class, dirty-marks, frame-layout, marks, settled-by, writes-cheap, colour-key]
+    check: Your script adds a class to a card. What does the browser do at that moment, and when does it lay the page out?
+    answer: It only marks the change as dirty; it recomputes style and layout later, once, before drawing the next frame.
+    misconceptions:
+      - "Every class change runs layout immediately -> it only marks the change; layout runs once per frame unless something forces it sooner."
+  - point: A geometry read such as getBoundingClientRect right after a write cannot be answered from the old layout, so the browser recalculates styles and lays the page out right then, inside the script.
+    kind: mechanism
+    weight: core
+    teach:
+      - Now ask the browser a question. After adding gap-before to a Review card, Tasklane's script reads the card's rectangle.
+      - The answer depends on whether the class moved the card, and the browser has not worked that out yet. So it stops the script, runs style and layout for everything dirty, and only then returns the rectangle.
+      - The same read with nothing pending is cheap; it returns what the last frame already computed.
+    draw: [forced, gap-added, rect-read, forced-now, then-read-rect, forces, read-clean]
+    check: Why is getBoundingClientRect cheap at the start of a handler but expensive right after a class change?
+    answer: At the start nothing is pending, so the last layout answers it; after a write the geometry may have changed, so the browser must run style and layout before it can return.
+    misconceptions:
+      - "getBoundingClientRect is always slow -> it is cheap when nothing is pending; only a read after a write forces layout."
+  - point: Tasklane's drop gap tries the gap on all 50 Review cards per pointer move, writing, reading and writing again for each, so one move forces 50 layouts, about 20 ms, more than the 16.7 ms frame.
+    kind: failure
+    weight: core
+    teach:
+      - Tasklane's launch board has 400 cards in 8 columns. On mid-range laptops dragging feels sticky, the card trails the pointer and the drop gap jumps.
+      - On every pointermove the script walks the 50 cards in the column under the pointer. For each one it adds gap-before, reads the rectangle, and removes the class again.
+      - Every read follows a write, so every read forces a layout. 50 layouts in a row come to about 20 ms on this laptop, longer than the whole 16.7 ms frame, and half the frames are missed.
+    draw: [drop-loop, card-1, card-2, card-rest, next-card, next-cards, fifty-layouts, frame-due]
+    check: How many layouts does one pointer move cost in the original drop-gap loop over 50 cards, and why does the drag feel sticky?
+    answer: 50, one per card, because each rectangle read follows a class write; together they take about 20 ms, past the 16.7 ms frame, so frames are missed and the card lags the pointer.
+    misconceptions:
+      - "The drag is slow because a class change is expensive -> each step is cheap on its own; the cost comes from a read after every write."
+  - point: Nothing in the loop is slow on its own; the cost comes from the order, and alternating writes and reads in a loop is layout thrashing, fixed by reading everything first and writing after.
+    kind: rule
+    weight: core
+    teach:
+      - Name the pattern. A read after a write forces a layout; a loop that alternates them forces one per item. That is layout thrashing.
+      - The fix is almost always the same work in a different order. When the drag begins, read all 50 Review rectangles in one pass, while layout is clean, so it costs at most one layout, and keep their midpoints.
+    draw: [fix, drag-start-read, midpoints, keeps]
+    check: How does Tasklane fix the drop gap without measuring less?
+    answer: It reads all 50 card rectangles once, at drag start, before any write, and keeps their midpoints; reads with no write between them cost at most one layout.
+    misconceptions:
+      - "The fix is to stop measuring -> the fix is to do every read before any write, so the reads share one layout."
+  - point: After the fix each pointer move compares the pointer with the cached midpoints and writes one class, so nothing is forced, the frame lays out once, and the move costs well under a millisecond.
+    kind: mechanism
+    weight: core
+    teach:
+      - On each move the handler finds the first cached midpoint below the pointer and sets gap-before on that one card. No read follows the write.
+      - So nothing is forced. The frame lays the board out once, as it planned to, and the gap follows the pointer on time.
+    draw: [move-write, compares, per-move, under-ms]
+    check: After the fix, what does one pointer move read and write, and how many layouts does it cause?
+    answer: It reads no geometry, only the cached midpoints, and writes one class; the only layout is the frame's own, once.
+task:
+  prompt: Draw one pointer move of the drop-gap loop over three cards, marking every write, every read and every forced layout, then redraw it with the reads moved to drag start.
+  expects: [2, 3, 4]

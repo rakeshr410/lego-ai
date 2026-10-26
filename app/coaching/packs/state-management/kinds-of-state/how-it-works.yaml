@@ -1,0 +1,138 @@
+# Where a value lives: five questions in order, derived state with no home, server state as a cache, how long each home keeps state, and colocating before lifting.
+id: state-management/kinds-of-state/how-it-works
+title: Kinds of state and where they live
+source:
+  hash: 7752c4cb1b06
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: null
+  assumes: []
+  carries:
+    - "Five questions, asked in order, place a value: computable, server-owned, wanted after a reload or link, an unsent edit, read far apart; otherwise component state."
+    - Derived state is computed in render or a selector and never stored.
+    - Server state is a cache keyed by the query that fetched it, never hand-copied into the app's store.
+    - Each home keeps state for a different time; bugs sit where a value's need and its home's lifetime do not match.
+    - State starts in the component that uses it and is lifted only to the closest common parent, or to a small shared store when that parent is the whole app.
+  terms:
+    - term: derived state
+      means: A value computed from state that already has an owner, such as the cart badge's count; it has no home of its own.
+    - term: server cache
+      means: The client's copy of facts the server owns, keyed by what was asked and refetched when stale.
+    - term: URL state
+      means: State in the path or query string, which a reload, Back or a shared link brings back.
+    - term: form draft
+      means: An edit the person has typed but not yet sent, held by the form until submit.
+    - term: shared store
+      means: A small store outside the component tree that owns state distant components read or change; it lives until the tab reloads.
+    - term: colocation
+      means: Keeping state in the component that uses it, as low in the tree as possible.
+board:
+  keep: []
+  elements:
+    - { id: placement, kind: region, label: Where does this value live?, at: [2, 2], size: [52, 39] }
+    - { id: q-computed, kind: diamond, label: can it be computed?, at: [4, 5], size: [20, 3], in: placement }
+    - { id: q-server, kind: diamond, label: does the server own it?, at: [4, 11], size: [20, 3], in: placement }
+    - { id: q-url, kind: diamond, label: back after reload or a link?, at: [4, 17], size: [20, 3], in: placement }
+    - { id: q-form, kind: diamond, label: an edit not yet sent?, at: [4, 23], size: [20, 3], in: placement }
+    - { id: q-shared, kind: diamond, label: read far apart in the tree?, at: [4, 29], size: [20, 3], in: placement }
+    - { id: home-component, kind: box, label: component state, at: [6, 36], size: [16, 3], in: placement, tone: blue }
+    - { id: home-derived, kind: box, label: "derive it, store nothing", at: [32, 5], size: [18, 3], in: placement, tone: green }
+    - { id: home-cache, kind: box, label: "server cache, keyed by query", at: [32, 11], size: [18, 3], in: placement, tone: amber }
+    - { id: home-url, kind: box, label: URL path or query string, at: [32, 17], size: [18, 3], in: placement, tone: amber }
+    - { id: home-form, kind: box, label: "the form, until submit", at: [32, 23], size: [18, 3], in: placement, tone: amber }
+    - { id: home-store, kind: box, label: small shared store, at: [32, 29], size: [18, 3], in: placement, tone: amber }
+    - { id: two-values, kind: note, label: "fits two homes? it is two values", at: [26, 37], in: placement }
+    - { id: badge-derived, kind: note, label: "badge count: derived", at: [31, 9], in: placement }
+    - { id: memo-1ms, kind: note, label: memoise past 1 ms, at: [43, 9], in: placement }
+    - { id: lifetimes, kind: region, label: How long each home keeps it, at: [60, 2], size: [52, 18] }
+    - { id: life-component, kind: box, label: "component: until unmount", at: [62, 5], size: [15, 2], in: lifetimes, tone: blue }
+    - { id: life-store, kind: box, label: "store: the tab, until reload", at: [62, 8], size: [28, 2], in: lifetimes, tone: amber }
+    - { id: life-url, kind: box, label: "URL: reload, Back, a shared link", at: [62, 11], size: [48, 2], in: lifetimes, tone: amber }
+    - { id: life-cache, kind: box, label: "cache: dropped any time, refetched", at: [62, 14], size: [22, 2], in: lifetimes, tone: amber, dashed: true }
+    - { id: fig-stale, kind: note, label: "14 min later: fig sold, cache says 1 left", at: [86, 14], in: lifetimes }
+    - { id: no-copy-stock, kind: note, label: "stock copied into the store: never refreshed", at: [62, 17], in: lifetimes }
+    - { id: bug-draft, kind: note, label: "draft in an unmounted component: lost", at: [79, 5], in: lifetimes }
+    - { id: bug-filter, kind: note, label: "filter held in memory: gone on reload", at: [92, 8], in: lifetimes }
+    - { id: owners, kind: region, label: Who owns what on the product page, at: [60, 22], size: [52, 18] }
+    - { id: own-gallery, kind: box, label: "Gallery: photo", at: [62, 25], size: [12, 3], in: owners, tone: blue }
+    - { id: own-buybox, kind: box, label: "BuyBox: quantity", at: [78, 25], size: [12, 3], in: owners, tone: blue }
+    - { id: own-stepper, kind: box, label: Stepper, at: [72, 31], size: [10, 2], in: owners }
+    - { id: own-addtocart, kind: box, label: AddToCart, at: [85, 31], size: [10, 2], in: owners }
+    - { id: own-lines, kind: box, label: "cart store: lines", at: [98, 25], size: [12, 3], in: owners, tone: amber }
+    - { id: own-badge, kind: box, label: "CartBadge: count", at: [98, 34], size: [12, 3], in: owners, tone: green }
+    - { id: own-pot, kind: box, label: "pot: 17 cm, in the URL", at: [62, 35], size: [14, 3], in: owners, tone: amber }
+    - { id: own-stock, kind: box, label: StockLabel reads the cache, at: [79, 35], size: [14, 3], in: owners, tone: amber }
+  arrows:
+    - { id: yes-computed, from: q-computed, to: home-derived, label: "yes" }
+    - { id: yes-server, from: q-server, to: home-cache, label: "yes" }
+    - { id: yes-url, from: q-url, to: home-url, label: "yes" }
+    - { id: yes-form, from: q-form, to: home-form, label: "yes" }
+    - { id: yes-shared, from: q-shared, to: home-store, label: "yes" }
+    - { id: no-shared, from: q-shared, to: home-component, label: "no" }
+    - { id: buybox-stepper, from: own-buybox, to: own-stepper }
+    - { id: buybox-add, from: own-buybox, to: own-addtocart }
+    - { id: derives-count, from: own-lines, to: own-badge, label: derives }
+beats:
+  - point: Any value finds its home by five questions asked in order, stopping at the first yes, with component state as the default when every answer is no.
+    kind: decision
+    weight: core
+    teach:
+      - Draw the path top to bottom. Can it be computed from other state? Then derive it. Does the server own the truth? Server cache. Should a reload, Back or a shared link bring it back? The URL. Is it an edit not yet sent? The form. Do components far apart read or change it? A small shared store. Otherwise, component state.
+      - The order matters. Mossgrove's cart count is both shared and computable; ask about sharing first and it becomes a stored field, ask about computing first and it is stored nowhere, which is right.
+      - When a value seems to fit two homes it is usually two values. The pot size a customer picked belongs in the URL; that pot's price belongs to the server cache.
+    draw: [placement, q-computed, home-derived, yes-computed, q-server, home-cache, yes-server, q-url, home-url, yes-url, q-form, home-form, yes-form, q-shared, home-store, yes-shared]
+    check: The customer picks the 17 cm pot on a product page, and the page shows that pot's price. Where does each value live, and why?
+    answer: The pot pick goes in the URL, because a reload, Back or a shared link should bring it back; the price belongs to the server cache, because the server owns it. They are two values with two homes.
+    misconceptions:
+      - "Anything two components share goes in the global store -> ask first whether it can be computed or is the server's; the cart count is shared but derived, so it is stored nowhere."
+  - point: Derived state has no home of its own, so it is computed during render or in a selector instead of being stored as a copy.
+    kind: rule
+    weight: core
+    teach:
+      - The bag badge's count, the subtotal, the label that says 2 filters and the plants that pass the filters are all functions of state that already has an owner.
+      - A stored copy means every path that changes the source must remember to update the copy, for good. Computing it costs a loop over a few cart lines; memoise only when a measured calculation takes about a millisecond or more.
+    draw: [badge-derived, memo-1ms]
+    check: Why should Mossgrove's bag badge compute its count from the cart lines rather than keep a count field in the store?
+    answer: The count is a function of the lines, which already have an owner. A stored copy must be updated by every code path that changes the lines, and can drift; computing it is cheap.
+    misconceptions:
+      - "Store the computed value so it is not recalculated every render -> the recalculation is cheap; memoise only when a measured calculation reaches about a millisecond."
+  - point: Server state is a cache of the server's truth, kept in a request cache keyed by what was asked so it can go stale and be fetched again, and never hand-copied into the app's store.
+    kind: rule
+    weight: core
+    teach:
+      - Mossgrove's stock count was true when it arrived and stops being true when someone else buys. At T plus 14 minutes another shopper takes the last Fiddle-leaf fig, and this copy still says 1 left.
+      - So it lives in a cache keyed by the request, a product, the wishlist, page 2 of a search, which can mark it stale and refetch. Copied into the app's own store, nothing would ever refresh it.
+    draw: [lifetimes, life-cache, fig-stale, no-copy-stock]
+    check: A developer copies each product's stock count into the app's shared store when the page loads. What goes wrong?
+    answer: The store never refetches, so once someone else buys, the copy keeps showing stock that is gone. Stock belongs in the server cache, keyed by the query, which can mark it stale and fetch again.
+    misconceptions:
+      - "Server data is app state like any other -> it is a cache of the server's truth; keep it in a request cache that can refetch, not in the client store."
+  - point: Each home keeps state for a different time, component state until unmount, a shared store until reload, the URL through reloads, history and links, the server cache only until it is dropped, and bugs sit where a value's need and its home do not match.
+    kind: mechanism
+    weight: core
+    teach:
+      - Read the homes as promises. Component state lasts while the component renders at the same place in the tree. A shared store lasts as long as the JavaScript holding it, the tab until a reload. The URL comes back on reload, waits in history and travels in a pasted link. The server cache can be thrown away whenever, since the server can answer again.
+      - Follow one visit. A review draft held in the product page's component is lost when the guest goes back to the catalogue. A filter held only in memory forgets itself on reload. The guest cart in a memory-only store vanishes on reload too, unless the store persists it.
+    draw: [life-component, life-store, life-url, bug-draft, bug-filter]
+    check: A guest has two lines in a memory-only cart store and reloads the page. What survives, the cart or the ?light=low filter in the URL, and why?
+    answer: The URL filter survives, because the URL is reloaded with the page; the cart is lost, because a memory-only store lives only until the tab reloads.
+    misconceptions:
+      - "A shared store keeps state for good -> it lives as long as the JavaScript holding it; a reload clears it unless it is persisted."
+  - point: State starts in the component that uses it and moves up only when a second component needs it, to their closest common parent, or to a small shared store when that parent is the whole app.
+    kind: decision
+    weight: core
+    teach:
+      - When every question is answered no, the value is component state. Colocated state is easy to find, thrown away with its component, and re-renders only that component. Only the Gallery cares which photo shows, so it keeps that itself.
+      - The quantity is shown by the stepper and sent by AddToCart, two siblings, so it moves up to BuyBox, their closest parent, and no further. Each value keeps one owner; the owner just moved.
+      - The cart lines are read by the header badge, the drawer and the Add button, whose only common parent is the app, so a small store owns them and the badge derives its count. The pot pick lives in the URL and StockLabel reads stock from the cache; the pot and its price are two values with two homes, which is how to read any value that seems to fit two.
+    draw: [home-component, no-shared, owners, own-gallery, own-buybox, own-stepper, own-addtocart, buybox-stepper, buybox-add, own-lines, own-badge, derives-count, own-pot, own-stock, two-values]
+    check: On Mossgrove's product page, the quantity stepper shows a number and the AddToCart button sends it. Where should the quantity live?
+    answer: In BuyBox, the closest common parent of the two siblings, and no higher; it is not a global value.
+    misconceptions:
+      - "Lifting state means moving it to a global store -> lift only to the closest common parent; a store is for when that parent is the whole app."
+task:
+  prompt: For Mossgrove's product page, draw the five questions as a decision path and place the gallery photo, the quantity, the cart lines, the badge count, the pot size and the stock in their homes.
+  expects: [1, 5]

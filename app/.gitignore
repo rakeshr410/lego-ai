@@ -1,9 +1,8 @@
-# build output (dist-pseudo: the en-XA pseudo-locale build, npm run build:pseudo)
+# build output
 dist/
-dist-pseudo/
 # generated types
 .astro/
-# content snapshot, generated from ../content before every build and dev server start
+# content snapshot, generated from lego's content/ before every build and dev server start
 .content/
 
 # dependencies
@@ -11,10 +10,6 @@ node_modules/
 
 # logs
 npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
-
 
 # environment variables
 .env
@@ -23,32 +18,13 @@ pnpm-debug.log*
 # macOS-specific files
 .DS_Store
 
-# jetbrains setting folder
-.idea/
+# Playwright
+test-results/
+playwright-report/
+blob-report/
 
-# Component workbench build (npm run workbench:build)
-workbench-dist/
-# Visual baselines: only the Linux set is committed (docs/workbench.md); other platforms keep their own locally
-e2e-visual/__screenshots__/*
-!e2e-visual/__screenshots__/linux/
-
-# Build-time diagram svgs, cached by a hash of what draws them (src/lib/server/diagram-renderer.ts)
-.content-cache/
-
-# Ask eval reports (npm run eval:ask); the nightly job uploads them as artifacts
+# Interview eval reports (npm run eval:interview)
 eval/results/
 
-# Lighthouse CI reports (npm run lighthouse; the CI job uploads them)
-.lighthouseci/
-
-# Synthetic catalog builds (node ../load/build-scale.mjs)
-.build-scale/
-
-# Self-hosted Pyodide, copied from node_modules/pyodide by scripts/copy-pyodide.mjs (predev/prebuild)
-public/pyodide/
-
-# Excalidraw's fonts for the interview whiteboard, copied by scripts/copy-excalidraw.mjs (predev/prebuild)
+# Excalidraw's fonts for the whiteboard, copied by scripts/copy-excalidraw.mjs (predev/prebuild)
 public/excalidraw/
-
-# DuckDB wheel cache (scripts/copy-pyodide.mjs downloads and sha256-verifies it; ARROWBOX_WHEEL_CACHE overrides the dir)
-.cache/wheels/

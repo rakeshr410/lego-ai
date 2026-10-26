@@ -1,0 +1,130 @@
+# Formatting contexts, the idea: a box is placed by its parent's context and runs one for its children; a new context is a wall.
+id: formatting-contexts-and-css-positioning/formatting-contexts/key-idea
+title: Layout happens in rooms
+source:
+  hash: 85271985c7cc
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: null
+  assumes:
+    - display has an outer half (how the box sits among siblings) and an inner half (how it lays out its children).
+    - Normal flow stacks block boxes and wraps inline content into lines.
+    - Touching vertical margins of blocks in normal flow collapse to the larger one.
+  carries:
+    - A box is placed by the formatting context its parent runs, and lays out its children by the context it runs itself.
+    - "The four contexts in an app: block (BFC), inline (IFC), flex and grid."
+    - "Children of a flex or grid container are items; an inline display is turned into block."
+    - Most block boxes continue the context they sit in; a new context is a wall the outside sees as one rectangle.
+    - "Flex and grid containers are always walls; display: flow-root builds one for block content and does nothing else."
+    - Flex and grid items each start a new block formatting context.
+  terms:
+    - term: formatting context
+      means: The layout algorithm a box runs for its children, block, inline, flex or grid.
+    - term: block formatting context (BFC)
+      means: A context where block boxes go one after another down the page and floats are pulled to a side.
+    - term: inline formatting context (IFC)
+      means: A context where words and inline boxes are packed into line boxes.
+    - term: blockified
+      means: An item of a flex or grid container whose inline outer display is computed as block.
+board:
+  keep: []
+  elements:
+    - { id: span-demo, kind: region, label: "One span, two parents", at: [66, 1], size: [52, 13] }
+    - { id: para-ctx, kind: region, label: in a paragraph, at: [68, 4], size: [20, 7], in: span-demo }
+    - { id: span-in-p, kind: box, label: "span, sits like a word", at: [70, 7], size: [16, 3], in: para-ctx, tone: blue }
+    - { id: flex-ctx, kind: region, label: in a flex row, at: [96, 4], size: [20, 7], in: span-demo }
+    - { id: span-in-flex, kind: box, label: "span, now a block item", at: [98, 7], size: [16, 3], in: flex-ctx, tone: blue }
+    - { id: parent-decides, kind: note, label: "the parent's context decides", at: [68, 12], in: span-demo }
+    - { id: four-contexts, kind: region, label: Four contexts, at: [66, 16], size: [52, 21] }
+    - { id: ctx-block, kind: region, label: "Block: boxes stack", at: [68, 18], size: [24, 8], in: four-contexts, tone: blue }
+    - { id: blk-one, kind: box, label: block one, at: [70, 21], size: [20, 2], in: ctx-block }
+    - { id: blk-two, kind: box, label: block two, at: [70, 23], size: [20, 2], in: ctx-block }
+    - { id: ctx-inline, kind: region, label: "Inline: words wrap", at: [94, 18], size: [22, 8], in: four-contexts, tone: blue }
+    - { id: line-full, kind: box, label: words fill a line, at: [96, 21], size: [18, 2], in: ctx-inline }
+    - { id: line-wrap, kind: box, label: then wrap, at: [96, 23], size: [10, 2], in: ctx-inline }
+    - { id: ctx-flex, kind: region, label: "Flex: one main axis", at: [68, 27], size: [24, 8], in: four-contexts, tone: blue }
+    - { id: flex-item-1, kind: box, label: item 1, at: [70, 30], size: [6, 2], in: ctx-flex }
+    - { id: flex-item-2, kind: box, label: item 2, at: [84, 30], size: [6, 2], in: ctx-flex }
+    - { id: ctx-grid, kind: region, label: "Grid: cells in tracks", at: [94, 27], size: [22, 8], in: four-contexts, tone: blue }
+    - { id: cell-1, kind: box, label: cell 1, at: [96, 30], size: [9, 2], in: ctx-grid }
+    - { id: cell-2, kind: box, label: cell 2, at: [105, 30], size: [9, 2], in: ctx-grid }
+    - { id: cell-3, kind: box, label: cell 3, at: [96, 32], size: [9, 2], in: ctx-grid }
+    - { id: cell-4, kind: box, label: cell 4, at: [105, 32], size: [9, 2], in: ctx-grid }
+    - { id: root-bfc, kind: region, label: "html: the root block context", at: [2, 1], size: [62, 31] }
+    - { id: app-shell, kind: region, label: "app shell: grid", at: [4, 4], size: [58, 26], in: root-bfc, tone: blue }
+    - { id: top-bar, kind: box, label: "top bar: grid item", at: [6, 7], size: [16, 3], in: app-shell }
+    - { id: sidebar, kind: box, label: "sidebar: grid item", at: [6, 11], size: [16, 3], in: app-shell }
+    - { id: board, kind: region, label: "board: grid", at: [26, 7], size: [35, 21], in: app-shell, tone: blue }
+    - { id: column, kind: region, label: "column: flex", at: [28, 10], size: [31, 17], in: board, tone: blue }
+    - { id: task-card, kind: region, label: "card: flex item, new BFC", at: [30, 13], size: [27, 13], in: column, tone: green }
+    - { id: card-header, kind: box, label: "header: own flex", at: [32, 16], size: [23, 3], in: task-card, tone: blue }
+    - { id: card-body, kind: box, label: "body: overflow hidden, BFC", at: [32, 19], size: [23, 3], in: task-card, tone: red }
+    - { id: attachment-row, kind: box, label: "attachments: own flex", at: [32, 22], size: [23, 3], in: task-card, tone: blue }
+    - { id: activity, kind: region, label: "activity: grid item, BFC", at: [6, 15], size: [18, 13], in: app-shell }
+    - { id: comment, kind: region, label: "comment: flow-root", at: [7, 18], size: [16, 8], in: activity, tone: green }
+    - { id: avatar, kind: box, label: "avatar: float", at: [8, 20], size: [6, 4], in: comment }
+    - { id: comment-text, kind: box, label: "text: inline", at: [15, 20], size: [7, 3], in: comment }
+    - { id: walls, kind: region, label: A new context is a wall, at: [2, 34], size: [62, 7] }
+    - { id: same-bfc, kind: box, label: "div in a div: same BFC", at: [4, 37], size: [16, 3], in: walls, tone: grey }
+    - { id: flow-root, kind: box, label: "flow-root: new BFC", at: [26, 37], size: [16, 3], in: walls, tone: green }
+    - { id: always-walls, kind: box, label: "flex, grid: always walls", at: [44, 37], size: [18, 3], in: walls, tone: blue }
+  arrows:
+    - { id: moved, from: span-in-p, to: span-in-flex, label: moved }
+    - { id: main-axis, from: flex-item-1, to: flex-item-2, label: main axis }
+    - { id: opt-in, from: same-bfc, to: flow-root, label: opt in }
+beats:
+  - point: An element never lays itself out; it is placed by the context its parent runs, and it places its own children by the context it runs itself.
+    kind: mechanism
+    weight: core
+    teach:
+      - Recall display's two halves. The outer half is how the box takes part in what its parent is doing; the inner half is what it does for its own children, flow, flow-root, flex, grid or table.
+      - "Take one span. Inside a paragraph it sits on a line like a word. Move it directly into a flex container and it becomes a flex item: its inline display is computed as block and the flex algorithm sizes it. The span did not change; its parent's context did."
+    draw: [span-demo, para-ctx, span-in-p, flex-ctx, span-in-flex, moved, parent-decides]
+    check: A span with display inline is moved from inside a paragraph to directly inside a display flex container. How is it laid out now?
+    answer: As a flex item; its display is blockified and the flex algorithm sizes it, while its inner flow still lays out its own text.
+    misconceptions:
+      - "The span keeps sitting on a line because its own display says inline -> the parent's context decides; children of a flex container are items and are blockified."
+  - point: "Four contexts do the work in an app: block stacks boxes down the page and pulls floats aside, inline packs words into line boxes, flex shares one axis, grid places items in tracks."
+    kind: mechanism
+    weight: core
+    teach:
+      - Block, started by the root, flow-root, floats and several others, puts block boxes one after another down the page and pulls floats to a side so later content flows around them.
+      - Inline is what a block container runs when all its children are inline-level, text, spans, images, packed into line boxes and wrapped.
+      - Flex lines items up on one main axis, each starting from its basis and growing or shrinking. Grid places items into rows and columns sized from lengths, content and fr shares.
+    draw: [four-contexts, ctx-block, blk-one, blk-two, ctx-inline, line-full, line-wrap, ctx-flex, flex-item-1, flex-item-2, main-axis, ctx-grid, cell-1, cell-2, cell-3, cell-4]
+    check: Which context does a block container run when all of its children are text, spans and images?
+    answer: An inline formatting context, which packs them into line boxes and wraps them.
+  - point: "A Slatework screen is contexts inside contexts: html starts the root BFC, the shell and the board run grid, each column runs flex, and each card, as a flex item, is a new BFC."
+    kind: component
+    weight: core
+    teach:
+      - Draw from the outside in. html starts the first block formatting context. The app shell is display grid, so the top bar, sidebar, board and activity panel are grid items placed in areas, not stacked by block rules.
+      - The board is a grid item of the shell and a grid container itself, with a column per track. A column is a flex column, so its cards are flex items, and that alone makes each card a new BFC.
+      - Inside a card the header and attachment rows run their own flex layout, and the body, with overflow hidden, is a BFC that also clips, which matters when a menu inside it gets cut off.
+    draw: [root-bfc, app-shell, top-bar, sidebar, board, column, task-card, card-header, card-body, attachment-row]
+    check: Why is a Slatework card a new block formatting context, though nobody wrote anything on it to make one?
+    answer: It is a flex item of its column, and a flex item is enough to start a new block formatting context.
+  - point: Most block boxes continue the context they sit in, but a new context is a wall, laid out by fresh rules inside and seen as one rectangle outside; flex and grid containers are always walls, and flow-root builds one for ordinary blocks.
+    kind: rule
+    weight: core
+    teach:
+      - "A div inside a div joins the same block formatting context. That is why a float in one can reach into the other, and why margins can merge across their edges."
+      - Some boxes open a new context instead, a wall. Everything inside starts fresh, and the outside sees one rectangle.
+      - "Flex and grid containers are always walls. For plain block content you choose to build one, most cleanly with display: flow-root. Put it on each comment in the activity panel and the floated avatar is contained, with the text beside it in its own inline context."
+    draw: [walls, same-bfc, flow-root, opt-in, always-walls, activity, comment, avatar, comment-text]
+    check: Why does a div inside another div usually share its parent's block formatting context?
+    answer: A plain block box with display block and overflow visible continues the context it sits in; a new one starts only when something on the list, such as flow-root, overflow, a float or a flex parent, applies.
+    misconceptions:
+      - "Every div starts its own layout context -> plain block boxes continue the surrounding BFC, so floats and margins cross between them."
+      - "overflow: clip starts a BFC like overflow hidden -> it clips without becoming a scroll container and starts no BFC."
+  - point: "Slatework's two bugs, an avatar dangling into the next activity entry and a Review column swollen by one unbroken file name, both come down to asking whose rules are laying the element out."
+    kind: failure
+    weight: supporting
+    teach:
+      - Name the two bugs and the question that cracks both. The avatar is fixed by making the comment a wall; why the column swells, the board being a grid of columns, is for the next part.
+task:
+  prompt: "Draw Slatework's screen as nested formatting contexts, from html down to one card and one comment, and write which context each box runs."
+  expects: [3, 4]

@@ -1,0 +1,117 @@
+# What strong answers show: the trace each signal leaves on the trip board, three answers to one prompt, and the 0 to 3 scale.
+id: what-is-frontend-system-design/what-strong-answers-show/how-it-works
+title: What a strong answer shows
+source:
+  hash: 5eb51239873d
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: what-is-frontend-system-design/two-kinds-of-questions/key-idea
+  assumes:
+    - A frontend design details everything inside the browser tab and draws the server as one box known by its contract.
+    - "An application prompt is about views and navigation, a server contract, data that changes under you and product priorities."
+    - "Waiting, failure, offline and keyboard or screen-reader use are frontend questions from the start."
+  carries:
+    - "A reviewer looks for six signals: scoping, decomposition, browser depth, options weighed, user care and narration."
+    - Each signal counts only as a trace you can point to, tied to this prompt's requirements and numbers.
+    - Depth applied before the problem is sized earns little and leaves other signals empty.
+    - "A choice counts as options weighed only when it sits beside alternatives, is tied to a stated requirement and names its cost."
+    - "Each signal scores 0 to 3: nothing, only when prompted, unprompted but generic, unprompted and tied to this prompt."
+  terms:
+    - term: signal
+      means: One kind of evidence a reviewer scores, such as scoping or user care.
+    - term: out-list
+      means: The things you say aloud you are leaving out of scope.
+    - term: check-in
+      means: A question to the interviewer at a turn in the session, such as whether the plan works for them.
+board:
+  keep: [browser-tab, trip-board-view, search-box, client-store, data-access, server-side, api-server, intents, query, load-save, https-json, shape-decision, app-prompt, app-views, app-contract, app-changing, app-priorities]
+  elements:
+    - { id: signals, kind: region, label: Six signals and their trace, at: [2, 45], size: [70, 20] }
+    - { id: sig-scoping, kind: box, label: Scoping, at: [4, 49], size: [20, 3], in: signals, tone: blue }
+    - { id: sig-parts, kind: box, label: Decomposition, at: [27, 49], size: [20, 3], in: signals, tone: blue }
+    - { id: sig-narration, kind: box, label: Narration, at: [50, 49], size: [20, 3], in: signals, tone: blue }
+    - { id: trace-scoping, kind: note, label: "3 questions + an out-list", at: [4, 53], in: signals }
+    - { id: trace-parts, kind: note, label: "5 parts, one owner each", at: [27, 53], in: signals }
+    - { id: trace-narration, kind: note, label: "plan said, check-ins, hints", at: [50, 53], in: signals }
+    - { id: sig-depth, kind: box, label: Browser depth, at: [4, 56], size: [20, 3], in: signals, tone: blue }
+    - { id: sig-options, kind: box, label: Options weighed, at: [27, 56], size: [20, 3], in: signals, tone: blue }
+    - { id: sig-care, kind: box, label: User care, at: [50, 56], size: [20, 3], in: signals, tone: blue }
+    - { id: trace-depth, kind: note, label: "~30 places a day: no virtual list", at: [4, 60], in: signals }
+    - { id: trace-options, kind: note, label: "refetch vs poll vs stream", at: [27, 60], in: signals }
+    - { id: trace-care, kind: note, label: "failed save keeps row + Retry", at: [50, 60], in: signals }
+    - { id: trace-cost, kind: note, label: "stream wins: live in seconds", at: [27, 62], in: signals }
+    - { id: answers, kind: region, label: Three answers to one prompt, at: [75, 45], size: [45, 11] }
+    - { id: answer-a, kind: box, label: "A: depth first", at: [77, 49], size: [13, 3], in: answers, tone: red }
+    - { id: answer-b, kind: box, label: "B: all six", at: [91, 49], size: [13, 3], in: answers, tone: green }
+    - { id: answer-c, kind: box, label: "C: no check-ins", at: [105, 49], size: [13, 3], in: answers }
+    - { id: score-a, kind: note, label: 1 1 2 0 0 1, at: [77, 53], in: answers }
+    - { id: score-b, kind: note, label: 3 3 2 3 3 3, at: [91, 53], in: answers }
+    - { id: score-c, kind: note, label: 3 2 2 1 2 1, at: [105, 53], in: answers }
+    - { id: scale, kind: region, label: The 0 to 3 scale, at: [75, 58], size: [21, 13] }
+    - { id: scale-0, kind: note, label: "0: nothing to write down", at: [77, 61], in: scale }
+    - { id: scale-1, kind: note, label: "1: only after a direct prompt", at: [77, 63], in: scale }
+    - { id: scale-2, kind: note, label: "2: unprompted, but generic", at: [77, 65], in: scale }
+    - { id: scale-3, kind: note, label: "3: unprompted, tied to this prompt", at: [77, 67], in: scale, tone: green }
+  arrows: []
+beats:
+  - point: "Scoping, decomposition and narration each leave a trace you can point to: questions that change the design plus an out-list said aloud, one box per part with a named interface, and a plan stated with check-ins at the turns."
+    kind: rule
+    weight: core
+    teach:
+      - "Use the trip board prompt. Scoping sounds like: must user 1 see user 2's edits live or is a refresh fine, is offline editing in scope, and sharing links and payments are out unless you want them. Each question would change the design."
+      - Decomposition is a box per part, board view, place row, search box, trip store, trips client, one owner per piece of state, and an arrow labelled by what crosses it, such as a moveOrder call.
+      - Narration is the plan said aloud with a check-in, and a hint that changes what you do next, such as redoing the layout for a narrow screen once phones come up.
+    draw: [signals, sig-scoping, trace-scoping, sig-parts, trace-parts, sig-narration, trace-narration]
+    check: What makes a scoping question count as evidence rather than filler?
+    answer: Its answer would change the design, and the things left out are said aloud as an out-list rather than assumed.
+  - point: "Browser depth, options weighed and user care count only when tied to this prompt: a fact applied to its numbers, several candidates with a pick tied to a stated requirement and its cost, and the states a real person hits."
+    kind: rule
+    weight: core
+    teach:
+      - Browser depth is applied to a number or a field. A day holds about 30 places, which renders fine in full, so no virtual list; reordering needs a keyboard path, not only drag; place names typed by users go in as text, never as HTML.
+      - "Options weighed: to show user 2's edits on user 1's screen, refetch when the tab regains focus, poll every 20 seconds, or hold a server-sent event stream. Live within a few seconds rules out the slow poll, so the stream wins, at the cost of a long-lived connection."
+      - "User care is the states people hit: placeholder rows on first load, an empty day that says nothing is planned yet with a search button, a failed save that keeps the row, marked, with Retry, and user 2's change announced politely to a screen reader."
+    draw: [sig-depth, trace-depth, sig-options, trace-options, trace-cost, sig-care, trace-care]
+    check: What three things turn a technology choice into evidence of options weighed?
+    answer: Several candidates put side by side, a pick tied to a requirement the interviewer stated, and the cost of that pick named.
+    misconceptions:
+      - "Naming a technique shows browser depth -> depth counts when the fact is applied to this prompt's numbers or fields, such as 30 places a day needing no virtual list."
+  - point: Depth applied before the problem is sized earns little; Answer A spent twenty minutes virtualising a list of about thirty rows, while Answer B asked three questions and said its out-list first.
+    kind: failure
+    weight: core
+    teach:
+      - "Same prompt, minute two, twice. Answer A goes straight to a virtualised list and measuring row heights. Nothing in it is wrong, but no question has been asked and the size of a day is unknown."
+      - Answer B asks how many places a day holds, whether edits must be live, and whether phones matter, then says what is out and plans the next eight minutes with a check-in.
+      - Only at minute 22, when the interviewer asks, does A learn a day holds about thirty places. Scoping and narration appeared only when forced, options and user care never. Read the scores in signal order, scoping first and narration last.
+    draw: [answers, answer-a, score-a, answer-b, score-b]
+    check: Why did twenty minutes of accurate virtualisation detail earn Answer A so little?
+    answer: The size of a day was never established, so the depth solved a problem the prompt did not have, and the other signals stayed empty.
+    misconceptions:
+      - "Strength in one area makes up for the rest -> depth in one corner does not cover the signals left empty."
+  - point: "Answer C scoped and decomposed well but defended one option against a hint and never checked in, so options weighed and narration scored low."
+    kind: failure
+    weight: core
+    teach:
+      - C announced that live updates need a WebSocket and held that line when the interviewer wondered whether something simpler would do.
+      - Its save states were thorough, but in a twenty-minute monologue with no check-ins after minute 7, so a reviewer cannot tell how this person works in a design review.
+      - A WebSocket can be a fine choice. What lost the signal was not setting it beside alternatives tied to a requirement, and talking at the interviewer instead of with them.
+    draw: [answer-c, score-c]
+    check: Answer C scoped as well as Answer B. What cost it the most?
+    answer: Defending one option against a hint and never checking in, which left options weighed and narration nearly empty.
+    misconceptions:
+      - "Choosing WebSocket was the mistake -> the choice can be fine; the problem was not weighing it against alternatives and waving the hint away."
+  - point: "Each signal is scored 0 to 3: nothing to write down, only after a direct prompt, unprompted but generic, and unprompted and tied to this prompt's requirements."
+    kind: rule
+    weight: core
+    teach:
+      - Walk up the scale with user care on the trip board. 0 is no mention of a failed save; 1 is saying it should handle errors once asked; 2 is volunteering a spinner and an error message.
+      - A 3 ties the state to this prompt, the failed row stays where user 2 dropped it, marked, with Retry, and user 1's board is untouched.
+    draw: [scale, scale-0, scale-1, scale-2, scale-3]
+    check: "Unasked, a candidate says we should show an error if the request fails. What do they score for user care?"
+    answer: A 2, since it is unprompted but generic; a 3 would say where the failed place stays and what user 1 sees meanwhile.
+task:
+  prompt: "Draw the six signals as boxes and, under each, the trace you would leave in an answer to Pathnook's trip board prompt."
+  expects: [1, 2]

@@ -20,11 +20,11 @@ type Props = {
   action: ReactNode;
   /** What starting costs, under the start card's title ("Uses 1 of your 5 voice sessions…"); null until known. */
   usage?: string | null;
-  /** The drill this page is on (docs/interview/README.md, "Drills"), or null for the system's page. */
+  /** The drill this page is on (docs/README.md, "Drills"), or null for the system's page. */
   scope?: { topic: string; section: string | null } | null;
   /** The system has a whole interview (its page lists the drills under it); false on a concept system, whose page is the drills. */
   systemFull?: boolean;
-  /** A coach lesson's page (docs/interview/coach-mode.md): the same plan, taught instead of asked; or the mock interview's. */
+  /** A coach lesson's page (docs/coach-mode.md): the same plan, taught instead of asked; or the mock interview's. */
   kind?: 'interview' | 'coach';
 };
 
@@ -241,9 +241,10 @@ function Drills({ page, concept, coach }: { page: InterviewPage; concept: boolea
 export default function InterviewLanding({ page, action, usage = null, scope = null, systemFull = true, kind = 'interview' }: Props) {
   const { system } = page;
   const { stages, total, ticks } = timeline(page);
-  const hub = `/systems/${system.slug}`;
+  // A playlist's lesson (docs/coaching.md) belongs to its playlist's page.
+  const hub = page.course?.hub ?? `/systems/${system.slug}`;
   const coach = kind === 'coach';
-  const interviewHref = `/systems/${system.slug}/interview${coach ? '?kind=coach' : ''}`;
+  const interviewHref = page.course?.hub ?? `/systems/${system.slug}/interview${coach ? '?kind=coach' : ''}`;
   // The same page as the other kind (the lesson's as an interview, and back), scope kept.
   const drillQuery = scope ? `topic=${encodeURIComponent(scope.topic)}${scope.section ? `&section=${encodeURIComponent(scope.section)}` : ''}` : '';
   const otherHref = `/systems/${system.slug}/interview${coach ? (drillQuery ? `?${drillQuery}` : '') : `?${drillQuery ? `${drillQuery}&` : ''}kind=coach`}`;
@@ -283,7 +284,9 @@ export default function InterviewLanding({ page, action, usage = null, scope = n
         <nav className="iv-top__crumbs" aria-label={tc('nav.breadcrumb')}>
           <a href={hub}>{system.name}</a>
           <span>/</span>
-          {scope ? (
+          {page.course ? (
+            <strong>{page.title}</strong>
+          ) : scope ? (
             <>
               <a href={interviewHref}>{t(coach ? 'coach.crumb' : 'crumb')}</a>
               <span>/</span>
@@ -309,13 +312,13 @@ export default function InterviewLanding({ page, action, usage = null, scope = n
                 <span className="ivl-beta">{t('beta')}</span>
               </span>
               <h1 className="ivl-title">{page.title}</h1>
-              <p className="ivl-lede">{coach ? t('coach.lede') : page.summary}</p>
+              <p className="ivl-lede">{page.course ? page.summary : coach ? t('coach.lede') : page.summary}</p>
               {scope && (
                 <p className="ivl-back">
                   <a href={interviewHref}>{t(systemFull ? 'drill.back' : 'drill.backDrills', { system: system.name })}</a>
                 </p>
               )}
-              {!conceptPage && (
+              {!conceptPage && !page.course && (
                 <p className="ivl-back">{t.rich(coach ? 'coach.switchBack' : 'coach.switch', { link: (text, key) => <a key={key} href={otherHref}>{text}</a> })}</p>
               )}
             </div>

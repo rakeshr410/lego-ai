@@ -1,0 +1,127 @@
+# HTTP versions' idea: the meaning of a request never changed; each version changed what a request waits behind.
+id: client-server-protocols/http-versions/key-idea
+title: Three versions, one browser
+source:
+  hash: "912669635900"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: null
+  assumes: []
+  carries:
+    - Methods, paths, headers and status codes mean the same in HTTP/1.1, HTTP/2 and HTTP/3; page code does not change.
+    - HTTP/1.1 carries one exchange at a time per connection, so browsers open about six per origin and the rest queue.
+    - HTTP/2 interleaves every request as frames on numbered streams over one TCP connection.
+    - Over TCP one lost packet stalls every HTTP/2 stream behind it; HTTP/3 on QUIC stalls only the stream that lost it.
+    - HTTP/3 runs over QUIC on UDP and does the transport and TLS setup together, so a new connection is ready a round trip sooner.
+  terms:
+    - term: stream
+      means: One request and its response inside a shared HTTP/2 or HTTP/3 connection, cut into frames tagged with its number.
+    - term: head-of-line blocking
+      means: Something at the front of a queue holding up everything behind it.
+    - term: QUIC
+      means: A transport over UDP that knows about streams and recovers each one separately; HTTP/3 runs on it.
+    - term: round trip (RTT)
+      means: The time for a message to reach the server and an answer to come back.
+board:
+  keep: []
+  elements:
+    - { id: semantics, kind: region, label: Lot 118 page, at: [2, 2], size: [26, 18] }
+    - { id: lot-requests, kind: box, label: about 60 requests, at: [4, 6], size: [22, 3], in: semantics, tone: blue }
+    - { id: same-get, kind: box, label: GET /api/lots/118, at: [4, 11], size: [22, 3], in: semantics, tone: amber }
+    - { id: rfc-9110, kind: note, label: means the same in every version, at: [4, 16], in: semantics }
+    - { id: h1, kind: region, label: HTTP/1.1, at: [30, 2], size: [28, 23] }
+    - { id: h1-conns, kind: region, label: 6 TCP + TLS connections, at: [32, 5], size: [24, 12], in: h1, tone: blue }
+    - { id: h1-c1, kind: box, label: request 1, at: [34, 8], size: [20, 2], in: h1-conns }
+    - { id: h1-c2, kind: box, label: request 2, at: [34, 11], size: [20, 2], in: h1-conns }
+    - { id: h1-c6, kind: box, label: request 6, at: [34, 14], size: [20, 2], in: h1-conns }
+    - { id: h1-queue, kind: box, label: request 7 waits, at: [32, 21], size: [24, 2], in: h1, tone: red }
+    - { id: h1-rule, kind: note, label: one exchange per connection at a time, at: [32, 24], in: h1 }
+    - { id: h2, kind: region, label: HTTP/2, at: [60, 2], size: [28, 23] }
+    - { id: h2-conn, kind: region, label: 1 TCP + TLS connection, at: [62, 5], size: [24, 8], in: h2, tone: blue }
+    - { id: h2-js, kind: box, label: app.js frame, at: [64, 8], size: [6, 3], in: h2-conn, tone: green }
+    - { id: h2-photo, kind: box, label: photo frame, at: [71, 8], size: [6, 3], in: h2-conn, tone: green }
+    - { id: h2-json, kind: box, label: JSON frame, at: [78, 8], size: [6, 3], in: h2-conn, tone: green }
+    - { id: h2-stall, kind: box, label: one lost packet stalls all, at: [62, 19], size: [24, 3], in: h2, tone: red }
+    - { id: h3, kind: region, label: HTTP/3, at: [90, 2], size: [28, 23] }
+    - { id: h3-conn, kind: region, label: "1 QUIC connection, UDP", at: [92, 5], size: [24, 8], in: h3, tone: blue }
+    - { id: h3-js, kind: box, label: app.js stream, at: [94, 8], size: [6, 3], in: h3-conn, tone: green }
+    - { id: h3-photo, kind: box, label: photo stream, at: [101, 8], size: [6, 3], in: h3-conn, tone: green }
+    - { id: h3-json, kind: box, label: JSON stream, at: [108, 8], size: [6, 3], in: h3-conn, tone: green }
+    - { id: h3-stall, kind: box, label: one lost packet stalls one, at: [92, 18], size: [24, 3], in: h3, tone: green }
+    - { id: h3-ready, kind: note, label: ready a round trip sooner, at: [92, 22], in: h3 }
+    - { id: h3-udp, kind: note, label: UDP may be blocked, at: [106, 22], in: h3 }
+  arrows:
+    - { id: all-busy, from: h1-conns, to: h1-queue, label: busy }
+    - { id: one-order, from: h2-conn, to: h2-stall, label: in order }
+    - { id: own-order, from: h3-json, to: h3-stall, label: own order }
+beats:
+  - point: A request means the same thing in every HTTP version, so the page's fetch() and the server's routing do not change; only how the bytes travel does.
+    kind: rule
+    weight: core
+    teach:
+      - Open Gavelry's lot 118 page. The browser has some sixty things to fetch from bid.example.com, the HTML, scripts, a stylesheet, eight photos of a coffee pot, the lot's JSON, the bid history.
+      - Each is an ordinary HTTP exchange. Method, path, status code and headers like Cache-Control are defined once and mean the same over 1.1, 2 or 3.
+      - So moving the edge to a new version changes nothing in page code. The browser's network stack does the framing; the page never learns which version carried the bytes.
+    draw: [semantics, lot-requests, same-get, rfc-9110]
+    check: Gavelry moves its edge from HTTP/2 to HTTP/3. What must change in the lot page's fetch('/api/lots/118') call?
+    answer: Nothing; the method, path, headers and status codes mean the same in every version, and the browser handles the framing.
+    misconceptions:
+      - "HTTP/2 needs a different URL scheme or binary requests from page code -> the scheme and the call stay the same; the network stack frames the request."
+  - point: HTTP/1.1 carries one exchange at a time on a connection, so browsers open about six connections per origin and the seventh request waits for one to free up.
+    kind: mechanism
+    weight: core
+    teach:
+      - HTTP/1.1 sends a request as lines of text, and that connection can carry the next request only once the whole answer is back.
+      - "Browsers work around it with parallel connections, about six per origin. Six requests go out; request seven waits for one of them to finish."
+      - That is the first kind of waiting, waiting for a free connection.
+    draw: [h1, h1-conns, h1-c1, h1-c2, h1-c6, h1-queue, all-busy, h1-rule]
+    check: On HTTP/1.1, the lot page has 60 requests for one origin. Why does the seventh one wait?
+    answer: Each connection carries one exchange at a time and the browser keeps about six per origin, so the seventh request queues until one of the six finishes.
+  - point: HTTP/2 cuts every exchange into binary frames tagged with a stream number, so all of the page's requests share one TCP connection at once.
+    kind: mechanism
+    weight: core
+    teach:
+      - HTTP/2 gives each request a numbered stream and slices responses into small frames, so the edge can send a bit of app.js, then a bit of a photo, then a bit of the lot JSON.
+      - All sixty requests are in flight on a single TCP connection. Request seven no longer queues behind six busy connections.
+    draw: [h2, h2-conn, h2-js, h2-photo, h2-json]
+    check: What kind of waiting does HTTP/2 remove that HTTP/1.1 has?
+    answer: Waiting for a free connection; many requests share one connection at the same time as interleaved streams.
+    misconceptions:
+      - "HTTP/2 opens one connection per stream -> all streams share a single TCP connection; that is the point of multiplexing."
+  - point: HTTP/2 keeps one wait, TCP delivers bytes strictly in order, so one lost packet holds back every stream on the connection until it is resent.
+    kind: failure
+    weight: core
+    teach:
+      - TCP hands bytes to the browser only in order, and all sixty streams share that one ordered sequence.
+      - On a bad train connection one packet carrying part of the lot JSON goes missing. Every stream behind it stops until the gap is filled, even the photos whose own bytes already arrived.
+      - That is head-of-line blocking at the TCP layer. HTTP/2 removed the queue for a connection but kept TCP's.
+    draw: [h2-stall, one-order]
+    check: On HTTP/2, one packet carrying part of lot.json is lost. What waits?
+    answer: Every stream on that TCP connection, until the retransmit arrives, because TCP releases bytes only in order.
+    misconceptions:
+      - "Multiplexing means a loss only affects its own stream -> over TCP every stream shares one byte order, so all of them stall; only HTTP/3 confines it."
+  - point: HTTP/3 moves the streams onto QUIC over UDP, which recovers each stream on its own, and does the transport and TLS setup together so a new connection is ready a round trip sooner.
+    kind: mechanism
+    weight: core
+    teach:
+      - HTTP/3 runs on QUIC, a transport over UDP. Each stream is put back together separately, so a lost packet delays only the response it belonged to.
+      - It also folds the encryption handshake into the transport handshake, so a new connection is usable one round trip earlier than TCP plus TLS.
+      - It leaves a smaller wait of its own, the stream that lost a packet still waits, and some networks block UDP.
+    draw: [h3, h3-conn, h3-js, h3-photo, h3-json, h3-stall, own-order, h3-ready, h3-udp]
+    check: The same lot.json packet is lost on HTTP/3. What waits now, and why?
+    answer: Only lot.json's stream; QUIC knows which stream each packet belongs to and reassembles every stream on its own.
+    misconceptions:
+      - "HTTP/3 is HTTP/2 over a faster TCP -> it runs over QUIC on UDP, not TCP."
+      - "HTTP/3 skips the TLS handshake -> it still does TLS, combined with QUIC's own setup in one exchange."
+  - point: Each version deleted one kind of waiting and left a smaller one, and knowing which queue a page is standing in is most of what a frontend engineer needs from the protocol.
+    kind: rule
+    weight: supporting
+    teach:
+      - Sum it up along the board. 1.1 waits for a free connection; 2 removes that but waits on TCP's single byte order; 3 confines a loss to one stream.
+      - Promise the next part, where the round trips, the twelve-request waterfall and the lost packet get numbers.
+task:
+  prompt: Draw the lot page's requests going over HTTP/1.1, HTTP/2 and HTTP/3 side by side, and mark for each what a request still has to wait behind.
+  expects: [2, 3, 4, 5]

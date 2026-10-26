@@ -1,0 +1,119 @@
+# The service worker's idea: your own script on the request path, answering from a cache you control before the network, with a strategy per request and a lifecycle per version.
+id: network-performance/service-worker-caching/key-idea
+title: A proxy in the browser
+source:
+  hash: f0c56cec1dd7
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: null
+  assumes: []
+  carries:
+    - The HTTP cache only does what response headers say, and with no signal the browser shows its own offline error page.
+    - A service worker is a script the page registers that receives a fetch event for every request from pages in its scope and answers it with a Response it chooses.
+    - The worker answers from Cache Storage, the network, a race of the two, or a reply it builds; the page's own fetch calls do not change.
+    - A worker takes the network off the shell's critical path; it does not make the network faster.
+    - Each kind of request gets its own strategy, cache first for files whose URL changes with their content, network first with a dated fallback for live data.
+    - A new worker version installs beside the old one and waits until no open tab depends on the old one.
+  terms:
+    - term: service worker
+      means: A script the page registers that sits between its pages and the network and answers their requests.
+    - term: scope
+      means: The set of URLs whose pages the worker controls.
+    - term: fetch event
+      means: What the browser hands the worker for each request a controlled page makes.
+    - term: Cache Storage
+      means: Named caches of request and response pairs that the worker's own code fills and reads.
+    - term: app shell
+      means: The HTML, scripts and styles every page boots from, before its data arrives.
+    - term: strategy
+      means: The order in which a worker tries the cache and the network for one kind of request.
+board:
+  keep: []
+  elements:
+    - { id: no-worker, kind: region, label: Without a worker, at: [1, 1], size: [49, 11] }
+    - { id: offline-error, kind: box, label: "browser's error page", at: [3, 5], size: [12, 3], in: no-worker, tone: red }
+    - { id: nw-page, kind: box, label: Tidewatch spot page, at: [21, 5], size: [10, 3], in: no-worker, tone: blue }
+    - { id: http-cache, kind: oval, label: HTTP cache, at: [36, 5], size: [12, 3], in: no-worker, tone: amber }
+    - { id: headers-note, kind: note, label: "only what the headers allow", at: [34, 9], in: no-worker }
+    - { id: sw-path, kind: region, label: Worker on the request path, at: [52, 1], size: [53, 19] }
+    - { id: sw-page, kind: box, label: page, at: [54, 5], size: [8, 3], in: sw-path, tone: blue }
+    - { id: sw, kind: box, label: service worker, at: [70, 5], size: [12, 3], in: sw-path, tone: blue }
+    - { id: network, kind: box, label: network, at: [88, 5], size: [10, 3], in: sw-path, tone: grey }
+    - { id: cache-storage, kind: oval, label: Cache Storage, at: [70, 15], size: [12, 3], in: sw-path, tone: amber }
+    - { id: every-request, kind: note, label: "every in-scope request, the API too", at: [54, 10], in: sw-path }
+    - { id: answers, kind: note, label: "answer: cache, network, race, or build", at: [84, 16], in: sw-path }
+    - { id: morning, kind: region, label: "Morning open, beach 4G", at: [1, 14], size: [42, 16] }
+    - { id: m-no-sw, kind: box, label: "no worker: shell at 760 ms", at: [3, 17], size: [38, 3], in: morning, tone: red }
+    - { id: m-sw, kind: box, label: "worker: shell at 180 ms", at: [3, 21], size: [9, 3], in: morning, tone: green }
+    - { id: m-offline, kind: box, label: "offline: forecast dated 06:10", at: [3, 25], size: [16, 3], in: morning, tone: amber }
+    - { id: not-faster, kind: note, label: "network not faster, just off the shell's path", at: [14, 22], in: morning }
+    - { id: two-ideas, kind: region, label: Two ideas for the rest, at: [52, 22], size: [59, 10] }
+    - { id: idea-strategy, kind: box, label: a strategy per kind of request, at: [54, 25], size: [26, 3], in: two-ideas, tone: blue }
+    - { id: idea-lifecycle, kind: box, label: "a lifecycle: the new version waits", at: [83, 25], size: [26, 3], in: two-ideas, tone: blue }
+    - { id: strategy-note, kind: note, label: "hashed files: cache; forecast: network, then dated copy", at: [54, 29], in: two-ideas }
+    - { id: lifecycle-note, kind: note, label: installed beside the old one until no tab needs it, at: [83, 29], in: two-ideas }
+  arrows:
+    - { id: asks-cache, from: nw-page, to: http-cache, label: asks }
+    - { id: nw-offline, from: nw-page, to: offline-error, label: offline }
+    - { id: fetch-event, from: sw-page, to: sw, label: fetch event }
+    - { id: to-network, from: sw, to: network, label: fetch }
+    - { id: match-put, from: sw, to: cache-storage, label: "match, put", both: true }
+beats:
+  - point: The browser's HTTP cache only does what response headers told it to, so with a weak signal the HTML still waits on the server and with none the reader gets the browser's error page.
+    kind: requirement
+    weight: core
+    teach:
+      - Tidewatch's regulars open the same few spot pages each morning, often from a beach car park with one bar of signal.
+      - The HTTP cache keeps the hashed scripts and styles, but the HTML must be checked with the server first, and the forecast past its short max-age goes to the network every time.
+      - With no signal at all the browser shows its own offline page. Nothing lets the page say, give me what you had yesterday and tell the reader how old it is.
+    draw: [no-worker, nw-page, http-cache, asks-cache, offline-error, nw-offline, headers-note]
+    check: With no signal, what does a Tidewatch reader see without a service worker, and why can't the page help?
+    answer: The browser's own offline error page; nothing of Tidewatch's runs before the navigation succeeds, and the HTTP cache only follows the headers it was given.
+  - point: A service worker is a script the page registers that the browser hands a fetch event for every request from pages in its scope, and the worker answers each with a Response it chooses.
+    kind: component
+    weight: core
+    teach:
+      - The page registers sw.js. From then on every request from a page in its scope goes to the worker first, the navigation, the scripts, the photos, even calls to the API on another origin.
+      - The worker can answer from a copy in Cache Storage, go to the network, race the two, or build a reply itself.
+      - The page's code does not change. It still calls fetch for the forecast and gets an answer.
+    draw: [sw-path, sw-page, sw, fetch-event, network, to-network, cache-storage, match-put, every-request, answers]
+    check: Which of Tidewatch's requests does its service worker see, and what can it answer them with?
+    answer: Every request from a page in its scope, the navigation, scripts, photos and API calls even to another origin; it can answer from Cache Storage, from the network, by racing them, or with a reply it builds.
+    misconceptions:
+      - "The page has to call the service worker -> the page just calls fetch as before; the browser routes the request through the worker."
+  - point: A worker takes the network off the shell's critical path, so a repeat visit paints from the cache in a fraction of the time, and offline it can show a stored forecast labelled with its age.
+    kind: metric
+    weight: core
+    teach:
+      - On beach 4G with cold connections, the shell without a worker waits for a connection and an HTML revalidation and paints at about 760 ms.
+      - With a worker, it boots in about 40 ms, answers the navigation from Cache Storage, and the shell paints at about 180 ms. The forecast still has to connect to the API.
+      - Offline, the shell still comes from the cache and the forecast fetch fails fast, so the worker returns the copy stored at 06:10 and the page says so.
+    draw: [morning, m-no-sw, m-sw, m-offline, not-faster]
+    check: Does a service worker make Tidewatch's forecast request faster on a good signal?
+    answer: No; the forecast still needs a connection to the API. The worker takes the network off the shell's path, so the shell paints from the cache sooner.
+    misconceptions:
+      - "A service worker speeds up the network -> it does not; it lets the cache answer before the network gets a say."
+  - point: Each kind of request gets its own strategy, a file whose URL changes with its content comes straight from the cache, while the forecast tries the network first and falls back to a stored copy labelled with its age.
+    kind: decision
+    weight: core
+    teach:
+      - A hashed script can never be stale, because a new version means a new URL, so the cache can answer it.
+      - A forecast changes and matters, so the worker asks the network and only falls back to the stored copy, which the page must date.
+    draw: [two-ideas, idea-strategy, strategy-note]
+    check: Why can Tidewatch's hashed app script come straight from the cache while the forecast cannot?
+    answer: The script's URL changes whenever its content does, so a cached copy is always right; the forecast changes under the same URL, so it tries the network first and falls back to a dated copy.
+  - point: The worker is itself a file that ships with each release, and the browser installs a new version beside the old one and holds it back until no open tab still depends on the old one.
+    kind: mechanism
+    weight: core
+    teach:
+      - Every release ships a new sw.js. The browser installs it next to the running one rather than swapping it in.
+      - The new version waits until no open tab still uses the old one. Most service-worker bugs come from not understanding this step; the next part walks through it.
+    draw: [idea-lifecycle, lifecycle-note]
+    check: Tidewatch deploys a new worker while a reader has a spot page open. Does the new worker take over that tab at once?
+    answer: No; it is installed beside the old one and waits until no open tab still depends on the old version.
+task:
+  prompt: Draw a Tidewatch page, its service worker, Cache Storage and the network, with the arrows a request follows, and write when the shell paints on beach 4G with and without the worker.
+  expects: [2, 3]

@@ -1,0 +1,148 @@
+# FLIP on Tasklane's board: First, Last, Invert, Play inside one task, the frame budget, inverting size, interrupted glides, reduced motion, and view transitions.
+id: rendering-performance/compositor-animations/how-it-works
+title: Animating layout changes with FLIP
+source:
+  hash: "0be2e647fc2c"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: how-browsers-render-content/layers-and-compositing/how-it-works
+  assumes:
+    - Animating transform or opacity on a rastered layer reruns only compositing, on the compositor thread.
+    - Animating width, height, top or bottom reruns layout and paint every frame.
+    - Paint records drawing commands; raster turns them into pixels; compositing stacks the rasterized layers into the frame.
+  carries:
+    - "FLIP: read every First rect before any write, apply the change, read every Last rect, invert with a transform, play it to none."
+    - The first read after a DOM change forces one layout; later reads reuse it as long as nothing is written between them.
+    - The whole FLIP runs in one task, so the browser paints once, with the inverting transforms already in place.
+    - Animate only the cards the user can see; measuring and committing every moved card can miss the frame.
+    - getBoundingClientRect includes a running transform, so an interrupted FLIP starts from where the card is drawn.
+    - Reduced motion swaps travel for colour or opacity changes; it does not delete the information the motion carried.
+  terms:
+    - term: FLIP
+      means: First, Last, Invert, Play; measure before and after a layout change, then animate a transform from the old place to none.
+    - term: invert
+      means: The transform that puts an element back where it was drawn before the change, first minus last.
+    - term: forced layout
+      means: A layout the browser runs inside a script because a read needs geometry that a write has made stale.
+    - term: reduced motion
+      means: The user's operating-system setting, exposed as prefers-reduced-motion reduce, asking for less movement on screen.
+    - term: view transition
+      means: The browser's own version of the idea, document.startViewTransition, animating snapshots of named elements.
+board:
+  keep: [property-trees, transform-tree, clip-tree, effect-tree, scroll-tree, chunk-points, compositor-copy, layerize, paint-chunks, page-layer, own-layer, split-where, merged, kept-apart, layer-reasons, wc-hint, running-anim, own-content, sticky-over, badge-overlap, wc-effects, tiles-region, tile-p1, tile-p2, tile-p3, tile-p4, tile-p5, gallery-width, fling-blank, threads-scroll, compositor-thread, main-busy, asks-first, passive-rule, touch-action, routes, route-layout, route-paint, route-composite, bar-jump]
+  elements:
+    - { id: flip-steps, kind: region, label: FLIP in one task, at: [2, 52], size: [66, 18] }
+    - { id: flip-first, kind: box, label: "First: read 13 rects", at: [4, 55], size: [16, 3], in: flip-steps, tone: blue }
+    - { id: flip-change, kind: box, label: apply the drop, at: [27, 55], size: [16, 3], in: flip-steps, tone: amber }
+    - { id: flip-last, kind: box, label: "Last: read, one layout", at: [50, 55], size: [16, 3], in: flip-steps, tone: red }
+    - { id: reads-reuse, kind: note, label: 12 more reads reuse that layout, at: [4, 66], in: flip-steps }
+    - { id: flip-invert, kind: box, label: "Invert: first minus last", at: [50, 65], size: [16, 3], in: flip-steps, tone: blue }
+    - { id: flip-play, kind: box, label: "Play: animate to none", at: [27, 65], size: [16, 3], in: flip-steps, tone: green }
+    - { id: invert-math, kind: region, label: "One card's invert", at: [70, 63], size: [23, 8] }
+    - { id: top-move, kind: note, label: "card top: 312 px to 216 px", at: [72, 66], in: invert-math }
+    - { id: translate-96, kind: note, label: "translate 96 px down, to none in 220 ms", at: [72, 68], in: invert-math }
+    - { id: one-paint, kind: note, label: "one task, one paint, after invert", at: [72, 70], in: invert-math }
+    - { id: frame-budget, kind: region, label: Drop frame at 60 Hz, at: [70, 52], size: [36, 9] }
+    - { id: budget-13, kind: box, label: "13 visible cards: 6.2 ms spare", at: [72, 55], size: [32, 2], in: frame-budget, tone: green }
+    - { id: budget-84, kind: box, label: "84 cards: 20.2 ms, frame missed", at: [72, 58], size: [32, 2], in: frame-budget, tone: red }
+    - { id: size-invert, kind: region, label: Inverting size, at: [95, 63], size: [23, 12] }
+    - { id: scale-stretch, kind: note, label: scale stretches text and corners, at: [97, 66], in: size-invert }
+    - { id: counter-drift, kind: note, label: "halfway: text 1.13 times too big", at: [97, 68], in: size-invert }
+    - { id: panel-crossfade, kind: note, label: "scale a panel, crossfade content", at: [97, 70], in: size-invert }
+    - { id: no-first-last, kind: note, label: "new card fades in, old one animates out", at: [97, 72], in: size-invert }
+    - { id: interrupt, kind: region, label: Second drop mid-glide, at: [2, 72], size: [43, 7] }
+    - { id: drawn-rect, kind: box, label: drawn rect is the new First, at: [4, 75], size: [22, 3], in: interrupt, tone: blue }
+    - { id: cancel-old, kind: note, label: "cancel the old glide: no jump", at: [28, 76], in: interrupt }
+    - { id: reduced, kind: region, label: Reduce motion, at: [47, 72], size: [46, 7] }
+    - { id: reduced-drop, kind: box, label: "drop: instant, 600 ms tint", at: [49, 75], size: [20, 3], in: reduced, tone: green }
+    - { id: reduced-drawer, kind: box, label: "drawer: fades in, 120 ms", at: [71, 75], size: [20, 3], in: reduced, tone: green }
+  arrows:
+    - { id: then-write, from: flip-first, to: flip-change, label: then write }
+    - { id: then-read, from: flip-change, to: flip-last, label: then read }
+    - { id: subtract, from: flip-last, to: flip-invert, label: subtract }
+    - { id: hand-off, from: flip-invert, to: flip-play, label: hand off }
+beats:
+  - point: FLIP starts by reading every card's First rect before any write, then applies the change, then reads every Last rect; the first read after the change forces one layout and the other reads reuse it.
+    kind: flow
+    weight: core
+    teach:
+      - User 1 drops a card into Review on Tasklane's board, and 13 visible cards need to glide to their new places. The browser cannot animate layout cheaply, so measure and fake it.
+      - First comes before any write, so the 13 rects come from the layout the browser already has and cost a fraction of a millisecond. Then the store applies the drop and the DOM changes, which marks layout dirty.
+      - Last is the one costly read. The first getBoundingClientRect after the change makes the browser lay the board out right then, about 3 ms, the same layout it would have done at the end of the task anyway. The other 12 reads reuse it, as long as nothing is written between them.
+    draw: [flip-steps, flip-first, flip-change, flip-last, then-write, then-read, reads-reuse]
+    check: Why read every First rect before the change, and every Last rect before writing any transform?
+    answer: Reads before any write come from the existing layout for free; after the change, the first read forces one layout and the rest reuse it, but a write between reads would force a fresh layout each time.
+    misconceptions:
+      - "Each getBoundingClientRect costs a layout -> only a read after a write does; consecutive reads with no write between them share one layout."
+  - point: Invert is subtraction, a transform that puts each card back where it was drawn, and Play animates that transform to none; because it all happens in one task, the browser paints once, with the inverting transforms in place.
+    kind: mechanism
+    weight: core
+    teach:
+      - The card that was at top 312 px is now at 216 px, so it gets translateY of 96 px, which draws it exactly where it was.
+      - Play hands it a two-keyframe animation from that transform to none over 220 ms. A transform animation is one the compositor can run, which is why the glide holds up while the 90 ms save task runs.
+      - The sequence never leaves the task, so the browser paints only once, after the inverting transforms are set. The user never sees the cards sitting in their final slots before the glide. In React the same split works, First in the drop handler, Last and Play in useLayoutEffect, before paint.
+    draw: [flip-invert, flip-play, subtract, hand-off, invert-math, top-move, translate-96, one-paint]
+    check: A card was at top 312 px and is now at 216 px. What transform does Invert give it, and why does the user never see it jump to its new slot first?
+    answer: translateY(96px), animated to none; the whole FLIP runs in one task, so the first paint already has the inverting transform in place.
+    misconceptions:
+      - "FLIP animates top from the old value to the new one -> it animates a transform; the card's layout position changes once, before the first paint."
+  - point: FLIP fits the frame when it animates the cards the user can see; Tasklane's 13 visible cards leave about 6 ms spare, while all 84 moved cards push the work to about 20 ms and miss the frame.
+    kind: metric
+    weight: core
+    teach:
+      - Lay the drop frame out at 60 Hz, 16.7 ms. The handler, two rounds of reads, the store update, one forced layout and 13 animations, then style, paint and commit, leave about 6.2 ms spare.
+      - Animate all 84 cards the drop moved and there is more measuring, more animations to set up and many more composited layers to commit. The work runs to about 20.2 ms and the first frame of the glide is late.
+      - The one layout is affordable because it comes right after the user's input, when about 100 ms passes unnoticed; it would not be affordable 13 times during the motion.
+    draw: [frame-budget, budget-13, budget-84]
+    check: Why does Tasklane animate only the 13 visible cards rather than all 84 that moved?
+    answer: Measuring, starting animations and committing layers for 84 cards takes the drop frame to about 20 ms, past the 16.7 ms budget; the 13 visible ones fit with about 6 ms to spare.
+  - point: Position inverts cleanly to a translate, but size inverts to a scale that stretches text, and counter-scaling the children drifts mid-animation, so a size change is better done by scaling a plain panel and crossfading the content.
+    kind: rule
+    weight: core
+    teach:
+      - Growing a card of 272 by 88 into the 480 by 808 drawer means starting the drawer at about 0.57 wide and 0.11 tall, and everything inside is drawn squashed until the end.
+      - Giving the children the inverse scale is only exact at the two ends. Halfway, a parent going from 0.5 to 1 is at 0.75 and a child going from 2 to 1 is at 1.5, so text is drawn about 1.13 times too big.
+      - The plainer answer is to scale a background panel from the card's rect to the drawer's and fade the drawer's content in on top. Appearing and disappearing cards have nothing to invert; a new card fades in where it lands, a leaving one is animated out before it is removed.
+    draw: [size-invert, scale-stretch, counter-drift, panel-crossfade, no-first-last]
+    check: Why is FLIP with scale a poor fit for growing a card into the detail drawer, and what does Tasklane do instead?
+    answer: Scale stretches the text and corners, and counter-scaling the children only cancels out at the ends; Tasklane scales a plain background panel and crossfades the drawer's content.
+    misconceptions:
+      - "A counter-scale on the children keeps the text exact throughout -> the two interpolated scales multiply to something other than 1 in the middle."
+  - point: When a second drop lands mid-glide, getBoundingClientRect reports where the card is drawn, running transform included, so the new FLIP measures from there, cancels the old animation and never jumps.
+    kind: failure
+    weight: core
+    teach:
+      - User 2 drops another card above user 1's 120 ms into its glide. The card is drawn about 20 px below its slot at that moment.
+      - First reads the drawn rect, which includes the running transform, and that becomes the new starting point. Only then are the old FLIP animations cancelled, so Last measures layout rather than a transform.
+      - The new delta is measured from where the card really was on screen, so the second glide continues from there with no jump.
+    draw: [interrupt, drawn-rect, cancel-old]
+    check: A card is 120 ms into its glide when a second drop arrives. Where does the new FLIP measure its First from, and why does the card not jump?
+    answer: From where the card is drawn at that moment, since getBoundingClientRect includes the running transform; the old animation is cancelled and the new one starts from that drawn position.
+    misconceptions:
+      - "An interrupted card must snap to its slot before the next glide -> First measures the drawn rect, transform included, so the new glide starts where it is."
+  - point: Reduced motion is a different animation, not a deleted one, travel is swapped for changes of colour or opacity that keep the information, and motion that follows the user's own pointer stays.
+    kind: rule
+    weight: core
+    teach:
+      - Some people get dizzy from sliding, panning and zooming and turn on Reduce motion; the browser exposes it as prefers-reduced-motion reduce.
+      - Deleting the glide throws away where the card went. So with the setting on, the drop reorders instantly and tints the dropped card for 600 ms, and the drawer fades in over 120 ms instead of sliding.
+      - WCAG's Animation from Interactions criterion treats colour, blur and opacity changes that do not alter size, shape or position as not motion. The lifted card under the pointer still follows it, because that is the user moving it.
+    draw: [reduced, reduced-drop, reduced-drawer]
+    check: With Reduce motion on, what does Tasklane do when a card is dropped, and why not just remove the animation?
+    answer: It reorders instantly and tints the dropped card briefly; removing the animation outright would lose the information of where the card went.
+    misconceptions:
+      - "Reduced motion means no animation at all -> it means no travel; fades and colour changes still carry the information."
+  - point: document.startViewTransition does a browser-built FLIP over snapshots of named elements, less code for one-off moves, but a hand-written FLIP gives more control for frequent, interruptible reorders.
+    kind: decision
+    weight: supporting
+    teach:
+      - The browser captures each element with a view-transition-name as an image, runs the update, captures again, and animates each image from its old box to its new one. Same-document view transitions became Baseline in October 2025.
+      - Every moving card needs its own unique name, the page is frozen while the update runs, the user sees images rather than the cards, and a new drop cannot pick a card up from where it is drawn. Reduced motion is still your job.
+    check: Why might Tasklane keep its FLIP helper for card drops rather than switch to view transitions?
+    answer: Drops are frequent and get interrupted; a hand-written FLIP picks a card up from where it is drawn, while a view transition can only be skipped, and it animates snapshots rather than the cards.
+task:
+  prompt: Draw the four FLIP steps for one card that moves from top 312 px to 216 px, write the transform Invert gives it, and mark which step forces a layout.
+  expects: [1, 2]

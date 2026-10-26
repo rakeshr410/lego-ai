@@ -76,7 +76,8 @@ export async function deleteRoom(opts: Opts, name: string): Promise<void> {
 /**
  * A meeting token for one participant of the room: the candidate (user_id = the session id, which
  * the pipeline admits) or the bot (owner, user_id 'bot'). Short-lived: minutes for the candidate's
- * join, the room's life for the bot.
+ * join, the room's life for the bot. The candidate's `exp` bounds when they may join, not how long they
+ * stay: ejecting at it dropped every lesson five minutes in. The room's own expiry ends the call.
  */
 export async function createToken(opts: Opts, room: string, who: { userId: string; userName: string; owner: boolean }, expiresAt: Date): Promise<string> {
   const out = await call<{ token: string }>(opts, 'POST', '/meeting-tokens', {
@@ -87,7 +88,7 @@ export async function createToken(opts: Opts, room: string, who: { userId: strin
       is_owner: who.owner,
       exp: Math.floor(expiresAt.getTime() / 1000),
       start_video_off: true,
-      eject_at_token_exp: true,
+      eject_at_token_exp: who.owner,
     },
   });
   return out.token;

@@ -3,6 +3,7 @@ import { loadContent } from '@arrowbox/content-kit/node';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { decide, initialState, intentOf, POLICY, stageItems, type DirectorInput, type DirectorState, type LiveSignal } from './director';
+import { snapshotPaths } from '../../content-snapshot.node';
 
 // The director's decision table (ADR 0003, design section 5), replayed on scripted candidates
 // over the real customer-support-agent plan: a strong candidate reaches the covered-and-advance
@@ -10,7 +11,8 @@ import { decide, initialState, intentOf, POLICY, stageItems, type DirectorInput,
 // the item it names, "let's move on" mid-sentence is an answer and never an intent, and the last
 // stage ends instead of looping.
 
-const contentDir = fileURLToPath(new URL('../../../../../content', import.meta.url));
+// lego's content/ (CONTENT_DIR overrides it), where the build reads it too.
+const contentDir = snapshotPaths(fileURLToPath(new URL('../../../../', import.meta.url))).contentDir;
 const { catalog } = loadContent(contentDir);
 const system = catalog.systems.find((s) => s.slug === 'customer-support-agent')!;
 const plan: DerivedPlan = derivePlans({ system, topics: catalog.topics.filter((t) => t.system === system.slug).map((t) => ({ slug: t.slug, file: t.file, data: t.data })), override: null }).system!;

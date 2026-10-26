@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 
 import httpx
+import pytest
 from pipecat.frames.frames import (
     InterruptionFrame,
     LLMContextFrame,
@@ -19,6 +20,7 @@ from pipecat.tests.utils import run_test
 
 from app.web_client import State
 from bot import speech
+from bot.conductor import PEN_TEXT, PauseFrame, PenMarkFrame
 from bot.llm_gateway import GatewayLLMService
 
 SID = "a" * 24
@@ -185,6 +187,43 @@ async def test_an_interruption_drops_the_stream_and_reports_what_played(web, fak
     assert not gw.busy
 
 
+async def test_a_cut_in_while_the_voice_is_still_saying_a_finished_reply_reports_what_was_heard(web, fake_web):
+    # The reply's text is all in; the voice is still saying it when the candidate cuts in, then speaks.
+    gw = GatewayLLMService(
+        web=web,
+        sid=SID,
+        state=_state(fake_web),
+        on_state=_noop,
+        on_stale=_noop,
+        spoken_text=lambda: "Each tweet has an author row,",
+        filler_after_secs=5,
+        playing=lambda: True,
+    )
+    # Pipecat may raise the interruption more than once for the same speech: the web is told once.
+    frames = [InterruptionFrame(), InterruptionFrame(), LLMContextFrame(context=_context("Wait, what is a handle?"))]
+    await _run(gw, frames, None)
+    actions = [c[1] for c in fake_web.calls if c[1] in ("played", "turns")]
+    # What was heard reaches the web before the learner's turn, so the lesson knows the move was cut.
+    assert actions == ["played", "turns"]
+    played = [c for c in fake_web.calls if c[1] == "played"]
+    assert played[0][2] == {"epoch": 1, "spoken": "Each tweet has an author row,"}
+
+
+async def test_speech_after_the_reply_has_played_is_not_a_cut_in(web, fake_web):
+    gw = GatewayLLMService(
+        web=web,
+        sid=SID,
+        state=_state(fake_web),
+        on_state=_noop,
+        on_stale=_noop,
+        spoken_text=lambda: "Each tweet has an author row,",
+        filler_after_secs=5,
+        playing=lambda: False,
+    )
+    await _run(gw, [InterruptionFrame(), LLMContextFrame(context=_context("What is a handle?"))], None)
+    assert not [c for c in fake_web.calls if c[1] == "played"]
+
+
 async def test_a_turn_refused_as_busy_is_sent_again(web, fake_web):
     original = fake_web.handler
     busy = {"left": 2}
@@ -238,7 +277,7 @@ async def test_a_web_outage_is_said_once_and_the_line_stays_open(web):
 
 
 async def test_a_continue_asks_for_the_coachs_next_move_and_forwards_its_drawing(web, fake_web):
-    """A coach lesson (docs/interview/coach-mode.md): the pipeline asks for the next move with no words
+    """A coach lesson (docs/coach-mode.md): the pipeline asks for the next move with no words
     from the learner; the sequence stands, no filler is spoken, and the drawing reaches the board callback."""
     fake_web.kind = "coach"
     fake_web.self_drive = 1.5
@@ -249,9 +288,9 @@ async def test_a_continue_asks_for_the_coachs_next_move_and_forwards_its_drawing
     ]
     drawn, states = [], []
 
-    async def on_draw(ops, anchor):
+    async def on_draw(ops, pace):
         drawn.append(ops)
-        assert anchor == {"words": 3}
+        assert pace is None  # not paced: drawn at once
 
     async def on_state(s):
         states.append(s)
@@ -291,3 +330,216 @@ async def test_a_continue_asks_for_the_coachs_next_move_and_forwards_its_drawing
     assert drawn == [fake_web.draw_ops]
     assert gw.continues == 1 and gw.turns == 0 and gw.state.seq == 0
     assert states[-1].kind == "coach" and states[-1].self_drive == 1.5
+
+
+async def test_a_lessons_drawing_is_paced_the_words_before_it_then_each_label_between_its_pen_marks(web, fake_web):
+    """bot/conductor.py: the reply's speech is split at the drawing, each operation's label is its own segment
+    between its marks, and the board gets the drawing at once with the reference the cues name."""
+    fake_web.kind = "coach"
+    fake_web.self_drive = 1.5
+    fake_web.reply = "Every element gets four rectangles."
+    fake_web.draw_ops = [
+        {"op": "region", "label": "border box", "at": {"x": 0, "y": 0}, "size": {"w": 10, "h": 10}},
+        {"op": "arrow", "from": "a", "to": "b"},
+    ]
+    drawn = []
+
+    async def on_draw(ops, pace):
+        drawn.append((ops, pace))
+
+    gw = GatewayLLMService(
+        web=web,
+        sid=SID,
+        state=_state(fake_web),
+        on_state=_noop,
+        on_stale=_noop,
+        spoken_text=lambda: "",
+        filler_after_secs=0,
+        on_draw=on_draw,
+        pace_drawings=True,
+    )
+
+    class Continue(FrameProcessor):
+        async def process_frame(self, frame, direction):
+            await super().process_frame(frame, direction)
+            if isinstance(frame, LLMContextFrame):
+                await gw.continue_lesson()
+                await gw._turn_task
+                return
+            await self.push_frame(frame, direction)
+
+    down, _ = await run_test(
+        Pipeline([Continue(), gw]),
+        frames_to_send=[LLMContextFrame(context=_context("ignored"))],
+        expected_down_frames=None,
+    )
+    down = [f for f in down if not isinstance(f, LLMServiceMetadataFrame)]
+    ((ops, pace),) = drawn
+    assert ops == fake_web.draw_ops and pace and pace.endswith(".1")
+    shape = [
+        (type(f).__name__, getattr(f, "phase", None) or getattr(f, "text", None))
+        for f in down
+        if not isinstance(f, LLMTextFrame)
+    ]
+    assert shape == [
+        ("LLMFullResponseStartFrame", None),
+        ("SegmentEndFrame", None),
+        ("PenMarkFrame", "before"),
+        ("TTSSpeakFrame", "border box."),
+        ("PenMarkFrame", "after"),
+        ("PenMarkFrame", "before"),  # the arrow has no label: a pause while it is drawn
+        ("PenMarkFrame", "after"),
+        ("SegmentStartFrame", None),
+        ("LLMFullResponseEndFrame", None),
+    ]
+    speak = next(f for f in down if isinstance(f, TTSSpeakFrame))
+    assert speak.text_type == PEN_TEXT and speak.append_to_context is False
+    marks = [f for f in down if isinstance(f, PenMarkFrame)]
+    assert {m.ref for m in marks} == {pace} and [m.item.index for m in marks] == [0, 0, 1, 1]
+
+
+async def test_the_board_a_lesson_opens_with_goes_on_at_once_not_paced(web, fake_web):
+    """The board drawn in earlier lessons is no part of the reply's words: no pen marks, and the room puts it on
+    at once."""
+    fake_web.kind = "coach"
+    fake_web.self_drive = 1.5
+    fake_web.reply = "Now the store."
+    fake_web.draw_prelude = True
+    fake_web.draw_ops = [{"op": "region", "label": "Mock-up", "at": {"x": 0, "y": 0}, "size": {"w": 10, "h": 10}}]
+    drawn = []
+
+    async def on_draw(ops, pace, instant=False):
+        drawn.append((pace, instant))
+
+    gw = GatewayLLMService(
+        web=web,
+        sid=SID,
+        state=_state(fake_web),
+        on_state=_noop,
+        on_stale=_noop,
+        spoken_text=lambda: "",
+        filler_after_secs=0,
+        on_draw=on_draw,
+        pace_drawings=True,
+    )
+
+    class Continue(FrameProcessor):
+        async def process_frame(self, frame, direction):
+            await super().process_frame(frame, direction)
+            if isinstance(frame, LLMContextFrame):
+                await gw.continue_lesson()
+                await gw._turn_task
+                return
+            await self.push_frame(frame, direction)
+
+    down, _ = await run_test(
+        Pipeline([Continue(), gw]), frames_to_send=[LLMContextFrame(context=_context("x"))], expected_down_frames=None
+    )
+    assert drawn == [(None, True)]
+    assert not [f for f in down if isinstance(f, PenMarkFrame)]
+
+
+async def test_a_lessons_reply_pauses_after_each_sentence(web, fake_web):
+    """Each sentence is a segment of its own with a pause after it, wherever the stream splits it: longer after a
+    question, a beat after a short setup ending in a colon, none after a long clause's colon."""
+    fake_web.kind = "coach"
+    fake_web.self_drive = 1.5
+    fake_web.reply_chunks = ["First idea.", " Second", " idea. Why?", " Picture this: a list. The cursor from the last response: c1. Third, 2.5 s."]
+    gw = GatewayLLMService(
+        web=web,
+        sid=SID,
+        state=_state(fake_web),
+        on_state=_noop,
+        on_stale=_noop,
+        spoken_text=lambda: "",
+        filler_after_secs=0,
+        on_draw=_noop2,
+        pace_drawings=True,
+    )
+
+    class Continue(FrameProcessor):
+        async def process_frame(self, frame, direction):
+            await super().process_frame(frame, direction)
+            if isinstance(frame, LLMContextFrame):
+                await gw.continue_lesson()
+                await gw._turn_task
+                return
+            await self.push_frame(frame, direction)
+
+    down, _ = await run_test(
+        Pipeline([Continue(), gw]), frames_to_send=[LLMContextFrame(context=_context("x"))], expected_down_frames=None
+    )
+    shape = [
+        f.text if isinstance(f, LLMTextFrame) else f"pause {f.ms}" if isinstance(f, PauseFrame) else type(f).__name__
+        for f in down
+        if not isinstance(f, LLMServiceMetadataFrame)
+    ]
+    def pause(ms: int) -> list[str]:
+        return ["SegmentEndFrame", f"pause {ms}", "SegmentStartFrame"]
+
+    assert shape == [
+        "LLMFullResponseStartFrame",
+        "First idea.",
+        *pause(800),
+        "Second",
+        " idea.",
+        *pause(800),
+        "Why?",
+        *pause(1200),
+        "Picture this:",
+        *pause(450),
+        "a list.",
+        *pause(800),
+        "The cursor from the last response:",
+        " c1.",
+        *pause(800),
+        "Third, 2.5 s.",
+        "LLMFullResponseEndFrame",
+    ]
+
+
+async def _noop2(*_):
+    pass
+
+
+@pytest.mark.parametrize(("after", "said"), [([" ", "."], []), ([" .", " Then", " the list."], ["Then", " the list."])])
+async def test_what_follows_a_drawing_is_said_only_when_it_has_a_word(web, fake_web, after, said):
+    """A segment of only a space or a sentence's "." gets no voice (the speech service fails an empty context)."""
+    fake_web.kind = "coach"
+    fake_web.self_drive = 1.5
+    fake_web.reply = "Every element gets a box"
+    fake_web.after_draw = after
+    fake_web.draw_ops = [{"op": "box", "label": "box", "at": {"x": 0, "y": 0}}]
+
+    async def on_draw(ops, pace):
+        pass
+
+    gw = GatewayLLMService(
+        web=web,
+        sid=SID,
+        state=_state(fake_web),
+        on_state=_noop,
+        on_stale=_noop,
+        spoken_text=lambda: "",
+        filler_after_secs=0,
+        on_draw=on_draw,
+        pace_drawings=True,
+    )
+
+    class Continue(FrameProcessor):
+        async def process_frame(self, frame, direction):
+            await super().process_frame(frame, direction)
+            if isinstance(frame, LLMContextFrame):
+                await gw.continue_lesson()
+                await gw._turn_task
+                return
+            await self.push_frame(frame, direction)
+
+    down, _ = await run_test(
+        Pipeline([Continue(), gw]),
+        frames_to_send=[LLMContextFrame(context=_context("ignored"))],
+        expected_down_frames=None,
+    )
+    names = [type(f).__name__ for f in down]
+    start = names.index("SegmentStartFrame")
+    assert [f.text for f in down[start:] if isinstance(f, LLMTextFrame)] == said

@@ -1,0 +1,149 @@
+# MutationObserver: the options and how they combine, what a record carries, delivery in one microtask, the heading shortcut, the late support launcher, the self-write loop, and what subtree costs.
+id: dom-and-virtual-dom/observers/mutation-observer
+title: Watching the tree
+source:
+  hash: "10035e0df9a5"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: dom-and-virtual-dom/observers/key-idea
+  assumes:
+    - An observer is registered once and the browser calls it with a batch of entries; one observer takes many targets.
+    - MutationObserver reports changes to the DOM tree itself.
+    - A MutationObserver callback runs in a microtask after the script that changed the DOM, before rendering.
+  carries:
+    - childList, attributes and characterData choose the kinds of change; subtree extends them to every descendant; at least one of the three must end up true or observe throws.
+    - "A record carries type, target, added and removed nodes, attributeName and oldValue; for characterData the target is the Text node itself."
+    - Records are queued as each change happens and delivered together in one microtask after the script, never during it.
+    - A callback that writes into what it observes queues itself again in the same checkpoint and freezes the tab.
+    - The cost of an observer is roughly the records it causes, so observe the smallest root with the fewest options.
+  terms:
+    - term: MutationRecord
+      means: One change to the tree, as delivered to the callback; records are a log in order, not a diff of the end state.
+    - term: subtree
+      means: The option that applies the other options to every descendant of the target, not only the target itself.
+    - term: characterData
+      means: The data of a Text or Comment node; typing usually edits a Text node in place.
+    - term: takeRecords
+      means: Returns the records queued but not yet delivered, and empties the queue.
+board:
+  keep: [old-way, poll-timer, scroll-handler, measure-layout, new-way, your-code, the-browser, batch-callback, observe-once, on-change, three-kinds, mo-kind, ro-kind, io-kind, shape, shape-new, shape-observe, shape-entries, shape-stop, shape-then, shape-batch, frame, lane-main, lane-callbacks, input-task, mo-delivery, style-layout, ro-delivery, paint-step, io-delivery]
+  elements:
+    - { id: page-tree, kind: region, label: "User 1's page as a tree", at: [1, 30], size: [33, 22] }
+    - { id: body-node, kind: box, label: page body, at: [10, 32], size: [12, 3], in: page-tree, tone: blue }
+    - { id: launcher, kind: box, label: "support launcher, late", at: [3, 37], size: [12, 3], in: page-tree, tone: grey }
+    - { id: editor-root, kind: box, label: editor root, at: [19, 37], size: [12, 3], in: page-tree, tone: blue }
+    - { id: launcher-note, kind: note, label: "watch body, childList only", at: [3, 41], in: page-tree }
+    - { id: block-0411, kind: box, label: block 0411, at: [18, 43], size: [7, 3], in: page-tree, tone: blue }
+    - { id: block-0412, kind: box, label: block 0412, at: [26, 43], size: [7, 3], in: page-tree, tone: blue }
+    - { id: smallest-root, kind: note, label: observe the smallest root, at: [3, 45], in: page-tree }
+    - { id: blocks-note, kind: note, label: 40 blocks under one root, at: [3, 49], in: page-tree }
+    - { id: text-node, kind: box, label: text node, at: [26, 49], size: [7, 3], in: page-tree, tone: amber }
+    - { id: mo-flow, kind: region, label: The observer and its callback, at: [36, 30], size: [23, 22] }
+    - { id: observer-box, kind: box, label: "observer, subtree and characterData", at: [38, 37], size: [16, 3], in: mo-flow, tone: blue }
+    - { id: mo-callback, kind: box, label: "callback, batched", at: [38, 43], size: [8, 3], in: mo-flow, tone: green }
+    - { id: heading-swap, kind: box, label: h2 replaces block, at: [51, 43], size: [8, 3], in: mo-flow, tone: blue }
+    - { id: batch-note, kind: note, label: "30 inserts, one call", at: [48, 47], in: mo-flow }
+    - { id: mo-record, kind: box, label: characterData record, at: [38, 49], size: [12, 3], in: mo-flow, tone: amber }
+    - { id: self-loop, kind: region, label: Writing into what it watches, at: [1, 54], size: [57, 7] }
+    - { id: loop-write, kind: box, label: callback trims every block, at: [3, 56], size: [14, 3], in: self-loop, tone: red }
+    - { id: loop-record, kind: box, label: new characterData record, at: [26, 56], size: [14, 3], in: self-loop, tone: red }
+    - { id: tab-freezes, kind: note, label: the tab freezes, at: [43, 56], in: self-loop }
+    - { id: write-if-differs, kind: note, label: write only when it differs, at: [43, 58], in: self-loop }
+  arrows:
+    - { id: body-to-root, from: body-node, to: editor-root }
+    - { id: root-to-0411, from: editor-root, to: block-0411 }
+    - { id: root-to-0412, from: editor-root, to: block-0412 }
+    - { id: block-to-text, from: block-0412, to: text-node }
+    - { id: observes-root, from: editor-root, to: observer-box, label: observes }
+    - { id: typing-record, from: text-node, to: mo-record, label: typing }
+    - { id: record-delivered, from: mo-record, to: mo-callback }
+    - { id: callback-writes, from: mo-callback, to: heading-swap, label: writes }
+    - { id: body-to-launcher, from: body-node, to: launcher }
+    - { id: loop-again, from: loop-write, to: loop-record, label: again and again, both: true }
+beats:
+  - point: You choose what a MutationObserver reports with the options to observe, childList for children, attributes, characterData for text, and subtree to extend them to every descendant; they combine, and at least one of the first three must be on.
+    kind: mechanism
+    weight: core
+    teach:
+      - Draw user 1's page as a tree, the editor root under body, the 40 blocks under the root, a text node inside a block. One observer on the root, not one per block.
+      - childList reports children added or removed, attributes an attribute changing, characterData the text of a Text or Comment node changing. attributeFilter narrows attributes to a list, and the two old-value options add the previous value; each of those implies its kind.
+      - subtree does not compete with the others, it extends them. childList alone means the root's own children; with subtree it means children of any node below it. If none of childList, attributes and characterData ends up true, observe throws a TypeError, because there would be nothing to report.
+    draw: [page-tree, body-node, editor-root, body-to-root, block-0411, block-0412, root-to-0411, root-to-0412, text-node, block-to-text, blocks-note, mo-flow, observer-box, observes-root]
+    check: "Ledgerleaf observes the editor root with childList and subtree. Is a node inserted inside block 0412 reported, and what would happen with childList off and nothing else set?"
+    answer: Yes; subtree extends childList to children of any node below the root. With none of childList, attributes and characterData on, observe throws a TypeError.
+    misconceptions:
+      - "childList and subtree conflict -> subtree extends childList to every descendant; together they report nodes added or removed anywhere below the target."
+  - point: Each change becomes a MutationRecord with its type, its target, the nodes added or removed, the attribute name and an optional old value, and records are a log in order, not a diff of the end state.
+    kind: mechanism
+    weight: core
+    teach:
+      - User 1 types in block 0412. Typing edits the Text node in place, so the record's type is characterData and its target is the Text node, not the paragraph; code climbs to the block with parentElement first.
+      - For childList the target is the parent whose children changed, with addedNodes, removedNodes and the siblings around the change. For attributes it is the element, with attributeName.
+      - A node added and removed in the same script gives two records although nothing changed in the end, and oldValue is the value before that one change. Treat records as a hint about where to look, then read the DOM.
+    draw: [mo-record, typing-record]
+    check: User 1 types a letter in block 0412. What is the record's type, and what is its target?
+    answer: characterData, and the target is the Text node inside the block, not the block element.
+    misconceptions:
+      - "The target of a text change is the paragraph -> it is the Text node; it has no closest or dataset, so go to its parentElement first."
+  - point: Records are queued as each change happens and delivered together in one microtask after the script that made them, so 30 inserts in a loop give one callback with 30 records, before anything is rendered.
+    kind: flow
+    weight: core
+    teach:
+      - The first record for an observer queues one microtask; later records join the same queue until it runs. The callback never interrupts the code making the changes.
+      - So a script that inserts 30 nodes in a loop gets one callback with 30 records, after the loop and the rest of the script, and before the browser renders.
+      - The old Mutation Events fired synchronously inside every insertion, could change the tree mid-operation and slowed every DOM change on the page. Chrome removed them in version 127; MutationObserver is the replacement.
+    draw: [mo-callback, record-delivered, batch-note]
+    check: A script appends 30 rows in a loop inside an observed region. When does the callback run, and how many times?
+    answer: Once, in a microtask after that script finishes and before rendering, with 30 records.
+    misconceptions:
+      - "The callback runs once per change, as it happens -> that was Mutation Events; observer records are batched and delivered after the script."
+  - point: The heading shortcut is one observer on the editor root with subtree and characterData; for each text record it finds the block, and if the text starts with one to three hashes and a space it replaces the block with a heading and tells the page model.
+    kind: flow
+    weight: core
+    teach:
+      - User 1 types hash, hash, space in block 0412. Three characterData records, one callback. For each, climb from the Text node to its block; if the block's text starts with two hashes and a space, build an h2 with the rest of the text and swap it in with replaceWith, caret at the end.
+      - Two practical details. A typed space at the end of editable text is often a no-break space, so the pattern accepts both. And one batch can hold several records for one block, so skip any block that is no longer connected, because it was already replaced.
+      - The swap makes a childList record, but the observer only watches characterData, so it does not call itself again. A real editor turns the change into an operation on its page model, block 0412 becomes h2, and lets its renderer draw it; ProseMirror reads the browser's changes this way.
+    draw: [heading-swap, callback-writes]
+    check: The callback replaces block 0412 with an h2. Why does that write not make the observer call itself again?
+    answer: replaceWith makes a childList record, and the observer only watches characterData, so nothing is queued for it.
+    misconceptions:
+      - "One observer per block is cleaner -> one observer on the root with subtree covers all 40 blocks, and the code finds the block from each record."
+  - point: For a node another script adds later, like the support chat's launcher, observe body with childList only, no subtree, and disconnect as soon as it appears.
+    kind: decision
+    weight: supporting
+    teach:
+      - The third-party support script appends its launcher to body some time after load, and Ledgerleaf's Feedback button must move up when it appears. No event says another script added a node.
+      - Polling the DOM works and is wasteful. The launcher is a direct child of body, so childList on body is enough, without subtree; check first whether it is already there, and disconnect once it is found.
+    draw: [launcher, body-to-launcher, launcher-note]
+    check: Why does the launcher watcher not need subtree?
+    answer: The launcher is appended as a direct child of body, so childList on body alone reports it; subtree would build records for every change on the page.
+  - point: A callback that writes into what it observes makes a new record, which queues another microtask straight away, and because microtasks drain completely the tab freezes; write only when the value differs, or watch only the kinds of change you do not produce.
+    kind: failure
+    weight: core
+    teach:
+      - Suppose the callback tidies every block it sees by setting its text to a trimmed copy. That write is a characterData change, so it makes a record, which queues another delivery, which writes again.
+      - Writing the same text still makes a record. Microtasks run until the queue is empty, so input and rendering never get a turn and the tab hangs.
+      - Fixes, write only when the value really differs; watch only record types you do not produce, as the heading shortcut does; or disconnect, write, call takeRecords to drop your own records, and observe again.
+    draw: [self-loop, loop-write, loop-record, loop-again, tab-freezes, write-if-differs]
+    check: A callback watching characterData with subtree sets each block's text to a trimmed copy on every record. What happens, and how do you fix it?
+    answer: Its own write makes a new record, the callback runs again in the same checkpoint, forever, and the tab freezes. Write only when the text differs, or avoid watching the kind of change you make, or disconnect, write, takeRecords and observe again.
+    misconceptions:
+      - "Writes made inside the callback are ignored by the observer -> every write to an observed node makes a record, even one that sets the same value."
+      - "The browser stops it with a stack overflow -> it is a microtask loop, not recursion; nothing stops it and the tab simply freezes."
+  - point: An observer costs roughly the records it causes, so subtree on a big region is the expensive option; observe the smallest root with the fewest options, call takeRecords before disconnect if pending records matter, and do not keep records around.
+    kind: rule
+    weight: supporting
+    teach:
+      - Records are built at the moment of each change, inside whatever code made it, whether or not the callback reads them. A table renderer rebuilding 200 rows inside a panel would flood an editor observer that only cares about text in blocks.
+      - disconnect discards records that were queued but not delivered; call takeRecords first if they matter. A stored record keeps its removed nodes alive, so process records in the callback.
+      - If the only changes you care about are the person's own typing, beforeinput and input events say what they meant; the observer is for changes from any source, spellcheck, paste, extensions, other scripts.
+    draw: [smallest-root]
+    check: Ledgerleaf's editor observer is on body with subtree and every option. What does that cost, and what would you change?
+    answer: Every insertion, attribute flip and text edit on the whole page builds a record, read or not; observe the editor root only, with only characterData (and childList if needed).
+task:
+  prompt: Draw the editor root with two blocks and a text node, put one MutationObserver on the root, and show the record from typing reaching the callback and the heading swap; then draw the loop a trimming callback would cause.
+  expects: [1, 3, 4, 6]

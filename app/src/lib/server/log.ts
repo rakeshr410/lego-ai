@@ -25,7 +25,7 @@ const settings = serverEnv();
 
 const options: LoggerOptions = {
   level: settings.LOG_LEVEL ?? (isProduction() ? 'info' : 'debug'),
-  base: { service: 'web', ...(settings.RELEASE ? { release: settings.RELEASE } : {}) },
+  base: { service: 'lego-ai', ...(settings.RELEASE ? { release: settings.RELEASE } : {}) },
   timestamp: pino.stdTimeFunctions.isoTime,
   formatters: { level: (label) => ({ level: label }) },
   redact: {
@@ -108,7 +108,7 @@ export function logDestination(fd = 1): DestinationStream {
     stats.failedWrites++;
     if (outage) return;
     outage = { since: new Date().toISOString(), failedWrites: stats.failedWrites - 1, droppedLines: stats.droppedLines };
-    tell(JSON.stringify({ level: 'error', service: 'web', event: 'log_write_failed', code: err.code, msg: 'log writes are failing; holding, then dropping lines until they work again' }));
+    tell(JSON.stringify({ level: 'error', service: 'lego-ai', event: 'log_write_failed', code: err.code, msg: 'log writes are failing; holding, then dropping lines until they work again' }));
   });
   // pino flushes synchronously on exit, and sonic-boom's flushSync retries a failing write every
   // 100 ms forever (only EAGAIN ever gives up): with the disk still full, the process would hang

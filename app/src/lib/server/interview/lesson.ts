@@ -1,9 +1,10 @@
 import { textContext } from '@arrowbox/content-kit';
 import { blockText, type Block } from '../ask-grounding';
 import { getSnapshot, type SnapshotTopic } from '../../content-snapshot';
+import { sectionBlocksOf } from '../coaching/hash';
 import type { Plan } from './plans';
 
-// The coach's lesson material (docs/interview/coach-mode.md): the article text of each section the
+// The coach's lesson material (docs/coach-mode.md): the article text of each section the
 // plan covers, rendered from the topic's content blocks the way Ask grounds its answers
 // (ask-grounding.ts), so the coach teaches what the site says and nothing else. A section's text is
 // capped; the coach reads it from the stage's lesson notes (prompt.ts).
@@ -12,22 +13,19 @@ import type { Plan } from './plans';
 export const MATERIAL_MAX = 7000;
 
 const topicOf = (system: string, slug: string): SnapshotTopic | undefined => getSnapshot().topics.find((t) => t.system === system && t.slug === slug);
+/** The system a plan's section belongs to: a playlist's lesson draws on several (coaching/lessons.ts). */
+const systemOf = (plan: Plan, section: string) => plan.lesson?.sections.find((s) => s.key === section)?.system ?? plan.system.slug;
 
 /** The blocks between a section heading and the next, by the section's key (`<topic>/<sectionKey>`). */
 export function sectionBlocks(topic: Pick<SnapshotTopic, 'content'>, sectionKey: string): Block[] | null {
-  const content = (topic.content ?? []) as Block[];
-  const heads = content.flatMap((b, i) => (b.__component === 'sd.section' ? [{ b, i }] : []));
-  const n = heads.findIndex(({ b }, k) => ((b as { key?: string }).key ?? `section-${k + 1}`) === sectionKey);
-  if (n < 0) return null;
-  const end = heads[n + 1]?.i ?? content.length;
-  return content.slice(heads[n].i + 1, end);
+  return sectionBlocksOf((topic.content ?? []) as (Block & { key?: string })[], sectionKey);
 }
 
 /** One section's article text for the coach, or null when the topic or section is not in the snapshot. */
 export function sectionMaterial(plan: Plan, section: string): string | null {
   const [slug, ...rest] = section.split('/');
   const sectionKey = rest.join('/');
-  const topic = topicOf(plan.system.slug, slug);
+  const topic = topicOf(systemOf(plan, section), slug);
   if (!topic) return null;
   const blocks = sectionBlocks(topic, sectionKey);
   if (!blocks) return null;
@@ -53,12 +51,12 @@ export const DIAGRAM_MAX = 1800;
 
 /**
  * The article's own pictures of a section: each component diagram's groups, boxes and arrows, in the
- * article's layout, as lines the coach can draw from (docs/interview/coach-mode.md, "Drawing"). Empty
+ * article's layout, as lines the coach can draw from (docs/coach-mode.md, "Drawing"). Empty
  * when the section has none.
  */
 export function sectionDiagrams(plan: Plan, section: string): string[] {
   const [slug, ...rest] = section.split('/');
-  const topic = topicOf(plan.system.slug, slug);
+  const topic = topicOf(systemOf(plan, section), slug);
   if (!topic) return [];
   const blocks = sectionBlocks(topic, rest.join('/'));
   if (!blocks) return [];
@@ -74,7 +72,12 @@ export function sectionDiagrams(plan: Plan, section: string): string[] {
       const inside = (parent: string | null | undefined) => (parent && names.has(parent) ? ` (in ${names.get(parent)})` : '');
       const lines = [
         ...(d.groups ?? []).map((g) => `group ${name(g.key)}${inside(g.parent)}${g.sublabel ? `: ${g.sublabel}` : ''}`),
-        ...(d.nodes ?? []).map((n) => `box ${name(n.key)}${inside(n.parent)}${n.details?.length ? `: ${n.details.slice(0, 2).join('; ')}` : ''}`),
+        ...(d.nodes ?? []).map((n) => {
+          // The article gives a box's details as a list, or as one line of text.
+          const details: unknown = n.details;
+          const shown = (Array.isArray(details) ? details : typeof details === 'string' && details.trim() ? [details] : []).slice(0, 2).map(String);
+          return `box ${name(n.key)}${inside(n.parent)}${shown.length ? `: ${shown.join('; ')}` : ''}`;
+        }),
         ...(d.edges ?? []).map((e) => `arrow ${name(e.from)} -> ${name(e.to)}${e.label ? ` (${e.label})` : ''}`),
       ];
       const text = lines.join('\n');

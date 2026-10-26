@@ -1,0 +1,138 @@
+# How the box model works: display's two halves and the box tree, how a block is sized, line boxes, and margins that merge.
+id: formatting-contexts-and-css-positioning/box-model-and-normal-flow/how-it-works
+title: How boxes are made, sized and spaced
+source:
+  hash: ca57485a4fa2
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: formatting-contexts-and-css-positioning/box-model-and-normal-flow/key-idea
+  assumes:
+    - Every element is laid out as four nested rectangles, content, padding, border and margin.
+    - Normal flow stacks block boxes and wraps inline content into lines.
+  carries:
+    - display has an outer half (how the box sits among siblings) and an inner half (how it lays out its children).
+    - Elements generate a box tree; loose inline text beside blocks gets an anonymous block box, display none generates nothing.
+    - Across the inline axis a block's margins, borders, padding and width add up to its containing block.
+    - Inline boxes live in line boxes; their vertical padding paints but does not push.
+    - Touching vertical margins of blocks in normal flow collapse to the larger one.
+  terms:
+    - term: outer display type
+      means: How a box behaves among its siblings, block-level or inline-level.
+    - term: inner display type
+      means: How a box lays out its own children, flow, flow-root, flex, grid or table.
+    - term: anonymous block box
+      means: A block box with no element behind it, made to wrap loose inline content beside block children.
+    - term: line box
+      means: A strip as wide as the block's content box that holds one line of inline content.
+    - term: margin collapsing
+      means: Two touching vertical margins in block layout merging into one the size of the larger.
+board:
+  keep: [card, content-box, padding-box, border-box, margin-box, normal-flow, parent-block, block-1, block-2, stack, line-boxes, line-1, line-2, wrap]
+  elements:
+    - { id: display, kind: region, label: display = outer + inner, at: [2, 26], size: [50, 11] }
+    - { id: outer, kind: box, label: "outer: block or inline", at: [4, 30], size: [22, 3], in: display, tone: blue }
+    - { id: inner, kind: box, label: "inner: flow, flow-root, flex or grid", at: [28, 30], size: [22, 3], in: display, tone: blue }
+    - { id: flex-pair, kind: note, label: "flex: block outside, flex inside", at: [4, 34], in: display }
+    - { id: box-tree, kind: region, label: Box tree, at: [2, 39], size: [62, 19] }
+    - { id: article-box, kind: box, label: article (block box), at: [4, 43], size: [58, 3], in: box-tree, tone: blue }
+    - { id: heading-box, kind: box, label: heading, at: [4, 49], size: [12, 3], in: box-tree, tone: blue }
+    - { id: list-box, kind: box, label: list, at: [18, 49], size: [12, 3], in: box-tree, tone: blue }
+    - { id: anon-box, kind: region, label: anonymous block box, at: [32, 49], size: [30, 7], in: box-tree, tone: grey }
+    - { id: inline-run, kind: box, label: "Due Fri + QA chip", at: [34, 52], size: [26, 3], in: anon-box }
+    - { id: none-rule, kind: note, label: "display none: no box at all", at: [4, 54], in: box-tree }
+    - { id: sizing, kind: region, label: Sizing one block, at: [2, 60], size: [64, 18] }
+    - { id: inline-sum, kind: note, label: margins + borders + padding + width = 336, at: [4, 62], in: sizing }
+    - { id: column-cb, kind: region, label: "column content box: 336", at: [4, 64], size: [40, 12], in: sizing, tone: blue }
+    - { id: card-auto, kind: box, label: "card, width auto: 336", at: [6, 67], size: [36, 3], in: column-cb }
+    - { id: centre-rule, kind: box, label: "width 240, auto margins", at: [12, 71], size: [24, 3], in: column-cb }
+    - { id: pct-parent, kind: region, label: "parent, height auto", at: [46, 64], size: [18, 7], in: sizing }
+    - { id: pct-height, kind: box, label: "child height 50%: auto", at: [48, 67], size: [14, 3], in: pct-parent, tone: red }
+    - { id: inline-demo, kind: region, label: Chips in a line of text, at: [68, 35], size: [50, 15] }
+    - { id: span-demo, kind: region, label: plain span chip, at: [70, 38], size: [22, 9], in: inline-demo }
+    - { id: span-above, kind: box, label: line above, at: [72, 41], size: [18, 2], in: span-demo }
+    - { id: span-line, kind: box, label: Due Fri + QA span, at: [72, 43], size: [18, 2], in: span-demo, tone: red }
+    - { id: inline-paint, kind: note, label: "span: padding only paints", at: [70, 48], in: inline-demo }
+    - { id: blk-demo, kind: region, label: inline-block chip, at: [94, 38], size: [22, 9], in: inline-demo }
+    - { id: blk-above, kind: box, label: line above it, at: [96, 41], size: [18, 2], in: blk-demo }
+    - { id: blk-line, kind: box, label: Due Fri + QA box, at: [96, 43], size: [18, 3], in: blk-demo, tone: green }
+    - { id: inline-block-rule, kind: note, label: "inline-block: line makes room", at: [94, 48], in: inline-demo }
+    - { id: collapse, kind: region, label: Margins that merge, at: [68, 52], size: [50, 24] }
+    - { id: block-col, kind: region, label: block column, at: [70, 55], size: [22, 14], in: collapse }
+    - { id: card-a, kind: box, label: "card A, bottom 16", at: [72, 58], size: [18, 3], in: block-col, tone: blue }
+    - { id: gap-24, kind: box, label: "gap 24, not 40", at: [72, 61], size: [18, 3], in: block-col, dashed: true }
+    - { id: card-b, kind: box, label: "card B, top 24", at: [72, 64], size: [18, 3], in: block-col, tone: blue }
+    - { id: flex-col, kind: region, label: flex column, at: [94, 55], size: [22, 16], in: collapse }
+    - { id: card-a-flex, kind: box, label: "card A, flex item", at: [96, 58], size: [18, 3], in: flex-col, tone: blue }
+    - { id: flex-40, kind: box, label: "16 + 24 = 40", at: [96, 61], size: [18, 5], in: flex-col, dashed: true }
+    - { id: card-b-flex, kind: box, label: "card B, flex item", at: [96, 66], size: [18, 3], in: flex-col, tone: blue }
+    - { id: stoppers, kind: note, label: "border, padding, text or flow-root between: no merge", at: [70, 73], in: collapse }
+  arrows:
+    - { id: to-heading, from: article-box, to: heading-box }
+    - { id: to-list, from: article-box, to: list-box }
+    - { id: contains, from: article-box, to: anon-box }
+beats:
+  - point: display packs two answers into one word, the outer type says how the box sits among its siblings and the inner type how it lays out its own children.
+    kind: mechanism
+    weight: core
+    teach:
+      - It is tempting to read display flex as a description of the element itself. It is really two answers. The outer half says block, it takes a line of its own, or inline, it sits in a line of text.
+      - The inner half says how its children are arranged, ordinary flow, flow-root, flex or grid. flex is block outside and flex inside; inline-flex is inline outside and flex inside.
+    draw: [display, outer, inner, flex-pair]
+    check: "What do the two halves of display: inline-flex say?"
+    answer: Outer inline, so the box sits in a line of text beside its neighbours; inner flex, so it lays out its own children as a flex row.
+    misconceptions:
+      - "display: flex says how the element itself is placed -> that is the outer half, block; flex is the inner half, for its children."
+  - point: Elements generate a box tree, and a block that holds both block children and loose inline content wraps that content in an anonymous block box; display none generates no box at all.
+    kind: mechanism
+    weight: core
+    teach:
+      - Layout works on boxes, not elements. The card's article, heading and list each generate a block box.
+      - The loose line, Due Fri and the QA chip, sits beside those blocks, and a block container holds either blocks or inline content, not both. So the browser wraps the loose run in an anonymous block box with no element behind it.
+      - A hidden draft flag with display none generates nothing, takes no space, and nothing points to it.
+    draw: [box-tree, article-box, heading-box, list-box, to-heading, to-list, anon-box, contains, inline-run, none-rule]
+    check: A card holds a heading and, after it, a loose line of text. What box does the browser make for that loose text, and why?
+    answer: An anonymous block box around the inline content, because a block container's children are either all block boxes or all inline content.
+    misconceptions:
+      - "display: none just hides the box -> it generates no box, so the element takes no space at all."
+  - point: Across the inline axis a block's margins, borders, padding and width add up to its containing block's width, so width auto takes what is left, auto margins centre it, and an auto height comes from the content.
+    kind: rule
+    weight: core
+    teach:
+      - Slatework's column is 360 wide with 12 of padding on each side, so its content box, the cards' containing block, is 336.
+      - The seven inline parts of a card must add up to 336. Leave width auto and it soaks up the remainder, so the card's border box is exactly 336. Give it a width and both inline margins auto, and they split the leftover, which centres it.
+      - Height runs the other way, it follows the content. That is why a percentage height inside a parent whose height is auto is treated as auto, there is nothing fixed to take a share of.
+    draw: [sizing, inline-sum, column-cb, card-auto, centre-rule, pct-parent, pct-height]
+    check: A column's content box is 336 pixels. A card in it has width auto, padding 16 and a 1-pixel border. How wide is its content?
+    answer: "302 pixels: 336 minus 2 × 16 of padding minus 2 × 1 of border; its border box is exactly 336."
+    misconceptions:
+      - "A percentage height always works -> only when the parent's height is fixed; against an auto height it is ignored."
+      - "Percentage top padding is measured against the height -> padding and margin percentages use the containing block's width on all four sides."
+  - point: Inline content is laid out in line boxes, an inline box's vertical padding and border only paint, and inline-block makes a box the line has to make room for.
+    kind: mechanism
+    weight: core
+    teach:
+      - Inside a block of inline content the browser fills line boxes, strips as wide as the content box, and starts a new one underneath when the next piece does not fit.
+      - A plain span has no say in that height. width and height are ignored, and its vertical padding paints up and down, overlapping the line above, while the lines stay where line-height put them.
+      - When a chip needs real height, make it inline-block. It becomes one atomic box, and its line grows to hold it.
+    draw: [inline-demo, span-demo, span-above, span-line, inline-paint, blk-demo, blk-above, blk-line, inline-block-rule]
+    check: Why does a padded QA chip overlap the line above instead of pushing it down, and how do you make its line make room for it?
+    answer: Vertical padding on an inline box only paints; the line's height comes from line-height. Making the chip inline-block turns it into a box with real height that the line grows to fit.
+  - point: When two vertical margins of blocks in normal flow touch, they collapse into one the size of the larger, unless something sits between them or the boxes are not in block flow.
+    kind: rule
+    weight: core
+    teach:
+      - Card A has a bottom margin of 16 and card B, under it, a top margin of 24. In a block column the gap is 24, not 40, the larger one wins.
+      - Margins also merge between a parent and its first or last child when no border, padding or content separates them, and through an empty block.
+      - Anything between the edges stops it, a border, padding, a line of text, or a parent that starts its own formatting context like flow-root. Flex and grid items never collapse, so in a flex column the same cards are 40 apart. Inline margins never collapse.
+    draw: [collapse, block-col, card-a, gap-24, card-b, flex-col, card-a-flex, flex-40, card-b-flex, stoppers]
+    check: Card A has a bottom margin of 16 and card B, right under it, a top margin of 24. What is the gap in a block column, and in a flex column?
+    answer: 24 in a block column, because the touching margins collapse to the larger; 40 in a flex column, where margins never collapse.
+    misconceptions:
+      - "Margins always add up -> touching vertical margins of blocks in normal flow collapse to the larger."
+      - "Padding collapses like margins -> padding and border always add; only margins collapse."
+task:
+  prompt: Draw a column holding two cards, one with a bottom margin of 16 and the next with a top margin of 24, and write the gap between them in a block column and in a flex column.
+  expects: [5]

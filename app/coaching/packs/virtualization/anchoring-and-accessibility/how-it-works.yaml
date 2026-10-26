@@ -1,0 +1,144 @@
+# Keeping the reader's place in a virtual list: the browser's scroll anchoring and its limits, anchoring by id and offset, jumping to an index, focus and ARIA for a partial DOM.
+id: virtualization/anchoring-and-accessibility/how-it-works
+title: Anchoring, jumping and accessibility
+source:
+  hash: 5c079cec26b1
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: virtualization/variable-heights/how-it-works
+  assumes:
+    - A windowed list keeps only the rows in view plus an overscan in the DOM and recycles row nodes for other entries.
+    - An offset table of running totals gives every index a top, from measured heights or estimates, and finds the entry at a pixel by binary search.
+    - When rows above an anchor entry change height, the list adds the change to scrollTop before paint.
+  carries:
+    - A virtual list usually turns the browser's scroll anchoring off with overflow-anchor none and anchors by hand.
+    - The anchor is a line id plus the offset of its top from the viewport edge, captured before a change and restored in the same task.
+    - Jumping to an index sets scrollTop from the offset table, then treats the target as the anchor once rows near it are measured.
+    - The rendered set is the window plus the focused row, and keys move focus by index.
+    - A partial list states its real size and positions with ARIA and announces events through a separate polite status.
+  terms:
+    - term: scroll anchoring
+      means: The browser keeping a chosen anchor node still by adjusting the scroll position when layout above it changes.
+    - term: overflow-anchor
+      means: The CSS property that turns the browser's scroll anchoring on (auto) or off (none) for a scroller.
+    - term: following mode
+      means: The reader is at the bottom, so no anchor is kept and the list sticks to the end after each append.
+    - term: aria-rowcount
+      means: The full number of rows in a grid or table, header rows included, set on the container when only some rows exist.
+    - term: aria-rowindex
+      means: A rendered row's real 1-based position among all the rows.
+board:
+  keep: [estimate, est-list, measured-a, measured-b, guessed-a, guessed-b, est-constant, est-mean, est-per-row, est-server, measuring, rendered-row, heights-by-id, observes, offsets, offsets-array, sums, entry-5, entry-6, viewport-490, entry-7, entry-8, scrolltop-490, search, correcting, anchor-120, rows-above, e-116, trace-117, e-118, pushes, add-delta, one-frame-late, browser-suppressed]
+  elements:
+    - { id: browser-anchoring, kind: region, label: Browser scroll anchoring, at: [2, 43], size: [37, 10] }
+    - { id: anchor-auto, kind: box, label: "overflow-anchor: auto", at: [4, 46], size: [13, 3], in: browser-anchoring, tone: grey }
+    - { id: anchor-none, kind: box, label: "overflow-anchor: none", at: [24, 46], size: [13, 3], in: browser-anchoring, tone: blue }
+    - { id: suppressed-path, kind: note, label: "off: moved rows, or scroll at zero", at: [4, 50], in: browser-anchoring }
+    - { id: double-jump, kind: note, label: "recycled rows: a double jump", at: [23, 50], in: browser-anchoring }
+    - { id: by-hand, kind: region, label: Anchoring by hand, at: [41, 43], size: [39, 21] }
+    - { id: one-task, kind: region, label: "one task, one corrected paint", at: [42, 45], size: [36, 15], dashed: true }
+    - { id: capture, kind: box, label: "capture line 182,004, 6 px up", at: [44, 47], size: [14, 3], in: by-hand, tone: blue }
+    - { id: trim, kind: box, label: "trim 5,000 lines", at: [63, 47], size: [14, 3], in: by-hand, tone: red }
+    - { id: rebuild, kind: box, label: "rebuild offsets, resize", at: [63, 55], size: [14, 3], in: by-hand, tone: blue }
+    - { id: restore, kind: box, label: "set scrollTop: new top minus 6", at: [44, 55], size: [12, 3], in: by-hand, tone: green }
+    - { id: index-shift, kind: note, label: "index 122,003 becomes 117,003", at: [44, 52], in: by-hand }
+    - { id: following, kind: note, label: "following the tail: stick to the end", at: [42, 61], in: by-hand }
+    - { id: jump, kind: region, label: Jumping to a line, at: [82, 43], size: [37, 16] }
+    - { id: est-top, kind: box, label: "estimated top 2,486,140", at: [84, 46], size: [14, 3], in: jump, tone: grey }
+    - { id: real-top, kind: box, label: "measured top 2,486,460", at: [103, 46], size: [14, 3], in: jump, tone: red }
+    - { id: target-anchor, kind: note, label: "the target is the anchor, 120 px down", at: [84, 51], in: jump }
+    - { id: focus-after, kind: box, label: focus the match row, at: [84, 54], size: [14, 3], in: jump, tone: green }
+    - { id: match-status, kind: box, label: "status: Match 3 of 57, line 180,412", at: [103, 54], size: [14, 3], in: jump, tone: amber }
+    - { id: focus-aria, kind: region, label: Keeping focus, at: [2, 55], size: [38, 19] }
+    - { id: row-pool, kind: region, label: "row pool, the window", at: [4, 58], size: [16, 11], in: focus-aria, tone: blue, dashed: true }
+    - { id: pool-a, kind: box, label: "line 115,400", at: [5, 60], size: [14, 2], in: row-pool }
+    - { id: pool-b, kind: box, label: "line 115,401", at: [5, 63], size: [14, 2], in: row-pool }
+    - { id: pool-c, kind: box, label: "line 115,402", at: [5, 66], size: [14, 2], in: row-pool }
+    - { id: lost-focus, kind: note, label: "unmounted: focus falls to body", at: [22, 67], in: focus-aria }
+    - { id: focused-row, kind: box, label: focused row stays mounted, at: [27, 62], size: [12, 3], in: focus-aria, tone: green }
+    - { id: keys-by-index, kind: note, label: "keys: next index, render, then focus", at: [4, 71], in: focus-aria }
+    - { id: aria-region, kind: region, label: Telling assistive tech, at: [82, 61], size: [38, 15] }
+    - { id: rowcount, kind: region, label: "grid: aria-rowcount 250,001", at: [84, 64], size: [20, 8], in: aria-region, tone: blue }
+    - { id: rowindex, kind: box, label: "row: aria-rowindex 115,413", at: [85, 66], size: [18, 3], in: rowcount, tone: blue }
+    - { id: list-variant, kind: note, label: "list: aria-setsize and aria-posinset", at: [84, 73], in: aria-region }
+    - { id: busy, kind: note, label: aria-busy while a trim runs, at: [104, 73], in: aria-region }
+    - { id: status-region, kind: box, label: "role status, outside the list", at: [107, 66], size: [12, 3], in: aria-region, tone: amber }
+    - { id: no-live-list, kind: note, label: never role log on the list, at: [107, 70], in: aria-region }
+  arrows:
+    - { id: list-sets, from: anchor-auto, to: anchor-none, label: list sets }
+    - { id: then-trim, from: capture, to: trim, label: then }
+    - { id: then-rebuild, from: trim, to: rebuild, label: then }
+    - { id: look-up-id, from: rebuild, to: restore, label: look up id }
+    - { id: drifts, from: est-top, to: real-top, label: drifts }
+    - { id: then-status, from: focus-after, to: match-status, label: then }
+    - { id: leaves-pool, from: row-pool, to: focused-row, label: taken out }
+beats:
+  - point: The browser's scroll anchoring keeps ordinary pages steady, but it backs off for the way a virtual list moves its rows, so the list turns it off with overflow-anchor none and anchors by hand.
+    kind: mechanism
+    weight: core
+    teach:
+      - Every scroller picks an anchor node, preferring one fully in view, and when layout above it changes the browser shifts the scroll position by the same distance before anything is shown. That is why an image loading above an article no longer shoves the paragraph away. overflow-anchor auto turns it on, none turns it off.
+      - A virtualizer trips its brakes. The adjustment is cancelled when top, transform, height and the like change between the anchor and the scroller, which is exactly how rows are placed. A scroll offset of zero also cancels it, so prepending history at the very top gets no help, and older browsers on users' devices have none of it.
+      - Recycled rows add a fight, the node the browser chose may show another line after the next render, and two corrections of the same scrollTop make a visible double jump. Only the list knows which line each row shows, so it sets none and does the job.
+    draw: [browser-anchoring, anchor-auto, anchor-none, list-sets, suppressed-path, double-jump]
+    check: "Why does Logscope's scroller set overflow-anchor: none?"
+    answer: The browser's adjustment is suppressed when rows are moved by top or transform and at a scroll offset of zero, and recycled rows mean its anchor node may show another line, so two corrections would fight; only the list knows which line each row holds.
+    misconceptions:
+      - "Browser scroll anchoring covers any change above the reader -> it is suppressed when top or transform change on the anchor's path and at scroll offset zero, which is the virtual list's usual case."
+  - point: The list anchors on the id of the first row at the viewport top plus that row's offset from the edge, captures it before a change, and restores scrollTop from the rebuilt offset table in the same task.
+    kind: flow
+    weight: core
+    teach:
+      - Each Logscope line has an id from ingest, and its store index is that id minus the first id still held, so a trim renumbers everything while ids never change. The reader sits on line 182,004, index 122,003, its top 6 px above the edge.
+      - The store trims its oldest 5,000 lines. With scrollTop untouched, the same indices now hold lines 5,000 later, and every row on screen is one they never scrolled to.
+      - The order is the trick. Capture the id and offset, apply the trim, rebuild the offsets and resize the container so the next scrollTop is not clamped, look up the id's new index, 117,003, and set scrollTop to its top minus the saved offset, then render. All in one task, so only the corrected frame is painted; split across two frames, one flickers.
+      - At the bottom the list is following the tail, keeps no anchor and simply scrolls to the end after each append.
+    draw: [by-hand, capture, trim, then-trim, rebuild, then-rebuild, index-shift, restore, look-up-id, one-task, following]
+    check: Logscope trims 5,000 lines above a reader on line 182,004. What do they see with no anchoring, and what does the list capture so they stay on that line?
+    answer: With no anchoring the same scrollTop maps to the same indices, which now hold lines 5,000 later. The list captures the line's id and its top's offset from the viewport edge, then after the trim and rebuild sets scrollTop to the id's new top minus that offset, in the same task.
+    misconceptions:
+      - "Anchor on the row's index -> the index changes with every trim; the id does not, so anchor on the id plus an offset."
+      - "Correct the position on the next frame -> one frame of wrong lines gets painted, a flicker; capture, change and restore in one task before paint."
+  - point: Jumping to a line reads its top from the offset table and sets scrollTop, then treats the target as the anchor so measuring the rows near it cannot push it away.
+    kind: flow
+    weight: core
+    teach:
+      - A virtual list cannot scroll past 180,000 lines to reach one, and need not. The offset table already gives line 180,412 a top, measured where rows were seen and estimated elsewhere. Look it up, set scrollTop, render the window around it.
+      - The estimate said 2,486,140 px; once the traces above it are measured the real top is 2,486,460, and without care the match slides 320 px down the screen. Treat the target as the anchor, here 120 px below the edge for context, and restore it before paint. A jump and a trim are the same mechanism.
+      - Finish the job. Move focus to the match only once its row exists, and say where the reader is in a short polite status outside the list, Match 3 of 57, line 180,412. Find-in-page cannot help, the browser only searches rows that exist.
+    draw: [jump, est-top, real-top, drifts, target-anchor, focus-after, match-status, then-status]
+    check: After a jump to line 180,412 the rows above it are measured 320 px taller than estimated. What keeps the match where the reader expects it?
+    answer: The target is treated as the anchor with the offset wanted, 120 px below the top edge, and after measuring the list restores that position before paint, as it does after a trim.
+    misconceptions:
+      - "The browser's find-in-page can jump to any line -> it only searches rows in the DOM; Logscope searches the store in a worker and jumps by index."
+  - point: A focused row must never be unmounted or recycled, so the rendered set is the window plus the focused row, and keys move focus by index.
+    kind: rule
+    weight: core
+    teach:
+      - Focus lives on a DOM node. The reader tabs into a line, then turns the wheel, and a naive list unmounts that row, so focus falls back to the body and the next Tab starts from nowhere they chose. Reusing the node is worse, focus sits on a row now showing another line.
+      - Logscope renders the window plus the focused index. The focused row stays mounted at its true offset even far off screen and is taken out of the row pool, so recycling never rebinds it.
+      - Arrow and Page keys compute the next index, make sure that row is rendered, scrolling it in if needed, and only then call focus on it.
+    draw: [focus-aria, row-pool, pool-a, pool-b, pool-c, lost-focus, focused-row, leaves-pool, keys-by-index]
+    check: The reader has focus on a log line and scrolls it far out of the window with the wheel. What goes wrong in a naive virtualizer, and what is Logscope's rule?
+    answer: The row is unmounted, so focus falls back to the body, or it is reused for another line, so focus sits on the wrong line. Logscope keeps the focused row mounted and out of the recycling pool, rendering the window plus the focused index.
+    misconceptions:
+      - "Arrow keys can move focus to the next DOM sibling -> the next line may not be rendered; move by index, render the row, then focus it."
+  - point: When only some rows exist, the list must state the real size and each row's position with ARIA, and announce events through a separate polite status, never by making the list live.
+    kind: rule
+    weight: core
+    teach:
+      - With every item in the DOM the browser counts sizes and positions itself; with a window it cannot. Logscope is a grid, so the container carries aria-rowcount, 250,000 lines plus one header row, 250,001, and each rendered row its aria-rowindex. Line 180,412 is index 115,411, so its row index is 115,413.
+      - A list variant uses aria-setsize and aria-posinset on each rendered item instead. During a batch such as a trim, aria-busy lets assistive technology wait for the finished list.
+      - Events are spoken through one visually hidden status element outside the list. A log role or live region on the list itself would queue speech for every appended line of a 40 lines a second tail.
+    draw: [aria-region, rowcount, rowindex, list-variant, busy, status-region, no-live-list]
+    check: Logscope's grid has 250,000 lines and a header row. What aria-rowcount does it carry, and what aria-rowindex does line 180,412, at store index 115,411, get?
+    answer: aria-rowcount 250,001, counting the header row; aria-rowindex 115,413, its 1-based position after the header.
+    misconceptions:
+      - "Make the list a live region so changes are announced -> on a fast tail it would queue speech for every new line; announce one short summary per event through a separate role=status element."
+      - "Screen readers count the rows themselves -> they only see the rows in the DOM, so the list must supply the real count and positions."
+task:
+  prompt: Draw the trim of 5,000 lines with the reader on line 182,004, 6 px above the edge, as the steps the list runs in one task, and write the ARIA the grid and that line's row carry.
+  expects: [2, 5]

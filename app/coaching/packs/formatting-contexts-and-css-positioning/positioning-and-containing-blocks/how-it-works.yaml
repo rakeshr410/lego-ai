@@ -1,0 +1,174 @@
+# Positioning, how it works: the walk up the tree for each position value, who may clip the box, fixed inside a transform, and sticky's conditions.
+id: formatting-contexts-and-css-positioning/positioning-and-containing-blocks/how-it-works
+title: Positioning and containing blocks
+source:
+  hash: 97c2fccd93fa
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: null
+  assumes:
+    - "Every element is laid out as four nested rectangles: content, padding, border, margin."
+    - "overflow hidden, auto or scroll makes a box a scroll container that clips its content, menus included."
+    - "contain: layout also makes a containing block for absolute and fixed descendants and a stacking context."
+  carries:
+    - "A static, relative or sticky box measures against the content box of its nearest block container ancestor."
+    - "An absolute box measures against the padding box of its nearest positioned ancestor, or the initial containing block if there is none."
+    - "A fixed box uses the viewport unless an ancestor with a transform, filter, contain or similar captures it; such an ancestor captures absolute boxes too."
+    - A clipping ancestor cuts a positioned box only if the box's containing block is the clipper or below it.
+    - "A sticky box keeps its space in flow and needs an inset, the right scroll container and room in its parent."
+  terms:
+    - term: containing block
+      means: The rectangle a box's position, percentage widths and offsets are measured against.
+    - term: positioned
+      means: "Having a position of relative, absolute, fixed or sticky."
+    - term: initial containing block
+      means: A viewport-sized rectangle anchored at the top of the document, where an absolute box's walk ends if nothing qualifies.
+    - term: padding box
+      means: The content box plus its padding, inside the border.
+    - term: scrollport
+      means: The scroll container a sticky box sticks to, its nearest ancestor with overflow hidden, scroll or auto.
+board:
+  keep: []
+  elements:
+    - { id: walk-rules, kind: region, label: Containing block by position, at: [2, 1], size: [62, 18] }
+    - { id: rule-flow, kind: note, label: "in flow: the parent's content box", at: [4, 17], in: walk-rules }
+    - { id: cb-gp, kind: region, label: "grandparent: position relative", at: [4, 4], size: [58, 12], in: walk-rules, tone: blue }
+    - { id: cb-parent, kind: region, label: "parent: static, skipped", at: [6, 7], size: [26, 7], in: cb-gp, tone: grey }
+    - { id: rule-abs, kind: box, label: "child: position absolute", at: [8, 10], size: [20, 3], in: cb-parent }
+    - { id: gp-padding, kind: box, label: "grandparent's padding box", at: [44, 10], size: [16, 3], in: cb-gp, tone: green }
+    - { id: icb-note, kind: note, label: "none positioned: initial containing block", at: [26, 17], in: walk-rules }
+    - { id: card-spec, kind: region, label: "card: 320 wide, border 1, padding 16", at: [2, 21], size: [62, 15] }
+    - { id: padding-cb, kind: region, label: "padding box: 318", at: [3, 23], size: [60, 12], in: card-spec, tone: green }
+    - { id: content-cb, kind: region, label: "content box: 286", at: [6, 25], size: [54, 6], in: padding-cb, tone: blue }
+    - { id: static-half, kind: box, label: "static child, 50%: 143", at: [6, 27], size: [27, 3], in: content-cb }
+    - { id: half-note, kind: note, label: "half of the content box", at: [43, 28], in: content-cb }
+    - { id: abs-half, kind: box, label: "absolute child, 50%: 159", at: [3, 31], size: [30, 3], in: padding-cb }
+    - { id: abs-full, kind: note, label: "absolute, right 0, 100%: 318", at: [36, 32], in: padding-cb }
+    - { id: menu-walk, kind: region, label: "Where the More menu's walk stops", at: [2, 38], size: [28, 28] }
+    - { id: cb-viewport, kind: box, label: Viewport, at: [4, 41], size: [24, 2], in: menu-walk, tone: grey }
+    - { id: cb-shell, kind: box, label: "app shell: slide transform", at: [4, 44], size: [24, 2], in: menu-walk }
+    - { id: cb-board, kind: box, label: "board: overflow-x auto", at: [4, 47], size: [24, 2], in: menu-walk, tone: red }
+    - { id: cb-column, kind: box, label: "column: overflow-y auto", at: [4, 50], size: [24, 2], in: menu-walk, tone: red }
+    - { id: cb-card, kind: box, label: "card: position relative", at: [4, 53], size: [24, 2], in: menu-walk, tone: blue }
+    - { id: cb-body, kind: box, label: "card body: hidden, relative", at: [4, 56], size: [24, 2], in: menu-walk, tone: red }
+    - { id: cb-more, kind: box, label: "div.more: position relative", at: [4, 59], size: [24, 2], in: menu-walk, tone: green }
+    - { id: cb-menu, kind: box, label: "menu: position absolute", at: [4, 62], size: [24, 2], in: menu-walk, tone: blue }
+    - { id: toast-shell, kind: region, label: Toast in a transformed shell, at: [32, 38], size: [32, 13] }
+    - { id: undo-toast, kind: box, label: "Undo toast: position fixed", at: [36, 41], size: [26, 4], in: toast-shell, tone: blue }
+    - { id: toast-scrolls, kind: note, label: "scrolled 120: toast moved up 120", at: [34, 46], in: toast-shell, tone: red }
+    - { id: fix-none, kind: note, label: "fix: transform none, or portal to body", at: [34, 48], in: toast-shell, tone: green }
+    - { id: fixed-rules, kind: region, label: Where a fixed box measures from, at: [32, 53], size: [32, 12] }
+    - { id: rule-fixed, kind: box, label: fixed box, at: [34, 56], size: [8, 7], in: fixed-rules, tone: blue }
+    - { id: vp-window, kind: box, label: the window, at: [50, 56], size: [12, 3], in: fixed-rules, tone: grey }
+    - { id: rule-capture, kind: box, label: "transform, filter, contain", at: [50, 60], size: [12, 3], in: fixed-rules, tone: red }
+    - { id: clipping, kind: region, label: Who may clip a positioned box, at: [2, 68], size: [25, 11] }
+    - { id: clip-inside, kind: note, label: "walk stopped inside a clipper: cut", at: [4, 71], in: clipping, tone: red }
+    - { id: clip-above, kind: note, label: "stopped above it, or viewport: not cut", at: [4, 73], in: clipping, tone: green }
+    - { id: half-fix, kind: note, label: "half-fix: stops at card, column cuts", at: [4, 75], in: clipping }
+    - { id: both-axes, kind: note, label: "overflow-y auto clips sideways too", at: [4, 77], in: clipping }
+    - { id: sticky-needs, kind: region, label: What sticky needs, at: [34, 68], size: [30, 11] }
+    - { id: board-wrap, kind: box, label: "board wrapper: overflow auto", at: [36, 71], size: [26, 3], in: sticky-needs, tone: red }
+    - { id: sticky-inset, kind: note, label: "needs: inset, right scroller, room", at: [36, 75], in: sticky-needs }
+    - { id: sticky-space, kind: note, label: "keeps its space, like relative", at: [36, 77], in: sticky-needs }
+  arrows:
+    - { id: abs-against, from: rule-abs, to: gp-padding, label: positions against }
+    - { id: fixed-normal, from: rule-fixed, to: vp-window, label: normally }
+    - { id: fixed-captured, from: rule-fixed, to: rule-capture, label: captured by, dashed: true }
+    - { id: vp-shell, from: cb-viewport, to: cb-shell }
+    - { id: shell-board, from: cb-shell, to: cb-board }
+    - { id: board-column, from: cb-board, to: cb-column }
+    - { id: column-card, from: cb-column, to: cb-card }
+    - { id: card-body-edge, from: cb-card, to: cb-body }
+    - { id: body-more, from: cb-body, to: cb-more }
+    - { id: more-menu-edge, from: cb-more, to: cb-menu }
+    - { id: toast-cb, from: undo-toast, to: cb-shell, label: contained by, dashed: true }
+beats:
+  - point: "Each position value walks up the tree with its own stopping rule: a box in flow stops at the nearest block container's content box, an absolute box at the nearest positioned ancestor's padding box, or the initial containing block if none qualifies."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Static, relative and sticky boxes are in the flow. Their containing block is the content box of the nearest block container or context-starting ancestor, almost always the parent you expect, and their percentage widths and margins come from it."
+      - "An absolute box skips every static ancestor and stops at the first one whose position is relative, absolute, fixed or sticky. It measures against that ancestor's padding box, so 0 lands just inside the border."
+      - If no ancestor qualifies, the walk ends at the initial containing block, a viewport-sized rectangle at the top of the document.
+    draw: [walk-rules, rule-flow, cb-gp, cb-parent, rule-abs, gp-padding, abs-against, icb-note]
+    check: An absolutely positioned menu sits inside three static divs inside a card with position relative. What is its containing block?
+    answer: The card's padding box; the walk skips the static divs and stops at the first positioned ancestor.
+    misconceptions:
+      - "An absolute box is placed against its parent -> against the nearest positioned ancestor, which may be several levels up, or the initial containing block."
+  - point: "The same card gives a static child and an absolute child different containing blocks: the content box for one, the padding box for the other."
+    kind: rule
+    weight: core
+    teach:
+      - Take a Slatework card 320 wide with a 1-pixel border and 16 of padding. Its content box is 286 and its padding box 318.
+      - "A static child with width 50% gets 143, starting after the padding. Make the card relative and the child absolute with left 0: it starts at the padding edge and 50% is now 159."
+      - With right 0 and width 100% the absolute child fills the padding box exactly, 318, covering the padding on both sides but never the border.
+    draw: [card-spec, padding-cb, content-cb, static-half, half-note, abs-half, abs-full]
+    check: "A card is 320 wide with a 1-pixel border and 16 of padding, and position relative. How wide is an absolute child with width 50%?"
+    answer: "159 pixels, half of the 318-pixel padding box; a static child would get half of the 286-pixel content box, 143."
+    misconceptions:
+      - "left: 0 puts an absolute box at the content edge -> it is the padding edge, just inside the border."
+  - point: "A fixed box normally uses the viewport, but an ancestor with transform, filter, perspective, contain, a will-change naming one of them or content-visibility auto becomes the containing block for fixed and absolute descendants alike."
+    kind: rule
+    weight: core
+    teach:
+      - Fixed skips the whole tree and uses the viewport, which is what makes it fixed.
+      - "The surprise is the capturing ancestor: a transform, an individual translate, rotate or scale, perspective, filter, backdrop-filter, contain layout, paint, strict or content, will-change naming one of those, or content-visibility auto. The walk for fixed stops there, and so does the walk for absolute, even if that ancestor is static."
+      - Browsers have not always agreed on perspective and filter, so test those two rather than relying on them.
+    draw: [fixed-rules, rule-fixed, vp-window, fixed-normal, rule-capture, fixed-captured]
+    check: A static ancestor carries a transform. Which descendants does it capture as their containing block?
+    answer: Both fixed and absolute descendants; the walk for either stops at the transformed ancestor, positioned or not.
+    misconceptions:
+      - "Only fixed boxes are captured by a transformed ancestor -> absolute boxes are too, even when that ancestor is static."
+  - point: "Slatework's More menu is absolute, so its walk stops at the first positioned ancestor, div.more, which sits inside the card body and the column, both of them clipping boxes."
+    kind: flow
+    weight: core
+    teach:
+      - Draw the menu's ancestors from the viewport down, the app shell, the board that scrolls sideways, the column that scrolls down, the card, the card body with overflow hidden and position relative for its fade, div.more with position relative, and the menu.
+      - Walk up from the menu. The first positioned ancestor is div.more, right above it, so that is its containing block, and everything above it on the way to the board can still have a say.
+    draw: [menu-walk, cb-viewport, cb-shell, vp-shell, cb-board, shell-board, cb-column, board-column, cb-card, column-card, cb-body, card-body-edge, cb-more, body-more, cb-menu, more-menu-edge]
+    check: Which box is the More menu's containing block as shipped, and why that one?
+    answer: div.more, because it is the first ancestor of the absolute menu with a position other than static.
+  - point: "A box with overflow hidden, clip, auto or scroll cuts its descendants at its padding edge unless their containing block is the viewport or an ancestor of the clipper: if the walk stopped inside the clipper, the clipper wins."
+    kind: rule
+    weight: core
+    teach:
+      - Read the clipping rule as a question about the walk. div.more is inside the card body, so the body cuts the menu, and so does the column.
+      - "The half-fix drops position from div.more and the body. The walk now stops at the card, which is above the body, so the body stops cutting; the column still cuts, because the card is inside it. Every scroll container between the trigger and the root is another clipper."
+      - "hidden, auto and scroll cannot clip one axis alone: the other axis computes to auto. So a column with overflow-y auto also cuts a menu poking out of its right edge. A fixed menu escapes every clipper on the board, but its top and left are now window coordinates."
+    draw: [clipping, clip-inside, clip-above, half-fix, both-axes]
+    check: Position is removed from div.more and from the card body, so the card becomes the menu's containing block. Is the menu still clipped, and by what?
+    answer: Yes, at the column; the body no longer clips because the walk stopped above it, but the column scrolls and the card is inside it.
+    misconceptions:
+      - "Removing position from the menu's wrapper frees it from clipping -> only from clippers below the new containing block; the column above the card still cuts it."
+      - "overflow-y: auto only clips vertically -> the visible axis computes to auto, so it clips sideways too."
+  - point: "A fixed toast inside an app shell that kept a transform after its slide-in scrolls away with the page, because the rule looks at the computed value, not the visual result."
+    kind: failure
+    weight: core
+    teach:
+      - Slatework's shell slides in with a transform and keeps translateX(0) afterwards. The Undo toast is fixed, but the shell is its containing block. At scroll 0 it looks right; scroll 120 and it has moved up 120, and by 280 it has left the window while its Undo timer still runs.
+      - Nothing has to move for this to happen; translateX(0), scale(1) and a will-change transform hint left on all count.
+      - If you own the ancestor, let the effect end at none and drop the hint after the animation. If you do not, move the toast out of the subtree, a direct child of body, or a popover in the top layer, which ignores every ancestor's transform.
+    draw: [toast-shell, undo-toast, toast-cb, toast-scrolls, fix-none]
+    check: "A position: fixed toast scrolls away with the page. What is the likely cause, and what are the two fixes?"
+    answer: "An ancestor such as the app shell still carries a transform, even translateX(0), and became its containing block. End the effect at transform none, or render the toast outside that subtree, under body or as a popover."
+    misconceptions:
+      - "fixed is always relative to the viewport -> an ancestor with a transform, filter, contain or similar captures it, even one that moves nothing."
+  - point: "A sticky box is laid out like a relative one and keeps its space, then sticks only with an inset on its axis, the right scroll container, and room left in its parent."
+    kind: rule
+    weight: core
+    teach:
+      - "As its scroll container scrolls, the browser shifts the sticky box so it never crosses its inset; top 0 means not above the top of the scrollport. Every failure looks the same, the box scrolls away."
+      - "It needs an inset in the scrolling axis. It sticks to the nearest ancestor with overflow hidden, scroll or auto, even one that never scrolls: Slatework's div.board-wrap had overflow auto just in case, so the column headers scrolled away with the page."
+      - And it moves only inside its parent's content box, so the short Done column's header sticks briefly and is pushed off at the column's end.
+    draw: [sticky-needs, board-wrap, sticky-inset, sticky-space]
+    check: Column headers with position sticky and top 0 scroll away with the page. Their wrapper has overflow auto and is as tall as its content. Why?
+    answer: The wrapper is their scroll container though it never scrolls, so from its point of view the headers never need to move; remove that overflow or use overflow clip where only clipping was wanted.
+    misconceptions:
+      - "A sticky box leaves the flow when it sticks -> it is laid out like a relative box and keeps its space in the flow."
+      - "overflow: clip on the wrapper also captures sticky boxes -> clip makes no scroll container, so it does not."
+task:
+  prompt: "Draw the More menu's ancestors from the viewport down, mark its containing block as shipped and every box that may clip it, then mark what changes when position is removed from div.more and the card body."
+  expects: [4, 5]

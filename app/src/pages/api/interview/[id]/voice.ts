@@ -3,6 +3,7 @@ import { readerOr503 } from '../../../../lib/server/ask-http';
 import { isSameOrigin, json, readJson, tooMany } from '../../../../lib/server/http';
 import { handle, interviewOff } from '../../../../lib/server/interview/http';
 import { ID_PATTERN } from '../../../../lib/server/interview/sessions';
+import { finish } from '../../../../lib/server/interview/service';
 import { joinVoice, leaveVoice } from '../../../../lib/server/interview/voice';
 import { rateLimit } from '../../../../lib/server/rate-limit';
 
@@ -14,6 +15,10 @@ export const prerender = false;
 //                            holds the session: after a reload, a dropped line, a deploy):
 //                            {session, join: {url, token, expiresAt}}
 //   POST {action: "leave"}   ends the voice part; the session goes on in text until the feedback
+//   POST {action: "leave", finish: true}
+//                            ends the voice part and then a lesson (a coach session) with it, in one
+//                            request, so a learner who presses End and leaves the page at once does not
+//                            leave the lesson open
 
 export const POST: APIRoute = async ({ request, url, params, cookies }) => {
   const off = interviewOff();
@@ -29,6 +34,10 @@ export const POST: APIRoute = async ({ request, url, params, cookies }) => {
   const body = await readJson(request, 4 * 1024);
   const action = body?.action;
   if (action === 'join') return handle('voice join', async () => json(await joinVoice(reader.documentId, id)));
-  if (action === 'leave') return handle('voice leave', async () => json({ session: await leaveVoice(reader.documentId, id) }));
+  if (action === 'leave')
+    return handle('voice leave', async () => {
+      const session = await leaveVoice(reader.documentId, id);
+      return json({ session: body?.finish === true && session.kind === 'coach' ? await finish(reader.documentId, id) : session });
+    });
   return json({ error: 'Unknown action' }, 400);
 };

@@ -10,8 +10,8 @@ import { boardKey, boardPngKey, ttlFrom, type Session } from './sessions';
 // stage live under their own keys, capped in size and count.
 
 export { boardKey, boardPngKey };
-/** The largest board body accepted: MAX_ELEMENTS compacted elements come to about 110 KB. */
-export const BOARD_MAX_BYTES = 160 * 1024;
+/** The largest board body accepted: MAX_ELEMENTS compacted elements, with how each looks, come to about 190 KB. */
+export const BOARD_MAX_BYTES = 256 * 1024;
 export const PNG_MAX_BYTES = 200 * 1024;
 export const PNG_MAX_PER_SESSION = 8;
 /** Board snapshots kept on the session (text only), at stage changes and the finish. */

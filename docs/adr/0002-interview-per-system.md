@@ -3,7 +3,7 @@
 - **Status:** Accepted, 2026-09-27
 - **Plan item:** P3-11 (production-readiness plan, Phase 3), first slice
 - **Findings:** GAP3-5 (granularity), GAP3-2 (content-driven stages)
-- **Design:** [docs/interview/README.md](../interview/README.md)
+- **Design:** [docs/README.md](../README.md)
 
 ## Context
 

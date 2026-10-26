@@ -1,0 +1,90 @@
+# lego-ai beside the main site's local stack (lego/docker-compose.yml, project "arrowbox"), on its
+# network: the app (the mock interview and the coach), the voice service, and an edge that puts
+# both apps on one origin the way the production load balancer does (app/routes.mjs).
+#
+#   (cd ../lego && docker compose --profile web up -d --build)   # the main site first, with
+#                                                                # LEGO_AI_URL=http://ai:4322 and LEGO_AI_SECRET
+#   docker compose up -d --build                                 # app and edge
+#   docker compose --profile voice up -d --build                 # and the voice service
+#
+# Then browse the whole site at http://localhost:4300. Values come from ./.env (next to this file);
+# LEGO_AI_SECRET must match the main site's.
+
+name: arrowbox-ai
+
+services:
+  ai:
+    build:
+      context: .
+      dockerfile: app/Dockerfile
+      additional_contexts:
+        lego: ${LEGO_DIR:-../lego}
+      args:
+        PUBLIC_ORIGIN: http://localhost:4300
+        PUBLIC_INTERVIEW_ENABLED: ${PUBLIC_INTERVIEW_ENABLED:-true}
+        PUBLIC_INTERVIEW_BOARD_ENABLED: ${PUBLIC_INTERVIEW_BOARD_ENABLED:-true}
+        PUBLIC_INTERVIEW_VOICE_ENABLED: ${PUBLIC_INTERVIEW_VOICE_ENABLED:-false}
+        PUBLIC_REVIEWED_ONLY: ${PUBLIC_REVIEWED_ONLY:-false}
+    image: arrowbox-ai:local
+    environment:
+      PUBLIC_ORIGIN: http://localhost:4300
+      WEB_INTERNAL_URL: http://web:4321
+      LEGO_AI_SECRET: ${LEGO_AI_SECRET:-}
+      # The main site's Redis: the gateway's budget and kill switch are shared with Ask.
+      REDIS_URL: redis://redis:6379
+      # The edge appends the client to X-Forwarded-For.
+      TRUST_PROXY: '1'
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ASK_ENABLED: ${ASK_ENABLED:-true}
+      INTERVIEW_VOICE_URL: ${INTERVIEW_VOICE_URL:-}
+      INTERVIEW_VOICE_SECRET: ${INTERVIEW_VOICE_SECRET:-}
+      DAILY_API_KEY: ${DAILY_API_KEY:-}
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    ports:
+      - '127.0.0.1:4322:4322'
+    networks: [arrowbox]
+
+  edge:
+    image: arrowbox-ai:local
+    depends_on: [ai]
+    command: ['node', 'scripts/edge.mjs']
+    environment:
+      EDGE_PORT: '4300'
+      AI_URL: http://ai:4322
+      WEB_URL: http://web:4321
+    ports:
+      - '127.0.0.1:4300:4300'
+    networks: [arrowbox]
+
+  # The voice service (voice/, docs/README.md "Voice"): one Pipecat pipeline per voice session. With
+  # INTERVIEW_VOICE_URL=http://voice:7860, INTERVIEW_VOICE_SECRET (32+ characters, shared), the
+  # Daily, Deepgram and Cartesia keys, and PUBLIC_INTERVIEW_VOICE_ENABLED=true for the app's build.
+  voice:
+    profiles: ['voice']
+    build:
+      context: .
+      dockerfile: voice/Dockerfile
+    image: arrowbox-voice:local
+    environment:
+      INTERVIEW_WEB_URL: http://ai:4322
+      INTERVIEW_VOICE_SECRET: ${INTERVIEW_VOICE_SECRET:-}
+      DEEPGRAM_API_KEY: ${DEEPGRAM_API_KEY:-}
+      CARTESIA_API_KEY: ${CARTESIA_API_KEY:-}
+      SARVAM_API_KEY: ${SARVAM_API_KEY:-}
+      SMALLEST_API_KEY: ${SMALLEST_API_KEY:-}
+      VOICE_STT: ${VOICE_STT:-deepgram}
+      VOICE_TTS: ${VOICE_TTS:-cartesia}
+      VOICE_SPECULATE: ${VOICE_SPECULATE:-true}
+      VOICE_FIRST_CLAUSE: ${VOICE_FIRST_CLAUSE:-true}
+      VOICE_MAX_SESSIONS_PER_TASK: ${VOICE_MAX_SESSIONS_PER_TASK:-4}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    ports:
+      - '127.0.0.1:7860:7860'
+    networks: [arrowbox]
+
+networks:
+  # The main site's stack (lego/docker-compose.yml): web, redis.
+  arrowbox:
+    name: arrowbox_default
+    external: true

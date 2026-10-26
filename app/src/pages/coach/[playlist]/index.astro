@@ -1,0 +1,126 @@
+---
+import AppLayout from '../../../layouts/AppLayout.astro';
+import Logo from '../../../components/Logo.astro';
+import { getPlaylistPages, type PlaylistPage } from '../../../lib/interview.node';
+import tc from '../../../i18n/messages/common';
+import t from '../../../i18n/messages/interview';
+import '../../../styles/interview.css';
+
+// A coaching playlist (docs/coaching.md): its lessons in order, each a whiteboard lesson with the
+// coach (/coach/<playlist>/<lesson>). Behind PUBLIC_INTERVIEW_ENABLED like the interview pages:
+// with the flag off no page is built.
+export async function getStaticPaths() {
+  const pages = await getPlaylistPages();
+  return pages.map((page) => ({ params: { playlist: page.slug }, props: { page } }));
+}
+
+const { page } = Astro.props as { page: PlaylistPage };
+---
+
+<AppLayout title={page.title} description={t('playlist.meta.description', { count: page.lessons.length, title: page.title })} noindex>
+  <div class="iv">
+    <header class="iv-top">
+      <a href="/" class="bp-logo"><Logo tone="dark" /></a>
+      <nav class="iv-top__crumbs" aria-label={tc('nav.breadcrumb')}>
+        <strong>{page.title}</strong>
+      </nav>
+    </header>
+    <main class="ivl pl" id="content" tabindex="-1">
+      <section class="ivl-card ivl-hero">
+        <div class="ivl-hero__text">
+          <span class="ivl-kicker">{t('playlist.kicker')}<span class="ivl-beta">{t('beta')}</span></span>
+          <h1 class="ivl-title">{page.title}</h1>
+          <p class="ivl-lede">{page.summary}</p>
+        </div>
+      </section>
+      <section class="ivl-card" aria-labelledby="pl-lessons">
+        <div class="ivl-card__intro">
+          <h2 class="ivl-h2" id="pl-lessons">{t('playlist.lessons')}</h2>
+          <p class="ivl-small">{t('playlist.lessons.note')}</p>
+        </div>
+        <ol class="pl-list">
+          {
+            page.lessons.map((l, i) => (
+              <li class="pl-lesson">
+                <span class="pl-n" aria-hidden="true">{String(i + 1).padStart(2, '0')}</span>
+                <a class="pl-lesson__body" href={l.href}>
+                  <span class="pl-lesson__head">
+                    <span class="pl-lesson__title">{l.title}</span>
+                    <span class="ivl-mono">{t('playlist.lesson.minutes', { minutes: l.minutes })}</span>
+                  </span>
+                  <span class="ivl-small">{l.summary}</span>
+                  <span class="ivl-mono ivl-mono--faint">{l.parts.join(' · ')}</span>
+                </a>
+              </li>
+            ))
+          }
+        </ol>
+      </section>
+      <section class="ivl-card">
+        <h2 class="ivl-h3">{t('playlist.outline')}</h2>
+        <p class="ivl-small">{page.outline}</p>
+      </section>
+    </main>
+  </div>
+</AppLayout>
+
+<style>
+  .pl {
+    grid-template-columns: minmax(0, 880px);
+    justify-content: center;
+  }
+  .pl-list {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-10);
+  }
+  .pl-lesson {
+    display: grid;
+    grid-template-columns: 40px minmax(0, 1fr);
+    gap: var(--space-14);
+    align-items: start;
+  }
+  .pl-n {
+    padding-top: var(--space-16);
+    font: 600 var(--text-lg) var(--mono);
+    color: var(--midnight-335);
+  }
+  .pl-lesson__body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-6);
+    padding: var(--space-14) var(--space-16);
+    border: 1px solid var(--midnight-110);
+    border-radius: var(--radius-14);
+    color: var(--ink);
+    text-decoration: none;
+  }
+  .pl-lesson__body:hover {
+    border-color: var(--midnight-335);
+  }
+  .pl-lesson__body:hover .pl-lesson__title {
+    text-decoration: underline;
+  }
+  .pl-lesson__head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: var(--space-10);
+  }
+  .pl-lesson__title {
+    font-size: var(--text-lg);
+    font-weight: 600;
+  }
+  @media (max-width: 720px) {
+    .pl-lesson {
+      grid-template-columns: minmax(0, 1fr);
+      gap: var(--space-4);
+    }
+    .pl-n {
+      padding-top: 0;
+    }
+  }
+</style>

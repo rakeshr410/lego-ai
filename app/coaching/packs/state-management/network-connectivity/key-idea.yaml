@@ -1,0 +1,140 @@
+# The idea: connectivity is a piece of state with five situations, one owner and a shape every screen reads.
+id: state-management/network-connectivity/key-idea
+title: Connectivity is state
+source:
+  hash: "7babbe6b2a2d"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: null
+  assumes:
+    - State has kinds and owners; a value many screens read is held in one place and subscribed to.
+  carries:
+    - "Networks do not fail cleanly: online, slow, flaky, offline, and connected but cut off are five different situations."
+    - Every situation needs a decision for what the screen shows and what each action does (runs, queues, or is disabled with a reason).
+    - Connectivity is one value, owned by one ConnectivityMonitor, that every screen reads.
+    - "Its shape: status (online, slow, checking, offline), since, lastOkAt, a rolling RTT, saveData and pendingWrites."
+    - A Checking status between Online and Offline keeps one failed request off the screen; lastOkAt is a time, so the screen can say how old its data is.
+    - Connected but cut off looks exactly like offline to the app, so it shares Offline's behaviour and only the wording differs.
+  terms:
+    - term: connectivity state
+      means: The one value that says how good the path to the server is right now, written by ConnectivityMonitor and read by every screen.
+    - term: Checking
+      means: The short status between Online and Offline while the app confirms that requests really stopped coming back.
+    - term: lastOkAt
+      means: The last time any response came back from Stallhand; the stale markers and the banner's wording come from it.
+    - term: connected but cut off
+      means: The device has a network, but requests never reach the server, as behind a Wi-Fi sign-in page or a firewall.
+board:
+  keep: []
+  elements:
+    - { id: situations, kind: region, label: "Five situations, good to gone", at: [2, 1], size: [69, 10] }
+    - { id: sit-online, kind: box, label: "online: answers in a second", at: [4, 4], size: [10, 3], in: situations, tone: green }
+    - { id: sit-slow, kind: box, label: "slow: seconds per request", at: [16, 4], size: [10, 3], in: situations }
+    - { id: sit-flaky, kind: box, label: "flaky: drops of a few seconds", at: [28, 4], size: [10, 3], in: situations }
+    - { id: sit-offline, kind: box, label: "offline: nothing gets through", at: [40, 4], size: [10, 3], in: situations, tone: red }
+    - { id: sit-cutoff, kind: box, label: "cut off: a Wi-Fi sign-in page", at: [59, 4], size: [10, 3], in: situations, tone: red }
+    - { id: bars-note, kind: note, label: "two bars can still mean nothing moves", at: [4, 8], in: situations }
+    - { id: offline-actions, kind: region, label: "Offline: what each action does", at: [2, 13], size: [38, 17] }
+    - { id: act-sale, kind: box, label: record a cash sale, at: [4, 16], size: [12, 3], in: offline-actions, tone: blue }
+    - { id: out-queue, kind: box, label: "queued, sent later", at: [26, 16], size: [12, 3], in: offline-actions, tone: green }
+    - { id: act-refund, kind: box, label: refund a card payment, at: [4, 20], size: [12, 3], in: offline-actions, tone: blue }
+    - { id: out-disabled, kind: box, label: "disabled, says why", at: [26, 20], size: [12, 3], in: offline-actions, tone: red }
+    - { id: act-orders, kind: box, label: "today's orders", at: [4, 24], size: [12, 3], in: offline-actions, tone: blue }
+    - { id: out-aged, kind: box, label: shown with their age, at: [26, 24], size: [12, 3], in: offline-actions, tone: amber }
+    - { id: on-return, kind: note, label: "back online: sent once, list catches up", at: [4, 28], in: offline-actions }
+    - { id: one-owner, kind: region, label: "One owner, every screen reads it", at: [78, 1], size: [36, 16] }
+    - { id: monitor, kind: box, label: ConnectivityMonitor, at: [80, 4], size: [13, 3], in: one-owner, tone: blue }
+    - { id: reads-banner, kind: box, label: connection banner, at: [101, 4], size: [11, 3], in: one-owner }
+    - { id: reads-list, kind: box, label: order list, at: [101, 8], size: [11, 3], in: one-owner }
+    - { id: reads-buttons, kind: box, label: sale and refund buttons, at: [101, 12], size: [11, 3], in: one-owner }
+    - { id: conn-state, kind: region, label: The connectivity state, at: [43, 13], size: [32, 20], tone: amber }
+    - { id: f-status, kind: box, label: "status: online, slow, checking or offline", at: [45, 16], size: [28, 3], in: conn-state, tone: blue }
+    - { id: f-since, kind: box, label: "since: when it changed", at: [45, 20], size: [13, 3], in: conn-state }
+    - { id: f-lastok, kind: box, label: "last OK at: a time", at: [60, 20], size: [13, 3], in: conn-state, tone: amber }
+    - { id: f-rtt, kind: box, label: "round trip, last 10", at: [45, 24], size: [13, 3], in: conn-state }
+    - { id: f-savedata, kind: box, label: "save data: asked for less", at: [60, 24], size: [13, 3], in: conn-state }
+    - { id: f-pending, kind: box, label: "pending writes: 2 sales", at: [45, 28], size: [13, 3], in: conn-state, tone: amber }
+    - { id: stale-note, kind: note, label: "updated 10:42, from last OK at", at: [60, 29], in: conn-state }
+  arrows:
+    - { id: looks-same, from: sit-cutoff, to: sit-offline, label: looks the same }
+    - { id: sale-queues, from: act-sale, to: out-queue, label: money in the tin }
+    - { id: refund-off, from: act-refund, to: out-disabled, label: needs the server }
+    - { id: orders-cached, from: act-orders, to: out-aged, label: from the cache }
+    - { id: publishes, from: monitor, to: reads-banner, label: publishes }
+    - { id: to-list, from: monitor, to: reads-list }
+    - { id: to-buttons, from: monitor, to: reads-buttons }
+    - { id: owns, from: monitor, to: conn-state, label: owns }
+beats:
+  - point: "Networks do not fail cleanly: a phone meets five different situations, online, slow, flaky, offline, and connected but cut off, and 'online or offline' gets most of them wrong."
+    kind: requirement
+    weight: core
+    teach:
+      - "Tell the story of user 1's Saturday. User 1 sells cheese at the back of a covered market; Stallhand shows click-and-collect pre-orders, records walk-up cash sales and carries a chat with user 2."
+      - At 9 the hall is empty and 4G is fast. By 11 the hall is packed, the one cell is overloaded, and the phone shows two bars while almost no data moves. At lunch the café's Wi-Fi joins on its own and sends every request to a sign-in page.
+      - Draw the five as a spectrum from good to gone. Slow still succeeds, only in seconds; flaky drops for a few seconds and most requests work on a retry; offline gets nothing through; cut off has a network that never reaches Stallhand.
+    draw: [situations, sit-online, sit-slow, sit-flaky, sit-offline, sit-cutoff, bars-note]
+    check: "User 1's phone shows two bars but nothing loads. Which of the five situations are they in, and why don't the bars settle it?"
+    answer: "Offline, as far as Stallhand is concerned: requests are not getting through. Bars describe the radio, not whether requests reach the server."
+    misconceptions:
+      - "Signal bars or a Wi-Fi icon mean the app is online -> they describe the radio link; only requests that come back say the path to the server works."
+      - "Slow and flaky are the same as offline -> slow and flaky still succeed, in seconds or on a retry, so the app keeps working."
+  - point: Each situation needs a decision for what the screen shows and what every action does; offline, user 1 must still record a sale and see their orders with their age, while a card refund is disabled with a reason.
+    kind: requirement
+    weight: core
+    teach:
+      - "Walk the offline case. A cash sale already happened, the money is in the tin, so the app records it and sends it later. The orders they had stay on screen, marked with how old they are."
+      - "A card refund needs the server's answer now, so its button says why it is unavailable instead of failing after a spinner."
+      - "When the connection returns, the queued sales must reach the server exactly once and the order list must catch up on what they missed. When it is merely slow, the app keeps working and skips what it can, like photo previews."
+    draw: [offline-actions, act-sale, out-queue, sale-queues, act-refund, out-disabled, refund-off, act-orders, out-aged, orders-cached, on-return]
+    check: "Offline, which of these stays available: recording a cash sale, or refunding a card payment? Why?"
+    answer: "Recording the cash sale: it already happened and only needs sending later. The refund needs the payment provider's answer now, so it is disabled with a reason."
+    misconceptions:
+      - "Offline, disable everything -> actions that already happened in the world, like a cash sale, must still be recorded and sent later."
+      - "Hide the buttons that cannot work -> keep them and say why, or people think the feature vanished."
+  - point: Connectivity is one value, owned in one place, ConnectivityMonitor, and every screen reads it, so the whole app follows the same rules when it changes.
+    kind: component
+    weight: core
+    teach:
+      - Retries, optimistic writes and offline caching each have their own topic. What ties them together is one value that says how good the connection is right now, and the rules each part follows when it changes.
+      - "Draw the monitor and its readers: the connection banner, the order list, the sale and refund buttons. None of them decides for itself whether the app is online; they all subscribe to the monitor."
+    draw: [one-owner, monitor, reads-banner, publishes, reads-list, to-list, reads-buttons, to-buttons]
+    check: Why should the banner, the order list and the buttons all read one monitor instead of each checking the network themselves?
+    answer: "So the app has one answer at a time: every part changes together, by the same rules, instead of the banner saying one thing while a button behaves as if it were another."
+    misconceptions:
+      - "Each component can check navigator.onLine itself -> scattered checks disagree; one owner decides and everyone reads."
+  - point: "The value has a shape: a status of online, slow, checking or offline, since when, the last time a response came back, a rolling round-trip time, the save-data preference and how many writes are waiting."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Draw the state the monitor owns, field by field. status is one of four values. since is when the status last changed."
+      - "lastOkAt is the last time any response came back from Stallhand. rttMs is a rolling average of the last 10 requests. saveData says the person asked for less data."
+      - pendingWrites comes from the outbox, so the banner can say two sales are waiting to send.
+    draw: [conn-state, owns, f-status, f-since, f-lastok, f-rtt, f-savedata, f-pending]
+    check: Name the fields of the connectivity state and say which one lets the banner tell user 1 how many sales are waiting.
+    answer: "status, since, lastOkAt, the rolling RTT, saveData and pendingWrites; pendingWrites, which comes from the outbox, gives the count."
+  - point: "Two details matter: Checking sits between Online and Offline so one failed request does not change the screen, and lastOkAt is a time, not a flag, so the screen can say how old its data is."
+    kind: rule
+    weight: core
+    teach:
+      - "One failed request is not enough to tell user 1 they are offline; on a mobile link a single request can die for many reasons. So the app spends a few seconds in Checking, confirming, before the screen changes."
+      - "Offline with the last answer three seconds ago and offline with it forty minutes ago call for different wording. The 'Updated 10:42' marker on each order is computed from lastOkAt."
+    draw: [stale-note]
+    check: Why does the state keep lastOkAt as a timestamp rather than a flag like wasRecentlyOnline?
+    answer: "So the screen can show how old its data is ('Updated 10:42') and word the banner by how long the outage has lasted; a flag cannot tell a blip from a long outage."
+    misconceptions:
+      - "Show offline the moment a request fails -> one failure can be noise; Checking confirms first so blips never reach the screen."
+  - point: Connected but cut off gets no status of its own, because to the app it looks exactly like offline; it shares Offline's behaviour and only the banner's wording mentions it.
+    kind: rule
+    weight: supporting
+    teach:
+      - "Behind the café's sign-in page the phone has a network, but requests never reach Stallhand. From inside the app that is indistinguishable from no signal, as the next part shows."
+      - "So it uses Offline's rules, and the banner adds a hint about signing in to public Wi-Fi."
+    draw: [looks-same]
+    check: Why doesn't Stallhand give 'connected but cut off' its own status?
+    answer: "The app cannot tell it apart from offline, since requests fail the same way; it shares Offline's behaviour and only the wording hints at a Wi-Fi sign-in."
+task:
+  prompt: "Draw Stallhand's connectivity state: the five situations from good to gone, the one monitor that owns the value and the screens that read it, and its fields. Mark which offline actions queue and which are disabled."
+  expects: [1, 2, 3, 4]

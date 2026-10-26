@@ -4,7 +4,7 @@
 - **Amends:** [ADR 0002](0002-interview-per-system.md) (points 2 and 4); supersedes the
   "Target architecture: a separate interview service" section of the interview README as it stood
   before this date
-- **Design:** [docs/interview/README.md](../interview/README.md); the brainstorm that led here is
+- **Design:** [docs/README.md](../README.md); the brainstorm that led here is
   the "AI interviewer" design note (Arrowbox, 22 October 2026)
 - **Code:** `content-kit/src/interview-derive.ts`, the `derive` command of the content CLI, lint
   rules `derived-plan` and `derived-plan-sanity`

@@ -34,7 +34,7 @@ export type SnapshotTrack = {
   view: 'library' | 'board';
   /** System slugs named on the track's card first. */
   featured: string[];
-  /** Practice drills (topic and section interviews) are derived for this track's systems (docs/interview/README.md, "Drills"). */
+  /** Practice drills (topic and section interviews) are derived for this track's systems (docs/README.md, "Drills"). */
   interviewDrills: boolean;
   /** Example systems named on the card while the track has none. */
   examples: string[];
@@ -172,7 +172,7 @@ export type SnapshotInterview = {
 };
 
 /**
- * A practice drill (docs/interview/README.md, "Drills"): a topic's or one section's short interview,
+ * A practice drill (docs/README.md, "Drills"): a topic's or one section's short interview,
  * derived like the system plan (ADR 0003), for systems on a track with `interviewDrills`. Whole,
  * like SnapshotInterview: the private fields never leave the interview service.
  */

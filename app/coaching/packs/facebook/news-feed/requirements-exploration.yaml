@@ -1,0 +1,112 @@
+# News feed requirements: what the client owns, the questions that fix the numbers, and the functional and non-functional lists.
+id: facebook/news-feed/requirements-exploration
+title: What the feed must do, and how well
+source:
+  hash: d7d95b00d653
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: null
+  assumes: []
+  carries:
+    - Ranking is a server black box that returns ordered pages; the client shows them fast, pages smoothly, keeps the reader's place and makes likes instant.
+    - "Working numbers: 10 posts per page, heavy sessions of 300 posts, a mid-range Android phone on 4G."
+    - Top and Recent are two separate feeds, each with its own cursor and position.
+    - New posts are announced by a pill and never inserted under the reader.
+    - "Targets: FCP < 1.5 s, LCP < 2.5 s, INP < 200 ms, 60 fps with at most 20 posts mounted, CLS < 0.1, at most 500 posts cached."
+  terms:
+    - term: functional requirement
+      means: Something the user can do or see on the feed, written so it can be checked.
+    - term: non-functional requirement
+      means: How well the feed must behave (speed, smoothness, stability, access, resilience, memory), with a number to meet.
+    - term: heavy session
+      means: The design's budget case, a reader who scrolls through 300 or more posts.
+board:
+  keep: []
+  elements:
+    - { id: feed-scope, kind: region, label: Feed scope, at: [1, 1], size: [24, 13] }
+    - { id: scope-client, kind: note, label: "client: show fast, page, keep place, like", at: [2, 3], in: feed-scope }
+    - { id: scope-server, kind: note, label: "server: ranking, a black box", at: [2, 5], in: feed-scope, tone: grey }
+    - { id: scope-out, kind: note, label: "out: composer, comments, ads, native", at: [2, 7], in: feed-scope, tone: grey }
+    - { id: assume-pages, kind: note, label: "10 per page, heavy session 300 posts", at: [2, 9], in: feed-scope, tone: amber }
+    - { id: assume-device, kind: note, label: "mid-range Android on 4G, Top and Recent", at: [2, 11], in: feed-scope, tone: amber }
+    - { id: functional, kind: region, label: Functional, at: [1, 15], size: [28, 16] }
+    - { id: fr-first, kind: note, label: 1 first screen in server-ranked order, at: [2, 17], in: functional }
+    - { id: fr-more, kind: note, label: "2 more loads near the end, no dupes or gaps", at: [2, 19], in: functional }
+    - { id: fr-pill, kind: note, label: 3 new posts wait behind a pill, at: [2, 21], in: functional }
+    - { id: fr-like, kind: note, label: "4 like shows at once, reverts on failure", at: [2, 23], in: functional }
+    - { id: fr-tabs, kind: note, label: 5 Top and Recent keep their own place, at: [2, 25], in: functional }
+    - { id: fr-back, kind: note, label: 6 Back restores posts and the post read, at: [2, 27], in: functional }
+    - { id: fr-offline, kind: note, label: "7 offline keeps posts and retries, end says so", at: [2, 29], in: functional }
+    - { id: non-functional, kind: region, label: Non-functional, at: [1, 32], size: [28, 12] }
+    - { id: nfr-load, kind: note, label: "FCP under 1.5 s, LCP under 2.5 s, JS 120 KB max", at: [2, 34], in: non-functional, tone: red }
+    - { id: nfr-input, kind: note, label: "INP under 200 ms, like in the same frame", at: [2, 36], in: non-functional, tone: red }
+    - { id: nfr-scroll, kind: note, label: "60 fps, at most 20 posts mounted", at: [2, 38], in: non-functional, tone: red }
+    - { id: nfr-stable, kind: note, label: "CLS under 0.1, new posts shift nothing", at: [2, 40], in: non-functional, tone: red }
+    - { id: nfr-access, kind: note, label: "WCAG 2.1 AA, at most 500 posts cached", at: [2, 42], in: non-functional, tone: red }
+  arrows: []
+beats:
+  - point: The server ranks the feed and is treated as a black box; the client's job is to show the ranked pages fast, load more smoothly, keep the reader's place and make likes feel instant.
+    kind: requirement
+    weight: core
+    teach:
+      - Open by drawing the line between server and client. Which posts appear, and in what order, is decided by ranking on the server; the client receives ordered pages and never second-guesses them.
+      - What is left for the client is still a lot, a fast first screen, paging as the reader scrolls, a reading position that holds, and likes that answer at once.
+      - Say what is out, to keep the design small, the composer, comment threads, stories and ads, and native apps.
+    draw: [feed-scope, scope-client, scope-server, scope-out]
+    check: Which of these is the client's job here, choosing the order of posts, or keeping the reader's position steady when posts load or arrive?
+    answer: Keeping the position steady; ordering is the server's ranking, a black box to the client.
+    misconceptions:
+      - "The client decides which posts to show -> ranking happens on the server; the client shows the ordered pages it is given."
+  - point: Clarifying questions turn a vague brief into numbers to design against, 10 posts a page, heavy sessions of 300 posts, a mid-range Android phone on 4G, and two tabs, Top and Recent.
+    kind: requirement
+    weight: core
+    teach:
+      - Ask before drawing anything. Which post types (text, one image, a carousel, a video)? How fresh (a new post announced within about a minute)? Which devices (desktop and mobile browsers, budgeted for a mid-range phone on 4G)?
+      - Pin the scale as an assumption, 10 posts per page, 30 to 50 posts in a typical session, 300 or more in a heavy one, and budget for the heavy case.
+      - Two orderings, Top and Recent, are treated as two separate feeds, each with its own cursor and scroll position.
+    draw: [assume-pages, assume-device]
+    check: Why budget the design for 300 posts when a typical session is 30 to 50?
+    answer: Because the heavy session is where a feed breaks, smoothness, memory and position have to hold there, so the design is sized for it.
+    misconceptions:
+      - "Top and Recent are one list sorted two ways -> each is its own feed with its own cursor and scroll position."
+  - point: The functional list says what the reader can do and see, from the ranked first screen and loading more without duplicates or gaps, to likes, tabs, coming back, offline and the end of the feed.
+    kind: requirement
+    weight: core
+    teach:
+      - Write each requirement so it can be checked. The first screen shows posts in the server's order; more posts load by themselves near the end, with a loading state and no duplicates or gaps.
+      - A like shows immediately and is reverted with a message if the request fails. Each tab keeps its position, and coming back to the feed restores the loaded posts and the post being read.
+      - On failure or offline, what was loaded stays and there is a way to retry; at the end of the posts the feed says so instead of spinning forever.
+    draw: [functional, fr-first, fr-more, fr-like, fr-tabs, fr-back, fr-offline]
+    check: The reader opens a post's permalink and presses Back. What should the feed show?
+    answer: The same loaded posts, positioned at the post they were reading, not the top of the feed and not a raw pixel offset.
+    misconceptions:
+      - "Restoring the feed means restoring the pixel scroll offset -> the position is tied to a post, since the layout may not match the old pixels."
+  - point: New posts that arrive while the user reads are announced by a pill and appear only when the user asks, because nothing may move under the reader.
+    kind: requirement
+    weight: core
+    teach:
+      - A friend posts while you are on the fifth post. Inserting it at the top would push what you are reading away, so the design holds it back.
+      - The pill says new posts are waiting and the list stays exactly where it is. Only pressing the pill brings them in.
+    draw: [fr-pill]
+    check: A friend posts while you are reading the fifth post. What do you see?
+    answer: A pill offering the new post, while the list stays exactly where it is.
+    misconceptions:
+      - "New posts should slide in at the top straight away -> inserting them moves content under the reader's eyes; they wait behind the pill."
+  - point: The non-functional requirements give each quality a number, fast first load, instant taps, smooth scrolling with few posts mounted, no layout shift, accessibility, resilience and bounded memory.
+    kind: metric
+    weight: core
+    teach:
+      - First load on a mid-range phone on 4G with a cold cache, first contentful paint under 1.5 s, largest under 2.5 s, at most 120 KB of route JavaScript.
+      - Taps answer in under 200 ms of INP and a like shows in the same frame. Scrolling holds 60 fps with no long task over 50 ms and no more than 20 posts mounted, measured after 300 have loaded.
+      - Nothing moves under the reader, CLS under 0.1 and no shift at all from new posts. The list meets WCAG 2.1 AA with the feed pattern, loaded posts survive a flaky network with a retry on every error, and at most 500 posts of payload stay cached.
+    draw: [non-functional, nfr-load, nfr-input, nfr-scroll, nfr-stable, nfr-access]
+    check: After 300 posts have loaded, how many posts may be mounted, and what frame rate must scrolling keep?
+    answer: At most 20 posts mounted, scrolling at 60 fps with no long tasks over 50 ms.
+    misconceptions:
+      - "After 300 posts all 300 are in the DOM -> the budget allows at most 20 mounted at once."
+task:
+  prompt: Draw three stacked panels for the news feed, what is in and out of scope, the functional requirements, and the non-functional targets with their numbers.
+  expects: [1, 3, 5]
