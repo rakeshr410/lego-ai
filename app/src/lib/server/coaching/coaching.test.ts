@@ -2,9 +2,10 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { stringify } from 'yaml';
-import { getSnapshot } from '../../content-snapshot';
+import { getSnapshot, topicAt } from '../../content-snapshot';
 import { drawParser, parseDraw } from '../interview/draw';
 import { catalogFromFiles, footprint, lessonBoard } from './catalog';
+import { packRef } from './schema';
 import { coachingSectionHash } from './hash';
 import { placeOp, startIds } from './layout';
 import { lessonPlan } from './lessons';
@@ -191,6 +192,21 @@ describe('catalogFromFiles', () => {
   });
 });
 
+describe('a backend pack', () => {
+  it('is named backend/<system>/<topic>/<section>, its system keeping the prefix', () => {
+    expect(packRef('backend/url-shortener/short-links-end-to-end/api')).toEqual({ system: 'backend/url-shortener', topic: 'short-links-end-to-end', sectionKey: 'api', section: 'short-links-end-to-end/api' });
+    expect(packRef('twitter/news-feed-end-to-end/api')).toEqual({ system: 'twitter', topic: 'news-feed-end-to-end', sectionKey: 'api', section: 'news-feed-end-to-end/api' });
+  });
+
+  it('checks beside a frontend pack of the same system, topic and section', () => {
+    const front = pack('a');
+    const back = { ...pack('a'), id: `backend/${pid('a')}` };
+    const c = catalogFromFiles({ [`packs/${front.id}.yaml`]: stringify(front), [`packs/${back.id}.yaml`]: stringify(back) });
+    expect(c.errors).toEqual([]);
+    expect([...c.packs.keys()].sort()).toEqual([`backend/${pid('a')}`, pid('a')]);
+  });
+});
+
 describe('the board plan', () => {
   const c = catalogFromFiles(filesOf([pack('one'), second()]));
   const layout = lessonBoard(c.packs, [pid('one'), pid('two')]);
@@ -263,9 +279,9 @@ describe('app/coaching', () => {
   it('names sections the content has, and no playlist takes a system’s slug', () => {
     const snap = getSnapshot();
     for (const id of c.packs.keys()) {
-      const [system, slug, key] = id.split('/');
-      const t = snap.topics.find((x) => x.system === system && x.slug === slug);
-      expect(t && coachingSectionHash(t.content ?? [], key), id).toBeTruthy();
+      const { system, topic, sectionKey } = packRef(id);
+      const t = topicAt(snap, system, topic);
+      expect(t && coachingSectionHash(t.content ?? [], sectionKey), id).toBeTruthy();
     }
     const systems = new Set(snap.topics.map((t) => t.system));
     for (const slug of c.playlists.keys()) expect(systems.has(slug), slug).toBe(false);

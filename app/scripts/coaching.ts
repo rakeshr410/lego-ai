@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import Anthropic from '@anthropic-ai/sdk';
 import { catalogFromFiles } from '../src/lib/server/coaching/catalog.ts';
 import { coachingSectionHash, sectionBlocksOf } from '../src/lib/server/coaching/hash.ts';
+import { packRef } from '../src/lib/server/coaching/schema.ts';
 import { readOwnArticles, snapshotPaths, writeSnapshot } from '../src/lib/content-snapshot.node.ts';
 import { loadContent } from '@arrowbox/content-kit/node';
 import { formatLint, lintTopic } from '@arrowbox/content-kit';
@@ -19,7 +20,8 @@ import { formatLint, lintTopic } from '@arrowbox/content-kit';
 //   node scripts/coaching.ts articles         lego-ai's own articles (app/articles) checked as content/'s
 //                                             topics are, then the snapshot rebuilt with them (exits 1
 //                                             when one is skipped)
-//   node scripts/coaching.ts hash <pack id>   the section's current hash (<system>/<topic>/<sectionKey>)
+//   node scripts/coaching.ts hash <pack id>   the section's current hash (<system>/<topic>/<sectionKey>, or
+//                                             backend/<system>/<topic>/<sectionKey> for a backend article)
 //   node scripts/coaching.ts stamp <pack id>  after rereading the section and fixing the pack:
 //                                             records the section's current hash in the pack
 //   node scripts/coaching.ts draft <pack id> [--after <pack id>] [--keep id,id] [--force]
@@ -53,11 +55,13 @@ function files(): Record<string, string> {
 function topics(): Topic[] {
   const { outFile } = snapshotPaths(appDir);
   if (!existsSync(outFile)) throw new Error(`No content snapshot at ${outFile}: run \`npx astro sync\` first.`);
-  return (JSON.parse(readFileSync(outFile, 'utf8')) as { topics: Topic[] }).topics;
+  const snap = JSON.parse(readFileSync(outFile, 'utf8')) as { topics: Topic[]; backendTopics?: Topic[] };
+  // Backend articles under their pack ids' system, backend/<system> (packRef).
+  return [...snap.topics, ...(snap.backendTopics ?? []).map((t) => ({ ...t, system: `backend/${t.system}` }))];
 }
 
 function section(id: string): { topic: Topic; key: string; hash: string } {
-  const [system, slug, key] = id.split('/');
+  const { system, topic: slug, sectionKey: key } = packRef(id);
   const topic = topics().find((t) => t.system === system && t.slug === slug);
   if (!topic) throw new Error(`No topic ${system}/${slug} in the snapshot.`);
   const hash = coachingSectionHash(topic.content ?? [], key ?? '');
@@ -74,7 +78,7 @@ function check(strict: boolean): number {
   const problems = [...c.errors];
   const stale: string[] = [];
   for (const [id, p] of c.packs) {
-    const [system, slug, key] = id.split('/');
+    const { system, topic: slug, sectionKey: key } = packRef(id);
     const t = all_topics.find((x) => x.system === system && x.slug === slug);
     const hash = t ? coachingSectionHash(t.content ?? [], key) : null;
     if (!hash) problems.push(`packs/${id}.yaml: the section is not in the content (${system}/${slug}#${key})`);

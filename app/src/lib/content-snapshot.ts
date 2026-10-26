@@ -202,6 +202,11 @@ export type ContentSnapshot = {
   systems: SnapshotSystem[];
   /** Topics that validated, in systems.yaml order, then by order and slug. */
   topics: SnapshotTopic[];
+  /**
+   * lego-ai's backend articles (app/articles/backend/<system>/<slug>.yaml), kept apart from `topics` so a
+   * backend article may share its system and slug with a frontend one. Only the coach reads them (topicAt).
+   */
+  backendTopics?: SnapshotTopic[];
   picker: SnapshotPicker;
   /** The tags topics may carry (P3-4). */
   tags: SnapshotTag[];
@@ -230,4 +235,14 @@ let parsed: ContentSnapshot | undefined;
 export function getSnapshot(): ContentSnapshot {
   parsed ??= JSON.parse(raw) as ContentSnapshot;
   return parsed;
+}
+
+/** The folder of lego-ai's backend articles and packs, and the prefix of a system written as theirs (`backend/url-shortener`). */
+export const BACKEND = 'backend';
+
+/** A topic by system and slug; a system written `backend/<system>` is looked up among the backend articles. */
+export function topicAt(snapshot: Pick<ContentSnapshot, 'topics' | 'backendTopics'>, system: string, slug: string): SnapshotTopic | undefined {
+  const backend = system.startsWith(`${BACKEND}/`);
+  const name = backend ? system.slice(BACKEND.length + 1) : system;
+  return (backend ? (snapshot.backendTopics ?? []) : snapshot.topics).find((t) => t.system === name && t.slug === slug);
 }

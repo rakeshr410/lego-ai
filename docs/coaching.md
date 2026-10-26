@@ -16,10 +16,20 @@ teaches something the article no longer says.
 
 ```
 app/coaching/
-  packs/<system>/<topic>/<sectionKey>.yaml   one pack per article section
-  playlists/<slug>.yaml                      lessons in order, each a few parts of one or two packs
-app/articles/<system>/<topic>.yaml           lego-ai's own articles (below)
+  packs/<system>/<topic>/<sectionKey>.yaml           one pack per article section
+  packs/backend/<system>/<topic>/<sectionKey>.yaml   the same, for a backend article
+  playlists/<slug>.yaml                              lessons in order, each a few parts of one or two packs
+app/articles/<system>/<topic>.yaml                   lego-ai's own articles (below)
+app/articles/backend/<system>/<topic>.yaml           lego-ai's own backend articles
 ```
+
+Backend design articles and their packs live under `backend/`, apart from the frontend ones, because one
+system can have both (Twitter's feed client and Twitter's timeline service): a backend article may share
+its system and slug with a frontend article, or with a topic of the main site. The snapshot keeps them in
+`backendTopics`, read only by the coach; a backend pack's id starts with `backend/`
+(`backend/url-shortener/short-links-end-to-end/api`), and `packRef` (schema.ts) and `topicAt`
+(content-snapshot.ts) resolve it. `backend` is therefore not a system slug. How a backend lesson's sections
+and board are decided is coaching-backend.md.
 
 ### lego-ai's own articles
 

@@ -1,5 +1,5 @@
 # URL shortener interview, API: "3. API creation" beside the entities, the POST with its body written as code and the GET beside it, one endpoint per functional requirement, as in the video.
-id: url-shortener/short-links-end-to-end/api
+id: backend/url-shortener/short-links-end-to-end/api
 title: One endpoint per requirement
 source:
   hash: "8215decc953d"
@@ -8,7 +8,7 @@ review:
   provenance: ai-drafted
   author: claude
 context:
-  after: url-shortener/short-links-end-to-end/entities
+  after: backend/url-shortener/short-links-end-to-end/entities
   assumes:
     - "Functional: create a short URL, optional custom URL and expiry for premium users, redirect to the original."
     - "The core entities are the short URL, the long URL and the user."

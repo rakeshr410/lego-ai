@@ -1,5 +1,5 @@
 # URL shortener interview, low-level design 1: hash the long URL and keep the first seven characters. Under "5. Low-level design: 1. Hash logic": the logic as one line, two URLs whose hashes share a prefix, and the server-to-database latency sum that doubles with each collision, as in the video (hashing, not encryption).
-id: url-shortener/short-links-end-to-end/lld-hashing
+id: backend/url-shortener/short-links-end-to-end/lld-hashing
 title: "Low-level design, 1: hash and truncate"
 source:
   hash: "fbf91bd99ecc"
@@ -8,7 +8,7 @@ review:
   provenance: ai-drafted
   author: claude
 context:
-  after: url-shortener/short-links-end-to-end/high-level-design
+  after: backend/url-shortener/short-links-end-to-end/high-level-design
   assumes:
     - "The high-level design is a client, one server that generates the short URL, and a database holding the mapping."
     - "Non-functional: about 200 ms, 1B URLs, every short URL unique."

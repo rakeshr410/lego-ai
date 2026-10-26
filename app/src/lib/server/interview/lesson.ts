@@ -1,6 +1,6 @@
 import { textContext } from '@arrowbox/content-kit';
 import { blockText, type Block } from '../ask-grounding';
-import { getSnapshot, type SnapshotTopic } from '../../content-snapshot';
+import { getSnapshot, topicAt, type SnapshotTopic } from '../../content-snapshot';
 import { sectionBlocksOf } from '../coaching/hash';
 import type { Plan } from './plans';
 
@@ -12,7 +12,7 @@ import type { Plan } from './plans';
 /** Characters of one section's material the coach is given. */
 export const MATERIAL_MAX = 7000;
 
-const topicOf = (system: string, slug: string): SnapshotTopic | undefined => getSnapshot().topics.find((t) => t.system === system && t.slug === slug);
+const topicOf = (system: string, slug: string): SnapshotTopic | undefined => topicAt(getSnapshot(), system, slug);
 /** The system a plan's section belongs to: a playlist's lesson draws on several (coaching/lessons.ts). */
 const systemOf = (plan: Plan, section: string) => plan.lesson?.sections.find((s) => s.key === section)?.system ?? plan.system.slug;
 

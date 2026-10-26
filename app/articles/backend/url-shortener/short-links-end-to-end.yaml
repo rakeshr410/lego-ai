@@ -1,4 +1,4 @@
-# yaml-language-server: $schema=../../../../lego/content-kit/schema/topic.schema.json
+# yaml-language-server: $schema=../../../../../lego/content-kit/schema/topic.schema.json
 # provenance: ai-drafted by claude-opus-5-5 on 2026-10-26
 #
 # A whole backend system design interview for a URL shortener like Bitly, run step by step on one

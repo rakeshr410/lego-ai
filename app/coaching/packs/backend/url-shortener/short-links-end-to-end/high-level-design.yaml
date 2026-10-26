@@ -1,5 +1,5 @@
 # URL shortener interview, high-level design: "4. High-level design" under the API, a client box, a server box that only says it generates the short URL, a database oval, the two flows as arrows, and the user and url tables written beside the database, as in the video.
-id: url-shortener/short-links-end-to-end/high-level-design
+id: backend/url-shortener/short-links-end-to-end/high-level-design
 title: Client, server, database
 source:
   hash: "a4f57f67bd24"
@@ -8,7 +8,7 @@ review:
   provenance: ai-drafted
   author: claude
 context:
-  after: url-shortener/short-links-end-to-end/api
+  after: backend/url-shortener/short-links-end-to-end/api
   assumes:
     - "POST /v1/urls creates a short URL; GET /{code} redirects to the long URL."
     - "The core entities are the short URL, the long URL and the user."

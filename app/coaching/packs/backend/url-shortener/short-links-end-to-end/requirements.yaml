@@ -1,5 +1,5 @@
 # URL shortener interview, requirements: "1. Functional requirements" on the left and "Non-functional requirements" on the right, under the problem statement, as the video lays them out; every non-functional line with its number.
-id: url-shortener/short-links-end-to-end/requirements
+id: backend/url-shortener/short-links-end-to-end/requirements
 title: Two lists, functional and non-functional
 source:
   hash: "5fc5b71868b3"
@@ -8,7 +8,7 @@ review:
   provenance: ai-drafted
   author: claude
 context:
-  after: url-shortener/short-links-end-to-end/problem-statement
+  after: backend/url-shortener/short-links-end-to-end/problem-statement
   assumes:
     - "A shortener maps each long URL to a short one, one to one, and redirects from the short one."
   carries:

@@ -1,6 +1,6 @@
 import { parse } from 'yaml';
 import { arrowRoute, labelRoom } from '../../board/geometry.ts';
-import { BOX_CELLS, CELL, GRID, pack as packSchema, playlist as playlistSchema, type BoardArrow, type BoardElement, type BoardList, type Pack, type Playlist } from './schema.ts';
+import { BOX_CELLS, CELL, GRID, packRef, pack as packSchema, playlist as playlistSchema, type BoardArrow, type BoardElement, type BoardList, type Pack, type Playlist } from './schema.ts';
 
 // The coaching material (docs/coaching.md), read and checked as one catalog: every pack and every
 // playlist under app/coaching, parsed against the schema, then checked against each other: a pack's
@@ -222,7 +222,7 @@ function checkPlaylist(file: string, pl: Playlist, packs: ReadonlyMap<string, Pa
       for (const list of p.board.lists ?? []) if (board.has(list.in)) slots.set(list.in, [...(slots.get(list.in) ?? []), ...Array.from({ length: list.slots }, (_, k) => slotCells(list, k))]);
     checkGeometry(l.slug, board, err, slots);
     // One section key per part: two systems' topics with one slug would be ambiguous in the plan.
-    const keys = ids.map((id) => id.split('/').slice(1).join('/'));
+    const keys = ids.map((id) => packRef(id).section);
     if (new Set(keys).size !== keys.length) err(`lesson "${l.slug}" teaches one topic section twice`);
   }
 }

@@ -1,5 +1,5 @@
 # URL shortener interview, low-level design 2: a counter. Under "5. Low-level design: 2. Counter", the video's two drawings one under the other: client, a tall round-robin load balancer, three servers with local counters, then a Redis counter and the database; below it the same picture split by traffic into encryption (create) and decryption (redirect) servers, a Redis counter, a Redis cache and the database.
-id: url-shortener/short-links-end-to-end/lld-counter
+id: backend/url-shortener/short-links-end-to-end/lld-counter
 title: "Low-level design, 2: a counter"
 source:
   hash: "48dd78c65985"
@@ -8,7 +8,7 @@ review:
   provenance: ai-drafted
   author: claude
 context:
-  after: url-shortener/short-links-end-to-end/lld-hashing
+  after: backend/url-shortener/short-links-end-to-end/lld-hashing
   assumes:
     - "Hash and truncate collides at 1B links and costs a database look-up per try."
     - "Non-functional: about 200 ms, 100M daily users and 1B URLs, every short URL unique, availability over consistency."

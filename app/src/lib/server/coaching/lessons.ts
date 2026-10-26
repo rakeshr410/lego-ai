@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { DerivedItem, DerivedPlan, DerivedSection, DerivedStage } from '@arrowbox/content-kit';
-import { getSnapshot } from '../../content-snapshot';
+import { getSnapshot, topicAt } from '../../content-snapshot';
 import { FLAGS } from '../../sd';
 import type { Plan } from '../interview/plans';
 import { lessonBoard } from './catalog';
@@ -8,7 +8,7 @@ import { startIds, type Layout } from './layout';
 import { coachingCatalog, packStanding, packTopic, type PackStanding } from './material';
 import type { ListPlan } from '../interview/draw';
 import { listChars } from './catalog';
-import { CELL, type Lesson, type Pack, type Playlist } from './schema';
+import { CELL, packRef, type Lesson, type Pack, type Playlist } from './schema';
 
 // A playlist's lesson as the coach runs it (docs/coaching.md): turned into the plan shape the coach
 // already teaches from (coach.ts), so the room, the voice, the quota, the progress rail and the
@@ -37,7 +37,7 @@ export type LessonInfo = {
   recall?: string[];
 };
 
-const sectionKeyOf = (packId: string) => packId.split('/').slice(1).join('/');
+const sectionKeyOf = (packId: string) => packRef(packId).section;
 
 /** An ask, by the lesson's items: which items' parts the learner gives, the ids drawn before asking, and the words. */
 export type LessonAsk = {
@@ -150,9 +150,9 @@ export function lessonPlan(playlistSlug: string, lessonSlug: string): Plan | nul
     if (standing === 'missing') return null;
     const key = sectionKeyOf(id);
     const usable = standing === 'fresh' ? p : null;
-    sections.push({ key, system: id.split('/')[0], packId: id, standing, pack: usable });
+    sections.push({ key, system: packRef(id).system, packId: id, standing, pack: usable });
     const items = usable ? packItems(usable, key) : articleItems(key, p.title);
-    planSections.push({ key, topic: topic.slug, sectionKey: id.split('/')[2], title: p.title, railLabel: p.title, ordinal: null, kind: 'deep-dive', items, pmFacts: [], minutes: 0, weight: 1 });
+    planSections.push({ key, topic: topic.slug, sectionKey: packRef(id).sectionKey, title: p.title, railLabel: p.title, ordinal: null, kind: 'deep-dive', items, pmFacts: [], minutes: 0, weight: 1 });
   }
   const stages: DerivedStage[] = lesson.parts.map((part, n) => {
     const keys = part.packs.map(sectionKeyOf);
@@ -176,7 +176,7 @@ export function lessonPlan(playlistSlug: string, lessonSlug: string): Plan | nul
       drawTasks: tasks.slice(0, 1),
     };
   });
-  const topics = [...new Set(ids.map((id) => id.split('/').slice(0, 2).join('/')))];
+  const topics = [...new Map(ids.map((id) => [`${packRef(id).system}/${packRef(id).topic}`, packRef(id)] as const)).values()];
   const plan: DerivedPlan = {
     title: lesson.title,
     summary: lesson.summary,
@@ -189,15 +189,14 @@ export function lessonPlan(playlistSlug: string, lessonSlug: string): Plan | nul
     stages,
     sections: planSections,
     pmFacts: [],
-    sourceTopics: topics.map((t) => t.split('/')[1]),
+    sourceTopics: topics.map((t) => t.topic),
     board: { components: [], edges: [] },
   };
   const layout = lessonBoard(packs, ids);
   const first = sections[0]?.pack;
   const snapshot = getSnapshot();
-  const briefs = topics.flatMap((ref) => {
-    const [system, slug] = ref.split('/');
-    const t = snapshot.topics.find((x) => x.system === system && x.slug === slug);
+  const briefs = topics.flatMap(({ system, topic: slug }) => {
+    const t = topicAt(snapshot, system, slug);
     return t?.tutorBrief ? [{ slug, title: t.title, brief: t.tutorBrief }] : [];
   });
   // The plan's version: the lesson, its packs and which of them are in use. A pack restamped or a section gone stale changes it.

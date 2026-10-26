@@ -1,5 +1,5 @@
 # URL shortener interview, low-level design 3: ZooKeeper, and finishing. Under "5. Low-level design: 3. ZooKeeper", as in the video: what ZooKeeper is, its tree of znodes (persistent, and ephemeral drawn dashed), then the final picture with ZooKeeper beside the encryption servers, the range notes, the Snowflake alternative, cron to the database, the database choice and 301 or 302. The video hashes a Snowflake ID down to six characters; this pack teaches leased counter ranges encoded whole, and why the truncated hash fails.
-id: url-shortener/short-links-end-to-end/lld-zookeeper
+id: backend/url-shortener/short-links-end-to-end/lld-zookeeper
 title: "Low-level design, 3: ZooKeeper, and finishing"
 source:
   hash: "ab5c681bfd5b"
@@ -8,7 +8,7 @@ review:
   provenance: ai-drafted
   author: claude
 context:
-  after: url-shortener/short-links-end-to-end/lld-counter
+  after: backend/url-shortener/short-links-end-to-end/lld-counter
   assumes:
     - "A counter in base62 is unique and short; one Redis counter is a single point of failure."
     - "Encryption (create) and decryption (redirect) servers are scaled separately, with a Redis cache for redirects."

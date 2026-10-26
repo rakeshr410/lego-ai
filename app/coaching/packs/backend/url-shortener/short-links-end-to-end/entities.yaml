@@ -1,5 +1,5 @@
 # URL shortener interview, core entities: "2. Identifying entities" under the functional list, three lines, as in the video.
-id: url-shortener/short-links-end-to-end/entities
+id: backend/url-shortener/short-links-end-to-end/entities
 title: Three entities
 source:
   hash: "bdc0011b8123"
@@ -8,7 +8,7 @@ review:
   provenance: ai-drafted
   author: claude
 context:
-  after: url-shortener/short-links-end-to-end/requirements
+  after: backend/url-shortener/short-links-end-to-end/requirements
   assumes:
     - "Functional: create a short URL, optional custom URL and expiry for premium users, redirect to the original."
   carries:

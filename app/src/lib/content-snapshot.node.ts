@@ -30,7 +30,7 @@ import { freeCut } from './free-tier.ts';
  * 12: practice drills (a topic's and each section's short interview) for the tracks that opt in
  * (tracks.yaml interviewDrills), and the flag on the track.
  */
-export const SNAPSHOT_FORMAT = 12;
+export const SNAPSHOT_FORMAT = 13;
 
 /**
  * Strapi's defaults for fields a file may leave out, so pages look as they did when they were
@@ -164,53 +164,66 @@ type BuildOptions = {
 };
 
 /**
- * lego-ai's own articles: topic files in the main site's format under app/articles/<system>/<slug>.yaml,
- * for an existing system of content/. They are written for the coaching playlists (docs/coaching.md)
+ * lego-ai's own articles: topic files in the main site's format under app/articles/<system>/<slug>.yaml
+ * (frontend) or app/articles/backend/<system>/<slug>.yaml (backend, the snapshot's backendTopics), for an
+ * existing system of content/. They are written for the coaching playlists (docs/coaching.md)
  * and live only in this app's snapshot: the main site does not list or serve them, and they are left
  * out of the systems' interview plans and drills. Each is validated and linted as content/'s topics
  * are; one with an error is skipped and reported.
  */
-export function readOwnArticles(dir: string, systems: readonly SystemEntry[], taken: ReadonlySet<string>): { topics: TopicRecord[]; problems: Map<string, string[]> } {
-  const topics: TopicRecord[] = [];
+/** app/articles/backend: BACKEND in content-snapshot.ts, which this file can only import types from (it reads the snapshot with ?raw). */
+const BACKEND = 'backend';
+
+export type OwnTopic = TopicRecord & { backend?: true };
+
+export function readOwnArticles(dir: string, systems: readonly SystemEntry[], taken: ReadonlySet<string>): { topics: OwnTopic[]; problems: Map<string, string[]> } {
+  const topics: OwnTopic[] = [];
   const problems = new Map<string, string[]>();
   if (!existsSync(dir)) return { topics, problems };
   const skip = (file: string, message: string) => problems.set(file, [...(problems.get(file) ?? []), message]);
-  for (const system of readdirSync(dir).sort()) {
-    const full = join(dir, system);
-    if (system.startsWith('.') || !statSync(full).isDirectory()) continue;
-    const entry = systems.find((s) => s.slug === system);
-    for (const name of readdirSync(full).sort()) {
-      if (!name.endsWith('.yaml')) continue;
-      const slug = name.slice(0, -'.yaml'.length);
-      const file = `articles/${system}/${name}`;
-      if (!entry) {
-        skip(file, `${file}: no system "${system}" in the main site's content/systems.yaml`);
-        continue;
+  // articles/<system>/ are frontend articles, beside content/'s topics; articles/backend/<system>/ are backend ones,
+  // kept apart (the snapshot's backendTopics), so they may share a system and a slug with a frontend article.
+  const read = (root: string, prefix: string, backend: boolean, clash: ReadonlySet<string>) => {
+    for (const system of readdirSync(root).sort()) {
+      const full = join(root, system);
+      if (system.startsWith('.') || !statSync(full).isDirectory()) continue;
+      if (!backend && system === BACKEND) continue;
+      const entry = systems.find((s) => s.slug === system);
+      for (const name of readdirSync(full).sort()) {
+        if (!name.endsWith('.yaml')) continue;
+        const slug = name.slice(0, -'.yaml'.length);
+        const file = `${prefix}/${system}/${name}`;
+        if (!entry) {
+          skip(file, `${file}: no system "${system}" in the main site's content/systems.yaml`);
+          continue;
+        }
+        if (clash.has(`${system}/${slug}`)) {
+          skip(file, `${file}: content/ already has a topic ${system}/${slug}`);
+          continue;
+        }
+        let value: unknown;
+        try {
+          value = parseYaml(readFileSync(join(full, name), 'utf8'));
+        } catch (err) {
+          skip(file, `${file}: ${err instanceof Error ? err.message.split('\n')[0] : String(err)}`);
+          continue;
+        }
+        const r = validateTopic(value);
+        if (!r.ok) {
+          skip(file, `${file}:\n${formatIssues(r.issues.map((i) => ({ ...i, file })))}`);
+          continue;
+        }
+        const errors = errorsOf(lintTopic(r.data, { groups: entry.groups }));
+        if (errors.length) {
+          skip(file, formatLint(errors.map((i) => ({ ...i, file }))));
+          continue;
+        }
+        topics.push({ system, slug, file, data: r.data as TopicFile, ...(backend ? { backend: true as const } : {}) });
       }
-      if (taken.has(`${system}/${slug}`)) {
-        skip(file, `${file}: content/ already has a topic ${system}/${slug}`);
-        continue;
-      }
-      let value: unknown;
-      try {
-        value = parseYaml(readFileSync(join(full, name), 'utf8'));
-      } catch (err) {
-        skip(file, `${file}: ${err instanceof Error ? err.message.split('\n')[0] : String(err)}`);
-        continue;
-      }
-      const r = validateTopic(value);
-      if (!r.ok) {
-        skip(file, `${file}:\n${formatIssues(r.issues.map((i) => ({ ...i, file })))}`);
-        continue;
-      }
-      const errors = errorsOf(lintTopic(r.data, { groups: entry.groups }));
-      if (errors.length) {
-        skip(file, formatLint(errors.map((i) => ({ ...i, file }))));
-        continue;
-      }
-      topics.push({ system, slug, file, data: r.data as TopicFile });
     }
-  }
+  };
+  read(dir, 'articles', false, taken);
+  if (existsSync(join(dir, BACKEND))) read(join(dir, BACKEND), `articles/${BACKEND}`, true, new Set());
   return { topics, problems };
 }
 
@@ -243,12 +256,13 @@ export function buildSnapshot(contentDir: string, { warn, articlesDir }: BuildOp
   }
 
   // lego-ai's own articles (app/articles), after content/'s topics; not in the interview plans or drills below.
+  const backendTopics: SnapshotTopic[] = [];
   if (articlesDir) {
     const own = readOwnArticles(articlesDir, catalog.systems, new Set(catalog.topics.map((t) => `${t.system}/${t.slug}`)));
     for (const [file, list] of own.problems) problems.set(file, list);
-    // Files are named from the app directory (articles/<system>/<topic>.yaml).
+    // Files are named from the app directory (articles/<system>/<topic>.yaml, articles/backend/<system>/<topic>.yaml).
     const ownMeta = deriveMeta(dirname(articlesDir), own.topics).meta;
-    for (const t of own.topics) topics.push(toTopic(t, ownMeta.get(t.file)));
+    for (const t of own.topics) (t.backend ? backendTopics : topics).push(toTopic(t, ownMeta.get(t.file)));
   }
 
   // A problem class that names no track is the library's (the system picker's, design 6a).
@@ -304,6 +318,7 @@ export function buildSnapshot(contentDir: string, { warn, articlesDir }: BuildOp
       groups: (s.groups ?? []).map((g) => ({ key: g.key, name: g.name, summary: g.summary ?? null })),
     })),
     topics,
+    backendTopics,
     picker: { ...DEFAULTS.picker, ...catalog.picker },
     tags: (catalog.tags ?? []).map((t) => ({ slug: t.slug, name: t.name, description: t.description ?? null })),
     coachTips: catalog.coachTips.map((t, i) => strapiSchemas.coachTip.parse({ id: i + 1, ...t })),

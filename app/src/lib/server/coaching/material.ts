@@ -1,8 +1,8 @@
-import { getSnapshot, type SnapshotTopic } from '../../content-snapshot';
+import { getSnapshot, topicAt, type SnapshotTopic } from '../../content-snapshot';
 import { FLAGS } from '../../sd';
 import { catalogFromFiles, type Catalog } from './catalog';
 import { coachingSectionHash } from './hash';
-import type { Pack } from './schema';
+import { packRef, type Pack } from './schema';
 
 // The build's coaching material (docs/coaching.md): the files under app/coaching, bundled at build
 // time like the article snapshot, checked once (an invalid file fails the build and the tests), and
@@ -25,8 +25,8 @@ export function coachingCatalog(): Catalog {
 
 /** The article topic a pack teaches from, as the snapshot has it. */
 export function packTopic(id: string): SnapshotTopic | undefined {
-  const [system, slug] = id.split('/');
-  return getSnapshot().topics.find((t) => t.system === system && t.slug === slug);
+  const { system, topic } = packRef(id);
+  return topicAt(getSnapshot(), system, topic);
 }
 
 /**
@@ -41,7 +41,7 @@ export type PackStanding = 'fresh' | 'stale' | 'draft' | 'missing';
 export function packStanding(p: Pack): PackStanding {
   const topic = packTopic(p.id);
   if (!topic) return 'missing';
-  const hash = coachingSectionHash((topic.content ?? []) as { __component?: string; key?: string }[], p.id.split('/')[2]);
+  const hash = coachingSectionHash((topic.content ?? []) as { __component?: string; key?: string }[], packRef(p.id).sectionKey);
   if (!hash) return 'missing';
   if (hash !== p.source.hash) return 'stale';
   if (FLAGS.reviewedOnly && p.review.status !== 'reviewed') return 'draft';

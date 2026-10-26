@@ -5,14 +5,15 @@ the frontend order: mock-up, requirements, components, state, API, performance. 
 decided differently, and its lessons follow the backend order instead of borrowing the frontend's. This
 note records that order and the board it draws, as extracted from a backend walkthrough video
 (InterviewWithBunny, System Design 1: Design Tiny URL, youtube.com/watch?v=Y-BO_4XNw8c), and how the URL
-shortener lessons (`app/articles/url-shortener/short-links-end-to-end.yaml`, the `backend-interviews`
-playlist) carry it. coaching.md's pack format and checks apply unchanged.
+shortener lessons (`app/articles/backend/url-shortener/short-links-end-to-end.yaml`, the packs under
+`app/coaching/packs/backend/`, the `backend-interviews` playlist) carry it. Backend articles and packs
+live under `backend/` (coaching.md, Files), so a system can have a frontend and a backend lesson set. coaching.md's pack format and checks apply unchanged.
 
 ## Sections, as the video decides them
 
 The video's chapters are the article's sections, one pack each:
 
-| Section key | Video chapter | What is said |
+| Section key (pack `backend/<system>/<topic>/<key>`) | Video chapter | What is said |
 |---|---|---|
 | `problem-statement` | Understanding the problem statement | What the product does, one example, the one-to-one mapping; the five steps said once (said, not drawn). |
 | `requirements` | Gathering functional / non-functional requirements | Functional first, core then optional; non-functional with a number and where it applies (latency, scale, uniqueness, CAP). Inside 10 to 15 minutes. |

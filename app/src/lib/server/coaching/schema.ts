@@ -17,8 +17,23 @@ const handle = () => z.string().regex(/^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9
 const date = () => z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Expected a date, YYYY-MM-DD');
 const line = (max = 300) => z.string().regex(/\S/, 'Empty text').max(max);
 
-/** A pack's id: the section it teaches, as `<system>/<topic>/<sectionKey>` (its path under coaching/packs). */
-export const PACK_ID = /^[a-z0-9]+(?:-[a-z0-9]+)*\/[a-z0-9]+(?:-[a-z0-9]+)*\/[a-z0-9][a-z0-9-]{0,120}$/;
+/**
+ * A pack's id: the section it teaches, as `<system>/<topic>/<sectionKey>` (its path under coaching/packs), or
+ * `backend/<system>/<topic>/<sectionKey>` for a backend article's (app/articles/backend), which may share its
+ * system and topic with a frontend one.
+ */
+export const PACK_ID = /^(?:backend\/)?[a-z0-9]+(?:-[a-z0-9]+)*\/[a-z0-9]+(?:-[a-z0-9]+)*\/[a-z0-9][a-z0-9-]{0,120}$/;
+
+/**
+ * A pack id's parts. `system` keeps the `backend/` prefix (content-snapshot.ts `topicAt` reads it), so
+ * `system`/`topic` names one article; `section` is `<topic>/<sectionKey>`, the plan's key for it.
+ */
+export function packRef(id: string): { system: string; topic: string; sectionKey: string; section: string } {
+  const parts = id.split('/');
+  const backend = parts.length === 4;
+  const [system, topic, sectionKey] = backend ? parts.slice(1) : parts;
+  return { system: backend ? `${parts[0]}/${system}` : system, topic, sectionKey, section: `${topic}/${sectionKey}` };
+}
 
 /** Board grid cell, in board pixels: positions and sizes in a pack are in cells. */
 export const CELL = 20;
