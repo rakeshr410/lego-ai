@@ -1,0 +1,59 @@
+# URL shortener interview, API: "3. API creation" beside the entities, the POST with its body written as code and the GET beside it, one endpoint per functional requirement, as in the video.
+id: url-shortener/short-links-end-to-end/api
+title: One endpoint per requirement
+source:
+  hash: "8215decc953d"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: url-shortener/short-links-end-to-end/entities
+  assumes:
+    - "Functional: create a short URL, optional custom URL and expiry for premium users, redirect to the original."
+    - "The core entities are the short URL, the long URL and the user."
+  carries:
+    - "POST /v1/urls with { longUrl, customAlias?, expiresAt? } returns the short URL; the two optional fields are premium only."
+    - "GET /{code} answers with a redirect whose Location is the long URL."
+    - The API maps one to one onto the functional requirements.
+  terms:
+    - term: endpoint
+      means: A method and a path the service answers, with what it takes and what it returns.
+board:
+  keep: [title, prompt-desc, prompt-example, fr, fr-create, fr-custom, fr-expiry, fr-redirect, nfr, nfr-latency, nfr-scale, nfr-unique, nfr-cap, entities, ent-short, ent-long, ent-user]
+  elements:
+    - { id: api, kind: region, label: 3. API creation, at: [26, 22], size: [44, 8], dashed: true }
+    - { id: api-post, kind: note, label: "POST /v1/urls, returns the short URL", at: [27, 24], in: api }
+    - { id: api-body-1, kind: note, label: "{ longUrl,", at: [29, 25], in: api }
+    - { id: api-body-2, kind: note, label: "customAlias?,", at: [31, 26], in: api }
+    - { id: api-body-3, kind: note, label: "expiresAt? }", at: [31, 27], in: api }
+    - { id: api-get, kind: note, label: "GET /{code}, redirects to the long URL", at: [48, 24], in: api }
+  arrows: []
+beats:
+  - point: "Creating is a POST to /v1/urls whose body is the long URL plus two optional fields, the custom alias and the expiry, and it returns the short URL."
+    kind: flow
+    weight: core
+    teach:
+      - "Step three, the API. With the requirements written it is almost one to one. The first requirement is creating, so a POST to v1 slash urls, and it returns the short URL."
+      - "The body: the long URL, then two optional fields, a custom alias and an expiry date, marked with a question mark because only premium users send them."
+    draw: [api, api-post, api-body-1, api-body-2, api-body-3]
+    check: How do you show on the board that the alias and the expiry are optional?
+    answer: With a question mark after each field in the body; they are optional and premium only.
+  - point: "Redirecting is a GET on the short code that answers with a redirect to the long URL, so the browser follows it by itself."
+    kind: flow
+    weight: core
+    teach:
+      - "The second requirement is the redirect. Opening a short URL is a GET on the code, and the answer is a redirect whose Location is the long URL; the browser follows it."
+      - "Two requirements, two endpoints: that one-to-one mapping is the check that the API is complete."
+    draw: [api-get]
+    check: What does the GET on a short code send back?
+    answer: A 3xx redirect with the long URL in the Location header, which the browser follows.
+    misconceptions:
+      - "The GET returns the long URL as JSON -> it is a redirect, because anyone opening a link is a plain browser request."
+asks:
+  - ids: [api-post, api-get]
+    beats: [1, 2]
+    question: "Looking at the two requirements, what endpoints do we need? Give me the method and the path, and I'll write them."
+    hints:
+      - One requirement creates something, the other reads it back.
+      - What would the create call send in its body?

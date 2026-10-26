@@ -1,0 +1,27 @@
+slug: backend-interviews
+title: Backend system design interviews
+summary: Backend design interviews run step by step on one whiteboard, as you would run them on the day. Requirements with numbers, entities, the API, a high-level design, then a low-level design that improves one flaw at a time.
+outline: "The URL shortener lessons follow the five-step order and the drawings of InterviewWithBunny's System Design 1, Design Tiny URL (youtube.com/watch?v=Y-BO_4XNw8c), section by section; no text is taken from it, and its factual slips are corrected in the article."
+lessons:
+  - slug: url-shortener
+    title: "The URL shortener interview: the problem, requirements, entities and API"
+    summary: "The problem written at the top of the board, functional and non-functional requirements side by side, the three entities, and the two endpoints."
+    parts:
+      - { title: "The problem, then two lists", minutes: 9, packs: [url-shortener/short-links-end-to-end/problem-statement, url-shortener/short-links-end-to-end/requirements] }
+      - { title: "Entities, then the API", minutes: 6, packs: [url-shortener/short-links-end-to-end/entities, url-shortener/short-links-end-to-end/api] }
+  - slug: url-shortener-design
+    title: "The URL shortener interview: high-level design, then hashing"
+    summary: "Client, server and database with the tables beside it; then the low-level design opens the server, and the first idea, hashing the long URL, fails on collisions."
+    parts:
+      - { title: "Client, server, database", minutes: 6, packs: [url-shortener/short-links-end-to-end/high-level-design] }
+      - { title: "Hash and truncate", minutes: 8, packs: [url-shortener/short-links-end-to-end/lld-hashing] }
+  - slug: url-shortener-counter
+    title: "The URL shortener interview: a counter"
+    summary: "A counter behind a load balancer, a global Redis counter and its single point of failure, then servers split by traffic with a cache for redirects."
+    parts:
+      - { title: "A counter, then split by traffic", minutes: 14, packs: [url-shortener/short-links-end-to-end/lld-counter] }
+  - slug: url-shortener-zookeeper
+    title: "The URL shortener interview: ZooKeeper, and finishing"
+    summary: "ZooKeeper ranges replace the Redis counter; then expiry, custom URLs, 301 or 302, the database, and the requirements read back against the board."
+    parts:
+      - { title: "ZooKeeper, then the last decisions", minutes: 16, packs: [url-shortener/short-links-end-to-end/lld-zookeeper] }

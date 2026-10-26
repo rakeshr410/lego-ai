@@ -1,0 +1,72 @@
+# URL shortener interview, high-level design: "4. High-level design" under the API, a client box, a server box that only says it generates the short URL, a database oval, the two flows as arrows, and the user and url tables written beside the database, as in the video.
+id: url-shortener/short-links-end-to-end/high-level-design
+title: Client, server, database
+source:
+  hash: "a4f57f67bd24"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: url-shortener/short-links-end-to-end/api
+  assumes:
+    - "POST /v1/urls creates a short URL; GET /{code} redirects to the long URL."
+    - "The core entities are the short URL, the long URL and the user."
+  carries:
+    - "The high-level design is a client, one server that generates the short URL, and a database holding the mapping."
+    - "Create: client sends the long URL, the server makes a code, saves the pair, returns the short URL. Redirect: the server looks the code up and redirects."
+    - "Tables: url (short code, long URL, expiry, custom flag, user) and user (account details, premium)."
+  terms:
+    - term: high-level design
+      means: The fewest boxes that meet the functional requirements, with how each box works left for later.
+board:
+  keep: [title, prompt-desc, prompt-example, fr, fr-create, fr-custom, fr-expiry, fr-redirect, nfr, nfr-latency, nfr-scale, nfr-unique, nfr-cap, entities, ent-short, ent-long, ent-user, api, api-post, api-body-1, api-body-2, api-body-3, api-get]
+  elements:
+    - { id: hld, kind: region, label: 4. High-level design, at: [6, 35], size: [69, 12] }
+    - { id: hld-client, kind: box, label: client, at: [8, 40], size: [8, 4] }
+    - { id: hld-server, kind: box, label: "Server, generates the short URL", at: [26, 39], size: [12, 6] }
+    - { id: hld-db, kind: oval, label: Database, at: [47, 39], size: [10, 6], tone: amber }
+    - { id: hld-user-table, kind: note, label: "user: id, metadata", at: [60, 39], in: hld }
+    - { id: hld-url-table-1, kind: note, label: "url: shortUrl, longUrl,", at: [60, 41], in: hld }
+    - { id: hld-url-table-2, kind: note, label: "expiresAt, customUrl", at: [62, 42], in: hld }
+  arrows:
+    - { id: hld-client-server, from: hld-client, to: hld-server, label: "create, redirect", both: true }
+    - { id: hld-server-db, from: hld-server, to: hld-db, label: "save, look up" }
+beats:
+  - point: "The high-level design needs three boxes: a client making requests, a server that generates the short URL, and a database that stores the mapping."
+    kind: component
+    weight: core
+    teach:
+      - "Step four, the high-level design: just enough boxes to meet the functional requirements. A client making the request. A server to turn the long URL into a short one."
+      - "And a database, because without storing the pair we could never redirect. The server's box only says it generates the short URL; how is for later."
+    draw: [hld, hld-client, hld-server, hld-db]
+    check: Why does even the simplest design need a database?
+    answer: Without storing the short-to-long mapping the server could never find the long URL to redirect to.
+  - point: "Create: the client sends the long URL, the server makes a code, saves the pair and returns the short URL. Redirect: the client opens the short URL, the server looks it up and redirects to the long one."
+    kind: flow
+    weight: core
+    teach:
+      - "Two flows. Create: the client calls generate URL with the long URL, the server makes a short code, saves the pair in the database, and sends the short URL back."
+      - "Redirect: the client opens the short URL, the server checks the database for that code and, if it is there, redirects to the long URL."
+    draw: [hld-client-server, hld-server-db]
+    check: Walk me through what happens when someone opens a short URL.
+    answer: The request reaches the server, which looks the code up in the database and, if found, redirects to the long URL.
+  - point: "Two tables: url, holding the short code, the long URL, the expiry and whether it is custom, and user, holding the account details including premium."
+    kind: decision
+    weight: core
+    teach:
+      - "Write what the database holds beside it. A user table with the account's metadata, so we know who is premium."
+      - "And the url table: the short URL, the long URL, the expiry date and the custom URL. That is the whole high-level design: the requirements as a picture."
+    draw: [hld-user-table, hld-url-table-1, hld-url-table-2]
+    check: Which table and column does the redirect look up?
+    answer: The url table, by its short code.
+asks:
+  - ids: [hld-client, hld-server, hld-db]
+    beats: [1]
+    question: "What's the smallest set of boxes that can do both, create and redirect? Name them and I'll draw them."
+    hints:
+      - Someone sends the request, and something does the work.
+      - And where would the mapping live between the two calls?
+task:
+  prompt: "Draw the high-level design: a client, a server that generates the short URL, a database, the create and redirect flows as arrows, and the url and user tables beside the database."
+  expects: [1, 2, 3]

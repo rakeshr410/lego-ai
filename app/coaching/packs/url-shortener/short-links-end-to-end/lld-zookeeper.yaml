@@ -1,0 +1,174 @@
+# URL shortener interview, low-level design 3: ZooKeeper, and finishing. Under "5. Low-level design: 3. ZooKeeper", as in the video: what ZooKeeper is, its tree of znodes (persistent, and ephemeral drawn dashed), then the final picture with ZooKeeper beside the encryption servers, the range notes, the Snowflake alternative, cron to the database, the database choice and 301 or 302. The video hashes a Snowflake ID down to six characters; this pack teaches leased counter ranges encoded whole, and why the truncated hash fails.
+id: url-shortener/short-links-end-to-end/lld-zookeeper
+title: "Low-level design, 3: ZooKeeper, and finishing"
+source:
+  hash: "ab5c681bfd5b"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: url-shortener/short-links-end-to-end/lld-counter
+  assumes:
+    - "A counter in base62 is unique and short; one Redis counter is a single point of failure."
+    - "Encryption (create) and decryption (redirect) servers are scaled separately, with a Redis cache for redirects."
+  carries:
+    - "ZooKeeper hands each create server a range of numbers from a persistent znode; servers count locally, with no call per create."
+    - "Snowflake IDs are 64 bits, 11 base62 characters; hashing one down to 7 collides again."
+    - "Expiry: a daily cron, a cache TTL no later than the expiry, and a check at read time. Custom URLs insert only if absent."
+    - "302 counts every click, 301 is cached by browsers; PostgreSQL or MySQL with the short code as the primary key."
+  terms:
+    - term: ZooKeeper
+      means: A replicated coordination service for configuration, naming, locks and group membership.
+    - term: znode
+      means: "A node in ZooKeeper's tree; persistent ones stay, ephemeral ones vanish when their client's session ends."
+    - term: Snowflake ID
+      means: "A 64-bit ID of 1 sign bit, 41 bits of milliseconds, 10 bits of worker and 12 bits of sequence."
+board:
+  keep: [title, nfr, nfr-latency, nfr-scale, nfr-unique, nfr-cap]
+  elements:
+    - { id: lld-zk, kind: region, label: "5. Low-level design: 3. ZooKeeper", at: [6, 22], size: [70, 50] }
+    - { id: zk-what, kind: note, label: a replicated coordination service for distributed apps, at: [8, 25], in: lld-zk }
+    - { id: zk-uses, kind: note, label: "used for configuration, naming, locks, group membership", at: [8, 26], in: lld-zk }
+    - { id: zk-root, kind: oval, label: root, at: [31, 28], size: [8, 3], tone: grey }
+    - { id: zk-ranges, kind: box, label: "/ranges, next free range", at: [16, 33], size: [14, 3] }
+    - { id: zk-servers, kind: box, label: /servers, at: [42, 33], size: [10, 3] }
+    - { id: zk-s1, kind: box, label: server 1, at: [32, 38], size: [8, 2], dashed: true }
+    - { id: zk-s2, kind: box, label: server 2, at: [42, 38], size: [8, 2], dashed: true }
+    - { id: zk-s3, kind: box, label: server 3, at: [52, 38], size: [8, 2], dashed: true }
+    - { id: zk-persistent, kind: note, label: "persistent znode, stays until deleted", at: [8, 42], in: lld-zk }
+    - { id: zk-ephemeral, kind: note, label: "ephemeral znode, gone when its server dies", at: [36, 42], in: lld-zk }
+    - { id: f-range-1, kind: note, label: "server 1 counts 1,000,000 to 1,999,999", at: [8, 45], in: lld-zk }
+    - { id: f-range-2, kind: note, label: "server 2 counts 2,000,000 to 2,999,999", at: [8, 46], in: lld-zk }
+    - { id: f-base62, kind: note, label: "the number in base62, at most 7 characters", at: [30, 45], in: lld-zk }
+    - { id: f-client, kind: box, label: client, at: [8, 56], size: [7, 3] }
+    - { id: f-lb, kind: box, label: Load balancer, at: [19, 50], size: [9, 14] }
+    - { id: f-encrypt, kind: box, label: "Encryption servers, local counter", at: [34, 49], size: [13, 4], tone: blue }
+    - { id: f-decrypt, kind: box, label: Decryption servers, at: [34, 59], size: [13, 3], tone: blue }
+    - { id: f-zk, kind: box, label: ZooKeeper, at: [56, 47], size: [10, 3], tone: grey }
+    - { id: f-db, kind: oval, label: Database, at: [52, 54], size: [10, 4], tone: amber }
+    - { id: f-cache, kind: oval, label: Redis cache, at: [52, 61], size: [10, 4], tone: green }
+    - { id: f-postgres, kind: note, label: "Postgres or MySQL, short code as primary key", at: [52, 59], in: lld-zk }
+    - { id: f-cron, kind: box, label: "cron, daily", at: [66, 55], size: [8, 3] }
+    - { id: f-301, kind: note, label: "301 is cached by browsers, 302 counts clicks", at: [8, 66], in: lld-zk }
+    - { id: f-expiry, kind: note, label: "expiry, cache TTL and a check on read", at: [52, 66], in: lld-zk }
+    - { id: f-custom, kind: note, label: "custom URL, insert if absent, else 409", at: [52, 68], in: lld-zk }
+    - { id: f-snowflake, kind: note, label: "Snowflake, 1 sign, 41 time, 10 worker, 12 sequence", at: [8, 68], in: lld-zk }
+    - { id: f-snowflake-len, kind: note, label: "64 bits is 11 characters; cut, it collides", at: [8, 69], in: lld-zk }
+  arrows:
+    - { id: zk-root-ranges, from: zk-root, to: zk-ranges }
+    - { id: zk-root-servers, from: zk-root, to: zk-servers }
+    - { id: zk-servers-1, from: zk-servers, to: zk-s1 }
+    - { id: zk-servers-2, from: zk-servers, to: zk-s2 }
+    - { id: zk-servers-3, from: zk-servers, to: zk-s3 }
+    - { id: f-client-lb, from: f-client, to: f-lb }
+    - { id: f-lb-encrypt, from: f-lb, to: f-encrypt }
+    - { id: f-lb-decrypt, from: f-lb, to: f-decrypt }
+    - { id: f-encrypt-zk, from: f-encrypt, to: f-zk }
+    - { id: f-encrypt-db, from: f-encrypt, to: f-db }
+    - { id: f-decrypt-cache, from: f-decrypt, to: f-cache }
+    - { id: f-decrypt-db, from: f-decrypt, to: f-db }
+    - { id: f-cron-db, from: f-cron, to: f-db }
+beats:
+  - point: "ZooKeeper is a replicated coordination service for distributed systems, used for configuration, naming, locks and keeping track of which servers are alive."
+    kind: component
+    weight: core
+    teach:
+      - "Third way, with a tool built for this: ZooKeeper. It is a coordination service for distributed apps, itself replicated across a few machines."
+      - "It is used for configuration, naming, distributed locks and group membership: knowing which servers are up."
+    draw: [lld-zk, zk-what, zk-uses]
+    check: What kind of system is ZooKeeper?
+    answer: A replicated coordination service, for configuration, naming, locks and tracking live servers.
+  - point: "ZooKeeper keeps a tree of znodes like folders: persistent znodes stay until deleted, ephemeral ones vanish when their server stops answering heartbeats."
+    kind: mechanism
+    weight: core
+    teach:
+      - "It stores a small tree, like folders: a root, and nodes under it called znodes. Here, one for the ranges and one for the servers."
+      - "Two kinds. A persistent znode stays until someone deletes it, so the next free range lives there. An ephemeral one belongs to a server and disappears when that server stops answering heartbeats; that is how ZooKeeper knows it died. I've drawn those dashed."
+    draw: [zk-root, zk-ranges, zk-root-ranges, zk-servers, zk-root-servers, zk-s1, zk-servers-1, zk-s2, zk-servers-2, zk-s3, zk-servers-3, zk-persistent, zk-ephemeral]
+    check: What is the difference between a persistent and an ephemeral znode?
+    answer: A persistent znode stays until deleted; an ephemeral one disappears when its client's session ends, such as a server dying.
+  - point: "Replace the Redis counter: ZooKeeper sits beside the encryption servers, each server registers and claims a range of numbers from the persistent znode, and counts inside it in memory."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Now the final picture. Same as before, but the Redis counter is gone and ZooKeeper sits beside the encryption servers."
+      - "When a server boots it registers, and claims a whole range of numbers, say a million, by advancing the persistent znode atomically. Then it counts inside its range in memory."
+    draw: [f-client, f-lb, f-client-lb, f-encrypt, f-lb-encrypt, f-decrypt, f-lb-decrypt, f-zk, f-encrypt-zk, f-db, f-encrypt-db, f-cache, f-decrypt-cache, f-decrypt-db]
+    check: Where does an encryption server get its numbers from now?
+    answer: From a range it claimed from ZooKeeper's persistent znode; it counts inside that range in memory.
+  - point: "Ranges are handed out once, so codes stay unique with no call per create; a crashed server loses only its unused numbers, and ZooKeeper being down does not stop creates."
+    kind: failure
+    weight: core
+    teach:
+      - "Server 1 counts from one million, server 2 from two million: never the same number, and no network call per create, so creates get faster. The number goes out in base62, seven characters at most."
+      - "Failures: a server crashes, the load balancer skips it, and the rest of its range is never used, harmless. ZooKeeper is down: servers only call it when a range runs out, and it is replicated, so creates go on."
+    draw: [f-range-1, f-range-2, f-base62]
+    check: Why is ZooKeeper not a single point of failure, when the one Redis was?
+    answer: Servers call it only to claim a new range, not per create, and it runs replicated with its data persisted.
+  - point: "Snowflake IDs are the other coordination-light option, a worker number from ZooKeeper plus time and a sequence, but at 64 bits they are 11 characters, and hashing one down to 7 brings collisions back."
+    kind: decision
+    weight: supporting
+    teach:
+      - "You will hear of Snowflake: 64 bits, one sign bit, 41 bits of milliseconds, 10 bits of worker number, which ZooKeeper can hand out, and 12 bits of sequence. Unique, with no coordination per ID."
+      - "But 64 bits is eleven base62 characters, too long. Hashing it and cutting it to seven is the first approach's flaw again. The dense counter fits whole, so we keep it."
+    draw: [f-snowflake, f-snowflake-len]
+    check: Why not hash a Snowflake ID down to seven characters?
+    answer: Truncating the hash throws the uniqueness away, so codes collide again.
+    misconceptions:
+      - "Hashing a unique ID keeps it unique -> the full hash would, but the cut prefix does not."
+  - point: "Expiry and custom URLs: a daily cron deletes expired rows, the cache TTL never outlives the expiry and the redirect checks the date; a custom URL is inserted only if absent, else 409."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Two requirements left. Expiry: each row has its date, and a cron job once a day deletes expired rows. The cache entry gets a TTL no later than that date, and the redirect checks it, so a link stops on time, not at midnight."
+      - "Custom URL, for premium users: skip the counter, insert the alias only if it is absent, and answer 409 if someone has it. A check then a separate insert would let two users both win."
+    draw: [f-cron, f-cron-db, f-expiry, f-custom]
+    check: A hot link expired at nine but the cron runs at midnight. How do you stop it redirecting at ten?
+    answer: The redirect checks the expiry on every look-up, and the cache TTL never outlives the expiry.
+  - point: "301 is permanent and cached by browsers, so fewer requests but no click counts; 302 reaches the server every time, so clicks can be counted. Choose with the interviewer."
+    kind: decision
+    weight: core
+    teach:
+      - "The redirect's status code. 301 means moved permanently: the browser remembers it and stops asking us. Less traffic, but we never see those clicks."
+      - "302 is temporary: every click comes back to the decryption servers, so premium users can get click counts. Ask the interviewer which matters more."
+    draw: [f-301]
+    check: Premium users want to see how often their link is opened. Which status fits?
+    answer: 302, because every click reaches the server and can be counted; a cached 301 does not.
+  - point: "The data is key-value rows, so PostgreSQL or MySQL is enough with the short code as the primary key; then read the non-functional list back against the board."
+    kind: decision
+    weight: core
+    teach:
+      - "Last, the database. Short code, long URL, user, two dates, no joins: Postgres or MySQL is plenty. Make the short code the primary key, so every cache miss is one index look-up."
+      - "Then close by reading the requirements on the right back against the board: latency from local counting and the cache, scale from two fleets, uniqueness from ranges, availability with nothing single on the request path."
+    draw: [f-postgres]
+    check: What must the url table be indexed on, and why?
+    answer: The short code, as its primary key, because every redirect that misses the cache looks a row up by code.
+asks:
+  - ids: [f-zk]
+    beats: [3]
+    question: "We want each create server to count on its own, with no shared counter on every request. What could hand each server its own numbers?"
+    hints:
+      - Think of the coordination service we just drew.
+      - What if a server took a whole block of numbers at once?
+  - ids: [f-cron, f-expiry]
+    beats: [6]
+    question: "Links expire after 90 days. How would you make that happen, in the database and in the cache?"
+    hints:
+      - Something that runs on a schedule could clean up the rows.
+      - And what stops a cached link from outliving its date?
+  - ids: [f-301]
+    beats: [7]
+    question: "When the redirect servers find the long URL, which status code would you send back, and why?"
+    hints:
+      - There's a permanent redirect and a temporary one.
+      - Which one lets us count every click?
+  - ids: [f-postgres]
+    beats: [8]
+    question: "Last decision: which database would you store the links in, and what would you index?"
+    hints:
+      - Look at what a row holds, and whether anything joins.
+      - What does every redirect look a row up by?
+task:
+  prompt: "Draw the final design: client, load balancer, encryption servers that count inside ranges from ZooKeeper, decryption servers reading through a Redis cache, the database, and the daily cron that deletes expired links."
+  expects: [3, 4, 6]

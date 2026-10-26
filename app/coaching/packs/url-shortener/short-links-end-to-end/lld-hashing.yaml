@@ -1,0 +1,92 @@
+# URL shortener interview, low-level design 1: hash the long URL and keep the first seven characters. Under "5. Low-level design: 1. Hash logic": the logic as one line, two URLs whose hashes share a prefix, and the server-to-database latency sum that doubles with each collision, as in the video (hashing, not encryption).
+id: url-shortener/short-links-end-to-end/lld-hashing
+title: "Low-level design, 1: hash and truncate"
+source:
+  hash: "fbf91bd99ecc"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: url-shortener/short-links-end-to-end/high-level-design
+  assumes:
+    - "The high-level design is a client, one server that generates the short URL, and a database holding the mapping."
+    - "Non-functional: about 200 ms, 1B URLs, every short URL unique."
+  carries:
+    - "Hashing the long URL with MD5 or SHA-1 and keeping 7 characters collides: a short prefix has too few values for 1B links."
+    - "Each collision costs another hash and another database look-up: 16 ms a try in the illustrative numbers, 32 ms after one collision."
+    - Hash and truncate is fine for a small service and rejected at a billion links.
+  terms:
+    - term: hash function
+      means: "Turns any input into a fixed-length value (MD5 32 hex characters, SHA-1 40); one way, nothing to decrypt."
+    - term: collision
+      means: Two different long URLs ending up with the same short code.
+board:
+  keep: [title, prompt-desc, prompt-example, fr, fr-create, fr-custom, fr-expiry, fr-redirect, nfr, nfr-latency, nfr-scale, nfr-unique, nfr-cap, entities, ent-short, ent-long, ent-user, api, api-post, api-body-1, api-body-2, api-body-3, api-get, hld, hld-client, hld-server, hld-db, hld-user-table, hld-url-table-1, hld-url-table-2, hld-client-server, hld-server-db]
+  elements:
+    - { id: lld-hash, kind: region, label: "5. Low-level design: 1. Hash logic", at: [6, 49], size: [64, 15] }
+    - { id: hash-logic, kind: note, label: "sha1(longUrl), keep the first 7 characters", at: [8, 52], in: lld-hash }
+    - { id: hash-libs, kind: note, label: "md5 or sha1, a hash, not encryption", at: [8, 54], in: lld-hash }
+    - { id: hash-fb, kind: note, label: "facebook URL hashes to 9191c0 37d0", at: [8, 57], in: lld-hash }
+    - { id: hash-amazon, kind: note, label: "amazon URL hashes to 9191c0 e3r3", at: [8, 58], in: lld-hash }
+    - { id: hash-clash, kind: note, label: "first 6 match, a collision", at: [8, 60], in: lld-hash }
+    - { id: hash-verdict, kind: note, label: "fine when small, not for 1B links", at: [8, 62], in: lld-hash }
+    - { id: hash-server, kind: box, label: server, at: [44, 52], size: [8, 3] }
+    - { id: hash-db, kind: oval, label: DB, at: [60, 52], size: [6, 3], tone: amber }
+    - { id: hash-time, kind: note, label: "hash, 1 ms", at: [44, 56], in: lld-hash }
+    - { id: hash-lookup, kind: note, label: "look-up, 10 ms", at: [58, 56], in: lld-hash }
+    - { id: hash-total, kind: note, label: "16 ms a try, 32 ms after a collision", at: [44, 59], in: lld-hash }
+  arrows:
+    - { id: hash-save, from: hash-server, to: hash-db, label: "save, 5 ms" }
+beats:
+  - point: "The first idea is to hash the long URL with MD5 or SHA-1 and keep the first seven characters as the code; it is hashing, not encryption."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Step five, the low-level design. We take the design above and open the server's box: how does it make the code? First idea: hash the long URL and keep the first seven characters."
+      - "MD5 gives 32 characters, SHA-1 gives 40, too long, hence the cut. It is a hash, not encryption: nothing gets decrypted, the database maps the code back."
+    draw: [lld-hash, hash-logic, hash-libs]
+    check: Why cut the hash at all?
+    answer: MD5 and SHA-1 output 32 and 40 characters, far longer than a short code.
+  - point: "Cutting the hash makes collisions: two different URLs can share the first characters, and six hex characters hold only about 16.8 million values, fewer than a billion links."
+    kind: failure
+    weight: core
+    teach:
+      - "The full hashes of two URLs almost never match, but their first few characters can. Say a facebook URL and an amazon URL both start 9191c0: same short code, two destinations."
+      - "And it is certain at our scale: six hex characters are only about 16.8 million values for a billion links. Even seven base62 characters collide over a hundred thousand times by the birthday bound."
+    draw: [hash-fb, hash-amazon, hash-clash]
+    check: MD5 itself rarely collides. Why does this approach collide so often?
+    answer: Only the first few characters are kept, and that short prefix has far fewer values than there are links.
+    misconceptions:
+      - "Similar URLs give similar hashes, so only near-duplicates collide -> any two URLs can share a truncated prefix; a good hash spreads similar inputs apart."
+  - point: "So every create must look the code up before saving and retry on a hit: in illustrative numbers 1 ms to hash, 10 ms to look up, 5 ms to save, 16 ms a try and 32 ms after one collision, with no bound on retries."
+    kind: metric
+    weight: core
+    teach:
+      - "Because any try may collide, each create checks the database first. Draw it: the server hashes in 1 millisecond, looks the code up in 10, saves in 5. Sixteen milliseconds a try."
+      - "On a collision, append something, hash again, look up again: 32 milliseconds, and nothing bounds how many times an unlucky URL retries. These are made-up round numbers to show the shape."
+    draw: [hash-server, hash-db, hash-save, hash-time, hash-lookup, hash-total]
+    check: What does one collision do to the create latency in this example?
+    answer: It doubles it, from 16 ms to 32 ms, because the hash, the look-up and the save happen again.
+  - point: "Hash and truncate works for a small service; at a billion links it is rejected, and it also gives the same long URL the same code, so two users share one link and one expiry."
+    kind: decision
+    weight: supporting
+    teach:
+      - "Write the verdict beside it: fine when the numbers are small, not for a billion links. Keep it on the board; the interviewer sees you know why it fails."
+      - "One more flaw: the same long URL always gets the same code, so two users who shorten one page share one link, and one expiry."
+    draw: [hash-verdict]
+    check: Two users shorten the same page with different expiry dates. What goes wrong with hashing?
+    answer: They get the same code, so they share one link and cannot have separate expiries.
+asks:
+  - ids: [hash-logic]
+    beats: [1]
+    question: "How could the server turn a long URL into a short code? What's your first idea?"
+    hints:
+      - Is there a function that turns any text into a fixed-length string?
+      - And that string would be long. How would you make it short?
+  - ids: [hash-clash]
+    beats: [2]
+    question: "So we keep only the first seven characters of the hash. What could go wrong with that, at a billion links?"
+    hints:
+      - Could two different URLs start with the same seven characters?
+      - How many values do six hex characters hold, next to a billion links?

@@ -1,0 +1,45 @@
+# URL shortener interview, core entities: "2. Identifying entities" under the functional list, three lines, as in the video.
+id: url-shortener/short-links-end-to-end/entities
+title: Three entities
+source:
+  hash: "bdc0011b8123"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: url-shortener/short-links-end-to-end/requirements
+  assumes:
+    - "Functional: create a short URL, optional custom URL and expiry for premium users, redirect to the original."
+  carries:
+    - "The core entities are the short URL, the long URL and the user who creates links."
+  terms:
+    - term: core entity
+      means: A noun the system stores and moves.
+board:
+  keep: [title, prompt-desc, prompt-example, fr, fr-create, fr-custom, fr-expiry, fr-redirect, nfr, nfr-latency, nfr-scale, nfr-unique, nfr-cap]
+  elements:
+    - { id: entities, kind: region, label: 2. Identifying entities, at: [6, 22], size: [17, 11], dashed: true }
+    - { id: ent-short, kind: note, label: short URL, at: [7, 24], in: entities }
+    - { id: ent-long, kind: note, label: long URL, at: [7, 26], in: entities }
+    - { id: ent-user, kind: note, label: user, at: [7, 28], in: entities }
+  arrows: []
+  lists:
+    - { id: entity-list, in: entities, at: [7, 24], step: 2, slots: 4, width: 14, items: [ent-short, ent-long, ent-user] }
+beats:
+  - point: "A shortener has three core entities: the short URL, the long URL, and the user who creates the link."
+    kind: component
+    weight: core
+    teach:
+      - "Step two: identify the core entities, the nouns the system keeps. This one is small, so there are only three."
+      - "The short URL, the long URL it maps to, and the user doing the creating, who may be premium."
+    draw: [entities, ent-short, ent-long, ent-user]
+    check: Why is the user an entity when anyone can open a short URL?
+    answer: Creating links is tied to an account, and premium users get custom URLs and their own expiry.
+asks:
+  - list: entity-list
+    beats: [1]
+    question: "What are the core entities here, the things this system keeps track of?"
+    hints:
+      - Look at the first requirement, what goes in and what comes out.
+      - And who is doing the shortening?

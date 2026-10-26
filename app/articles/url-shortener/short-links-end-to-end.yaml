@@ -1,0 +1,728 @@
+# yaml-language-server: $schema=../../../../lego/content-kit/schema/topic.schema.json
+# provenance: ai-drafted by claude-opus-5-5 on 2026-10-26
+#
+# A whole backend system design interview for a URL shortener like Bitly, run step by step on one
+# whiteboard, the backend counterpart of twitter/news-feed-end-to-end. The order and the board
+# follow a common five-step interview framework: requirements, core entities, API, high-level
+# design, then a low-level design that starts from the simplest way to make a short code and
+# replaces it, one flaw at a time (hash and truncate, a counter, a split read path with a cache,
+# ZooKeeper ranges), before the leftovers (expiry, custom aliases, 301 or 302, the database).
+# Every latency figure is an illustrative round number for the exercise, not a measurement.
+# The main-site topics short-codes, redirects and analytics design the same system in depth; this
+# one is the interview walkthrough, chronological and time-boxed.
+catalogVersion: 5
+title: Designing a URL shortener, end to end
+shortTitle: URL shortener interview
+summary: "A 45-minute backend design interview for a link shortener like Bitly, step by step on one board: requirements with numbers, entities, two endpoints, the high-level design, then four ways to make a unique short code, each fixing the last one's flaw, and the expiry, alias, redirect and storage decisions."
+group: write
+order: 3
+xp: 260
+difficulty: intermediate
+tags: [interview, unique-ids, caching, coordination, redirects, scalability]
+related:
+  - short-codes
+  - redirects
+  - analytics
+  - unique-id-generator/snowflake
+  - unique-id-generator/uuids-and-ranges
+eyebrow: Design
+breadcrumb: [Short links, Interview walkthrough]
+lede: "You have about forty-five minutes and one whiteboard to design a service like Bitly that turns a long URL into a short one and sends anyone who opens the short one to the original. This walkthrough runs the interview the way a strong candidate runs it: pin the requirements down with numbers, name the entities and the two endpoints, draw the simplest design that works, then spend the rest of the time on the hard part, making short codes that never collide at a billion links, one improvement at a time."
+reviewStatus: draft
+author: rakeshr410
+provenance: ai-drafted
+sources:
+  - title: "System Design 1: Design Tiny URL (InterviewWithBunny, YouTube)"
+    url: https://www.youtube.com/watch?v=Y-BO_4XNw8c
+    note: "The five-step order and the sequence of low-level approaches. Corrected here: hashing, not encryption; a leased counter encoded whole instead of a truncated hash of a Snowflake ID."
+  - title: Announcing Snowflake (Twitter Engineering)
+    url: https://blog.x.com/engineering/en_us/a/2010/announcing-snowflake
+    note: "Coordination-free 64-bit IDs from a timestamp, a worker number and a sequence."
+  - title: ZooKeeper overview (Apache ZooKeeper documentation)
+    url: https://zookeeper.apache.org/doc/current/zookeeperOver.html
+    note: "A replicated, hierarchical namespace of znodes, persistent and ephemeral, used for configuration, naming and coordination."
+  - title: INCR (Redis documentation)
+    url: https://redis.io/docs/latest/commands/incr/
+    note: "An atomic increment on a single key, the global counter of the second approach."
+  - title: "Ticket Servers: Distributed Unique Primary Keys on the Cheap (Flickr Engineering)"
+    url: https://code.flickr.net/2010/02/08/ticket-servers-distributed-unique-primary-keys-on-the-cheap/
+    note: "Counters split so that no two servers hand out the same number, the idea behind leasing ranges."
+  - title: "RFC 9110, HTTP Semantics: Redirection 3xx"
+    url: https://www.rfc-editor.org/rfc/rfc9110#section-15.4
+    note: "301 Moved Permanently may be cached by default; 302 Found is temporary."
+  - title: Birthday problem (Wikipedia)
+    url: https://en.wikipedia.org/wiki/Birthday_problem
+    note: "Why truncated hashes collide long before the space is full: about n squared over 2N expected collisions."
+tutorBrief: >-
+  Interview walkthrough for a URL shortener like Bitly (illustrative short domain sho.rt). The
+  interview is 45 minutes: requirements within the first 10 to 15 (commit point at minute 12), core
+  entities 1, API 3, high-level design 5, low-level design about 20, the leftovers and recap 5.
+  Five numbered steps on the board, top to bottom: 1 requirements (functional left, non-functional
+  right), 2 entities, 3 API (beside the entities), 4 high-level design (client, server, database,
+  the url and user tables written beside the database), 5 low-level design (the high-level diagram
+  copied and grown). Functional: create a short URL from a long one; optional custom alias (premium);
+  optional expiry, 90 days by default; open a short URL and be redirected to the long one.
+  Non-functional: create and redirect within about 200 ms; 100M daily users and 1B links; every
+  short URL unique; availability over consistency, eventual consistency is fine (a new link is
+  shared seconds after it is made). Entities: short URL, long URL, user. API: POST /v1/urls with
+  { longUrl, customAlias?, expiresAt? } returns 201 and the shortUrl; GET /{code} returns 302 with
+  Location set to the long URL. Codes are 7 base62 characters (0-9, A-Z, a-z): 62^7 = 3.52 trillion.
+  Low-level design, each approach fixing the last one's flaw: (1) hash and truncate: MD5 or SHA-1
+  of the long URL (hashing, not encryption), keep the first 7 characters; truncation collides (the
+  first 6 hex characters hold only 16.8M values, fewer than 1B links; even 7 base62 characters give
+  about n^2/2N = 142,000 expected collisions at 1B), so every create looks the code up and retries;
+  illustrative cost hash 1 ms + look-up 10 ms + save 5 ms = 16 ms a try, 32 ms after one collision.
+  Also the same long URL always gets the same code, so two users share one link and its expiry.
+  (2) counter: unique by construction, no look-up, 6 ms; a counter per server behind a round-robin
+  load balancer repeats numbers (every server starts at 0); one global counter in Redis (INCR is
+  atomic, ~2 ms) fixes that but is a single point of failure, and several Redis nodes each counting
+  repeat numbers again. (3) split the read path: redirects are most of the traffic (about 80 percent
+  of users only open links), so a create service and a redirect service scale separately, and a
+  Redis cache in front of the database serves hot codes in about 2 ms instead of 10 ms. (4)
+  ZooKeeper: a replicated coordination service with a tree of znodes, persistent (stay) and
+  ephemeral (vanish when the server's session ends, detected by missed heartbeats). A persistent
+  znode holds the next free range; each create server claims a range of 1,000,000 numbers at boot
+  and when it runs out, counts locally with no network call per create, and base62-encodes the
+  number into at most 7 characters. ZooKeeper is off the request path: it can be down for a while
+  without stopping creates. A crashed server loses the rest of its range, which is harmless. Snowflake
+  (1 sign bit, 41 bits of milliseconds = 69.7 years, 10 bits of worker = 1,024 workers, 12 bits of
+  sequence = 4,096 per ms) is the other coordination-light ID, with the worker number from ZooKeeper;
+  but it is 64 bits, 11 base62 characters, and hashing it down to 7 brings collisions back.
+  Sequential codes can be walked; scrambling them is the short-codes topic. Leftovers: expiry
+  stored per row, a daily cron deletes expired rows, the cache TTL never outlives the expiry, and the
+  redirect service checks expiresAt so a link stops at its time, not at the next cron. Custom
+  alias: premium only, inserted only if absent (a unique key), else 409; aliases and generated codes
+  share one namespace. 301 is permanent and cached by browsers (fewer requests, no click counts);
+  302 reaches the server every time (click analytics). Database: PostgreSQL or MySQL is enough for
+  key-value rows with a primary key on the short code; 1B rows at about 500 B is about 500 GB.
+components:
+  - key: client
+    name: Client
+    tone: sand
+    kind: client
+    summary: A browser or app that creates links through the API and opens short URLs.
+    owns: [nothing of its own]
+    talksTo: [load-balancer]
+  - key: load-balancer
+    name: Load balancer
+    tone: blue
+    kind: gateway
+    summary: Spreads requests across the servers, round robin, and stops sending to a server that fails its health check.
+    owns: [the list of healthy servers]
+    talksTo: [create-service, redirect-service]
+  - key: create-service
+    name: Create service
+    tone: green
+    kind: service
+    summary: Validates the long URL, takes the next number from its leased range, base62-encodes it and saves the mapping.
+    owns: [its current range, in memory]
+    talksTo: [zookeeper, links-db]
+  - key: redirect-service
+    name: Redirect service
+    tone: green
+    kind: service
+    summary: Looks a code up in the cache, then the database, checks it has not expired and answers with a redirect.
+    owns: [nothing durable]
+    talksTo: [cache, links-db]
+  - key: zookeeper
+    name: ZooKeeper
+    tone: purple
+    kind: external
+    summary: A replicated coordination service. A persistent znode holds the next free range of numbers; each create server registers with an ephemeral znode.
+    owns: [next free range, live servers]
+    talksTo: []
+  - key: cache
+    name: Redis cache
+    tone: orange
+    kind: cache
+    summary: Code to long URL for hot links, each entry with a TTL no later than the link's expiry.
+    owns: [hot mappings]
+    talksTo: []
+  - key: links-db
+    name: Links database
+    tone: yellow
+    kind: datastore
+    summary: PostgreSQL or MySQL; the url and user tables, with the short code as the primary key.
+    owns: [url, user]
+    talksTo: []
+  - key: cleanup
+    name: Cleanup job
+    tone: gray
+    kind: worker
+    summary: A cron job that runs once a day and deletes expired links.
+    owns: [nothing]
+    talksTo: [links-db]
+content:
+  # ────────────────────────────────────────────────────────────────── Problem statement
+  - __component: sd.section
+    key: problem-statement
+    title: Understanding the problem.
+    railLabel: Problem
+    intro: "The prompt is one line: design a URL shortener like Bitly. Before any design, say what the product does in your own words, with an example, and agree it with the interviewer. Then everything else, what it must do, for how many people, how fast, is yours to ask for, in five steps."
+  - __component: sd.rich-text
+    key: approach-why
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "A shortener takes a long URL, such as a product page with tracking parameters, and returns a short one like sho.rt/4kyLcpo. Anyone who opens the short URL is sent to the long one. Between the two there is a one-to-one mapping the service must store and look up, and that mapping is the whole design problem: making the short part unique, quickly, for a billion links."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Run the interview in five steps and say them once at the start: gather the requirements, name the core entities, write the API, draw the high-level design, then go deep in the low-level design. Number each step on the board as you reach it, top to bottom, so the board reads in the order you worked. The first three steps are quick but they decide everything after: the numbers you agree in step one are what you will use to reject designs in step five."
+      - type: paragraph
+        children:
+          - type: text
+            text: "The low-level design is where the interview is scored. A strong answer does not jump to the final design. It starts with the simplest way to make a short code, says exactly where it breaks against the requirements, fixes that, and repeats. Each rejected design stays on the board with its flaw written next to it, which shows the interviewer you know the trade-offs and not just the answer."
+  - __component: sd.card-grid
+    key: board-steps
+    title: The board, in the order you fill it
+    columns: 3
+    cards:
+      - title: 1. Requirements
+        text: Functional on the left (what it does), non-functional on the right (how well, each with a number). Done in the first 10 to 15 minutes.
+      - title: 2. Entities
+        text: The nouns the system stores and moves. For a shortener, three.
+      - title: 3. API
+        text: One endpoint per functional requirement, written as a request and what it returns.
+      - title: 4. High-level design
+        text: The fewest boxes that meet the functional requirements, the request flows drawn as arrows, and the tables beside the database.
+      - title: 5. Low-level design
+        text: "The high-level diagram copied and grown, one approach at a time, each fixing the last one's flaw: hashing, a counter, then ZooKeeper; then expiry, custom aliases, the redirect code and the database."
+  - __component: sd.quiz
+    key: approach-quiz
+    title: Quick check
+    questions:
+      - question: The interviewer says only "design a URL shortener like Bitly". What do you do first?
+        optionA: Draw a load balancer and three servers
+        optionB: Ask what it must do and at what scale, and write the answers down as functional and non-functional requirements
+        optionC: Choose a database
+        optionD: Explain how MD5 works
+        answer: B
+        explanation: The prompt is deliberately vague. Requirements with numbers come first because every later decision is checked against them.
+      - question: In the low-level design, why present a simple approach you already know is flawed?
+        optionA: To fill time
+        optionB: Because the interviewer expects exactly three approaches
+        optionC: Naming where it breaks against a requirement, then fixing it, shows the trade-offs behind the final design
+        optionD: You should not; go straight to the final design
+        answer: C
+        explanation: Each step of improvement is evidence of judgement. The rejected design stays on the board with its flaw beside it.
+  # ────────────────────────────────────────────────────────────────── 1. Requirements
+  - __component: sd.section
+    key: requirements
+    title: Requirements.
+    railLabel: Requirements
+    intro: "Two lists, side by side: what the shortener does, and how well it must do it. Every non-functional line carries a number, because the low-level design will reject approaches against those numbers."
+  - __component: sd.subsection
+    key: functional-sub
+    title: Functional requirements
+    railLabel: Functional
+  - __component: sd.checklist
+    key: functional
+    idPrefix: FR-
+    items:
+      - text: Given a long URL, create a short URL for it.
+      - text: "Optionally, a custom alias (sho.rt/spring-sale) instead of a generated code, for premium users."
+        note: Ask whether it is a paid feature; it changes who may call it, not how it is stored.
+      - text: "Optionally, an expiry date; without one, a link expires after 90 days."
+      - text: Opening a short URL redirects to the original long URL.
+        note: The two core requirements are create and redirect; the two optional ones ride on create.
+  - __component: sd.subsection
+    key: non-functional-sub
+    title: Non-functional requirements
+    railLabel: Non-functional
+  - __component: sd.requirement-table
+    key: non-functional
+    rows:
+      - area: Latency
+        requirement: Creating a link and following one both feel instant.
+        targets: ["about 200 ms, create and redirect"]
+        note: Say where the latency applies. A slow redirect is felt by every visitor; a slow create by one.
+      - area: Scale
+        requirement: Serve a large consumer user base.
+        targets: [100M daily active users, 1B links stored]
+        note: These numbers decide the architecture later; ask for them even if they feel like a formality.
+      - area: Uniqueness
+        requirement: Two long URLs never get the same short code.
+        targets: [zero collisions]
+        note: A collision sends one person's visitors to someone else's page.
+      - area: Availability
+        requirement: Creating and redirecting keep working when machines fail.
+        targets: [availability over consistency]
+        note: Eventual consistency is fine; a new link is shared seconds after it is made, so it may take a moment to resolve everywhere.
+  - __component: sd.rich-text
+    key: cap-choice
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "At 100 million daily users the data lives on more than one machine, and when the network between them splits, the system must choose: answer anyway, or wait until every copy agrees. For a ticket booking the answer is wait, because two people must never buy one seat. For a shortener it is answer: a short link is created and then shared by hand, and nobody opens it in the first second. So availability wins, and a link becoming readable everywhere a moment after it is created, eventual consistency, is acceptable as long as the redirect still meets its 200 ms."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Keep requirement gathering inside ten to fifteen minutes. Commit to the four functional lines and the four non-functional ones, and say what you are leaving out: click analytics dashboards, link editing, abuse detection. Name them, and move on."
+  - __component: sd.quiz
+    key: requirements-quiz
+    title: Quick check
+    questions:
+      - question: Which is the better way to write the latency requirement?
+        optionA: Low latency
+        optionB: "Create and redirect within about 200 ms"
+        optionC: As fast as possible
+        optionD: Use a cache
+        answer: B
+        explanation: A number, and where it applies. A cache is a solution, not a requirement.
+      - question: Why does a shortener choose availability over consistency?
+        optionA: Consistency is impossible in any distributed system
+        optionB: A link is shared by hand after it is created, so a short delay before it resolves everywhere costs nothing, while downtime loses every redirect
+        optionC: Because it uses Redis
+        optionD: Because links never change
+        answer: B
+        explanation: Contrast a ticket booking, where two buyers of one seat is a real failure. Here a moment of staleness is invisible.
+  # ────────────────────────────────────────────────────────────────── 2. Entities
+  - __component: sd.section
+    key: entities
+    title: Core entities.
+    railLabel: Entities
+    intro: "Name the nouns the system stores and moves. For a shortener there are only three, and naming them takes a minute."
+  - __component: sd.table
+    key: entities-table
+    columns:
+      - { label: Entity, style: strong }
+      - { label: What it is, style: text }
+    rows:
+      - [Short URL, "The code, such as 4kyLcpo, on the service's own domain. The key everything is looked up by."]
+      - [Long URL, The original address the short URL stands for.]
+      - [User, Who created the link; whether they are premium decides custom aliases and expiry.]
+  - __component: sd.quiz
+    key: entities-quiz
+    title: Quick check
+    questions:
+      - question: Why is the user an entity at all, when anyone can open a short URL?
+        optionA: It is not needed
+        optionB: Creating links is tied to an account, and premium users get custom aliases and their own expiry
+        optionC: To count clicks
+        optionD: For the load balancer
+        answer: B
+        explanation: Opening a link needs no account; the user matters on the create side.
+  # ────────────────────────────────────────────────────────────────── 3. API
+  - __component: sd.section
+    key: api
+    title: API.
+    railLabel: API
+    intro: "If the functional requirements are written well, the API is almost a one-to-one copy of them: one endpoint to create, one to redirect."
+  - __component: sd.endpoint
+    key: create-url
+    method: POST
+    path: /v1/urls
+    summary: "Creates a short URL. customAlias and expiresAt are optional and only honoured for premium users."
+    requestHeaders: ["Authorization: Bearer <token>"]
+    requestBody:
+      longUrl: https://shop.example.com/products/41820?utm_source=newsletter
+      customAlias: null
+      expiresAt: null
+    responses:
+      - label: Created
+        status: "201"
+        body:
+          shortUrl: https://sho.rt/4kyLcpo
+          expiresAt: "2027-01-24T10:00:00Z"
+      - label: Alias taken
+        status: "409"
+        body:
+          error: alias_taken
+  - __component: sd.endpoint
+    key: redirect
+    method: GET
+    path: "/{code}"
+    summary: "Opens a short URL. The answer is a redirect whose Location header is the long URL, so the browser follows it."
+    responses:
+      - label: Found
+        status: "302"
+        body:
+          Location: https://shop.example.com/products/41820?utm_source=newsletter
+      - label: Unknown or expired
+        status: "404"
+        body:
+          error: not_found
+  - __component: sd.table
+    key: requirement-to-endpoint
+    title: One endpoint per functional requirement
+    columns:
+      - { label: Requirement, style: text }
+      - { label: Endpoint, style: mono-strong }
+    rows:
+      - ["Create a short URL (with optional alias and expiry)", "POST /v1/urls"]
+      - [Redirect to the long URL, "GET /{code}"]
+  - __component: sd.quiz
+    key: api-quiz
+    title: Quick check
+    questions:
+      - question: How are the optional alias and expiry written in the create request?
+        optionA: As separate endpoints
+        optionB: As optional fields in the request body, marked with a question mark on the board
+        optionC: As query parameters on the redirect
+        optionD: They are not part of the API
+        answer: B
+        explanation: "{ longUrl, customAlias?, expiresAt? }: one endpoint, two optional fields that only premium users may set."
+      - question: What does the redirect endpoint return?
+        optionA: The long URL as JSON, for the client to navigate to
+        optionB: A 3xx redirect with the long URL in the Location header, which the browser follows by itself
+        optionC: An HTML page with a link
+        optionD: The short code
+        answer: B
+        explanation: Anyone opening a short URL is a plain browser request; the redirect status is what sends them on.
+  # ────────────────────────────────────────────────────────────────── 4. High-level design
+  - __component: sd.section
+    key: high-level-design
+    title: High-level design.
+    railLabel: High level
+    intro: "Draw the fewest boxes that meet the functional requirements: a client, a server and a database, with the create and redirect flows as arrows and the tables written beside the database. Nothing about how the code is made yet."
+  - __component: sd.component-diagram
+    key: hld-diagram
+    title: The first design
+    direction: LR
+    nodes:
+      - { key: client, details: [creates links, opens short URLs] }
+      - { key: create-service, details: ["one server: makes the code, saves it, looks codes up"] }
+      - { key: links-db, details: [url table, user table] }
+    edges:
+      - { from: client, to: create-service, label: "POST /v1/urls, GET /{code}" }
+      - { from: create-service, to: links-db, label: "save, look up" }
+  - __component: sd.rich-text
+    key: hld-flows
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Create: the client sends the long URL, the server makes a short code somehow, saves the pair in the database and returns the short URL. Redirect: the client opens the short URL, the server looks the code up, and if it is there, answers with a redirect to the long URL. That is the whole data flow, drawn as two pairs of arrows."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Write the tables beside the database. The url table holds the short code, the long URL, the expiry date, whether the code is a custom alias, and who made it. The user table holds the account's details, including whether it is premium. The server's box says only make the short code: how is the low-level design's job."
+  - __component: sd.db-schema
+    key: hld-tables
+    stores:
+      - key: links-store
+        engine: A relational database (chosen in the last section)
+        component: links-db
+        why: Two small tables reached by exact key.
+        tables:
+          - name: url
+            columns:
+              - { name: short_code, type: text, role: primary, note: "7 characters, or a custom alias" }
+              - { name: long_url, type: text }
+              - { name: user_id, type: bigint }
+              - { name: expires_at, type: timestamp }
+              - { name: is_custom, type: bool }
+          - name: user
+            columns:
+              - { name: id, type: bigint, role: primary }
+              - { name: email, type: text }
+              - { name: premium, type: bool }
+  - __component: sd.quiz
+    key: hld-quiz
+    title: Quick check
+    questions:
+      - question: What does the high-level design deliberately leave out?
+        optionA: The database
+        optionB: How the short code is made, and which database product is used
+        optionC: The redirect flow
+        optionD: The client
+        answer: B
+        explanation: It meets the functional requirements with abstract boxes. The low-level design opens each box.
+  # ────────────────────────────────────────────────────────────────── 5. Low-level design, 1: hashing
+  - __component: sd.section
+    key: lld-hashing
+    title: "Low-level design, 1: hash the long URL."
+    railLabel: LLD 1, hashing
+    intro: "Start the low-level design by copying the high-level diagram down the board and opening the server's box. The first idea most candidates have is to hash the long URL and keep the first few characters."
+  - __component: sd.rich-text
+    key: hash-idea
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Run the long URL through a hash function such as MD5 or SHA-1 and keep the first seven characters as the code. This is hashing, not encryption: nothing can be decrypted, the database is what maps the code back. MD5 gives 32 hex characters and SHA-1 gives 40, far too long, hence the truncation."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Truncation is the flaw. The full hash of two different URLs almost never matches, but the first few characters often do. Six hex characters hold only 16^6, about 16.8 million values, fewer than the billion links we must store, so collisions are certain. Even seven base62 characters, 3.52 trillion values, give about n squared over 2N, roughly 142,000 expected collisions by the billionth link. It also gives the same long URL the same code every time, so two users who shorten one page share one link and one expiry."
+  - __component: sd.table
+    key: hash-latency
+    title: What a collision costs (illustrative numbers)
+    columns:
+      - { label: Step, style: text }
+      - { label: Time, style: mono }
+    rows:
+      - [Hash the long URL, 1 ms]
+      - [Look the code up in the database, 10 ms]
+      - [Save the pair, 5 ms]
+      - [One try, 16 ms]
+      - [After one collision, 32 ms]
+  - __component: sd.rich-text
+    key: hash-verdict
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Because a collision is possible, every create must look the code up before saving it, and on a hit append something to the URL, hash again and look up again. Each retry adds another round trip, and nothing bounds the number of retries for an unlucky URL. It works for a small service; at a billion links, mark it rejected on the board with its flaw beside it: truncated hashes collide, and the check costs a look-up per try."
+  - __component: sd.quiz
+    key: hash-quiz
+    title: Quick check
+    questions:
+      - question: MD5 rarely collides. Why does this approach collide often?
+        optionA: MD5 is broken
+        optionB: Only the first few characters are kept, and a short prefix has far fewer values than there are links
+        optionC: URLs are too long
+        optionD: The database is slow
+        answer: B
+        explanation: "Six hex characters are 16.8 million values for a billion links: collisions are guaranteed. Even 3.52 trillion values collide often by the birthday bound."
+      - question: What does a collision cost on the create path?
+        optionA: Nothing; the database fixes it
+        optionB: Another hash, another database look-up and another try, with no bound on how many
+        optionC: A restart of the server
+        optionD: A cache miss
+        answer: B
+        explanation: Each try is about 16 ms in the illustrative numbers; the look-up is needed on every create because any try may collide.
+  # ────────────────────────────────────────────────────────────────── 5. Low-level design, 2: counter
+  - __component: sd.section
+    key: lld-counter
+    title: "Low-level design, 2: a counter."
+    railLabel: LLD 2, counter
+    intro: "If the server picks the number itself, uniqueness comes for free: link one gets 1, link two gets 2. No collision is possible, so the look-up before every save disappears."
+  - __component: sd.rich-text
+    key: counter-idea
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Keep a counter, give each new link the next number and base62-encode it (0-9, A-Z, a-z) into the code: a counter below 62^7, 3.52 trillion, never needs more than seven characters. The create path drops from 16 ms to about 6 ms in the illustrative numbers, because nothing has to be checked."
+      - type: paragraph
+        children:
+          - type: text
+            text: "But one server cannot carry 100 million daily users, and a bigger machine only goes so far, so we scale out: several identical servers behind a load balancer that spreads requests round robin. Say why the load balancer is there and which algorithm it uses. Now the counter breaks. Each server keeps its own, each starts at zero, and two servers hand out the same number to two different URLs."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Move the counter out of the servers into one shared place, a Redis instance, where INCR is atomic: every server asks Redis for the next number in about 2 ms and no two get the same one. The flaw now is that Redis is a single point of failure: when it is down, no link can be created. Running several Redis nodes, each with its own counter, brings the duplicates back. Write both flaws on the board. This design is a passable answer if you name them; the next steps remove them."
+  # ────────────────────────────────────────────────────────────────── (counter, continued) split and cache
+  - __component: sd.subsection
+    key: read-path
+    title: Split the servers by traffic, and cache the reads
+  - __component: sd.rich-text
+    key: read-path-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Of 100 million daily users, perhaps 20 percent create links and 80 percent only open them. One kind of server doing both must be scaled for the sum, wasting create capacity. So split it: a create service and a redirect service, each its own fleet behind the load balancer, each scaled to its share, say three create servers and six redirect servers. That is separation of concerns, and it lets the hot path grow alone."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Then make the redirect fast. Every redirect looks a code up in the database, about 10 ms in the illustrative numbers. Put a Redis cache in front of the database for the redirect service: look in the cache first, and only on a miss go to the database and fill the cache. A popular link is answered from memory in about 2 ms, and the redirect drops from about 15 ms to about 7 ms end to end."
+  - __component: sd.table
+    key: read-path-latency
+    title: A redirect, before and after the cache (illustrative numbers)
+    columns:
+      - { label: Path, style: text }
+      - { label: Look-up, style: mono }
+      - { label: End to end, style: mono }
+    rows:
+      - [Database every time, 10 ms, about 15 ms]
+      - [Cache hit, 2 ms, about 7 ms]
+  - __component: sd.quiz
+    key: read-path-quiz
+    title: Quick check
+    questions:
+      - question: Three servers behind a load balancer each keep their own counter. What goes wrong?
+        optionA: Nothing; each request goes to one server
+        optionB: Every server starts at zero, so two servers give the same number, and the same code, to different URLs
+        optionC: The load balancer runs out of numbers
+        optionD: Codes get longer
+        answer: B
+        explanation: The counter is only unique within one server. Uniqueness has to hold across all of them.
+      - question: What is the flaw of one global counter in Redis?
+        optionA: INCR is not atomic
+        optionB: It is a single point of failure, and splitting it across several Redis nodes, each counting, repeats numbers
+        optionC: Redis is too slow
+        optionD: It needs a database look-up per create
+        answer: B
+        explanation: Redis is single-threaded per key, so INCR is safe; the problem is that the one instance holds every create hostage.
+      - question: Why split creating and redirecting into two services?
+        optionA: They need different databases
+        optionB: Redirects are most of the traffic, so each service can be scaled to its own share instead of scaling both together
+        optionC: Microservices are always better
+        optionD: To use two load balancers
+        answer: B
+        explanation: With 80 percent of the traffic on redirects, scaling them alone saves the create capacity a combined fleet would waste.
+      - question: The cache sits in front of the database for which service?
+        optionA: The create service
+        optionB: The redirect service, which reads the same hot codes again and again
+        optionC: The load balancer
+        optionD: ZooKeeper
+        answer: B
+        explanation: Redirects are reads of a few very popular codes; that is what a cache is for.
+  # ────────────────────────────────────────────────────────────────── 5. Low-level design, 3: ZooKeeper
+  - __component: sd.section
+    key: lld-zookeeper
+    title: "Low-level design, 3: ZooKeeper, and finishing."
+    railLabel: LLD 3, ZooKeeper
+    intro: "The counter was the right idea; one shared counter on every request was the problem. Hand each create server a whole range of numbers at once, from a coordinator built not to lose them, and let it count locally."
+  - __component: sd.rich-text
+    key: zookeeper-basics
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "ZooKeeper is a replicated coordination service for distributed systems: configuration, naming, leader election, locks. It keeps a small tree of nodes called znodes, like folders: the root, a znode per application, children under them. A persistent znode stays until it is deleted. An ephemeral znode belongs to a client session and disappears when that client stops answering heartbeats, which is how ZooKeeper knows a server died."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Replace the Redis counter with ZooKeeper. A persistent znode holds the next free range. When a create server boots it registers with an ephemeral znode and claims a range, say numbers 3,000,000 to 3,999,999, by advancing that znode atomically. From then on it counts inside its range in memory: no network call per create, so the create path gets faster, not slower. When the range runs out it claims the next one. The number is base62-encoded into the code, at most seven characters."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Check the failures out loud. A server crashes: the load balancer stops sending it traffic, and the rest of its range is never used, a million numbers out of 3.52 trillion, which is harmless. It restarts and claims a fresh range. ZooKeeper is down: creates continue, because servers only call it when a range runs out, and ZooKeeper runs as a replicated ensemble whose persistent data survives a restart. No two servers ever hold the same range, so codes stay unique without a look-up."
+  - __component: sd.table
+    key: snowflake-bits
+    title: "The alternative: a Snowflake ID (64 bits)"
+    columns:
+      - { label: Bits, style: mono }
+      - { label: Field, style: text }
+      - { label: Gives, style: text }
+    rows:
+      - ["1", Sign, always 0]
+      - ["41", Milliseconds since an epoch, about 69.7 years]
+      - ["10", Worker number (from ZooKeeper), "1,024 workers"]
+      - ["12", Sequence within the millisecond, "4,096 IDs per ms per worker"]
+  - __component: sd.rich-text
+    key: snowflake-why-not
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Snowflake is the other well-known way to make unique IDs with almost no coordination: ZooKeeper hands each server a worker number, and the server combines the time, its worker number and a local sequence. It is unique, but it is 64 bits, eleven base62 characters, too long for a short link. Hashing it and keeping the first six or seven characters to shorten it throws away the uniqueness it was chosen for, the same flaw as the first approach. A dense counter from leased ranges fits in seven characters, so it is the better fit here."
+      - type: paragraph
+        children:
+          - type: text
+            text: "One caveat to name: counted codes are consecutive, so anyone can walk them, 4kyLcpo, 4kyLcpp. If that matters, scramble the number with a keyed permutation before encoding, which keeps it unique; the short-codes topic goes deep on this."
+  # ────────────────────────────────────────────────────────────────── (ZooKeeper, continued) expiry and alias
+  - __component: sd.subsection
+    key: expiry-and-alias
+    title: Expiry and custom aliases
+  - __component: sd.rich-text
+    key: expiry-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Expiry: every row is saved with its expiry date, 90 days by default or what a premium user chose. A cron job runs once a day and deletes the expired rows. Two details make it correct: the cache entry gets a TTL no later than the link's expiry, or a hot link would keep redirecting from the cache after its row is gone; and the redirect service checks expires_at itself, so a link stops at its time and not up to a day later when the job runs."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Custom alias: a premium user's alias skips the generator. Insert it only if it is absent, with the short code as a unique key, and answer 409 alias taken if someone holds it. A check followed by a separate insert would let two users racing for one alias both pass the check. Aliases and generated codes share one namespace, so the generator's own insert is put-if-absent too and skips a number that an alias already took."
+  # ────────────────────────────────────────────────────────────────── (ZooKeeper, continued) redirect and storage
+  - __component: sd.subsection
+    key: redirect-and-storage
+    title: "The redirect, the database, and the recap"
+  - __component: sd.table
+    key: redirect-codes
+    title: 301 or 302
+    columns:
+      - { label: Status, style: mono-strong }
+      - { label: Meaning, style: text }
+      - { label: Effect, style: text }
+    rows:
+      - ["301", Moved permanently, "Browsers cache it, so repeat visits skip our servers: less traffic, but no click counts and no way to change or expire the link for those browsers."]
+      - ["302", Found (temporary), "Every visit reaches the redirect service: more traffic, but each click can be counted for analytics, and expiry is enforced."]
+  - __component: sd.component-diagram
+    key: final-diagram
+    title: The final design
+    direction: LR
+    nodes:
+      - { key: client }
+      - { key: load-balancer, details: [round robin, health checks] }
+      - key: create-service
+        details: [count inside the leased range, base62]
+        parts: [{ name: create-1 }, { name: create-2 }, { name: create-3 }]
+      - key: redirect-service
+        details: [cache, then database, check expiry]
+        parts: [{ name: redirect-1 }, { name: redirect-2 }, { name: redirect-n }]
+      - { key: zookeeper, details: [next free range, live servers] }
+      - { key: cache, details: [TTL no later than expiry] }
+      - { key: links-db, details: [short code is the primary key] }
+      - { key: cleanup, details: [once a day] }
+    edges:
+      - { from: client, to: load-balancer }
+      - { from: load-balancer, to: create-service, label: POST /v1/urls }
+      - { from: load-balancer, to: redirect-service, label: "GET /{code}" }
+      - { from: create-service, to: zookeeper, label: claim a range }
+      - { from: create-service, to: links-db, label: insert if absent }
+      - { from: redirect-service, to: cache, label: look up }
+      - { from: redirect-service, to: links-db, label: on a miss }
+      - { from: cleanup, to: links-db, label: delete expired }
+  - __component: sd.rich-text
+    key: storage-text
+    body:
+      - type: paragraph
+        children:
+          - type: text
+            text: "Choose with the interviewer: 301 if the goal is the least traffic, 302 if premium users want click counts, which most shorteners sell. Then the database: the data is key-value rows, a code, a URL, a user and two dates, with no joins on the hot path. PostgreSQL or MySQL is enough, as long as the short code is the primary key, so every cache miss is one index look-up, not a scan. A billion rows at about 500 bytes is about 500 GB, which one well-provisioned primary with read replicas can hold, and sharding by code is the next step if it outgrows that."
+      - type: paragraph
+        children:
+          - type: text
+            text: "Close by reading the non-functional list back against the board. Latency: creates count in memory, redirects hit the cache. Scale: the load balancer and two fleets scaled to their share. Uniqueness: ranges are handed out once and encoded whole. Availability: no request depends on a single node, and ZooKeeper is off the request path."
+  - __component: sd.quiz
+    key: wrap-up-quiz
+    title: Quick check
+    questions:
+      - question: Why is ZooKeeper not a single point of failure here, when Redis was?
+        optionA: ZooKeeper never fails
+        optionB: Servers call it only to claim a new range, not per create, and it runs as a replicated ensemble whose data persists
+        optionC: It caches the codes
+        optionD: The load balancer replaces it
+        answer: B
+        explanation: Off the request path and replicated. Servers keep creating from their current range while it recovers.
+      - question: Why not hash a Snowflake ID down to seven characters?
+        optionA: Snowflake IDs are not unique
+        optionB: Truncating the hash brings collisions back, the very flaw the unique ID was meant to remove
+        optionC: Hashing is too slow
+        optionD: ZooKeeper forbids it
+        answer: B
+        explanation: Uniqueness survives encoding, not truncation. A leased counter is short enough to encode whole.
+      - question: A create server crashes halfway through its range. What happens to the unused numbers?
+        optionA: Another server takes them over
+        optionB: They are never used, which is harmless out of 3.52 trillion
+        optionC: They cause duplicates on restart
+        optionD: ZooKeeper reissues them
+        answer: B
+        explanation: Ranges are handed out once. Skipping some numbers costs nothing; reusing them would break uniqueness.
+      - question: A link expired at 09:00 but the cleanup job runs at midnight. How do you stop it redirecting at 10:00?
+        optionA: Run the job every minute
+        optionB: The redirect service checks expires_at on every look-up, and the cache TTL never outlives the expiry
+        optionC: You cannot
+        optionD: Delete it from the load balancer
+        answer: B
+        explanation: The job reclaims space; the check at read time enforces the expiry.
+      - question: How do you stop two users from both getting the alias spring-sale?
+        optionA: Check whether it exists, then insert
+        optionB: Insert only if absent, with the code as a unique key, and return 409 to the loser
+        optionC: Lock the whole table
+        optionD: Ask ZooKeeper for the alias
+        answer: B
+        explanation: A separate check and insert race; one atomic insert-if-absent has exactly one winner.
+      - question: Premium users want to see how many times their link was opened. Which redirect status fits?
+        optionA: "301, because it is faster"
+        optionB: "302, because every click reaches the server and can be counted"
+        optionC: "404"
+        optionD: Either; browsers report clicks
+        answer: B
+        explanation: A cached 301 never reaches the server again from that browser, so those clicks are invisible.
+      - question: What index does the links table need?
+        optionA: One on the long URL
+        optionB: The short code as the primary key, since every look-up is by code
+        optionC: One on the expiry date only
+        optionD: None; the cache handles reads
+        answer: B
+        explanation: Every redirect that misses the cache is a look-up by code; without the key it is a scan.

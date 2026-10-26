@@ -1,0 +1,145 @@
+# URL shortener interview, low-level design 2: a counter. Under "5. Low-level design: 2. Counter", the video's two drawings one under the other: client, a tall round-robin load balancer, three servers with local counters, then a Redis counter and the database; below it the same picture split by traffic into encryption (create) and decryption (redirect) servers, a Redis counter, a Redis cache and the database.
+id: url-shortener/short-links-end-to-end/lld-counter
+title: "Low-level design, 2: a counter"
+source:
+  hash: "48dd78c65985"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: url-shortener/short-links-end-to-end/lld-hashing
+  assumes:
+    - "Hash and truncate collides at 1B links and costs a database look-up per try."
+    - "Non-functional: about 200 ms, 100M daily users and 1B URLs, every short URL unique, availability over consistency."
+  carries:
+    - "A counter, base62-encoded, is unique by construction and needs no look-up; under 62^7 it fits in 7 characters."
+    - "Local counters behind a load balancer repeat numbers; one Redis counter (atomic INCR) fixes that but is a single point of failure."
+    - "Create and redirect split into two services scaled to their traffic (about 20 and 80 percent), with a Redis cache in front of the database for redirects."
+  terms:
+    - term: base62
+      means: "Writing a number with 0-9, A-Z and a-z; 62^7 is about 3.52 trillion, so seven characters hold any counter below it."
+    - term: load balancer
+      means: Spreads requests across identical servers, here round robin.
+    - term: single point of failure
+      means: One component whose failure stops the whole system.
+board:
+  keep: [title, nfr, nfr-latency, nfr-scale, nfr-unique, nfr-cap]
+  elements:
+    - { id: lld-counter, kind: region, label: "5. Low-level design: 2. Counter", at: [6, 22], size: [70, 46] }
+    - { id: counter-idea, kind: note, label: "counter 1, 2, 3, in base62, 7 characters", at: [8, 25], in: lld-counter }
+    - { id: c-client, kind: box, label: client, at: [8, 32], size: [7, 3] }
+    - { id: c-lb, kind: box, label: "Load balancer, round robin", at: [19, 27], size: [9, 13] }
+    - { id: c-server-1, kind: box, label: "Server 1, own counter", at: [34, 26], size: [11, 3] }
+    - { id: c-server-2, kind: box, label: "Server 2, own counter", at: [34, 32], size: [11, 3] }
+    - { id: c-server-3, kind: box, label: "Server 3, own counter", at: [34, 38], size: [11, 3] }
+    - { id: c-local, kind: note, label: "every server starts at 0, duplicates", at: [8, 43], in: lld-counter }
+    - { id: c-redis, kind: oval, label: "Redis, global counter", at: [52, 26], size: [14, 4], tone: amber }
+    - { id: c-incr, kind: note, label: "INCR is atomic, 2 to 3 ms", at: [52, 31], in: lld-counter }
+    - { id: c-db, kind: oval, label: Database, at: [52, 35], size: [12, 4], tone: amber }
+    - { id: c-spof, kind: note, label: "one Redis, a single point of failure", at: [52, 40], in: lld-counter }
+    - { id: s-client, kind: box, label: clients, at: [8, 54], size: [7, 3] }
+    - { id: s-lb, kind: box, label: Load balancer, at: [19, 48], size: [9, 14] }
+    - { id: s-encrypt, kind: box, label: "Encryption servers, 3, create", at: [34, 48], size: [12, 4], tone: blue }
+    - { id: s-decrypt, kind: box, label: "Decryption servers, 6, redirect", at: [34, 57], size: [12, 4], tone: blue }
+    - { id: s-counter, kind: oval, label: Redis counter, at: [52, 46], size: [10, 4], tone: amber }
+    - { id: s-db, kind: oval, label: "Database, 10 ms", at: [60, 52], size: [12, 4], tone: amber }
+    - { id: s-cache, kind: oval, label: "Redis cache, 2 ms", at: [52, 60], size: [12, 4], tone: green }
+    - { id: s-traffic, kind: note, label: "create 20 percent, redirect 80 percent", at: [8, 64], in: lld-counter }
+  arrows:
+    - { id: c-client-lb, from: c-client, to: c-lb }
+    - { id: c-lb-1, from: c-lb, to: c-server-1 }
+    - { id: c-lb-2, from: c-lb, to: c-server-2 }
+    - { id: c-lb-3, from: c-lb, to: c-server-3 }
+    - { id: c-1-redis, from: c-server-1, to: c-redis }
+    - { id: c-2-redis, from: c-server-2, to: c-redis }
+    - { id: c-3-db, from: c-server-3, to: c-db }
+    - { id: s-client-lb, from: s-client, to: s-lb }
+    - { id: s-lb-encrypt, from: s-lb, to: s-encrypt }
+    - { id: s-lb-decrypt, from: s-lb, to: s-decrypt }
+    - { id: s-encrypt-counter, from: s-encrypt, to: s-counter }
+    - { id: s-encrypt-db, from: s-encrypt, to: s-db }
+    - { id: s-decrypt-cache, from: s-decrypt, to: s-cache }
+    - { id: s-decrypt-db, from: s-decrypt, to: s-db, label: on a miss }
+beats:
+  - point: "A counter makes codes unique by construction: link one gets 1, link two gets 2, encoded in base62, so the look-up before each save disappears and a create drops to about 6 ms."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Second way: count. Each new link takes the next number, and we write it in base62, digits and both cases of letters. Seven characters cover over three trillion numbers."
+      - "No two links can get the same number, so there is nothing to check: the 10 millisecond look-up goes, and a create is about 6 milliseconds."
+    draw: [lld-counter, counter-idea]
+    check: Why does the counter remove the database look-up?
+    answer: Numbers are handed out once each, so a new code cannot already exist and there is nothing to check.
+  - point: "One server cannot carry 100 million daily users, so several servers sit behind a round-robin load balancer; but a counter on each server starts at zero, and two servers hand out the same number."
+    kind: failure
+    weight: core
+    teach:
+      - "One server will not take 100 million daily users, and a bigger machine only goes so far, so scale out: three servers behind a load balancer, round robin. Say why it is there and which algorithm."
+      - "Now the counter breaks. Each server keeps its own, each starts at zero. Two requests on two servers both get zero: the same code for two URLs."
+    draw: [c-client, c-lb, c-client-lb, c-server-1, c-lb-1, c-server-2, c-lb-2, c-server-3, c-lb-3, c-local]
+    check: Three servers each keep their own counter. What goes wrong?
+    answer: Every server starts at zero, so two servers give the same number, and the same code, to different URLs.
+  - point: "Moving the counter into one Redis instance fixes the duplicates: INCR is atomic, so every server gets a different number in about 2 to 3 ms."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Take the counter out of the servers into one shared place, a Redis instance. Every server asks Redis for the next number."
+      - "INCR on one key is atomic, so no two servers get the same value, and it answers in 2 to 3 milliseconds, much faster than the database check we removed."
+    draw: [c-redis, c-1-redis, c-2-redis, c-incr]
+    check: Why can two servers not get the same number from Redis?
+    answer: INCR on a single key is atomic; Redis runs the increments one at a time.
+  - point: "The flaw: one Redis is a single point of failure, and several Redis nodes each counting bring the duplicates back. Named, this design is a passable answer."
+    kind: failure
+    weight: core
+    teach:
+      - "The servers still save each pair in the database. But look at Redis: if that one instance goes down, no new link can be made. A single point of failure."
+      - "Several Redis nodes, each counting, repeat numbers again. Write the flaw down; with it named this is a passable answer, and the next step removes it."
+    draw: [c-db, c-3-db, c-spof]
+    check: What breaks if you run three Redis nodes, each with its own counter?
+    answer: They repeat each other's numbers, so codes collide again.
+    misconceptions:
+      - "INCR is not safe with many servers -> INCR is atomic; the problem is that the one instance is a single point of failure."
+  - point: "Most users only open links, so split the servers by traffic: encryption (create) servers and decryption (redirect) servers, each scaled to its share, about 20 and 80 percent."
+    kind: decision
+    weight: core
+    teach:
+      - "Before fixing Redis, fit the design to the traffic. Of 100 million daily users maybe 20 percent create links and 80 percent only open them."
+      - "One kind of server doing both wastes capacity. Split it: encryption servers that create, say three, and decryption servers that redirect, say six. Separation of concerns, each scaled to its own load."
+    draw: [s-client, s-lb, s-client-lb, s-encrypt, s-lb-encrypt, s-decrypt, s-lb-decrypt, s-counter, s-encrypt-counter, s-db, s-encrypt-db, s-traffic]
+    check: Why split creating and redirecting into separate servers?
+    answer: Redirects are most of the traffic, so each fleet can be scaled to its own share instead of scaling both together.
+  - point: "A Redis cache in front of the database serves popular codes for the redirect servers in about 2 ms instead of 10, going to the database only on a miss."
+    kind: mechanism
+    weight: core
+    teach:
+      - "The redirect still reads the database every time, 10 milliseconds. Put a Redis cache in front of it for the decryption servers: look in the cache first, and only on a miss go to the database."
+      - "A popular link comes back from memory in about 2 milliseconds, so a redirect drops from about 15 to about 7 milliseconds. Made-up numbers, real shape."
+    draw: [s-cache, s-decrypt-cache, s-decrypt-db]
+    check: Which servers read through the cache, and why those?
+    answer: The decryption servers, because redirects read the same popular codes again and again.
+asks:
+  - ids: [c-lb, c-server-1, c-server-2, c-server-3]
+    beats: [2]
+    question: "One server can't carry a hundred million users. How would you scale this out? Name the pieces and I'll draw them."
+    hints:
+      - Think of several copies of the same server.
+      - Then something has to spread the requests across them.
+  - ids: [c-redis]
+    beats: [3]
+    question: "Each server counting on its own repeats numbers. Where would you keep the counter so every server shares it?"
+    hints:
+      - Somewhere outside the servers, that all of them can reach.
+      - It needs a fast increment that never hands out the same value twice.
+  - ids: [s-encrypt, s-decrypt]
+    beats: [5]
+    question: "About 80 percent of users only open links, and 20 percent create them. What would you change about the servers?"
+    hints:
+      - Do creating and redirecting need to scale together?
+      - What if each had its own group of servers?
+  - ids: [s-cache]
+    beats: [6]
+    question: "Every redirect still reads the database, 10 milliseconds. How would you make popular links faster?"
+    hints:
+      - The same codes are opened again and again.
+      - Something in memory, in front of the database.

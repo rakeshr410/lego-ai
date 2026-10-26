@@ -1,0 +1,98 @@
+# URL shortener interview, requirements: "1. Functional requirements" on the left and "Non-functional requirements" on the right, under the problem statement, as the video lays them out; every non-functional line with its number.
+id: url-shortener/short-links-end-to-end/requirements
+title: Two lists, functional and non-functional
+source:
+  hash: "5fc5b71868b3"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: url-shortener/short-links-end-to-end/problem-statement
+  assumes:
+    - "A shortener maps each long URL to a short one, one to one, and redirects from the short one."
+  carries:
+    - "Functional: create a short URL from a long one; optional custom URL (premium); optional expiry, 90 days by default; a short URL redirects to the original."
+    - "Non-functional: about 200 ms for create and redirect; 100M daily users and 1B URLs; every short URL unique; availability over consistency, eventual is fine."
+    - Requirements are gathered within the first 10 to 15 minutes of 45.
+  terms:
+    - term: functional requirement
+      means: What the system does.
+    - term: non-functional requirement
+      means: "A quality of the system (latency, scale, availability), stated with a number and where it applies."
+    - term: eventual consistency
+      means: A new link may take a moment to become readable everywhere, but it gets there.
+board:
+  keep: [title, prompt-desc, prompt-example]
+  elements:
+    - { id: fr, kind: region, label: 1. Functional requirements, at: [6, 6], size: [28, 14], dashed: true }
+    - { id: fr-create, kind: note, label: create a short URL from a long URL, at: [7, 8], in: fr }
+    - { id: fr-custom, kind: note, label: "optional, a custom URL for premium users", at: [7, 10], in: fr }
+    - { id: fr-expiry, kind: note, label: "optional, an expiry date, 90 days default", at: [7, 12], in: fr }
+    - { id: fr-redirect, kind: note, label: the short URL redirects to the original, at: [7, 14], in: fr }
+    - { id: nfr, kind: region, label: Non-functional requirements, at: [40, 6], size: [28, 14], dashed: true }
+    - { id: nfr-latency, kind: note, label: "low latency, about 200 ms, create and redirect", at: [41, 8], in: nfr }
+    - { id: nfr-scale, kind: note, label: "scale, 100M daily users and 1B URLs", at: [41, 10], in: nfr }
+    - { id: nfr-unique, kind: note, label: every short URL is unique, at: [41, 12], in: nfr }
+    - { id: nfr-cap, kind: note, label: "availability over consistency, eventual", at: [41, 14], in: nfr }
+  arrows: []
+  lists:
+    - { id: fr-list, in: fr, at: [7, 8], step: 2, slots: 6, width: 26, items: [fr-create, fr-custom, fr-expiry, fr-redirect] }
+    - { id: nfr-list, in: nfr, at: [41, 8], step: 2, slots: 6, width: 26, items: [nfr-latency, nfr-scale, nfr-unique, nfr-cap] }
+beats:
+  - point: "The two core functional requirements: create a short URL from a long URL, and redirect anyone who opens the short URL to the original."
+    kind: requirement
+    weight: core
+    teach:
+      - "Step one, on the left: functional requirements, what the system does. The first is to create a short URL from a long URL."
+      - "The second is the other direction: whoever opens the short URL is redirected to the original. These two are the heart of it."
+    draw: [fr, fr-create, fr-redirect]
+    check: What are the two requirements a shortener cannot do without?
+    answer: Create a short URL from a long one, and redirect from the short URL to the original.
+  - point: "Two optional ones ride on create: a custom URL instead of a generated code, for premium users, and an expiry date, 90 days by default."
+    kind: requirement
+    weight: supporting
+    teach:
+      - "The interviewer may add features. A custom URL, an alias the user picks instead of a generated code, perhaps only for premium users."
+      - "And an expiry date: links expire after 90 days by default, and premium users may choose their own."
+    draw: [fr-custom, fr-expiry]
+    check: Who gets to choose a custom URL in this design?
+    answer: Premium users; everyone else gets a generated code.
+  - point: "Non-functional requirements are qualities with numbers: low latency, about 200 ms for both creating and redirecting, at a scale of 100 million daily users and a billion URLs."
+    kind: metric
+    weight: core
+    teach:
+      - "On the right, the non-functional requirements: the qualities. Low latency first, and say where it applies, on create and on redirect, and how much: about 200 milliseconds."
+      - "Then the scale. Ask for it: say 100 million daily active users and a billion URLs. These numbers drive the database and the architecture later."
+    draw: [nfr, nfr-latency, nfr-scale]
+    check: Why ask for the number of users at all?
+    answer: Because the scale decides the architecture and the database; a design for a thousand users fails at a hundred million.
+  - point: "Every short URL must be unique, and the system favours availability over consistency: a link is shared seconds after it is made, so eventual consistency is fine."
+    kind: requirement
+    weight: core
+    teach:
+      - "Every short URL is unique; two long URLs never share one."
+      - "Then CAP. At this scale the data is on many machines, so when the network splits we pick availability or consistency. A ticket booking needs consistency; here a link is created and then shared by hand, so nobody opens it in the first second. Availability wins, and eventual consistency is enough."
+    draw: [nfr-unique, nfr-cap]
+    check: Why is eventual consistency acceptable for a shortener but not for booking a seat?
+    answer: A new link is shared by hand after it is made, so a brief delay before it resolves everywhere costs nothing; two buyers for one seat is a real failure.
+    misconceptions:
+      - "A shortener must be strongly consistent so the link works instantly -> the gap between creating and sharing a link hides the delay; availability matters more."
+  - point: "Keep requirement gathering inside 10 to 15 minutes of a 45-minute interview, or there is no time left to design."
+    kind: rule
+    weight: supporting
+    teach:
+      - "Watch the clock: the requirements take 10 to 15 minutes at most. Spend longer and you gather everything and design nothing."
+asks:
+  - list: fr-list
+    beats: [1, 2]
+    question: "So what should this shortener do? Tell me the features one at a time, and I'll write them down."
+    hints:
+      - What does a user give it, and what do they get back?
+      - And what happens when someone opens the short link?
+  - list: nfr-list
+    beats: [3, 4]
+    question: "Now the qualities. How fast, how big, how reliable should it be? A number if you have one."
+    hints:
+      - Think about how long a redirect may take, and how many users there are.
+      - And what matters more when machines fail, staying up or staying exact?

@@ -1,0 +1,44 @@
+# URL shortener interview, the problem statement: the title, what Bitly does and one example, written at the top of the board as the video does, then the five steps said once (said, not drawn).
+id: url-shortener/short-links-end-to-end/problem-statement
+title: The problem, and the five steps
+source:
+  hash: "9a4782bf94cd"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: null
+  assumes: []
+  carries:
+    - "A shortener maps each long URL to a short one, one to one, and sends anyone who opens the short URL to the long one."
+    - "The interview runs in five steps: requirements, core entities, API, high-level design, low-level design."
+  terms:
+    - term: short code
+      means: "The part after the domain in a short URL, such as 4kyLcpo; the key the long URL is stored under."
+board:
+  keep: []
+  elements:
+    - { id: title, kind: note, label: URL shortener like Bitly, at: [8, 0] }
+    - { id: prompt-desc, kind: note, label: "Bitly shortens long links and lets you customize them", at: [8, 2] }
+    - { id: prompt-example, kind: note, label: "facebook.com/a.user becomes bit.ly/4kyLcpo", at: [8, 3] }
+  arrows: []
+beats:
+  - point: "A URL shortener like Bitly turns a long URL into a short one, and opening the short one sends you to the long one: a one-to-one mapping the service stores and looks up."
+    kind: rule
+    weight: core
+    teach:
+      - "Write the title: a URL shortener like Bitly. Under it, one line on what it does: it shortens long links and lets you customize them."
+      - "Then one example. A long profile URL on facebook.com becomes bit.ly slash 4kyLcpo, and opening the short one lands you on the long one. Between them is a one-to-one mapping we store and look up."
+    draw: [title, prompt-desc, prompt-example]
+    check: What does the service have to remember for every short URL it gives out?
+    answer: The long URL it stands for, the one-to-one mapping from the short code to the long URL, so it can redirect.
+  - point: "The interview runs in five steps: gather the requirements, identify the core entities, write the API, draw the high-level design, then the low-level design."
+    kind: rule
+    weight: core
+    teach:
+      - "Say the plan once: first the requirements, functional and non-functional. Then the core entities, then the API. Then a high-level design, and last the low-level design, where most of the time goes."
+      - "The prompt is vague on purpose. Asking the clarifying questions is your job, so you and the interviewer agree on what is being built."
+      - Said, not written; each step gets its number on the board when we reach it.
+    check: Which step comes straight after the requirements?
+    answer: Identifying the core entities, then the API.
