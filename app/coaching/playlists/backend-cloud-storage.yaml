@@ -2,6 +2,8 @@ slug: backend-cloud-storage
 title: "The cloud storage interview"
 summary: "A backend design interview for a file storage and sync platform like Google Drive or Dropbox, run step by step on one whiteboard: requirements, entities, folder and file endpoints, the high-level design, then a deep dive into chunked, resumable uploads, device sync, edits, downloads and deduplication."
 outline: "The cloud storage lessons follow the five-step order and the drawings of InterviewWithBunny's System Design 18, Design Cloud Storage Platform (youtube.com/watch?v=Dnp_-xZjNRo), section by section; no text is taken from it, and its factual slips are corrected in the article."
+landing:
+  subject: "a cloud storage service"
 lessons:
   - slug: cloud-storage
     title: "The cloud storage interview: the problem, requirements, entities and API"

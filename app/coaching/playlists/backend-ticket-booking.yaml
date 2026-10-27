@@ -2,6 +2,8 @@ slug: backend-ticket-booking
 title: "The ticket booking interview"
 summary: "A backend design interview for a service like BookMyShow, run step by step on one whiteboard: requirements with the CAP choice made per operation, entities, the API, a high-level design, then the databases, search, and two ways to make sure one seat is sold once."
 outline: "The ticket booking lessons follow the five-step order and the drawings of InterviewWithBunny's System Design 2, Design Ticket Booking System like BookMyShow, District (youtube.com/watch?v=uamf0wRMx5o), section by section; no text is taken from it, and its factual slips are corrected in the article."
+landing:
+  subject: "a ticket booking system"
 lessons:
   - slug: ticket-booking
     title: "The ticket booking interview: the problem, requirements, entities and API"

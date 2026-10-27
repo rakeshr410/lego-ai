@@ -4,6 +4,8 @@ slug: frontend-foundations
 title: Frontend system design, on the whiteboard
 summary: Twenty-five whiteboard lessons with the coach, from how the browser turns elements into boxes and pixels, through the DOM and its observers, long lists, client state and connectivity, protocols and loading performance, to designing the Twitter news feed end to end.
 outline: The order follows the way a frontend system design course is usually taught, browser fundamentals first, then the techniques built on them, then performance, then a full design. Every lesson teaches from Arrowbox's own articles, and each pack is checked against its section.
+landing:
+  subject: "a front end, from the browser up"
 lessons:
   - slug: approach
     title: What a frontend design covers

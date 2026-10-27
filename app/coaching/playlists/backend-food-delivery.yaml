@@ -2,6 +2,8 @@ slug: backend-food-delivery
 title: "The food delivery interview"
 summary: "A food delivery app like Zomato, Swiggy or Uber Eats, designed step by step on one whiteboard: requirements, entities and API, a high-level design for users, restaurants and delivery partners, then a deep dive into each service."
 outline: "The food delivery lessons follow the order and drawings of InterviewWithBunny's System Design 6, Design Food Delivery Application (youtube.com/watch?v=rZyAgZuuZiA), section by section; no text is taken from it, and its factual slips are corrected in the article."
+landing:
+  subject: "a food delivery app"
 lessons:
   - slug: food-delivery
     title: "The food delivery interview: the problem, requirements, entities and API"

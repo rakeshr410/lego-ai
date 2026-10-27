@@ -2,6 +2,8 @@ slug: backend-proximity-search
 title: "Proximity search: quadtree, geohash, PostGIS, Elasticsearch"
 summary: "Finding everything within 5 km of a user, the building block of Uber, food delivery and hotel booking designs: four approaches built one after another on one board, then the choice between them."
 outline: "The proximity search lessons follow the four numbered approaches and the drawings of InterviewWithBunny's System Design 7, Design Proximity Search (youtube.com/watch?v=6K6ihHNkO_0), section by section; no text is taken from it, and its factual slips are corrected in the article."
+landing:
+  subject: "proximity search"
 lessons:
   - slug: proximity-search
     title: "Proximity search: the problem, then a quadtree"

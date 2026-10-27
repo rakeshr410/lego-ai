@@ -2,6 +2,8 @@ slug: backend-email-delivery
 title: "The email delivery interview"
 summary: "A backend design interview for an email platform like Gmail or Outlook, run step by step on one whiteboard: requirements, entities, the API, four services, then a deep dive that follows one email from the compose window to a mailbox, here or at another provider."
 outline: "The email delivery lessons follow the five-step order and the drawings of InterviewWithBunny's System Design 20, Design an Email Delivery System (youtube.com/watch?v=87GhPP3jMp0), section by section; no text is taken from it, and its factual slips are corrected in the article."
+landing:
+  subject: "an email delivery service"
 lessons:
   - slug: email-delivery
     title: "The email interview: the problem, requirements, entities and API"

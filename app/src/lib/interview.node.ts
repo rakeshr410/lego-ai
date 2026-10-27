@@ -1,6 +1,7 @@
 import { interviewMinutes, type STAGE_KINDS } from '@arrowbox/content-kit';
 import { sectionAnchors } from './anchors';
 import type { SnapshotDrill, SnapshotInterview } from './content-snapshot';
+import type { PlaylistLanding } from './server/coaching/landing';
 import { interviewSystemOpen } from './flags';
 import { FLAGS, getSystems, getTopics } from './sd';
 
@@ -49,6 +50,8 @@ export type InterviewPage = {
   drills: InterviewDrill[];
   /** A coaching playlist's lesson (docs/coaching.md): `system` is then the playlist, and the page is the lesson's own. */
   course?: { playlist: string; lesson: string; hub: string; href: string };
+  /** The system's classroom (a coaching playlist's page, /coach/<playlist>) when it has one. */
+  classroom?: string | null;
 };
 
 /** A coaching playlist's page: its lessons in order. */
@@ -57,7 +60,12 @@ export type PlaylistPage = {
   title: string;
   summary: string;
   outline: string;
-  lessons: { slug: string; title: string; summary: string; minutes: number; parts: string[]; href: string }[];
+  /** What the page designs, and where its lessons end (coaching/landing.ts). */
+  landing: PlaylistLanding;
+  /** The system's mock interview the lessons prepare for, or null when it has none. */
+  interview: string | null;
+  /** `short`: the title without the playlist's lead ("Retries and dead executors"). */
+  lessons: { slug: string; title: string; short: string; summary: string; minutes: number; parts: string[]; href: string }[];
 };
 
 const publishedStatus = (status: SnapshotInterview['reviewStatus']) => !FLAGS.reviewedOnly || status === 'reviewed';
@@ -106,7 +114,9 @@ export function drillList(list: readonly SnapshotDrill[], system: string, topicO
 /** Every interview page's props; none while the interview flag is off. */
 export async function getInterviewPages(): Promise<InterviewPage[]> {
   if (!FLAGS.interview) return [];
-  const [all, allDrills, systems, topics] = await Promise.all([plans(), drills(), getSystems(), getTopics()]);
+  const [all, allDrills, systems, topics, playlists] = await Promise.all([plans(), drills(), getSystems(), getTopics(), getPlaylistPages()]);
+  // A system's classroom: the first playlist that prepares for its interview.
+  const classroomOf = (slug: string) => playlists.find((pl) => pl.interview === `/systems/${slug}/interview`)?.slug ?? null;
   const slugs = [...new Set([...all.map((p) => p.system), ...allDrills.map((d) => d.system)])];
   return slugs.flatMap((slug) => {
     const system = systems.find((s) => s.slug === slug);
@@ -115,7 +125,8 @@ export async function getInterviewPages(): Promise<InterviewPage[]> {
     const sys = { slug: system.slug, name: system.name, icon: system.icon ?? null };
     const entry = all.find((p) => p.system === slug);
     const list = drillList(allDrills, slug, topicOf);
-    if (entry) return [{ ...toInterviewPage(entry, sys, topicOf), drills: list }];
+    const classroom = classroomOf(slug);
+    if (entry) return [{ ...toInterviewPage(entry, sys, topicOf), drills: list, classroom: classroom && `/coach/${classroom}` }];
     // A concept system: the page is its drills.
     const page: InterviewPage = {
       system: sys,
@@ -202,15 +213,29 @@ export function toInterviewPage(entry: Pick<SnapshotInterview, 'plan' | 'derived
 /** Every playlist's page; none while the interview flag is off. */
 export async function getPlaylistPages(): Promise<PlaylistPage[]> {
   if (!FLAGS.interview) return [];
-  const { playlists } = await import('./server/coaching/lessons');
+  const [{ playlists }, { playlistLanding, shortTitle }, { packRef }, open] = await Promise.all([
+    import('./server/coaching/lessons'),
+    import('./server/coaching/landing'),
+    import('./server/coaching/schema'),
+    interviewSystems(),
+  ]);
+  // The system a playlist's first pack is on ("backend/job-scheduler" -> job-scheduler), if it has an interview.
+  const interviewOf = (pl: (ReturnType<typeof playlists>)[number]) => {
+    const first = pl.lessons[0]?.parts[0]?.packs[0];
+    const system = first ? packRef(first).system.split('/').at(-1)! : null;
+    return system && open.has(system) ? `/systems/${system}/interview` : null;
+  };
   return playlists().map((pl) => ({
     slug: pl.slug,
     title: pl.title,
     summary: pl.summary,
     outline: pl.outline,
+    landing: playlistLanding(pl),
+    interview: interviewOf(pl),
     lessons: pl.lessons.map((l) => ({
       slug: l.slug,
       title: l.title,
+      short: shortTitle(l.title),
       summary: l.summary,
       minutes: l.parts.reduce((n, p) => n + p.minutes, 0),
       parts: l.parts.map((p) => p.title),

@@ -2,6 +2,8 @@ slug: backend-job-scheduler
 title: "The job scheduler interview"
 summary: "A distributed job scheduler like Airflow, Temporal or Celery, designed step by step on one whiteboard: requirements with numbers, entities, the API, a high-level design, then deep dives into buffered writes, the watcher and executors, failures, cancelling and running now, and the follow-ups."
 outline: "The job scheduler lessons follow the five-step order and the drawings of InterviewWithBunny's System Design 9, Design Distributed Job Scheduler (youtube.com/watch?v=hLvB2haod5w), section by section; no text is taken from it, and its factual slips are corrected in the article."
+landing:
+  reach: "the polling race"
 lessons:
   - slug: job-scheduler
     title: "The job scheduler interview: the problem, requirements, entities and API"

@@ -2,6 +2,8 @@ slug: backend-distributed-logging
 title: "The distributed logging interview"
 summary: "A backend design interview for a log platform like Splunk, step by step on one whiteboard: requirements with numbers, entities, how a log leaves a service and the endpoints, a high-level design, then a deep dive through onboarding, a Kafka and Flink pipeline, search, retention and alerting."
 outline: "The distributed logging lessons follow the five-step order and the drawings of InterviewWithBunny's System Design 16, Design Distributed Logging System (youtube.com/watch?v=cqs5t7zqzCk), section by section; no text is taken from it, and its factual slips are corrected in the article."
+landing:
+  subject: "a distributed logging system"
 lessons:
   - slug: distributed-logging
     title: "The logging interview: the problem, requirements, entities and API"

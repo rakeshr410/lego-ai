@@ -696,6 +696,25 @@ export async function overview(readerId: string, system: string, scope: PlanScop
 }
 
 /**
+ * Where a reader is in a playlist (its page's start card, components/sd/PlaylistView.tsx): the lesson they left
+ * running and how long into it, and the lessons they finished.
+ */
+export async function playlistStatus(readerId: string, playlist: string): Promise<{ current: { lesson: string; minutes: number } | null; finished: string[] }> {
+  const cfg = interviewConfig();
+  const mine = (await listSessions(readerId)).filter((s) => s.kind === 'coach' && s.system === playlist && s.course);
+  const running = [...mine].reverse().find((s) => {
+    if (s.status !== 'active') return false;
+    const plan = sessionPlan(s);
+    return !!plan && closedReason(s, plan, cfg) !== 'time';
+  });
+  const plan = running ? sessionPlan(running) : null;
+  return {
+    current: running && plan ? { lesson: running.course!.lesson, minutes: Math.floor(usedSeconds(running, plan, cfg) / 60) } : null,
+    finished: [...new Set(mine.filter((s) => s.status === 'finished').map((s) => s.course!.lesson))],
+  };
+}
+
+/**
  * Starts a session on the system's plan, or returns the reader's session there that is still
  * running. Starting costs nothing: the problem statement and the first stage's opener are written
  * in the plan. Counts one of the reader's monthly sessions.

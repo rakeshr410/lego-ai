@@ -2,6 +2,8 @@ slug: backend-ride-sharing
 title: "The ride-sharing interview"
 summary: "A backend design interview for a ride-hailing app like Uber or Ola, run step by step on one whiteboard: requirements with numbers, entities, rider and driver endpoints, a high-level design, then a deep dive into the fare, driver matching under a lock, live locations, and the trip's data."
 outline: "The ride-sharing lessons follow the order and the drawings of InterviewWithBunny's System Design 11, Design Ride Sharing Application like Uber, Ola, Rapido, Lyft (youtube.com/watch?v=twUz_hWw2T8), section by section; no text is taken from it, and its factual slips are corrected in the article."
+landing:
+  subject: "a ride-sharing app"
 lessons:
   - slug: ride-sharing
     title: "The ride-sharing interview: the problem, requirements, entities and API"

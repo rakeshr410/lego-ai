@@ -2,6 +2,8 @@ slug: backend-hotel-booking
 title: "The hotel booking interview"
 summary: "A backend design interview for a hotel booking service like Airbnb or Booking.com, run step by step on one whiteboard: requirements with a split CAP choice, entities, the API, a microservice design, then each service opened, ending with how one room is never sold twice."
 outline: "The hotel booking lessons follow the five-step order and the drawings of InterviewWithBunny's System Design 5, Design Hotel Booking App like AirBnb / Booking.com (youtube.com/watch?v=mH2Ye3_vErw), service by service; no text is taken from it, and its factual slips are corrected in the article."
+landing:
+  subject: "a hotel booking system"
 lessons:
   - slug: hotel-booking
     title: "The hotel booking interview: the problem, requirements, entities and API"

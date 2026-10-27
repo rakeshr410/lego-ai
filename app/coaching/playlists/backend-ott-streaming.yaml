@@ -2,6 +2,8 @@ slug: backend-ott-streaming
 title: "The OTT streaming interview"
 summary: "A backend design interview for a streaming service like Netflix, run step by step on one whiteboard: requirements, entities, the API, a high-level design, then each service opened in turn, ending with how a film is cut, encoded and streamed without buffering."
 outline: "The OTT streaming lessons follow the order and the drawings of InterviewWithBunny's System Design 4, Design OTT Platform like Netflix / Amazon Prime / Hotstar (youtube.com/watch?v=NH-f955mvGg), section by section; no text is taken from it, and its factual slips are corrected in the article."
+landing:
+  subject: "an OTT streaming service"
 lessons:
   - slug: ott-streaming
     title: "The OTT streaming interview: the problem, requirements, entities and API"

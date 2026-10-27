@@ -206,6 +206,12 @@ export const playlist = z.strictObject({
   summary: line(400),
   /** Where the lessons come from: the sources a reviewer can check the outline against (no text is taken from them). */
   outline: line(400),
+  /**
+   * The playlist page's words (components/sd/PlaylistView.tsx) where the title doesn't give them: what is designed,
+   * after "Design" ("a job scheduler"), and where the lessons end ("the polling race"). Without them the subject
+   * comes from the title (coaching/landing.ts).
+   */
+  landing: z.strictObject({ subject: line(60).optional(), reach: line(40).optional() }).optional(),
   lessons: z.array(lesson).min(1).max(40),
 });
 export type Playlist = z.infer<typeof playlist>;

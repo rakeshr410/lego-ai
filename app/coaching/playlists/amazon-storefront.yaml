@@ -5,6 +5,8 @@ slug: amazon-storefront
 title: Design Amazon, on the whiteboard
 summary: "Fifteen whiteboard lessons with the coach: five frontend design interviews for an Amazon-like store, the product listing, the product page, the cart, checkout and payment, and orders and tracking, each from the prompt and requirements through components, state and the API to optimizations and trade-offs."
 outline: "The interviews follow a shopper's path through the store, in the order of Arrowbox's Amazon articles. Each lesson's parts follow its article's sections in order, and every pack is checked against its section."
+landing:
+  subject: "an Amazon product listing page"
 lessons:
   - slug: listing-scope-and-components
     title: "The Amazon product listing interview: scope and components"

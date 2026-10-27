@@ -227,6 +227,8 @@ function SessionCard({ page, scope, kind, overview, loadError, onOpen }: { page:
   const [consenting, setConsenting] = useState(false);
   const [agreed, setAgreed] = useState(false);
   const [audioOptIn, setAudioOptIn] = useState(false);
+  // The consent's full terms, shown under its line (design 20a's "Privacy details").
+  const [terms, setTerms] = useState(false);
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -400,51 +402,62 @@ function SessionCard({ page, scope, kind, overview, loadError, onOpen }: { page:
     );
   }
   if (voiceBuild) {
-    // Design 16a: the consent is the card (what happens, the two boxes, then the start).
+    // Design 20a: what happens in a line, the full terms a click away, the box that enables the start.
+    const last = past.at(-1);
     return (
       <>
-        <div className="ivl-label" id={`${consentId}-title`}>
-          {t('consent.title')}
-        </div>
-        <ul className="ivl-bullets" aria-labelledby={`${consentId}-title`}>
-          <li>{t(coach ? 'coach.consent.voice.ai' : 'consent.voice.ai')}</li>
-          <li>{t('consent.voice.mic')}</li>
-          <li>{t('consent.keep', { days: status.retentionDays })}</li>
-          <li>{t('consent.private')}</li>
-          {scope && <li>{t('consent.voice.drill', { limit: status.drillLimit, minutes: page.minutes })}</li>}
-        </ul>
-        <p className="ivl-more">{t.rich('consent.more', { link: (text, key) => <a key={key} href="/legal/privacy">{text}</a> })}</p>
-        <div className="ivl-agree">
-          {coach && (
-            <label className="ivl-name">
-              <span>{t('coach.name.label')}</span>
-              <input type="text" value={name} maxLength={30} autoComplete="given-name" onChange={(e) => setName(e.target.value)} />
-              <small>{t('coach.name.hint')}</small>
-            </label>
-          )}
-          <label className="ivl-check">
-            <input type="checkbox" checked={audioOptIn} onChange={(e) => setAudioOptIn(e.target.checked)} />
-            <span>{t('consent.voice.optIn')}</span>
-          </label>
-          <label className="ivl-check ivl-check--strong">
-            <input type="checkbox" checked={agreed} onChange={(e) => setAgreed(e.target.checked)} />
-            <span>{t('consent.agree')}</span>
-          </label>
-          <button type="button" className="iv-start iv-start--go" disabled={!agreed || busy} aria-busy={busy} onClick={() => void start('voice')}>
-            {busy ? t('consent.starting') : t('start.voiceCheck')} <span>→</span>
+        <p className="lp-card__text">
+          {t(coach ? 'coach.consent.short' : 'consent.short', { days: status.retentionDays })}{' '}
+          <button type="button" className="lp-inline" aria-expanded={terms} aria-controls={`${consentId}-terms`} onClick={() => setTerms((v) => !v)}>
+            {t('consent.details')}
           </button>
-          {error && (
-            <div className="ivl-error" role="alert">
-              <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
-                <circle cx="7" cy="7" r="6" />
-                <path d="M7 3.8V7.6" />
-                <circle cx="7" cy="10" r=".9" className="is-dot" />
-              </svg>
-              <span>{error}</span>
-            </div>
-          )}
-        </div>
-        {pastList}
+        </p>
+        {terms && (
+          <ul className="ivl-bullets" id={`${consentId}-terms`}>
+            <li>{t(coach ? 'coach.consent.voice.ai' : 'consent.voice.ai')}</li>
+            <li>{t('consent.voice.mic')}</li>
+            <li>{t('consent.keep', { days: status.retentionDays })}</li>
+            <li>{t('consent.private')}</li>
+            {scope && <li>{t('consent.voice.drill', { limit: status.drillLimit, minutes: page.minutes })}</li>}
+            <li>{t.rich('consent.more', { link: (text, key) => <a key={key} href="/legal/privacy">{text}</a> })}</li>
+          </ul>
+        )}
+        {coach && (
+          <label className="lp-field">
+            <span>{t('coach.name.label')}</span>
+            <input type="text" value={name} maxLength={30} autoComplete="given-name" onChange={(e) => setName(e.target.value)} />
+            <small>{t('coach.name.hint')}</small>
+          </label>
+        )}
+        <label className="lp-check lp-check--soft">
+          <input type="checkbox" checked={audioOptIn} onChange={(e) => setAudioOptIn(e.target.checked)} />
+          <span>{t('consent.voice.optIn')}</span>
+        </label>
+        <label className="lp-check">
+          <input type="checkbox" checked={agreed} onChange={(e) => setAgreed(e.target.checked)} />
+          <span>{t('consent.agree')}</span>
+        </label>
+        <button type="button" className="lp-start" disabled={!agreed || busy} aria-busy={busy} onClick={() => void start('voice')}>
+          <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
+            <rect x="4.5" y="1.5" width="5" height="7" rx="2.5" />
+            <path d="M2.5 7a4.5 4.5 0 0 0 9 0M7 11.5V13" />
+          </svg>
+          {busy ? t('consent.starting') : t('start.voiceCheck')}
+        </button>
+        {error && (
+          <p className="lp-note lp-note--error" role="alert">
+            {error}
+          </p>
+        )}
+        <p className="lp-hint">{t('start.ready', { minutes: page.minutes })}</p>
+        {last && (
+          <div className="lp-card__foot lp-card__foot--in">
+            <span>{t('past.last', { day: day(last.startedAt) })}</span>
+            <button type="button" onClick={() => void open(last.id)} disabled={busy}>
+              {t(last.status === 'finished' ? (last.rated ? 'past.last.feedback' : 'past.last.transcript') : 'past.last.view')}
+            </button>
+          </div>
+        )}
       </>
     );
   }
