@@ -28,3 +28,5 @@ eval/results/
 
 # Excalidraw's fonts for the whiteboard, copied by scripts/copy-excalidraw.mjs (predev/prebuild)
 public/excalidraw/
+# The interview and classroom modules, built for the dev server (npm run dev:remote; remote.vite.config.ts)
+public/_ai/

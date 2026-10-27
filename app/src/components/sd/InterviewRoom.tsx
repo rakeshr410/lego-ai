@@ -1,12 +1,11 @@
 import { lazy, Suspense, useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 import type { InterviewPage } from '../../lib/interview.node';
+import { sessionChanged } from '../../lib/live-session';
 import { readEvents } from '../../lib/sse';
-import tc from '../../i18n/messages/common';
 import t from '../../i18n/messages/interview';
 import type { SessionView, VoiceJoin } from '../../pages/api/interview/index';
 import '../../styles/interview-room.css';
 import '../../styles/interview-call.css';
-import Logo from '../Logo';
 import InterviewFeedback from './InterviewFeedback';
 import CoachRail from './CoachRail';
 import CoachSummary from './CoachSummary';
@@ -63,6 +62,9 @@ async function post(id: string, body: unknown, keepalive = false) {
 
 export default function InterviewRoom({ page, initial, join = null, onExit }: Props) {
   const [session, setSession] = useState(initial);
+  // The page around the room hears when the session starts and ends, and can end it (lib/live-session.ts).
+  useEffect(() => sessionChanged(page, session), [page, session]);
+  useEffect(() => () => sessionChanged(page, null), [page]);
   const [draft, setDraft] = useState('');
   // A reply on its way: the learner's words (null on a lesson's continue) and the reply so far.
   const [pending, setPending] = useState<{ candidate: string | null; reply: string } | null>(null);
@@ -344,10 +346,6 @@ export default function InterviewRoom({ page, initial, join = null, onExit }: Pr
     return (
       <div className="ivc">
         <header className="ivc-top">
-          <a href="/" className="ivc-logo">
-            <Logo tone="dark" />
-          </a>
-          <span className="ivc-top__rule" aria-hidden="true" />
           <div className="ivc-top__title">
             <h1>{page.title}</h1>
             <span>{t(coach ? 'coach.call.sub' : 'call.sub', { n: session.stageIndex + 1, total: page.stages.length, stage: stage.title })}</span>
@@ -424,24 +422,7 @@ export default function InterviewRoom({ page, initial, join = null, onExit }: Pr
   return (
     <div className="ivr">
       <header className="iv-top">
-        <a href="/" className="bp-logo">
-          <Logo tone="dark" />
-        </a>
-        <nav className="iv-top__crumbs" aria-label={tc('nav.breadcrumb')}>
-          <a href={page.course?.hub ?? `/systems/${page.system.slug}`}>{page.system.name}</a>
-          <span>/</span>
-          {page.course ? (
-            <strong>{page.title}</strong>
-          ) : session.scope ? (
-            <>
-              <a href={`/systems/${page.system.slug}/interview${coach ? '?kind=coach' : ''}`}>{t(coach ? 'coach.crumb' : 'crumb')}</a>
-              <span>/</span>
-              <strong>{t('crumb.drill')}</strong>
-            </>
-          ) : (
-            <strong>{t(coach ? 'coach.crumb' : 'crumb')}</strong>
-          )}
-        </nav>
+        {/* The logo and where this is are the site's header and mode bar, above the room. */}
         <div className="iv-top__spacer" />
         {!finished && (
           <div className="ivr-clock" aria-label={t('room.clock')}>

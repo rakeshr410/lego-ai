@@ -41,6 +41,8 @@ jobs:
             content
             content-kit
             graph/src
+            events/src
+            site-shell/src
             infra
       - uses: actions/setup-node@v4
         with:

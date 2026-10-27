@@ -3,10 +3,8 @@ import { topicLink } from '../../lib/auth-state';
 import type { InterviewPage } from '../../lib/interview.node';
 import { useAuthState } from '../../lib/use-auth-state';
 import { formatTwoDigits } from '../../i18n/format';
-import tc from '../../i18n/messages/common';
 import t from '../../i18n/messages/interview';
 import '../../styles/interview.css';
-import Logo from '../Logo';
 
 // Mock interview landing (design 16a): the timeline as the hero, the skills and how it works as
 // tiles, the drills grouped by topic, and the start card with its consent on the right. One per
@@ -242,7 +240,6 @@ export default function InterviewLanding({ page, action, usage = null, scope = n
   const { system } = page;
   const { stages, total, ticks } = timeline(page);
   // A playlist's lesson (docs/coaching.md) belongs to its playlist's page.
-  const hub = page.course?.hub ?? `/systems/${system.slug}`;
   const coach = kind === 'coach';
   const interviewHref = page.course?.hub ?? `/systems/${system.slug}/interview${coach ? '?kind=coach' : ''}`;
   // The same page as the other kind (the lesson's as an interview, and back), scope kept.
@@ -277,31 +274,7 @@ export default function InterviewLanding({ page, action, usage = null, scope = n
 
   return (
     <div className="iv">
-      <header className="iv-top">
-        <a href="/" className="bp-logo">
-          <Logo tone="dark" />
-        </a>
-        <nav className="iv-top__crumbs" aria-label={tc('nav.breadcrumb')}>
-          <a href={hub}>{system.name}</a>
-          <span>/</span>
-          {page.course ? (
-            <strong>{page.title}</strong>
-          ) : scope ? (
-            <>
-              <a href={interviewHref}>{t(coach ? 'coach.crumb' : 'crumb')}</a>
-              <span>/</span>
-              <strong>{t('crumb.drill')}</strong>
-            </>
-          ) : (
-            <strong>{t(coach ? 'coach.crumb' : 'crumb')}</strong>
-          )}
-        </nav>
-        <div className="iv-top__spacer" />
-        <a href={hub} className="iv-top__back">
-          <svg className="iv-top__arrow" width="14" height="10" viewBox="0 0 14 10" aria-hidden="true"><path d="M13 5H2M6 1L2 5L6 9" /></svg>
-          {t('back')}
-        </a>
-      </header>
+      {/* No bar of its own: the site's header and mode bar are above it (the shell's page, lego/web RemotePage.astro). */}
 
       <div className="ivl">
         <main className="ivl-main" id="content" tabIndex={-1}>

@@ -7,12 +7,11 @@
 export const ASSETS_DIR = '_ai';
 
 /** Regular expression sources, each matched against the start of a path (after its leading slash). */
+// No pages: the interview's and the coach's (/systems/<system>/interview, /coach/…) are the main
+// site's, which mounts this app's modules in them (src/remote/, served under ASSETS_DIR) from what
+// /api/interview/page says.
 export const OWNED = [
-  // The landing page, the room and the coach (prerendered)
-  String.raw`systems/[^/]+/interview(?:[/?#]|$)`,
-  // The coaching playlists and their lessons (prerendered; docs/coaching.md)
-  String.raw`coach(?:[/?#]|$)`,
-  // The reader's API, and the voice service's (private network only: the load balancer leaves it out)
+  // The reader's API (the modules' and the shell's), and the voice service's (private network only: the load balancer leaves it out)
   String.raw`api/(?:internal/)?interview(?:[/?#]|$)`,
   `${ASSETS_DIR}/`,
   // The whiteboard's fonts (scripts/copy-excalidraw.mjs)

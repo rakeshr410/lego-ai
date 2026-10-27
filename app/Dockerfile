@@ -22,6 +22,10 @@ RUN npm --prefix /src/lego/content-kit ci --no-audit --no-fund
 COPY --from=lego content-kit/ /src/lego/content-kit/
 # The content graph's client (lego/graph): a build with GRAPH_URL set fetches its material from the graph.
 COPY --from=lego graph/src/client.ts /src/lego/graph/src/client.ts
+# The page's event bus (lego/events) and the site shell's auth hint (lego/site-shell), which the
+# interview and classroom modules share with the page they mount in.
+COPY --from=lego events/src/ /src/lego/events/src/
+COPY --from=lego site-shell/src/ /src/lego/site-shell/src/
 WORKDIR /src/lego-ai/app
 COPY app/package.json app/package-lock.json ./
 RUN npm ci --no-audit --no-fund
