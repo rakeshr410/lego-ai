@@ -104,6 +104,8 @@ class SessionRun:
 ATTACH_BUSY_TRIES = 20
 ATTACH_BUSY_WAIT_SECS = 0.5
 LEAVE_GRACE_SECS = 10.0
+# The longest wait a room may ask a lesson for (the web's own are 1.5 s and 45 s).
+MAX_SELF_DRIVE_SECS = 120.0
 
 
 class RejoinWindow:
@@ -256,6 +258,19 @@ async def run_session(
 
     idle = IdleGate(timer=IdleTimer(state.idle_rungs, on_rung, on_continue=on_continue))
     idle.timer.self_drive = state.self_drive
+
+    # The learner turned the lesson's questions on or off in the room: the web answered with the new wait, and
+    # the room passes it on. A clock already running starts again on it (no more waiting for an answer).
+    @rtvi.event_handler("on_client_message")
+    async def on_client_message(_rtvi, msg) -> None:
+        if spec.kind != "coach" or msg.type != "pace" or not isinstance(msg.data, dict):
+            return
+        wait = msg.data.get("selfDrive")
+        if wait is not None and (not isinstance(wait, int | float) or not 0 <= wait <= MAX_SELF_DRIVE_SECS):
+            return
+        idle.timer.self_drive = float(wait) if wait is not None else None
+        if idle.timer.armed:
+            idle.timer.arm()
 
     context = LLMContext()
     # Who ends the turn: Flux does it itself (external strategies; Pipecat's eager strategy is not

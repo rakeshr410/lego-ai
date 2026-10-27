@@ -25,6 +25,8 @@ export interface VoiceClient {
   disconnect(): Promise<void>;
   enableMic(enable: boolean): void;
   readonly isMicEnabled: boolean;
+  /** A message to the pipeline over the call (a lesson's new pace: `pace`, {selfDrive}). */
+  sendClientMessage?(msgType: string, data?: unknown): void;
 }
 
 /** The Pipecat callbacks the call listens to (the client's RTVIEventCallbacks, the subset used). */
@@ -130,6 +132,15 @@ export class VoiceCall {
 
   setMuted(muted: boolean): void {
     this.client?.enableMic(!muted);
+  }
+
+  /** Tells the pipeline something over the call, if it is on one (nothing is queued for a later join). */
+  send(type: string, data: unknown): void {
+    try {
+      this.client?.sendClientMessage?.(type, data);
+    } catch {
+      /* not connected yet, or no longer: the pipeline reads the session's state on its next turn */
+    }
   }
 
   get muted(): boolean {

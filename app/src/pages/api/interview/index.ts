@@ -25,6 +25,8 @@ export const prerender = false;
 //                                        and its pipeline: {session, join: {url, token, expiresAt}}
 //   ?kind=coach / {kind: "coach"}        the same, for a coach lesson on the plan (docs/coach-mode.md):
 //                                        the coach teaches the plan's sections and checks them; its own quota
+//                                        ({questions: false}: it starts with its questions off, the
+//                                        learner's last choice in the room)
 //   ?lesson=<slug> / {lesson}          a lesson of the playlist `system` names (docs/coaching.md);
 //                                        coach only. The GET's `page` is then the lesson's projection.
 //   ?topic=<slug>[&section=<key>] / {topic, section}
@@ -119,13 +121,13 @@ export const POST: APIRoute = async ({ request, url, cookies }) => {
   if (body?.mode === 'voice') {
     return handle('start voice', async () => {
       await assertAccess(reader);
-      const { session, join, resumed } = kind === 'coach' ? await startVoiceSession(reader, system, body?.consent, body?.audioOptIn, scope, kind, lesson, learnerName(body?.name)) : await startVoiceSession(reader, system, body?.consent, body?.audioOptIn, scope);
+      const { session, join, resumed } = kind === 'coach' ? await startVoiceSession(reader, system, body?.consent, body?.audioOptIn, scope, kind, lesson, learnerName(body?.name), ...(body?.questions === false ? [false] : [])) : await startVoiceSession(reader, system, body?.consent, body?.audioOptIn, scope);
       return json({ session, join, resumed }, resumed ? 200 : 201);
     });
   }
   return handle('start', async () => {
     await assertAccess(reader);
-    const { session, resumed } = await startSession(reader.documentId, system, body?.consent, { scope, plan: planOf(reader), ...(kind === 'coach' ? { kind, name: learnerName(body?.name) } : {}), ...(lesson ? { lesson } : {}) });
+    const { session, resumed } = await startSession(reader.documentId, system, body?.consent, { scope, plan: planOf(reader), ...(kind === 'coach' ? { kind, name: learnerName(body?.name), ...(body?.questions === false ? { questions: false } : {}) } : {}), ...(lesson ? { lesson } : {}) });
     return json({ session, resumed }, resumed ? 200 : 201);
   });
 };

@@ -30,7 +30,7 @@ import {
   type SessionView,
   type VoiceCall,
 } from './service';
-import { lessonView } from './coach';
+import { lessonView, type LessonView } from './coach';
 import type { DrawAnchor, DrawOp } from './draw';
 import { continueLesson } from './service';
 import { dropPrefetch } from './prefetch';
@@ -164,11 +164,11 @@ const dailyOpts = (cfg: InterviewConfig) => ({ apiUrl: cfg.voice.dailyApiUrl, ap
  * or resumes the reader's running voice session there. Counts one of the month's voice sessions
  * and its planned minutes.
  */
-export async function startVoiceSession(reader: Reader, system: string, consentVersion: unknown, audioOptIn: unknown, scope: PlanScope = null, kind: SessionKind = 'interview', lesson: string | null = null, name: string | null = null): Promise<{ session: SessionView; join: VoiceJoin; resumed: boolean }> {
+export async function startVoiceSession(reader: Reader, system: string, consentVersion: unknown, audioOptIn: unknown, scope: PlanScope = null, kind: SessionKind = 'interview', lesson: string | null = null, name: string | null = null, questions?: boolean): Promise<{ session: SessionView; join: VoiceJoin; resumed: boolean }> {
   const cfg = interviewConfig();
   if (!hasVoicePlan(reader)) throw fail('plan', 403, kind === 'coach' ? 'Voice lessons are part of Pro.' : 'Voice interviews are part of Pro.', undefined, { plan: planOf(reader) });
   await checkVoiceCalls(cfg);
-  const { session, resumed } = await startSession(reader.documentId, system, consentVersion, { mode: 'voice', plan: planOf(reader), audioOptIn: audioOptIn === true, scope, ...(kind === 'coach' ? { kind } : {}), ...(lesson ? { lesson } : {}), ...(name ? { name } : {}) });
+  const { session, resumed } = await startSession(reader.documentId, system, consentVersion, { mode: 'voice', plan: planOf(reader), audioOptIn: audioOptIn === true, scope, ...(kind === 'coach' ? { kind } : {}), ...(lesson ? { lesson } : {}), ...(name ? { name } : {}), ...(questions === false ? { questions } : {}) });
   if (session.mode !== 'voice') throw fail('active', 409, `You have a typed ${kind === 'coach' ? 'lesson' : 'interview'} in progress on this system. Finish it first.`, undefined, { id: session.id });
   if (!resumed) {
     // A top-up session reserves no monthly minutes (its own caps bound it).
@@ -323,6 +323,9 @@ export type PipelineView = {
 /** The beat after a coach's move that waits for nothing, and the wait after a question the learner leaves unanswered. */
 export const COACH_CONTINUE_AFTER_SECS = 1.5;
 export const COACH_ANSWER_WAIT_SECS = 45;
+/** When a lesson's pipeline asks for the next move after the coach falls silent (null: it doesn't, the lesson is closed). */
+export const coachSelfDrive = (waiting: LessonView['waiting'], closed: boolean): number | null =>
+  closed ? null : waiting === 'answer' || waiting === 'draw' ? COACH_ANSWER_WAIT_SECS : COACH_CONTINUE_AFTER_SECS;
 /** A learner thinking aloud pauses longer than a candidate answering: the pipeline's turn-stop for a lesson. */
 export const COACH_TURN_STOP_SECS = 3;
 
@@ -338,7 +341,7 @@ export function pipelineView(session: Session, plan: Plan, cfg: InterviewConfig,
   const v = session.voice!;
   const coach = session.kind === 'coach';
   const closed = closedReason(session, plan, cfg);
-  const waiting = coach ? lessonView(plan.plan, session.coach, session.stageIndex).waiting : null;
+  const waiting = coach ? lessonView(plan.plan, session.coach, session.stageIndex, !session.coachQuiet).waiting : null;
   return {
     epoch: v.lease?.epoch ?? 0,
     seq: v.lease?.seq ?? session.candidateTurns,
@@ -353,7 +356,7 @@ export function pipelineView(session: Session, plan: Plan, cfg: InterviewConfig,
     // The coach's silence is its own to fill (selfDrive); the interviewer's rungs would only talk over it.
     idleRungs: coach ? [] : [20, 35, 60, 120],
     kind: coach ? 'coach' : 'interview',
-    selfDrive: !coach || closed ? null : waiting === 'answer' || waiting === 'draw' ? COACH_ANSWER_WAIT_SECS : COACH_CONTINUE_AFTER_SECS,
+    selfDrive: coach && waiting ? coachSelfDrive(waiting, !!closed) : null,
   };
 }
 

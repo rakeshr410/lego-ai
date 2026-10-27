@@ -132,6 +132,8 @@ export type Session = {
   course?: { lesson: string; recall: string[] };
   /** The coach's state (coach sessions). */
   coach?: import('./coach').CoachState;
+  /** The learner turned the coach's questions off (the room's toggle): it teaches straight through until they turn them on. */
+  coachQuiet?: true;
   /** A whole voice session past the month's quota, paid for by a purchased top-up (no monthly minutes reserved). */
   topup?: true;
   /** The session spends credits (lego-ledger, lib/server/credits.ts): its meter is open there under the session's id. */

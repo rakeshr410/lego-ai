@@ -38,6 +38,8 @@ type Props = {
   onVoice?: (e: { speaking: boolean } | { words: string }) => void;
   /** The call layout's syllabus rail (a lesson), under the speakers. */
   rail?: ReactNode;
+  /** A lesson's new wait before its next move (the questions toggle), passed on to the pipeline when it changes. */
+  pace?: { selfDrive: number | null; seq: number } | null;
 };
 
 /** Five bars that move while the speaker talks. */
@@ -77,7 +79,7 @@ async function voiceAction(id: string, action: 'join' | 'leave') {
   return { ok: res.ok, status: res.status, data };
 }
 
-export default function VoiceRoom({ sessionId, join: initialJoin, session, onSession, onLeft, layout = 'panel', showTranscript = true, onHideTranscript, kind = 'interview', onDraw, onPen, onVoice, rail = null }: Props) {
+export default function VoiceRoom({ sessionId, join: initialJoin, session, onSession, onLeft, layout = 'panel', showTranscript = true, onHideTranscript, kind = 'interview', onDraw, onPen, onVoice, rail = null, pace = null }: Props) {
   const who = t(kind === 'coach' ? 'voice.coach' : 'voice.interviewer');
   const onDrawRef = useRef(onDraw);
   const onPenRef = useRef(onPen);
@@ -93,6 +95,9 @@ export default function VoiceRoom({ sessionId, join: initialJoin, session, onSes
   const [speaking, setSpeaking] = useState<'you' | 'interviewer' | null>(null);
   const [captions, setCaptions] = useState<{ you: Caption | null; interviewer: Caption | null }>({ you: null, interviewer: null });
   const callRef = useRef<VoiceCall | null>(null);
+  useEffect(() => {
+    if (pace) callRef.current?.send('pace', { selfDrive: pace.selfDrive });
+  }, [pace]);
   const linesRef = useRef<HTMLDivElement>(null);
   const joinRef = useRef<VoiceJoin | null>(initialJoin);
   const attemptsRef = useRef(0);

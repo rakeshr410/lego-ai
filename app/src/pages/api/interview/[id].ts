@@ -4,8 +4,8 @@ import { isSameOrigin, json, readJson, tooMany } from '../../../lib/server/http'
 import { handle, interviewErrorBody, interviewOff } from '../../../lib/server/interview/http';
 import { ID_PATTERN } from '../../../lib/server/interview/sessions';
 import type { DrawAnchor, DrawOp } from '../../../lib/server/interview/draw';
-import { advance, continueLesson, finish, idle, InterviewError, readSession, removeSession, reply } from '../../../lib/server/interview/service';
-import { releaseVoiceFor, settleVoice } from '../../../lib/server/interview/voice';
+import { advance, continueLesson, finish, idle, InterviewError, readSession, removeSession, reply, setCoachQuestions } from '../../../lib/server/interview/service';
+import { coachSelfDrive, releaseVoiceFor, settleVoice } from '../../../lib/server/interview/voice';
 import { rateLimit } from '../../../lib/server/rate-limit';
 
 export const prerender = false;
@@ -27,6 +27,10 @@ export const prerender = false;
 //   POST {action: "idle", rung}           the candidate has been quiet rung seconds (20, 35, 60,
 //                                         120): a nudge, a rephrased question or a hint offer;
 //                                         nothing is advanced on silence
+//   POST {action: "questions", on}       a coach lesson: the coach asks the learner things (true, a
+//                                         discussion) or teaches straight through (false). With a
+//                                         voice, `selfDrive` is the pipeline's new wait, which the room
+//                                         passes on over the call
 //   DELETE                                deletes the session now
 // In a voice session, reply, advance, idle and finish are 409 voice_live while a voice pipeline
 // holds the session (its lease, renewed by its turns and heartbeats; stale after a minute), and
@@ -71,6 +75,11 @@ export const POST: APIRoute = async ({ request, url, params, cookies }) => {
 
   if (action === 'advance') return handle('advance', async () => json({ session: await advance(reader.documentId, id, body?.from) }));
   if (action === 'finish') return handle('finish', async () => json({ session: await finish(reader.documentId, id, { signal: request.signal }) }));
+  if (action === 'questions')
+    return handle('questions', async () => {
+      const session = await setCoachQuestions(reader.documentId, id, body?.on);
+      return json({ session, selfDrive: session.lesson ? coachSelfDrive(session.lesson.waiting, !!session.closed) : null });
+    });
   if (action === 'idle') return handle('idle', async () => json({ session: await idle(reader.documentId, id, body?.rung) }));
   if (action !== 'reply' && action !== 'continue') return json({ error: 'Unknown action' }, 400);
 

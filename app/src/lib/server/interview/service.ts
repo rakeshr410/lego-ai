@@ -534,7 +534,7 @@ export function toView(s: Session, plan: Plan, cfg = interviewConfig()): Session
     turnsLeft: Math.max(0, limitsOf(s, cfg).maxTurns - s.candidateTurns),
     mode: s.mode ?? 'text',
     kind: s.kind ?? 'interview',
-    lesson: s.kind === 'coach' ? lessonView(plan.plan, s.coach, s.stageIndex) : null,
+    lesson: s.kind === 'coach' ? lessonView(plan.plan, s.coach, s.stageIndex, !s.coachQuiet) : null,
     course: plan.lesson ? { playlist: plan.lesson.playlist.slug, playlistTitle: plan.lesson.playlist.title, lesson: plan.lesson.slug, title: plan.lesson.title, next: nextOf(plan) } : null,
     voice: s.voice
       ? {
@@ -713,6 +713,8 @@ export type StartOptions = {
   lesson?: string | null;
   /** What the coach calls the learner (`learnerName`); a coach session only. */
   name?: string | null;
+  /** False: the lesson starts with the coach's questions off (the learner's last choice, `coachQuiet`); a coach session only. */
+  questions?: boolean;
   /** The reader's plan (entitlements.ts), for the month's credits (lego-ledger). */
   plan?: string;
 };
@@ -880,6 +882,7 @@ async function createStarted(
     ...(voice ? { mode: 'voice' as const, voice: initialVoice(!!opts.audioOptIn) } : {}),
     ...(coach ? { kind: 'coach' as const, coach: initialCoachState(plan.plan, 0, now) } : {}),
     ...(coach && learnerName(opts.name) ? { learnerName: learnerName(opts.name)! } : {}),
+    ...(coach && opts.questions === false ? { coachQuiet: true as const } : {}),
     ...(topup ? { topup: true as const } : {}),
     ...(metered ? { metered: true as const } : {}),
     planVersion: plan.version,
@@ -1265,6 +1268,27 @@ export async function idle(readerId: string, id: string, rung: unknown, opts: { 
 }
 
 /**
+ * A lesson's questions, on (a discussion: the coach asks for lists, checks, drawings) or off (it teaches straight
+ * through): the learner's toggle in the room, kept on the session. The next move follows it; one still waiting for
+ * the learner's answer stops waiting, and the room's (or the voice's) continue takes the lesson on.
+ */
+export async function setCoachQuestions(readerId: string, id: string, on: unknown): Promise<SessionView> {
+  const cfg = interviewConfig();
+  if (typeof on !== 'boolean') throw fail('invalid', 400, 'Say whether the coach asks questions (true or false).');
+  return withLock(id, cfg, async () => {
+    const { session, plan } = await mine(readerId, id);
+    if (session.kind !== 'coach') throw fail('invalid', 400, 'Only a lesson has questions to turn off.');
+    if (session.status !== 'active' || !!session.coachQuiet === !on) return toView(session, plan, cfg);
+    const saved = await updateSession(id, cfg.retentionDays, (s) => {
+      const { coachQuiet: _, ...rest } = s;
+      return on ? rest : { ...rest, coachQuiet: true };
+    });
+    if (!saved) throw fail('not_found', 404, 'That lesson has expired.');
+    return toView(saved, plan, cfg);
+  });
+}
+
+/**
  * Ends the session and writes the feedback (one call on the feedback model, with structured
  * output). Runs whatever closed the session (time, turns, budget), once: a finished session
  * returns its feedback. With nothing said, it ends without a call; after MAX_FEEDBACK_ATTEMPTS
@@ -1586,7 +1610,7 @@ async function coachTurn(readerId: string, id: string, message: string | null, c
     const askIds = (asks ?? []).flatMap((a) => [...a.before, ...Object.values(a.lines).flat(), ...Object.values(a.rest).flat()]);
     const placedIds = new Set([...runs.flatMap((r) => [...r.covered]), ...(plan.lesson ? onBoard(plan.lesson.layout, askIds, earlier) : [])]);
     const lines = { placed: [...placedIds], given: earlier.flatMap((o) => ((o.op === 'note' || o.op === 'box' || o.op === 'region') && o.learner && o.covers ? [o.covers] : [])) };
-    const directed = decideCoach({ plan: plan.plan, stageIndex, elapsedMs, state, text: message, signal: await readSignal(id), closed: false, drawn: board?.tags.map((t) => t.item) ?? [], cutIn, questions: cfg.coach.questions, asks, lines });
+    const directed = decideCoach({ plan: plan.plan, stageIndex, elapsedMs, state, text: message, signal: await readSignal(id), closed: false, drawn: board?.tags.map((t) => t.item) ?? [], cutIn, questions: cfg.coach.questions, quiet: !!session.coachQuiet, asks, lines });
     // A move that draws a lesson item names the item's planned ids in its instruction, so the model has them in hand
     // (an ask's frame, or the lines the learner left out, when the move names its own).
     const planned = plan.lesson && directed.decision.draw ? (directed.decision.place ?? (directed.decision.item ? plannedIds(plan.lesson, directed.decision.item) : [])) : [];
@@ -1611,7 +1635,7 @@ async function coachTurn(readerId: string, id: string, message: string | null, c
         ? { role: 'event', stage: stage.key, text: CONTINUE_TEXT, at, meta: { ...meta, continued: true } }
         : { role: 'candidate', stage: stage.key, text: message, at, minute: Math.floor(elapsedMs / 60_000), meta: { ...meta, ...(voice ? { source: 'voice' as const } : {}) } };
     const tools = cfg.coach.drawTools;
-    const params = coachRequest(plan, [...session.turns, ...before, learner], { voice: !!voice, tools, name: session.learnerName, questions: cfg.coach.questions });
+    const params = coachRequest(plan, [...session.turns, ...before, learner], { voice: !!voice, tools, name: session.learnerName, questions: cfg.coach.questions && !session.coachQuiet });
     const callMeta = {
       readerId,
       topic: `${session.system}/interview`,

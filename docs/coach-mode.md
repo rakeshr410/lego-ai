@@ -263,6 +263,15 @@ None of the three runs under Python, and none should: the drawing stays in the b
      learner: the check after an item (row 9, and so the reteach after it) and the draw task at a stage's end
      (row 12). Off, a lesson teaches straight through, and the question filter strips any question the model
      writes into a teaching move. Turn it on when the questions come back.
+   - **The learner can turn the questions off.** The room's "Questions" toggle (typed and voice rooms; POST
+     `{action: "questions", on}`, kept on the session as `coachQuiet`) makes the lesson teach straight through
+     whatever the settings above allow: no check or reteach, no draw task, and no part the learner gives first
+     (`input.quiet` in `decideCoach`). What was still asked is settled: an open list closes and its lines are
+     taught, a draw task is dropped unreviewed, and the lesson view stops waiting (`waiting: 'continue'`). The
+     learner can still speak or ask at any time. Over a call the room passes the new wait to the pipeline
+     (`pace`, a client message), which restarts its clock on it. Turned back on, the next move asks as before.
+     The choice is remembered in the browser (`lib/coach-pref.ts`): the next lesson starts with it (`{questions: false}`
+     on the start), and a resumed lesson keeps its own.
    - **The next move waits for the learner.** The voice's self-drive (1.5 s after the coach falls silent) never
      fires while the learner talks: a cut-in stops the voice without arming it, and when they stop, it waits
      `AFTER_LEARNER_SECS` (3 s) more, and skips the move if a reply is already being made (`IdleGate`,

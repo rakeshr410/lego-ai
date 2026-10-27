@@ -947,6 +947,37 @@ describe('a coach lesson (docs/coach-mode.md)', () => {
 
   const startCoach = (reader = READER) => svc.startSession(reader, 'instagram', CONSENT_VERSION, { kind: 'coach' });
   const saved = (id: string) => JSON.parse(store.map.get(`interview:session:${id}`)!);
+
+  it('teaches straight through once the learner turns the questions off, and asks again once they turn them on', async () => {
+    const { session } = await startCoach();
+    create.mockResolvedValueOnce(message('Welcome. We start with the users of the login page.'));
+    await svc.continueLesson(READER, session.id);
+    const off = await svc.setCoachQuestions(READER, session.id, false);
+    expect(off.lesson).toMatchObject({ discussion: false, waiting: 'continue' });
+    expect(saved(session.id).coachQuiet).toBe(true);
+    create.mockResolvedValueOnce(message('Next, the session store.'));
+    await svc.continueLesson(READER, session.id);
+    const moves = () => saved(session.id).turns.flatMap((t: { meta?: { coach?: { move: string } } }) => (t.meta?.coach ? [t.meta.coach.move] : []));
+    // With the questions on, this move is the first item's check (the test above, with questions on).
+    expect(moves().at(-1)).toBe('teach');
+    const on = await svc.setCoachQuestions(READER, session.id, true);
+    expect(on.lesson?.discussion).toBe(true);
+    expect(saved(session.id).coachQuiet).toBeUndefined();
+    await expect(svc.setCoachQuestions(READER, session.id, 'no')).rejects.toMatchObject({ code: 'invalid', status: 400 });
+  });
+
+  it('starts with the questions off when the learner left them off last time, and a resumed lesson keeps its own', async () => {
+    const { session } = await svc.startSession(READER, 'instagram', CONSENT_VERSION, { kind: 'coach', questions: false });
+    expect(session.lesson?.discussion).toBe(false);
+    expect(saved(session.id).coachQuiet).toBe(true);
+    const again = await svc.startSession(READER, 'instagram', CONSENT_VERSION, { kind: 'coach' });
+    expect(again).toMatchObject({ resumed: true, session: { lesson: { discussion: false } } });
+  });
+
+  it('has no questions toggle on a mock interview', async () => {
+    const { session } = await svc.startSession(READER, 'instagram', CONSENT_VERSION);
+    await expect(svc.setCoachQuestions(READER, session.id, false)).rejects.toMatchObject({ code: 'invalid', status: 400 });
+  });
   const lastUser = (call: number) => {
     const [body] = create.mock.calls[call];
     return body.messages[body.messages.length - 1].content as string;

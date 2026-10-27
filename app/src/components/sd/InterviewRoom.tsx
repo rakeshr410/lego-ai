@@ -1,4 +1,5 @@
 import { lazy, Suspense, useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
+import { rememberQuestions } from '../../lib/coach-pref';
 import type { InterviewPage } from '../../lib/interview.node';
 import { sessionChanged } from '../../lib/live-session';
 import { readEvents } from '../../lib/sse';
@@ -73,6 +74,9 @@ export default function InterviewRoom({ page, initial, join = null, onExit }: Pr
   // lesson has not opened yet, so the first move comes at once), and whether the learner paused it.
   const [armedAt, setArmedAt] = useState<number | null>(() => (initial.kind === 'coach' && initial.turns.length === 0 ? 0 : null));
   const [paused, setPaused] = useState(false);
+  // The lesson's questions toggle: a request on its way, and the pipeline's new wait to pass on over the call.
+  const [switching, setSwitching] = useState(false);
+  const [pace, setPace] = useState<{ selfDrive: number | null; seq: number } | null>(null);
   const [error, setError] = useState('');
   const [confirmEnd, setConfirmEnd] = useState(false);
   const [now, setNow] = useState(() => Date.now());
@@ -292,6 +296,40 @@ export default function InterviewRoom({ page, initial, join = null, onExit }: Pr
     return () => clearTimeout(timer);
   }, [counting, continueAt]);
 
+  // The coach asks the learner things (a discussion) or just teaches: the learner's choice, kept on the session.
+  const discussion = lesson?.discussion ?? true;
+  const toggleQuestions = async () => {
+    setSwitching(true);
+    setError('');
+    const r = await fetch(`/api/interview/${session.id}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'questions', on: !discussion }) })
+      .then(async (res) => ({ ok: res.ok, data: (await res.json().catch(() => ({}))) as { session?: SessionView; selfDrive?: number | null; error?: string } }))
+      .catch(() => null);
+    setSwitching(false);
+    if (!r?.ok || !r.data.session) {
+      setError(r?.data.error ?? t('error.action'));
+      return;
+    }
+    setSession(r.data.session);
+    rememberQuestions(!discussion);
+    // A move left waiting for an answer goes on: over the call the pipeline's clock restarts on the new wait; typed,
+    // the auto-continue counts from now.
+    if (voiceOn) setPace({ selfDrive: r.data.selfDrive ?? null, seq: Date.now() });
+    else setArmedAt(Date.now());
+  };
+  const questionsToggle = (className: string) =>
+    coach && !closed && !finished ? (
+      <button
+        type="button"
+        className={`${className}${discussion ? ' is-on' : ''}`}
+        aria-pressed={discussion}
+        title={t(discussion ? 'coach.room.questions.on' : 'coach.room.questions.off')}
+        onClick={() => void toggleQuestions()}
+        disabled={switching || (!voiceOn && !!busy)}
+      >
+        {t('coach.room.questions')}
+      </button>
+    ) : null;
+
   const turns: Turn[] = pending
     ? [
         ...session.turns,
@@ -363,6 +401,7 @@ export default function InterviewRoom({ page, initial, join = null, onExit }: Pr
               {boardStatus}
             </span>
           )}
+          {questionsToggle('ivc-cc')}
           <button type="button" className={`ivc-cc${showTranscript ? ' is-on' : ''}`} aria-pressed={showTranscript} onClick={() => setShowTranscript((v) => !v)}>
             <span aria-hidden="true">{t('call.cc')}</span>
             {t('call.transcript')}
@@ -412,6 +451,7 @@ export default function InterviewRoom({ page, initial, join = null, onExit }: Pr
               onPen={(cue) => boardRef.current?.cue(cue)}
               onVoice={(e) => ('words' in e ? boardRef.current?.spoken(e.words) : boardRef.current?.speaking(e.speaking))}
               rail={coach && lesson ? <CoachRail lesson={lesson} stageIndex={session.stageIndex} /> : null}
+              pace={pace}
             />
           </Suspense>
         </div>
@@ -492,6 +532,7 @@ export default function InterviewRoom({ page, initial, join = null, onExit }: Pr
                       </span>
                     )}
                   </span>
+                  {questionsToggle('ivr-btn')}
                   <button
                     type="button"
                     className={`ivr-btn${paused ? ' is-on' : ''}`}

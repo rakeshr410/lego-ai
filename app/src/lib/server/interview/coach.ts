@@ -135,6 +135,11 @@ export type CoachInput = {
   cutIn?: boolean;
   /** The lesson may ask the learner things (checks, draw tasks); false teaches straight through. Default true. */
   questions?: boolean;
+  /**
+   * The learner turned the coach's questions off (the room's toggle): nothing is asked of them, not even the parts they
+   * give first, and what was still asked is settled (a list closes, a drawing is dropped). Default false.
+   */
+  quiet?: boolean;
   /** The parts the learner gives first (none: every part is taught). */
   asks?: readonly CoachAsk[];
   /** List lines on the board, by element id: all of them, and those written in the learner's words. */
@@ -373,7 +378,8 @@ export function questionFilter(forward: (delta: string) => void): { onText: (del
 export function decideCoach(input: CoachInput): CoachResult {
   const { plan, stageIndex, elapsedMs, signal, closed } = input;
   const cutIn = !!input.cutIn;
-  const asks = input.questions !== false;
+  const quiet = !!input.quiet;
+  const asks = input.questions !== false && !quiet;
   // Said over the coach, even "okay so" means the learner wants the floor: it is answered, not taken as a nod.
   const text = input.text !== null && !cutIn && isNod(input.text) ? null : input.text;
   const stage = stageOf(plan, stageIndex);
@@ -445,7 +451,7 @@ export function decideCoach(input: CoachInput): CoachResult {
     const index = indexOf(stage, item.id);
     // A part the learner gives first: ask for it (its frame drawn), and teach nothing yet.
     const ask = askOf(item.id);
-    if (ask && !brief && !state.asked?.[ask.key]) {
+    if (ask && !quiet && !brief && !state.asked?.[ask.key]) {
       state.asked = { ...state.asked, [ask.key]: { nudges: 0, open: true } };
       // A lesson may open on a part the learner gives: the opening sentence, then the question.
       const opening = !state.opened;
@@ -594,17 +600,18 @@ export function decideCoach(input: CoachInput): CoachResult {
   if (giving) {
     const entry = state.asked![giving.key];
     const done = input.text !== null && DONE.test(input.text.trim());
-    if (text !== null && !done && !brief) {
+    if (!quiet && text !== null && !done && !brief) {
       const open = giving.items.flatMap((i) => giving.lines[i] ?? []).filter((id) => !placed.has(id)).map((id) => `${id}: ${giving.labels[id] ?? id}`);
       return finish({ row: 15, move: 'capture', item: giving.items[0], draw: true, place: [], open, template: giving.list ? TEMPLATES.capture(open, giving.chars) : TEMPLATES.captureParts(open) });
     }
-    if (text === null && !done && !brief && entry.nudges < giving.hints.length) {
+    if (!quiet && text === null && !done && !brief && entry.nudges < giving.hints.length) {
       const hint = giving.hints[entry.nudges];
       entry.nudges += 1;
       return finish({ row: 16, move: 'nudge', item: giving.items[0], template: TEMPLATES.nudge(hint) });
     }
     entry.open = false;
-    finished = true;
+    // Closed by the toggle, what the learner said is still answered.
+    finished = !quiet || done;
     for (const i of giving.items) {
       const lines = giving.lines[i] ?? [];
       const rest = giving.rest?.[i] ?? [];
@@ -616,6 +623,8 @@ export function decideCoach(input: CoachInput): CoachResult {
   // 13. The learner drew what the stage asked (a continue, "Done drawing", or a remark; a question is still a
   // doubt): the matcher's reading of their board, and the live signal's, decide what to say.
   const task = stage.drawTasks[0];
+  // The learner turned the questions off while the drawing was asked: it is dropped, not reviewed.
+  if (!asks && task && state.drawTasks?.[stage.key] === 'asked') state.drawTasks[stage.key] = 'done';
   if (task && state.drawTasks?.[stage.key] === 'asked' && (text === null || !isQuestion(text))) {
     state.drawTasks[stage.key] = 'done';
     const onBoard = (id: string) => input.drawn?.includes(id) || ['covered', 'partial'].includes(signal?.items.find((i) => i.id === id)?.status ?? '');
@@ -692,7 +701,7 @@ export function decideCoach(input: CoachInput): CoachResult {
   if (focus && focusStatus === 'checked') {
     const v = verdict(focus.id);
     const index = indexOf(stage, focus.id);
-    if (v === 'shaky' && (state.checks[focus.id] ?? 0) < COACH_POLICY.maxChecks && !brief) {
+    if (asks && v === 'shaky' && (state.checks[focus.id] ?? 0) < COACH_POLICY.maxChecks && !brief) {
       state.checks[focus.id] = (state.checks[focus.id] ?? 0) + 1;
       return finish({
         row: 8,
@@ -807,9 +816,11 @@ export type LessonView = {
   waiting: 'answer' | 'draw' | 'continue';
   /** The draw task's words, while the coach waits for the drawing. */
   task: string | null;
+  /** The coach asks the learner things (a discussion), or teaches straight through: the learner's choice in the room. */
+  discussion: boolean;
 };
 
-export function lessonView(plan: DerivedPlan, state: CoachState | undefined, stageIndex: number): LessonView {
+export function lessonView(plan: DerivedPlan, state: CoachState | undefined, stageIndex: number, discussion = true): LessonView {
   const stages = plan.stages.map((s, n) => {
     const items = lessonItems(s);
     const keys = s.sections.length ? s.sections : [...new Set(items.map((i) => i.section))];
@@ -833,7 +844,7 @@ export function lessonView(plan: DerivedPlan, state: CoachState | undefined, sta
   const all = stages.flatMap((s) => s.sections.flatMap((x) => x.items));
   const focus = state?.focus ?? null;
   const current = plan.stages[Math.min(stageIndex, plan.stages.length - 1)];
-  const drawing = !!current && state?.drawTasks?.[current.key] === 'asked' && !!current.drawTasks[0];
+  const drawing = discussion && !!current && state?.drawTasks?.[current.key] === 'asked' && !!current.drawTasks[0];
   return {
     stages,
     understood: all.filter((i) => i.status === 'understood').length,
@@ -841,9 +852,10 @@ export function lessonView(plan: DerivedPlan, state: CoachState | undefined, sta
     shaky: all.filter((i) => i.status === 'shaky').length,
     left: all.filter((i) => i.status === 'queued' || i.status === 'skipped').length,
     focus,
-    // A part the learner is giving waits for them as a check does.
-    waiting: (focus && state?.items[focus] === 'checked') || Object.values(state?.asked ?? {}).some((a) => a.open) ? 'answer' : drawing ? 'draw' : 'continue',
+    // A part the learner is giving waits for them as a check does; a lesson that asks nothing waits for nobody.
+    waiting: discussion && ((focus && state?.items[focus] === 'checked') || Object.values(state?.asked ?? {}).some((a) => a.open)) ? 'answer' : drawing ? 'draw' : 'continue',
     task: drawing ? current.drawTasks[0].prompt : null,
+    discussion,
   };
 }
 

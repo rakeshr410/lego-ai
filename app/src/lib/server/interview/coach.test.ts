@@ -456,3 +456,49 @@ describe('a part the learner gives first', () => {
   });
 });
 
+
+describe('the learner turns the questions off (the room’s toggle)', () => {
+  const ask = {
+    key: `${A}#list`,
+    list: 'list' as string | undefined,
+    items: [`${A}/2`, `${A}/3`],
+    lines: { [`${A}/2`]: ['l1', 'l2'], [`${A}/3`]: ['l3'] },
+    before: ['frame'],
+    labels: { l1: 'never repeats', l2: 'loads early', l3: 'says when it ends' },
+    question: 'What should the feed do?',
+    hints: ['Think about scrolling.'],
+    chars: 40,
+  };
+  const lines = { placed: [] as string[], given: [] as string[] };
+
+  it('asks nothing: no check after an item, no list to give, the part taught as it comes', () => {
+    const intro = run({}, initialCoachState(plan, 0, AT));
+    expect(run({}, intro.state).decision.move).toBe('check');
+    expect(run({ quiet: true }, intro.state).decision).toMatchObject({ move: 'teach', item: `${A}/2` });
+    expect(run({ asks: [ask], lines, quiet: true }, intro.state).decision).toMatchObject({ move: 'teach', item: `${A}/2` });
+  });
+
+  it('settles what was still asked: an open list closes and its lines are taught, what the learner says is answered', () => {
+    const intro = run({ questions: false, asks: [ask], lines }, initialCoachState(plan, 0, AT));
+    const asked = run({ questions: false, asks: [ask], lines }, intro.state);
+    expect(asked.decision.move).toBe('ask');
+    expect(lessonView(plan, asked.state, 0, false).waiting).toBe('continue');
+    const on = run({ questions: false, asks: [ask], lines, quiet: true }, asked.state);
+    expect(on.decision).toMatchObject({ move: 'teach', item: `${A}/2` });
+    expect(on.state.asked?.[ask.key]?.open).toBe(false);
+    const said = run({ questions: false, asks: [ask], lines, quiet: true, text: 'Why does it load early?' }, asked.state);
+    expect(said.decision).toMatchObject({ row: 5, move: 'answer' });
+  });
+
+  it('drops a drawing it asked for, unreviewed, and the view waits for nobody', () => {
+    const withTask = { ...plan, stages: [{ ...plan.stages[0], drawTasks: [{ prompt: 'Draw part one.', expects: [`${A}/1`, `${B}/1`] }] }, plan.stages[1]] } as unknown as DerivedPlan;
+    const taught: CoachState = { ...initialCoachState(withTask, 0, AT), section: B, opened: true, items: { [`${A}/1`]: 'understood', [`${A}/2`]: 'understood', [`${A}/3`]: 'understood', [`${B}/1`]: 'understood' } };
+    const go = (overrides: Partial<CoachInput>, state: CoachState) => decideCoach({ plan: withTask, stageIndex: 0, elapsedMs: minutes(1), text: null, signal: null, closed: false, ...overrides, state });
+    const asked = go({}, taught);
+    expect(asked.decision.move).toBe('draw_task');
+    expect(lessonView(withTask, asked.state, 0, false)).toMatchObject({ waiting: 'continue', task: null, discussion: false });
+    const quiet = go({ quiet: true }, asked.state);
+    expect(quiet.decision).toMatchObject({ row: 11, move: 'advance_stage' });
+    expect(quiet.state.drawTasks).toEqual({ s1: 'done' });
+  });
+});

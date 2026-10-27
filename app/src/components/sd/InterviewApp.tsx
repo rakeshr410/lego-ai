@@ -1,4 +1,5 @@
 import { useEffect, useId, useState, type ReactNode } from 'react';
+import { rememberedQuestions } from '../../lib/coach-pref';
 import type { InterviewPage } from '../../lib/interview.node';
 import type { InterviewStatus, SessionView, VoiceJoin, VoiceStatus } from '../../pages/api/interview/index';
 import { formatDate } from '../../i18n/format';
@@ -257,8 +258,8 @@ function SessionCard({ page, scope, kind, overview, loadError, onOpen }: { page:
     const drill = page.course ? { lesson: page.course.lesson } : scope ? { topic: scope.topic, section: scope.section ?? undefined } : {};
     const body =
       mode === 'voice'
-        ? { system: page.system.slug, ...drill, mode: 'voice', consent: overview.voice.consentVersion, audioOptIn, ...(coach ? { kind: 'coach', name: name.trim() } : {}) }
-        : { system: page.system.slug, ...drill, consent: overview.status.consentVersion, ...(coach ? { kind: 'coach', name: name.trim() } : {}) };
+        ? { system: page.system.slug, ...drill, mode: 'voice', consent: overview.voice.consentVersion, audioOptIn, ...(coach ? { kind: 'coach', name: name.trim(), questions: rememberedQuestions() } : {}) }
+        : { system: page.system.slug, ...drill, consent: overview.status.consentVersion, ...(coach ? { kind: 'coach', name: name.trim(), questions: rememberedQuestions() } : {}) };
     const r = await call('/api/interview', 'POST', body).catch(() => null);
     setBusy(false);
     if (r?.ok) {
