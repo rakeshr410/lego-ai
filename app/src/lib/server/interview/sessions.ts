@@ -95,7 +95,7 @@ export type Feedback = {
 export type VoiceState = {
   room: { name: string; url: string; expiresAt: string } | null;
   /** The pipeline attached to the session: its epoch (one per attach), the last candidate seq it wrote, and when it last wrote. */
-  lease: { epoch: number; seq: number; at: string; task: string; epochUsage?: { sttSeconds: number; ttsChars: number } } | null;
+  lease: { epoch: number; seq: number; at: string; task: string; epochUsage?: { sttSeconds: number; ttsChars: number; roomSeconds?: number } } | null;
   /** Attaches so far (the next lease's epoch). */
   epochs: number;
   /** Usage the heartbeats reported, in total; `exchanges` counts interviewer replies (the voice turn cap). */
@@ -134,6 +134,10 @@ export type Session = {
   coach?: import('./coach').CoachState;
   /** A whole voice session past the month's quota, paid for by a purchased top-up (no monthly minutes reserved). */
   topup?: true;
+  /** The session spends credits (lego-ledger, lib/server/credits.ts): its meter is open there under the session's id. */
+  metered?: true;
+  /** When the reader's credits run out at the session's rate, once that is near (the ledger's word): the session closes then. */
+  creditsEndAt?: string;
   /** The plan's hash when the session started. */
   planVersion: string;
   consent: { version: string; at: string };
@@ -154,6 +158,11 @@ export type Session = {
    * billed, including replies that were stopped, timed out or dropped and so never saved.
    */
   costUsd: number;
+  /**
+   * The same spend by service, in USD: "claude reply", "claude feedback", ... for the model's calls by kind, "stt flux"
+   * and "tts smallest" for the speech services, "daily room" for the call's room. Absent on sessions from before it.
+   */
+  spend?: Record<string, number>;
   /** Feedback calls that may have been billed (the feedback is retried at most MAX_FEEDBACK_ATTEMPTS times). */
   feedbackAttempts?: number;
   feedback: Feedback | null;
@@ -360,4 +369,28 @@ async function lock(key: string, ttlMs: number): Promise<(() => Promise<void>) |
     // Only our own lock: after its TTL another holder may have a new one.
     if ((await store.get(key)) === token) await store.del(key);
   };
+}
+
+/** A session's spend by service with `usd` added to each line (lines of nothing are left out). */
+export function addSpend(spend: Record<string, number> | undefined, usd: Record<string, number>): Record<string, number> {
+  const out = { ...spend };
+  for (const [line, v] of Object.entries(usd)) if (v > 0) out[line] = (out[line] ?? 0) + v;
+  return out;
+}
+
+/** Every session in the store, for a report (scripts/session-costs.ts): a scan, never on a request's path. */
+export async function allSessions(): Promise<Session[]> {
+  const store = await getStore();
+  if (!store.keys) return [];
+  const out: Session[] = [];
+  for (const key of await store.keys('interview:session:')) {
+    const raw = await store.get(key);
+    if (!raw) continue;
+    try {
+      out.push(JSON.parse(raw) as Session);
+    } catch {
+      // an unreadable record is left out of the report
+    }
+  }
+  return out;
 }

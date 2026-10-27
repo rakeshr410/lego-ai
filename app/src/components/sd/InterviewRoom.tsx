@@ -305,6 +305,8 @@ export default function InterviewRoom({ page, initial, join = null, onExit }: Pr
         ? t(coach ? 'coach.room.closed.turns' : 'room.closed.turns')
         : closed === 'budget'
           ? t(coach ? 'coach.room.closed.budget' : 'room.closed.budget')
+          : closed === 'credits'
+            ? t(coach ? 'coach.room.closed.credits' : 'room.closed.credits')
           : closed === 'done'
             ? t(coach ? 'coach.room.closed.done' : 'room.closed.done')
             : '';
@@ -528,6 +530,11 @@ export default function InterviewRoom({ page, initial, join = null, onExit }: Pr
                 </div>
               )}
 
+              {session.creditsEndAt && !closed && !finished && (
+                <div className="ivr-closed" role="status">
+                  {t('room.creditsLow', { time: new Date(session.creditsEndAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) })}
+                </div>
+              )}
               {voiceOn && VoiceRoom ? (
                 <Suspense fallback={<div className="ivr-closed">{t('voice.joining')}</div>}>
                   <VoiceRoom sessionId={session.id} join={join} session={session} onSession={setSession} onLeft={setSession} kind={coach ? 'coach' : 'interview'} onDraw={(ops, pace, instant) => boardRef.current?.draw(ops, pace, instant)} onPen={(cue) => boardRef.current?.cue(cue)} />

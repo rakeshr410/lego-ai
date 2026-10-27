@@ -326,6 +326,8 @@ async def run_session(
         period_secs=settings.heartbeat_secs,
         on_closed=on_closed,
         on_stale=on_stale,
+        stt=settings.stt_vendor,
+        tts=settings.tts_vendor,
     )
 
     rejoin = RejoinWindow(LEAVE_GRACE_SECS, lambda: finish("left"))

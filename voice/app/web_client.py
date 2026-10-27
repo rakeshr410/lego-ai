@@ -193,14 +193,26 @@ class WebClient:
         return State.parse(await self._post(sid, "idle", {"epoch": epoch, "rung": rung}))
 
     async def heartbeat(
-        self, sid: str, epoch: int, stt_seconds: float, tts_chars: int, degraded: list[str]
+        self,
+        sid: str,
+        epoch: int,
+        stt_seconds: float,
+        tts_chars: int,
+        degraded: list[str],
+        *,
+        room_seconds: float = 0.0,
+        stt: str | None = None,
+        tts: str | None = None,
     ) -> str | None:
-        """Renews the lease and charges the speech; returns why the session stopped taking turns, or None."""
-        out = await self._post(
-            sid,
-            "heartbeat",
-            {"epoch": epoch, "sttSeconds": round(stt_seconds, 1), "ttsChars": tts_chars, "degraded": degraded},
-        )
+        """Renews the lease and charges the speech and the room, each service at its own price; returns why the
+        session stopped taking turns, or None."""
+        body: dict = {"epoch": epoch, "sttSeconds": round(stt_seconds, 1), "ttsChars": tts_chars, "degraded": degraded}
+        body["roomSeconds"] = round(room_seconds, 1)
+        if stt:
+            body["stt"] = stt
+        if tts:
+            body["tts"] = tts
+        out = await self._post(sid, "heartbeat", body)
         closed = out.get("closed")
         return str(closed) if closed else None
 

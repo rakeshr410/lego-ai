@@ -80,6 +80,14 @@ const SETTINGS = {
   } satisfies Setting<string>,
   /** The bearer between this app and the main site, both ways (the main site has the same value). */
   LEGO_AI_SECRET: secret(),
+  // The credit ledger (lego-ledger, lib/server/ledger.ts): with both set, sessions spend credits by the minute
+  // instead of counting against the month's sessions.
+  /** Where this app reaches lego-ledger on the private network (dev: http://localhost:4400). */
+  LEDGER_URL: { ...text('a URL like http://ledger.internal:4400'), schema: httpUrl('http://ledger.internal:4400').transform((u) => u.replace(/\/+$/, '')) } satisfies Setting<string | undefined>,
+  /** This app's bearer at the ledger (its lego-ai entry in LEDGER_CLIENTS). */
+  LEDGER_SECRET: secret(),
+  /** lego-admin's bearer here (the staff's usage pages): it reads what each session cost (/api/internal/interview/costs). */
+  LEGO_ADMIN_SECRET: secret(),
   // The model gateway (lib/server/llm-gateway.ts), shared with the main site's Ask mode: the same
   // kill switch (ASK_ENABLED or the store flag), daily budget and concurrency cover the interview.
   // With the same REDIS_URL as the main site, the store flag and the day's spend are shared too.
@@ -196,6 +204,17 @@ const SETTINGS = {
   /** The vendors' list prices, for the usage the voice service reports in its heartbeats (re-quote before the beta). */
   VOICE_STT_USD_PER_MIN: { schema: z.coerce.number<string>().min(0), fallback: 0.0077, expect: 'a dollar amount, 0 or more' } satisfies Setting<number>,
   VOICE_TTS_USD_PER_1K_CHARS: { schema: z.coerce.number<string>().min(0), fallback: 0.03, expect: 'a dollar amount, 0 or more' } satisfies Setting<number>,
+  /**
+   * Each service's own price, where it differs from the two above: "stt:flux=0.0077,tts:smallest=0.03,tts:sarvam=0.018",
+   * speech to text in USD a minute, the voice in USD per 1,000 characters (re-quote from the vendors' price pages).
+   */
+  VOICE_RATES: {
+    schema: z.string().regex(/^\s*(?:(?:stt|tts):[a-z0-9_-]+\s*=\s*\d+(?:\.\d+)?\s*(?:,\s*|$))*$/i),
+    fallback: '',
+    expect: 'a list like stt:flux=0.0077,tts:smallest=0.03',
+  } satisfies Setting<string>,
+  /** Daily's price for a participant's minute in a room (the learner and the voice service are two); re-quote from Daily's plan. */
+  DAILY_USD_PER_PARTICIPANT_MIN: { schema: z.coerce.number<string>().min(0), fallback: 0.004, expect: 'a dollar amount, 0 or more' } satisfies Setting<number>,
   /** Daily's REST API (rooms and meeting tokens); a mock in tests. */
   DAILY_API_URL: text('a URL like https://api.daily.co/v1'),
   DAILY_GEO: text('a Daily region like ap-south-1'),
@@ -302,6 +321,11 @@ export function productionProblems(): string[] {
   for (const optional of ['ANTHROPIC_API_KEY', 'BEDROCK_API_KEY', 'DAILY_API_KEY', 'DEEPGRAM_API_KEY', 'CARTESIA_API_KEY', 'SARVAM_API_KEY', 'SMALLEST_API_KEY'] as const) {
     const p = env(optional) ? secretProblem(optional, 20) : null;
     if (p) out.push(p);
+  }
+  if (env('LEDGER_URL') || env('LEDGER_SECRET')) {
+    const p = secretProblem('LEDGER_SECRET', 32);
+    if (p) out.push(p);
+    if (!env('LEDGER_URL')) out.push('LEDGER_URL is required with LEDGER_SECRET');
   }
   // The voice service's bearer is set with its URL, and real (the internal routes refuse every call without it).
   if (env('INTERVIEW_VOICE_URL') || env('INTERVIEW_VOICE_SECRET')) {

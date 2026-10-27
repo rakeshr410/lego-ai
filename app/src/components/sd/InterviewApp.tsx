@@ -12,10 +12,14 @@ import InterviewRoom from './InterviewRoom';
 // Everything it knows about the reader comes from /api/interview after load; the prerendered HTML
 // is the same for everyone.
 
+/** The reader's credits (lego-ledger): null when sessions count against the month's allowance instead. */
+type Credits = { balance: { total: number; expiresAt: string }; rates: Record<string, number>; minMinutes: number };
+
 type Overview = {
   signedIn: boolean;
   status: InterviewStatus;
   voice: VoiceStatus;
+  credits?: Credits | null;
   current: SessionView | null;
   past: { id: string; startedAt: string; status: SessionView['status']; rated: boolean }[];
   /** A drill's page projection (the prerendered page is the system's); null on the whole interview. */
@@ -66,9 +70,22 @@ async function micPreflight(): Promise<boolean> {
   }
 }
 
+/** With credits: what a session here costs a minute, the least it costs to start, and the balance. */
+function costOf(overview: Overview, scope: Scope, kind: Kind): { rate: number; needed: number; total: number } | null {
+  const credits = overview.credits;
+  if (!credits) return null;
+  const mode = VOICE_BUILD && overview.voice.enabled ? 'voice' : 'text';
+  const rate = credits.rates[`${kind === 'coach' ? 'coach' : scope ? 'drill' : 'interview'}:${mode}`] ?? 0;
+  return { rate, needed: Math.max(rate * credits.minMinutes, 0.001), total: credits.balance.total };
+}
+
+const whole = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(1));
+
 /** What starting costs and what is left, for the start card's header; null when nothing can start. */
 function usageOf(overview: Overview | null, scope: Scope, kind: Kind): string | null {
   if (!overview?.signedIn || overview.current || !overview.status.enabled) return null;
+  const cost = costOf(overview, scope, kind);
+  if (cost) return t('credits.usage', { rate: whole(cost.rate), total: whole(Math.floor(cost.total * 10) / 10) });
   const { status, voice } = overview;
   if (kind === 'coach') return t('coach.usage', { limit: status.coachLimit, remaining: Math.max(0, status.coachRemaining) });
   if (scope) return t('usage.drill', { limit: status.drillLimit, remaining: Math.max(0, status.drillsRemaining) });
@@ -319,6 +336,7 @@ function SessionCard({ page, scope, kind, overview, loadError, onOpen }: { page:
     );
   }
 
+  const cost = costOf(overview, scope, kind);
   const unavailable = !status.enabled
     ? status.reason === 'budget'
       ? t('unavailable.budget')
@@ -327,6 +345,10 @@ function SessionCard({ page, scope, kind, overview, loadError, onOpen }: { page:
         : status.reason === 'access'
           ? t('unavailable.access')
           : t('unavailable.other')
+    : cost
+      ? cost.total < cost.needed
+        ? (t.rich('credits.short', { needed: whole(cost.needed), total: whole(Math.floor(cost.total * 10) / 10), day: day(overview.credits!.balance.expiresAt), link: (text, key) => <a key={key} href="/pricing#credits">{text}</a> }) as ReactNode)
+        : ''
     : coach
       ? status.coachRemaining <= 0
         ? t('coach.unavailable.used', { limit: status.coachLimit, day: day(status.resetsAt) })
@@ -359,11 +381,11 @@ function SessionCard({ page, scope, kind, overview, loadError, onOpen }: { page:
       ? voice.reason === 'plan'
         ? (t.rich('voice.pro', { link: (text, key) => <a key={key} href="/pricing">{text}</a> }) as ReactNode)
         : t('voice.paused')
-      : voice.remaining <= 0
+      : !cost && voice.remaining <= 0
         ? `${t('voice.used', { limit: voice.limit, day: day(voice.resetsAt) })}${topups}`
         : null;
   // A drill in voice counts a drill and its minutes, not a voice session: only the minutes can run out.
-  const voiceOk = voiceBuild && voice.enabled && (scope ? voice.minutesLeft >= page.minutes : voice.remaining > 0 || voice.topups > 0);
+  const voiceOk = voiceBuild && voice.enabled && (cost ? true : scope ? voice.minutesLeft >= page.minutes : voice.remaining > 0 || voice.topups > 0);
 
   if (voiceBuild && !voiceOk) {
     return (

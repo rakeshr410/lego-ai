@@ -93,7 +93,7 @@ const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => 
   return new Response('not found', { status: 404 });
 });
 
-const ENV = ['INTERVIEW_VOICE_URL', 'INTERVIEW_VOICE_SECRET', 'DAILY_API_KEY', 'DAILY_API_URL', 'INTERVIEW_VOICE_MONTHLY_SESSIONS', 'INTERVIEW_VOICE_MONTHLY_MINUTES', 'INTERVIEW_VOICE_ENABLED', 'INTERVIEW_VOICE_DAILY_BUDGET_USD', 'INTERVIEW_VOICE_MAX_EXCHANGES', 'INTERVIEW_VOICE_SESSION_BUDGET_USD', 'INTERVIEW_EVALUATOR'];
+const ENV = ['VOICE_RATES', 'DAILY_USD_PER_PARTICIPANT_MIN', 'INTERVIEW_VOICE_URL', 'INTERVIEW_VOICE_SECRET', 'DAILY_API_KEY', 'DAILY_API_URL', 'INTERVIEW_VOICE_MONTHLY_SESSIONS', 'INTERVIEW_VOICE_MONTHLY_MINUTES', 'INTERVIEW_VOICE_ENABLED', 'INTERVIEW_VOICE_DAILY_BUDGET_USD', 'INTERVIEW_VOICE_MAX_EXCHANGES', 'INTERVIEW_VOICE_SESSION_BUDGET_USD', 'INTERVIEW_EVALUATOR'];
 let now = Date.parse('2026-10-23T12:00:00Z');
 const tick = (ms: number) => {
   now += ms;
@@ -422,6 +422,21 @@ describe('the pipeline', () => {
     expect((await svc.readSession(PRO.documentId, id)).voice).toMatchObject({ live: true });
     // A stale epoch's heartbeat is refused.
     await expect(voice.pipelineHeartbeat(id, { epoch: 0 }, { sttSeconds: 1, ttsChars: 1, degraded: [] })).rejects.toMatchObject({ code: 'stale_epoch' });
+  });
+
+  it('charges each speech service at its own price and the room for both participants, and keeps the spend by service', async () => {
+    process.env.VOICE_RATES = 'stt:flux=0.01, tts:smallest=0.02';
+    process.env.DAILY_USD_PER_PARTICIPANT_MIN = '0.004';
+    const { id, epoch } = await attached();
+    await voice.pipelineHeartbeat(id, { epoch }, { sttSeconds: 60, ttsChars: 1000, roomSeconds: 120, stt: 'flux', tts: 'smallest', degraded: [] });
+    // Cumulative: a second beat charges only what is new; a service without its own price takes the default.
+    await voice.pipelineHeartbeat(id, { epoch }, { sttSeconds: 120, ttsChars: 3000, roomSeconds: 180, stt: 'flux', tts: 'cartesia', degraded: [] });
+    const raw = JSON.parse(store.map.get(`interview:session:${id}`)!);
+    expect(raw.spend['stt flux']).toBeCloseTo(0.02, 6);
+    expect(raw.spend['tts smallest']).toBeCloseTo(0.02, 6);
+    expect(raw.spend['tts cartesia']).toBeCloseTo(2 * 0.03, 6);
+    expect(raw.spend['daily room']).toBeCloseTo(3 * 2 * 0.004, 6);
+    expect(raw.costUsd).toBeCloseTo(0.02 + 0.02 + 0.06 + 0.024, 6);
   });
 
   it('tells the pipeline when the session stops taking turns: its exchanges, its budget, or the voice day’s', async () => {

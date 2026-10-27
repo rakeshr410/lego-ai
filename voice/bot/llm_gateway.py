@@ -39,11 +39,11 @@ from app.web_client import State, WebClient, WebError
 from bot import speech
 from bot.conductor import (
     PEN_TEXT,
-    pause_after,
     PauseFrame,
     PenMarkFrame,
     SegmentEndFrame,
     SegmentStartFrame,
+    pause_after,
     pen_items,
 )
 

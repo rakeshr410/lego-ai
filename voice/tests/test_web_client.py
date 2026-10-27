@@ -32,8 +32,17 @@ async def test_attach_turn_and_heartbeat(web, fake_web):
     assert after.seq == 1 and after.exchanges_left == 89
     assert await web.heartbeat("a" * 24, 1, 12.34, 500, ["tts"]) is None
     fake_web.closed = "time"
-    assert await web.heartbeat("a" * 24, 1, 12.34, 500, []) == "time"
-    assert fake_web.calls[-1][2] == {"epoch": 1, "sttSeconds": 12.3, "ttsChars": 500, "degraded": []}
+    assert await web.heartbeat("a" * 24, 1, 12.34, 500, [], room_seconds=61.27, stt="flux", tts="smallest") == "time"
+    # The speech services in use and the room's time, so the web prices each service (the session's spend).
+    assert fake_web.calls[-1][2] == {
+        "epoch": 1,
+        "sttSeconds": 12.3,
+        "ttsChars": 500,
+        "degraded": [],
+        "roomSeconds": 61.3,
+        "stt": "flux",
+        "tts": "smallest",
+    }
 
 
 async def test_refusals_carry_the_interview_code(web, fake_web):

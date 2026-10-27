@@ -19,6 +19,7 @@ import {
   nextUtcMidnight,
   reply,
   secondsUntil,
+  meterIfDue,
   sessionPlan,
   speculate,
   startSession,
@@ -33,7 +34,7 @@ import { lessonView } from './coach';
 import type { DrawAnchor, DrawOp } from './draw';
 import { continueLesson } from './service';
 import { dropPrefetch } from './prefetch';
-import { getSession, interviewSpendKey, updateSession, voiceMinutesKey, voiceMonthKey, VOICE_SWITCH_KEY, voiceSpendKey, voiceTopups, type Session, type Turn, type VoiceState } from './sessions';
+import { addSpend, getSession, interviewSpendKey, updateSession, voiceMinutesKey, voiceMonthKey, VOICE_SWITCH_KEY, voiceSpendKey, voiceTopups, type Session, type Turn, type VoiceState } from './sessions';
 import { startPipeline, stopPipeline, VoiceServiceError, pipelineRunning } from './voice-client';
 import { mintVoiceToken, verifyVoiceToken } from './voice-token';
 
@@ -167,12 +168,13 @@ export async function startVoiceSession(reader: Reader, system: string, consentV
   const cfg = interviewConfig();
   if (!hasVoicePlan(reader)) throw fail('plan', 403, kind === 'coach' ? 'Voice lessons are part of Pro.' : 'Voice interviews are part of Pro.', undefined, { plan: planOf(reader) });
   await checkVoiceCalls(cfg);
-  const { session, resumed } = await startSession(reader.documentId, system, consentVersion, { mode: 'voice', audioOptIn: audioOptIn === true, scope, ...(kind === 'coach' ? { kind } : {}), ...(lesson ? { lesson } : {}), ...(name ? { name } : {}) });
+  const { session, resumed } = await startSession(reader.documentId, system, consentVersion, { mode: 'voice', plan: planOf(reader), audioOptIn: audioOptIn === true, scope, ...(kind === 'coach' ? { kind } : {}), ...(lesson ? { lesson } : {}), ...(name ? { name } : {}) });
   if (session.mode !== 'voice') throw fail('active', 409, `You have a typed ${kind === 'coach' ? 'lesson' : 'interview'} in progress on this system. Finish it first.`, undefined, { id: session.id });
   if (!resumed) {
     // A top-up session reserves no monthly minutes (its own caps bound it).
     const saved = await getSession(session.id);
-    const minutes = saved?.system === system && !saved.topup ? interviewMinutes(getPlan(system, saved.scope ?? null, saved.course?.lesson)!.plan) : 0;
+    // A session on credits reserves no minutes: it pays for the ones it uses.
+    const minutes = saved?.system === system && !saved.topup && !saved.metered ? interviewMinutes(getPlan(system, saved.scope ?? null, saved.course?.lesson)!.plan) : 0;
     if (minutes) await (await getStore()).incrByFloat(voiceMinutesKey(reader.documentId), minutes, 40 * DAY_MS).catch(() => 0);
   }
   const join = await joinVoice(reader.documentId, session.id);
@@ -508,8 +510,15 @@ export type Heartbeat = {
   /** Cumulative for the pipeline's epoch. */
   sttSeconds: number;
   ttsChars: number;
+  /** The pipeline's time in the call's room, cumulative for the epoch (absent from older voice services). */
+  roomSeconds?: number;
+  /** The speech services the pipeline uses ("flux", "smallest"), for their prices and the session's spend by service. */
+  stt?: string;
+  tts?: string;
   degraded: string[];
 };
+
+const vendor = (v: unknown) => (typeof v === 'string' && /^[a-z0-9_-]{1,20}$/i.test(v) ? v.toLowerCase() : null);
 
 /**
  * Every 15 s from the pipeline: renews the lease, charges the speech since the last one at the
@@ -524,19 +533,30 @@ export async function pipelineHeartbeat(sid: string, call: VoiceCall, beat: Hear
   const stt = Math.max(0, Number(beat.sttSeconds) || 0);
   const tts = Math.max(0, Number(beat.ttsChars) || 0);
   // Usage is cumulative per epoch; the session keeps a running total across epochs.
+  const room = Math.max(0, Number(beat.roomSeconds) || 0);
   const seen = v.lease.epochUsage ?? { sttSeconds: 0, ttsChars: 0 };
   const dStt = Math.max(0, stt - seen.sttSeconds);
   const dTts = Math.max(0, tts - seen.ttsChars);
-  const usd = (dStt / 60) * cfg.voice.sttUsdPerMin + (dTts / 1000) * cfg.voice.ttsUsdPer1kChars;
+  const dRoom = Math.max(0, room - (seen.roomSeconds ?? 0));
+  // Each service at its own price where one is set; the room is billed for both participants, the learner and the pipeline.
+  const sttVendor = vendor(beat.stt);
+  const ttsVendor = vendor(beat.tts);
+  const lines = {
+    [sttVendor ? `stt ${sttVendor}` : 'stt']: (dStt / 60) * (cfg.voice.rates[`stt:${sttVendor}`] ?? cfg.voice.sttUsdPerMin),
+    [ttsVendor ? `tts ${ttsVendor}` : 'tts']: (dTts / 1000) * (cfg.voice.rates[`tts:${ttsVendor}`] ?? cfg.voice.ttsUsdPer1kChars),
+    'daily room': (dRoom / 60) * 2 * cfg.voice.roomUsdPerParticipantMin,
+  };
+  const usd = Object.values(lines).reduce((a, b) => a + b, 0);
   const degraded = Array.isArray(beat.degraded) ? beat.degraded.filter((d): d is string => typeof d === 'string').slice(0, 4) : [];
   const saved = await updateSession(sid, cfg.retentionDays, (s) => {
     if (!s.voice?.lease || s.voice.lease.epoch !== call.epoch) return s;
     return {
       ...s,
       costUsd: s.costUsd + usd,
+      spend: addSpend(s.spend, lines),
       voice: {
         ...s.voice,
-        lease: { ...s.voice.lease, at: new Date().toISOString(), epochUsage: { sttSeconds: stt, ttsChars: tts } },
+        lease: { ...s.voice.lease, at: new Date().toISOString(), epochUsage: { sttSeconds: stt, ttsChars: tts, roomSeconds: room } },
         usage: { ...s.voice.usage, sttSeconds: s.voice.usage.sttSeconds + dStt, ttsChars: s.voice.usage.ttsChars + dTts },
         degraded,
       },
@@ -547,6 +567,8 @@ export async function pipelineHeartbeat(sid: string, call: VoiceCall, beat: Hear
     await Promise.all([store.incrByFloat(voiceSpendKey(), usd * 1e6, 3 * DAY_MS), store.incrByFloat(interviewSpendKey(), usd * 1e6, 3 * DAY_MS)]).catch((err) => console.error('[interview] voice spend:', (err as Error).message));
   }
   const current = saved ?? session;
+  // The session's credits, charged for the time so far: a reader out of them is closed on a later beat.
+  await meterIfDue(current, plan, cfg);
   let closed: SessionView['closed'] | 'voice_budget' | 'disabled' = closedReason(current, plan, cfg);
   if (!closed) {
     try {

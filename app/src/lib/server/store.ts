@@ -26,6 +26,8 @@ export interface Store {
    * `floor`. A fencing token that stays monotonic even if the store loses the key (billing).
    */
   incrAtLeast(key: string, floor: number, ttlMs: number): Promise<number>;
+  /** The live keys that start with `prefix` (a report's scan of the store; never on a request's path). */
+  keys?(prefix: string): Promise<string[]>;
 }
 
 const PREFIX = 'bp:';
@@ -35,6 +37,10 @@ class MemoryStore implements Store {
   #max: number;
   constructor(max = 50_000) {
     this.#max = max;
+  }
+
+  async keys(prefix: string) {
+    return [...this.#map.keys()].filter((k) => k.startsWith(prefix) && this.#live(k));
   }
 
   #live(key: string) {
@@ -147,6 +153,16 @@ class RedisStore implements Store {
   }
   async get(key: string) {
     return this.redis.get(PREFIX + key);
+  }
+  async keys(prefix: string) {
+    const out: string[] = [];
+    await new Promise<void>((resolve, reject) => {
+      const stream = this.redis.scanStream({ match: `${PREFIX}${prefix.replace(/[*?[\]\\]/g, '\\$&')}*`, count: 200 });
+      stream.on('data', (batch: string[]) => out.push(...batch.map((k) => k.slice(PREFIX.length))));
+      stream.on('end', resolve);
+      stream.on('error', reject);
+    });
+    return out;
   }
   async set(key: string, value: string, ttlMs: number) {
     await this.redis.set(PREFIX + key, value, 'PX', Math.max(1, Math.round(ttlMs)));

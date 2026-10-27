@@ -2,6 +2,7 @@ import type Anthropic from '@anthropic-ai/sdk';
 import { interviewMinutes } from '@arrowbox/content-kit';
 import { AskError, checkGateway, createMessage, streamMessage, type Lane, type Reservation } from '../llm-gateway';
 import { getStore } from '../store';
+import { chargeMeter, LedgerError, ledgerOn, openMeter, productOf } from '../credits';
 import { CONSENT_VERSION, interviewConfig, MAX_MESSAGE_CHARS, MAX_VOICE_MESSAGE_CHARS, VOICE_CONSENT_VERSION, type InterviewConfig } from './config';
 import { getPlan, sameScope, type Plan, type PlanScope } from './plans';
 import { decide, initialState, intentOf, toMeta, type DirectorResult, type LiveSignal } from './director';
@@ -51,6 +52,7 @@ import {
   type Session,
   type Turn,
   type TurnMeta,
+  addSpend,
 } from './sessions';
 
 // The mock interview (P3-11, docs/README.md): a text-only prototype of the interview
@@ -89,6 +91,8 @@ export type InterviewErrorCode =
   | 'done'
   | 'turns'
   | 'session_budget'
+  // Not enough credits to start (lego-ledger), or they ran out during the session.
+  | 'credits'
   | 'busy'
   | 'last_stage'
   | 'invalid'
@@ -194,11 +198,75 @@ export async function chargeSession(id: string, cfg: InterviewConfig, kind: Call
   await updateSession(id, cfg.retentionDays, (s) => ({
     ...s,
     costUsd: s.costUsd + usd,
+    spend: addSpend(s.spend, { [`claude ${kind}`]: usd }),
     ...(kind === 'feedback' ? { feedbackAttempts: (s.feedbackAttempts ?? 0) + 1 } : {}),
   }));
 }
 
 /** The lane a session's calls take through the gateway (llm-gateway.ts). */
+// ---------------------------------------------------------------------------------------
+// Credits (lego-ledger, lib/server/credits.ts): a session opens a meter when it starts and is charged by
+// the minute for its time as it runs: after each action on it (withLock) and each voice heartbeat, at most
+// every METER_EVERY_MS, and once more, closing it, when it ends.
+
+const METER_EVERY_MS = 15_000;
+/** The session learns when the credits run out once they would within this long: its countdown and its close. */
+const CREDITS_NEAR_S = 15 * 60;
+const meteredAt = new Map<string, number>();
+
+/** The session's last sign of use: its last turn, either side's, or the voice pipeline's last heartbeat. */
+const lastActive = (s: Session): number => Math.max(Date.parse(s.startedAt), ...s.turns.map((t) => Date.parse(t.at) || 0), s.voice?.lease ? Date.parse(s.voice.lease.at) || 0 : 0);
+
+/**
+ * The session's time used, in seconds: from its start to its last sign of use (a session left open, or
+ * left for a while before it is ended, is not charged for the wait), less the time the voice line was
+ * parked, and never past the session's end.
+ */
+export function usedSeconds(s: Session, plan: Plan, cfg: InterviewConfig, now = Date.now()): number {
+  const end = Math.min(now, lastActive(s), Date.parse(endsAt(s, plan, cfg)));
+  return Math.max(0, (end - Date.parse(s.startedAt) - (s.voice?.pausedMs ?? 0)) / 1000);
+}
+
+/**
+ * Charges the session's meter for its time so far (with `close`, closes it: the minimum applies unless
+ * `waive`), and notes on the session when its credits run out once that is near. A ledger that fails is
+ * logged, never the session's failure: the next charge carries the time.
+ */
+export async function meterSession(s: Session, plan: Plan, cfg: InterviewConfig, opts: { close?: boolean; waive?: boolean; now?: number } = {}): Promise<void> {
+  if (!s.metered || !ledgerOn()) return;
+  const now = opts.now ?? Date.now();
+  if (opts.close) meteredAt.delete(s.id);
+  else {
+    if (meteredAt.size > 10_000) meteredAt.clear();
+    meteredAt.set(s.id, now);
+  }
+  try {
+    const r = await chargeMeter(s.id, { seconds: usedSeconds(s, plan, cfg, now), close: opts.close, waive: opts.waive });
+    if (opts.close || s.status !== 'active') return;
+    const endAt = r.secondsLeft <= CREDITS_NEAR_S ? new Date(now + r.secondsLeft * 1000).toISOString() : undefined;
+    const same = endAt && s.creditsEndAt ? Math.abs(Date.parse(endAt) - Date.parse(s.creditsEndAt)) < 5_000 : endAt === s.creditsEndAt;
+    if (!same) await updateSession(s.id, cfg.retentionDays, (x) => ({ ...x, creditsEndAt: endAt }));
+  } catch (err) {
+    console.error(JSON.stringify({ level: 'error', event: 'credits_charge_failed', session: s.id, close: !!opts.close, err: (err as Error).message }));
+  }
+}
+
+/** The session's meter charged now if it is due (the voice heartbeat, which runs outside withLock). */
+export async function meterIfDue(s: Session, plan: Plan, cfg: InterviewConfig): Promise<void> {
+  if (s.metered && Date.now() - (meteredAt.get(s.id) ?? 0) >= METER_EVERY_MS) await meterSession(s, plan, cfg);
+}
+
+/** After an action on the session: its meter charged in the background, at most every METER_EVERY_MS. */
+function meterLater(id: string) {
+  if (!ledgerOn() || Date.now() - (meteredAt.get(id) ?? 0) < METER_EVERY_MS) return;
+  meteredAt.set(id, Date.now());
+  void (async () => {
+    const s = await getSession(id);
+    const plan = s ? sessionPlan(s) : null;
+    if (s?.metered && s.status === 'active' && plan) await meterSession(s, plan, interviewConfig());
+  })().catch(() => {});
+}
+
 function lane(cfg: InterviewConfig, kind: CallKind, plan: Plan, sessionId: string, voice = false, coach = false): Lane {
   const reserve = async (): Promise<Reservation> => {
     // The gateway has just checked its own switch and budget; these are the interview's. The
@@ -379,8 +447,10 @@ export type SessionView = {
   voice: VoiceView | null;
   /** Time the stage's clock was paused (a voice session parked), to take off the stage timer. */
   stagePausedMs: number;
-  /** No more messages: time, turns or the session budget ran out, or the interviewer wrapped up (done); only the feedback can run. */
-  closed: 'time' | 'turns' | 'budget' | 'done' | null;
+  /** No more messages: time, turns, credits or the session budget ran out, or the interviewer wrapped up (done); only the feedback can run. */
+  closed: 'time' | 'turns' | 'budget' | 'credits' | 'done' | null;
+  /** When the reader's credits run out at this session's rate, once that is near (null: not near, or not metered). */
+  creditsEndAt: string | null;
   feedback: Feedback | null;
   feedbackNote: string | null;
   /**
@@ -427,6 +497,7 @@ export function closedReason(s: Session, plan: Plan, cfg: InterviewConfig): Sess
   if (Date.now() >= Date.parse(endsAt(s, plan, cfg))) return 'time';
   if (s.candidateTurns >= limits.maxTurns) return 'turns';
   if (s.costUsd >= limits.sessionBudgetUsd) return 'budget';
+  if (s.creditsEndAt && Date.now() >= Date.parse(s.creditsEndAt)) return 'credits';
   return null;
 }
 
@@ -478,6 +549,7 @@ export function toView(s: Session, plan: Plan, cfg = interviewConfig()): Session
       : null,
     stagePausedMs: s.voice?.stagePausedMs ?? 0,
     closed: s.status === 'active' ? closedReason(s, plan, cfg) : null,
+    creditsEndAt: s.creditsEndAt ?? null,
     feedback: s.feedback,
     feedbackNote: s.feedbackNote ?? null,
     planChanged: s.planVersion !== plan.version,
@@ -641,6 +713,8 @@ export type StartOptions = {
   lesson?: string | null;
   /** What the coach calls the learner (`learnerName`); a coach session only. */
   name?: string | null;
+  /** The reader's plan (entitlements.ts), for the month's credits (lego-ledger). */
+  plan?: string;
 };
 
 /**
@@ -729,6 +803,9 @@ async function startLocked(
   // A drill counts against the drill quota (text or voice; a voice drill against the voice minutes too);
   // a whole voice session against the voice quota (sessions and minutes), a whole text one against the text quota.
   const store = await getStore();
+  const id = newSessionId();
+  // With the ledger, the session spends credits as it runs: it starts once the reader holds the minimum.
+  if (ledgerOn()) return startMetered(readerId, system, plan, cfg, consentVersion, opts, id);
   // A coach lesson, whole or on a drill's plan, counts against the coach quota.
   const key = coach ? coachMonthKey(readerId) : scope ? drillMonthKey(readerId) : voice ? voiceMonthKey(readerId) : monthKey(readerId);
   const limit = coach ? cfg.coach.monthlySessions : scope ? cfg.monthlyDrills : voice ? cfg.voice.monthlySessions : cfg.monthlySessions;
@@ -755,12 +832,47 @@ async function startLocked(
     }
   }
 
+  return createStarted(readerId, system, plan, cfg, consentVersion, opts, id, { topup, giveBack });
+}
+
+/** Opens the session's meter at the ledger, then creates the session (the meter closes without a charge if that fails). */
+async function startMetered(readerId: string, system: string, plan: Plan, cfg: InterviewConfig, consentVersion: string, opts: StartOptions, id: string) {
+  const product = productOf({ kind: opts.kind, scope: plan.scope });
+  const mode = opts.mode === 'voice' ? 'voice' : 'text';
+  try {
+    await openMeter({ sessionId: id, readerId, plan: opts.plan ?? 'free', product, mode, label: (plan.lesson?.title ?? plan.system.name).slice(0, 120) });
+  } catch (err) {
+    if (err instanceof LedgerError && err.code === 'credits') {
+      const needed = Number(err.body.needed) || 0;
+      const what = opts.kind === 'coach' ? 'lesson' : product === 'drill' ? 'drill' : 'mock interview';
+      throw fail('credits', 402, `You need at least ${needed} credits to start a ${mode === 'voice' ? 'voice ' : ''}${what}.`, undefined, { balance: err.body.balance, needed, rate: err.body.rate });
+    }
+    console.error(JSON.stringify({ level: 'error', event: 'credits_open_failed', session: id, err: (err as Error).message }));
+    throw fail('unavailable', 503, 'Your credits can’t be checked right now. Try again in a moment.', 5);
+  }
+  const giveBack = () => chargeMeter(id, { seconds: 0, close: true, waive: true }).then(() => {}, () => {});
+  return createStarted(readerId, system, plan, cfg, consentVersion, opts, id, { topup: false, giveBack, metered: true });
+}
+
+async function createStarted(
+  readerId: string,
+  system: string,
+  plan: Plan,
+  cfg: InterviewConfig,
+  consentVersion: string,
+  opts: StartOptions,
+  id: string,
+  { topup, giveBack, metered }: { topup: boolean; giveBack: () => Promise<void>; metered?: boolean },
+): Promise<{ session: SessionView; resumed: boolean }> {
+  const voice = opts.mode === 'voice';
+  const coach = opts.kind === 'coach';
+  const scope = plan.scope;
   const now = new Date().toISOString();
   const first = plan.plan.stages[0];
   // A playlist's lesson starts from what the learner's earlier lessons left (read once: the prompt stays the same all lesson).
   const recall = plan.lesson ? await recallFor(readerId, plan).catch(() => []) : [];
   const session: Session = {
-    id: newSessionId(),
+    id,
     readerId,
     system,
     ...(scope ? { scope } : {}),
@@ -769,6 +881,7 @@ async function startLocked(
     ...(coach ? { kind: 'coach' as const, coach: initialCoachState(plan.plan, 0, now) } : {}),
     ...(coach && learnerName(opts.name) ? { learnerName: learnerName(opts.name)! } : {}),
     ...(topup ? { topup: true as const } : {}),
+    ...(metered ? { metered: true as const } : {}),
     planVersion: plan.version,
     consent: { version: consentVersion, at: now },
     status: 'active',
@@ -790,7 +903,7 @@ async function startLocked(
     await giveBack();
     throw err;
   }
-  console.log(JSON.stringify({ event: 'interview_started', system, scope, ...(plan.lesson ? { lesson: plan.lesson.slug } : {}), session: session.id, plan: plan.version, mode: voice ? 'voice' : 'text', kind: coach ? 'coach' : 'interview', topup }));
+  console.log(JSON.stringify({ event: 'interview_started', system, scope, ...(plan.lesson ? { lesson: plan.lesson.slug } : {}), session: session.id, plan: plan.version, mode: voice ? 'voice' : 'text', kind: coach ? 'coach' : 'interview', topup, metered: !!metered }));
   return { session: toView(session, plan.lesson ? { ...plan, lesson: { ...plan.lesson, recall } } : plan, cfg), resumed: false };
 }
 
@@ -809,6 +922,7 @@ export function assertOpen(session: Session, plan: Plan, cfg: InterviewConfig) {
   if (closed === 'done') throw fail('done', 409, 'The interviewer has wrapped up. End the interview to get your feedback.');
   if (closed === 'turns') throw fail('turns', 409, `That was the last of this session’s ${limitsOf(session, cfg).maxTurns} messages. End the interview to get your feedback.`);
   if (closed === 'budget') throw fail('session_budget', 409, 'This session has reached its limit. End the interview to get your feedback.');
+  if (closed === 'credits') throw fail('credits', 409, session.kind === 'coach' ? 'You’ve run out of credits. End the lesson to see what you covered.' : 'You’ve run out of credits. End the interview to get your feedback.');
 }
 
 /**
@@ -840,6 +954,7 @@ export async function withLock<T>(id: string, cfg: InterviewConfig, run: () => P
     return await run();
   } finally {
     await release().catch(() => {});
+    meterLater(id);
   }
 }
 
@@ -1156,6 +1271,16 @@ export async function idle(readerId: string, id: string, rung: unknown, opts: { 
  * feedback calls that may have been billed and failed, it ends without feedback.
  */
 export async function finish(readerId: string, id: string, opts: { signal?: AbortSignal } = {}): Promise<SessionView> {
+  // Charged to the session's last use before the reader ended it, never for the feedback's writing.
+  const at = Date.now();
+  const view = await finishSession(readerId, id, opts);
+  const s = await getSession(id).catch(() => null);
+  const plan = s?.metered ? sessionPlan(s) : null;
+  if (s && plan) await meterSession(s, plan, interviewConfig(), { close: true, now: at });
+  return view;
+}
+
+async function finishSession(readerId: string, id: string, opts: { signal?: AbortSignal } = {}): Promise<SessionView> {
   const cfg = interviewConfig();
   const { session, plan } = await mine(readerId, id);
   if (session.status === 'finished') return toView(session, plan, cfg);

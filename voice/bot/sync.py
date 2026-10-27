@@ -5,6 +5,7 @@ learns whether the session still takes turns. A refused heartbeat (stale epoch) 
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import Awaitable, Callable
 
 from loguru import logger
@@ -24,6 +25,9 @@ class Heartbeat:
         period_secs: float,
         on_closed: Callable[[str], Awaitable[None]],
         on_stale: Callable[[WebError], Awaitable[None]],
+        stt: str | None = None,
+        tts: str | None = None,
+        clock: Callable[[], float] = time.monotonic,
     ):
         self._web = web
         self._sid = sid
@@ -32,6 +36,10 @@ class Heartbeat:
         self._period = period_secs
         self._on_closed = on_closed
         self._on_stale = on_stale
+        # The speech services in use, for their prices, and when the pipeline joined the room (its minutes are billed).
+        self._vendors = {"stt": stt, "tts": tts}
+        self._clock = clock
+        self._since = clock()
         self._task: asyncio.Task | None = None
         self.beats = 0
         self.misses = 0
@@ -45,7 +53,13 @@ class Heartbeat:
 
     async def once(self) -> str | None:
         closed = await self._web.heartbeat(
-            self._sid, self._epoch, self._usage.stt_seconds, self._usage.tts_chars, sorted(self._usage.degraded)
+            self._sid,
+            self._epoch,
+            self._usage.stt_seconds,
+            self._usage.tts_chars,
+            sorted(self._usage.degraded),
+            room_seconds=self._clock() - self._since,
+            **self._vendors,
         )
         self.beats += 1
         return closed

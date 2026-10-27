@@ -7,6 +7,8 @@ import type { PlanScope } from '../../../lib/server/interview/plans';
 import { interviewStatus, learnerName, overview, startSession, type SessionKind } from '../../../lib/server/interview/service';
 import { startVoiceSession, voiceStatus } from '../../../lib/server/interview/voice';
 import { rateLimit } from '../../../lib/server/rate-limit';
+import { creditsOf, ledgerOn } from '../../../lib/server/credits';
+import { planOf } from '../../../lib/server/entitlements';
 import { drillPage, lessonPage } from '../../../lib/interview.node';
 
 export const prerender = false;
@@ -84,9 +86,15 @@ export const GET: APIRoute = async (ctx) => {
   if (scope && !page) return json({ error: 'There is no drill on that topic or section.' }, 404);
   if (!reader) return json({ signedIn: false, status: await interviewStatus(null), voice: await voiceStatus(null), current: null, past: [], page });
   return handle('overview', async () => {
-    const [o, voice, access] = await Promise.all([kind === 'coach' ? overview(reader.documentId, system, scope, 'coach', lesson) : overview(reader.documentId, system, scope), voiceStatus(reader), interviewAccess(reader)]);
+    const [o, voice, access, credits] = await Promise.all([
+      kind === 'coach' ? overview(reader.documentId, system, scope, 'coach', lesson) : overview(reader.documentId, system, scope),
+      voiceStatus(reader),
+      interviewAccess(reader),
+      // The reader's credits (lego-ledger), when sessions spend them; null when the ledger is off or doesn't answer.
+      ledgerOn() ? creditsOf(reader.documentId, planOf(reader)).catch((err: Error) => (console.error('[interview] credits:', err.message), null)) : null,
+    ]);
     const status = access.allowed ? o.status : { ...o.status, enabled: false, reason: 'access' as const };
-    return json({ signedIn: true, ...o, status, voice, page });
+    return json({ signedIn: true, ...o, status, voice, credits, page });
   });
 };
 
@@ -117,7 +125,7 @@ export const POST: APIRoute = async ({ request, url, cookies }) => {
   }
   return handle('start', async () => {
     await assertAccess(reader);
-    const { session, resumed } = await startSession(reader.documentId, system, body?.consent, { scope, ...(kind === 'coach' ? { kind, name: learnerName(body?.name) } : {}), ...(lesson ? { lesson } : {}) });
+    const { session, resumed } = await startSession(reader.documentId, system, body?.consent, { scope, plan: planOf(reader), ...(kind === 'coach' ? { kind, name: learnerName(body?.name) } : {}), ...(lesson ? { lesson } : {}) });
     return json({ session, resumed }, resumed ? 200 : 201);
   });
 };

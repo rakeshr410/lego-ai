@@ -65,6 +65,14 @@ export function interviewConfig() {
       dailyBudgetUsd: s.INTERVIEW_VOICE_DAILY_BUDGET_USD,
       sttUsdPerMin: s.VOICE_STT_USD_PER_MIN,
       ttsUsdPer1kChars: s.VOICE_TTS_USD_PER_1K_CHARS,
+      // Each speech service's own price ("stt:flux" a minute, "tts:smallest" per 1,000 characters), over the two above.
+      rates: Object.fromEntries(
+        s.VOICE_RATES.split(',')
+          .map((r) => r.split('=').map((x) => x.trim().toLowerCase()))
+          .filter(([k, v]) => k && v)
+          .map(([k, v]) => [k, Number(v)]),
+      ) as Record<string, number>,
+      roomUsdPerParticipantMin: s.DAILY_USD_PER_PARTICIPANT_MIN,
       dailyApiUrl: s.DAILY_API_URL ?? 'https://api.daily.co/v1',
       dailyApiKey: s.DAILY_API_KEY ?? null,
       // Where Daily hosts the room's media server: Mumbai, with the service and the candidates (null: Daily's choice).

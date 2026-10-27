@@ -136,12 +136,12 @@ describe('with PUBLIC_INTERVIEW_ENABLED on', () => {
     mocks.startSession.mockResolvedValueOnce({ session: { id: ID }, resumed: false });
     const started = await index.POST(ctx('POST', '/api/interview', { system: 'instagram', consent: 'v1' }));
     expect(started.status).toBe(201);
-    expect(mocks.startSession).toHaveBeenLastCalledWith('doc7', 'instagram', 'v1', { scope: null });
+    expect(mocks.startSession).toHaveBeenLastCalledWith('doc7', 'instagram', 'v1', { scope: null, plan: 'free' });
 
     // A drill start carries its scope; a malformed one never reaches the service.
     mocks.startSession.mockResolvedValueOnce({ session: { id: ID }, resumed: false });
     expect((await index.POST(ctx('POST', '/api/interview', { system: 'instagram', topic: 'login', section: 'failures', consent: 'v1' }))).status).toBe(201);
-    expect(mocks.startSession).toHaveBeenLastCalledWith('doc7', 'instagram', 'v1', { scope: { topic: 'login', section: 'failures' } });
+    expect(mocks.startSession).toHaveBeenLastCalledWith('doc7', 'instagram', 'v1', { scope: { topic: 'login', section: 'failures' }, plan: 'free' });
     expect((await index.POST(ctx('POST', '/api/interview', { system: 'instagram', topic: 'Bad Topic', consent: 'v1' }))).status).toBe(400);
   });
 
@@ -183,7 +183,7 @@ describe('with PUBLIC_INTERVIEW_ENABLED on', () => {
     mocks.startSession.mockResolvedValue({ session: { id: ID, kind: 'coach' }, resumed: false });
     const res = await index.POST(ctx('POST', '/api/interview', { system: 'instagram', consent: 'v1', kind: 'coach' }));
     expect(res.status).toBe(201);
-    expect(mocks.startSession).toHaveBeenCalledWith('doc7', 'instagram', 'v1', { scope: null, kind: 'coach', name: null });
+    expect(mocks.startSession).toHaveBeenCalledWith('doc7', 'instagram', 'v1', { scope: null, plan: 'free', kind: 'coach', name: null });
     // A voice lesson starts as a voice session of the coach kind.
     const { startVoiceSession } = await import('./voice');
     vi.mocked(startVoiceSession).mockResolvedValue({ session: { id: ID, kind: 'coach', mode: 'voice' } as never, join: { url: 'u', token: 't', expiresAt: '' }, resumed: false });
@@ -206,7 +206,7 @@ describe('with PUBLIC_INTERVIEW_ENABLED on', () => {
 
     mocks.startSession.mockResolvedValue({ session: { id: ID, kind: 'coach' }, resumed: false });
     expect((await index.POST(ctx('POST', '/api/interview', { system: 'frontend-foundations', consent: 'v1', kind: 'coach', lesson: 'box-model' }))).status).toBe(201);
-    expect(mocks.startSession).toHaveBeenLastCalledWith('doc7', 'frontend-foundations', 'v1', { scope: null, kind: 'coach', name: null, lesson: 'box-model' });
+    expect(mocks.startSession).toHaveBeenLastCalledWith('doc7', 'frontend-foundations', 'v1', { scope: null, plan: 'free', kind: 'coach', name: null, lesson: 'box-model' });
     expect((await index.POST(ctx('POST', '/api/interview', { system: 'frontend-foundations', consent: 'v1', lesson: 'box-model' }))).status).toBe(400);
   });
 

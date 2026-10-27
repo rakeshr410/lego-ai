@@ -26,7 +26,7 @@ export const prerender = false;
 //   POST played     {epoch, spoken}                       the reply was cut off after these words
 //   POST advance    {epoch, from}                         the next stage: {say: its opener}
 //   POST idle       {epoch, rung}                         silence of rung seconds: {say}
-//   POST heartbeat  {epoch, sttSeconds, ttsChars, degraded}  renews the lease, charges speech: {closed}
+//   POST heartbeat  {epoch, sttSeconds, ttsChars, roomSeconds, stt, tts, degraded}  renews the lease, charges speech and the room: {closed}
 //   POST detach     {epoch, reason}                       transport | left | ended | error
 //
 // Rate limit: 240 calls a minute per session (a heartbeat every 15 s, a turn every few seconds).
@@ -52,7 +52,7 @@ export const POST: APIRoute = async ({ request, params }) => {
   if (action === 'advance') return handle('voice advance', async () => json(await pipelineAdvance(id, call, body.from)));
   if (action === 'idle') return handle('voice idle', async () => json(await pipelineIdle(id, call, body.rung)));
   if (action === 'heartbeat') {
-    return handle('voice heartbeat', async () => json(await pipelineHeartbeat(id, call, { sttSeconds: Number(body.sttSeconds), ttsChars: Number(body.ttsChars), degraded: Array.isArray(body.degraded) ? (body.degraded as string[]) : [] })));
+    return handle('voice heartbeat', async () => json(await pipelineHeartbeat(id, call, { sttSeconds: Number(body.sttSeconds), ttsChars: Number(body.ttsChars), roomSeconds: Number(body.roomSeconds) || 0, stt: body.stt as string | undefined, tts: body.tts as string | undefined, degraded: Array.isArray(body.degraded) ? (body.degraded as string[]) : [] })));
   }
   if (action === 'detach') return handle('voice detach', async () => (await pipelineDetach(id, call, body.reason), json({ ok: true })));
 

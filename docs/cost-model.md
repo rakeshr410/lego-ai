@@ -191,3 +191,34 @@ session keeps its running `costUsd`. After the first beta week:
 2. Check the cache-read ratio on `lane: "interview"` is above 0.8 after the first turn of a session;
    if not, something before the breakpoint varies per request.
 3. Re-derive the daily budget and the session cap from the table above.
+
+## What each session cost
+
+A session keeps its spend by service beside its total (`Session.spend`): `claude reply`, `claude feedback`,
+`claude evaluator`, ... for the model's calls (charged as the gateway records each), and, from the voice service's
+heartbeats, `stt <service>` and `tts <service>` at each service's own price (`VOICE_RATES`, for example
+`stt:flux=0.0077,tts:smallest=0.03`; a service without one takes `VOICE_STT_USD_PER_MIN` or
+`VOICE_TTS_USD_PER_1K_CHARS`) and `daily room` for the call's minutes, billed for both participants
+(`DAILY_USD_PER_PARTICIPANT_MIN`). The prices are list prices to re-quote from each vendor's plan; check the totals
+against the invoices each month.
+
+`npm run interview:session-costs` lists each session (newest first) with its total grouped as claude, stt, tts and
+room, and each person's sessions, minutes and spend, the costliest first: `--days 30`, `--reader <id>`, `--detail`
+for every line, `--csv`, `--json`. It reads Redis (`REDIS_URL`), or with `--url` asks the app's internal endpoint
+(`GET /api/internal/interview/costs`, bearer `LEGO_AI_SECRET`), which a dev server without Redis needs. Sessions
+are kept `INTERVIEW_RETENTION_DAYS`, so the report reaches back that far; spend from before the lines were kept
+shows as `unsplit`.
+
+
+## Credits
+
+With `LEDGER_URL` and `LEDGER_SECRET` set, sessions spend credits from lego-ledger (`../lego-ledger`)
+instead of counting against the month's sessions (`lib/server/credits.ts`, and "Credits" in
+`interview/service.ts`). A start opens the session's meter at the ledger (refused with `credits`, 402,
+without the minimum charge in hand). The meter is then charged for the session's time used: after each
+action on the session and each voice heartbeat, at most every 15 seconds, and once more, closing it, when
+the reader ends the session. Time used runs from the start to the session's last use (its last turn,
+or the voice service's last heartbeat), less the time the voice line was parked, so a reader who
+leaves pays only until then. Once the credits would run out within 15 minutes, the session records
+when (`creditsEndAt`): the room warns, and the session closes then (`closed: 'credits'`). Rates, grants
+and the minimum are the ledger's settings. Without the ledger, the monthly counts work as before.

@@ -302,6 +302,8 @@ describe('replying', () => {
     // Metered: the session's cost, the interview's daily spend and the gateway's global spend.
     const saved = JSON.parse(store.map.get(`interview:session:${session.id}`)!);
     expect(saved.costUsd).toBeGreaterThan(0);
+    // And by service: the reply's model call on its own line.
+    expect(saved.spend).toEqual({ 'claude reply': saved.costUsd });
     expect(Number(store.map.get(interviewSpendKey()))).toBeCloseTo(saved.costUsd * 1e6);
     expect(Number(store.map.get(gw.spendKey()))).toBeCloseTo(saved.costUsd * 1e6);
   });
@@ -1242,5 +1244,66 @@ describe('a lesson that goes on from an earlier board (docs/coach-mode.md)', () 
   it('adds nothing to a lesson that starts on an empty board', () => {
     expect(svc.openingBrief(lessonPlan([]))).toBe('');
     expect(svc.openingBrief({} as Parameters<typeof svc.openingBrief>[0])).toBe('');
+  });
+});
+
+describe('spending credits (lego-ledger)', () => {
+  // A ledger in a stub: the meters it opened and every charge, and how long the balance lasts.
+  const ledger = { opened: [] as Record<string, unknown>[], charges: [] as { id: string; seconds: number; close?: boolean; waive?: boolean }[], secondsLeft: 10_000, refuse: false };
+  const realFetch = globalThis.fetch;
+
+  beforeEach(() => {
+    process.env.LEDGER_URL = 'http://ledger.test';
+    process.env.LEDGER_SECRET = 's'.repeat(40);
+    Object.assign(ledger, { opened: [], charges: [], secondsLeft: 10_000, refuse: false });
+    globalThis.fetch = vi.fn(async (url: string | URL, init?: RequestInit) => {
+      const path = new URL(String(url)).pathname;
+      const body = init?.body ? JSON.parse(String(init.body)) : {};
+      const reply = (status: number, out: unknown) => new Response(JSON.stringify(out), { status, headers: { 'content-type': 'application/json' } });
+      if (path === '/v1/meters') {
+        if (ledger.refuse) return reply(402, { code: 'credits', error: 'Not enough credits to start.', needed: 3, balance: { total: 1 } });
+        ledger.opened.push(body);
+        return reply(201, { meter: {}, balance: {}, secondsLeft: ledger.secondsLeft });
+      }
+      ledger.charges.push({ id: path.split('/').pop()!, ...body });
+      return reply(200, { meter: {}, balance: {}, secondsLeft: ledger.secondsLeft });
+    }) as typeof fetch;
+  });
+  afterAll(() => {
+    globalThis.fetch = realFetch;
+    delete process.env.LEDGER_URL;
+    delete process.env.LEDGER_SECRET;
+  });
+
+  it('opens a meter instead of counting the month’s sessions, and refuses a start without the minimum', async () => {
+    const { session } = await svc.startSession(READER, 'instagram', CONSENT_VERSION, { plan: 'pro' });
+    expect(ledger.opened).toEqual([{ sessionId: session.id, readerId: READER, plan: 'pro', product: 'interview', mode: 'text', label: 'Instagram' }]);
+    expect(store.map.get(monthKey(READER))).toBeUndefined();
+    ledger.refuse = true;
+    await expect(svc.startSession(OTHER, 'instagram', CONSENT_VERSION)).rejects.toMatchObject({ code: 'credits', status: 402, message: 'You need at least 3 credits to start a mock interview.' });
+  });
+
+  it('charges the time used as the session runs, closes it on the time of last use, and closes the session when credits run out', async () => {
+    const { session } = await start();
+    tick(90_000);
+    await svc.reply(READER, session.id, 'Who uses it, and on what devices?');
+    await vi.waitFor(() => expect(ledger.charges).toHaveLength(1));
+    expect(ledger.charges[0]).toMatchObject({ id: session.id, seconds: 90 });
+    expect(ledger.charges[0].close).toBeUndefined();
+
+    // Nearly out: the session learns when, and closes then.
+    ledger.secondsLeft = 120;
+    tick(60_000);
+    await svc.reply(READER, session.id, 'Mobile web first.');
+    await vi.waitFor(() => expect(ledger.charges).toHaveLength(2));
+    await vi.waitFor(async () => expect(Date.parse((await svc.readSession(READER, session.id)).creditsEndAt ?? '') - (now + 120_000)).toBeLessThan(1_000));
+    tick(122_000);
+    expect((await svc.readSession(READER, session.id)).closed).toBe('credits');
+    await expect(svc.reply(READER, session.id, 'More.')).rejects.toMatchObject({ code: 'credits' });
+
+    // Left open ten minutes before it is ended: charged to its last use, not the wait.
+    tick(600_000);
+    await svc.finish(READER, session.id);
+    expect(ledger.charges.at(-1)).toMatchObject({ id: session.id, seconds: 150, close: true });
   });
 });
