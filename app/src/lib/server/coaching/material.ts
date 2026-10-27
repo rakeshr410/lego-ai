@@ -8,9 +8,12 @@ import { packRef, type Pack } from './schema';
 // time like the article snapshot, checked once (an invalid file fails the build and the tests), and
 // each pack's standing against the article it was written from.
 
-const FILES = Object.fromEntries(
-  Object.entries(import.meta.glob('../../../../coaching/**/*.yaml', { query: '?raw', import: 'default', eager: true }) as Record<string, string>).map(([path, text]) => [path.replace(/^.*\/coaching\//, ''), text]),
-);
+const byPath = (files: Record<string, string>) => Object.fromEntries(Object.entries(files).map(([path, text]) => [path.replace(/^.*\/coaching\//, ''), text]));
+const OWN = byPath(import.meta.glob('../../../../coaching/**/*.yaml', { query: '?raw', import: 'default', eager: true }) as Record<string, string>);
+// A build from the content graph (GRAPH_URL; lego/graph) writes the graph's packs and playlists here
+// (content-snapshot.node.ts writeCoachingFromGraph) and builds from them; otherwise there are none.
+const FROM_GRAPH = byPath(import.meta.glob('../../../../.content/coaching/**/*.yaml', { query: '?raw', import: 'default', eager: true }) as Record<string, string>);
+const FILES = Object.keys(FROM_GRAPH).length ? FROM_GRAPH : OWN;
 
 let cached: Catalog | null = null;
 

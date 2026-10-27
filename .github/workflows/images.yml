@@ -40,6 +40,7 @@ jobs:
           sparse-checkout: |
             content
             content-kit
+            graph/src
             infra
       - uses: actions/setup-node@v4
         with:

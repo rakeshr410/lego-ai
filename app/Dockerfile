@@ -20,6 +20,8 @@ FROM node:${NODE_VERSION}-bookworm-slim AS deps
 COPY --from=lego content-kit/package.json content-kit/package-lock.json /src/lego/content-kit/
 RUN npm --prefix /src/lego/content-kit ci --no-audit --no-fund
 COPY --from=lego content-kit/ /src/lego/content-kit/
+# The content graph's client (lego/graph): a build with GRAPH_URL set fetches its material from the graph.
+COPY --from=lego graph/src/client.ts /src/lego/graph/src/client.ts
 WORKDIR /src/lego-ai/app
 COPY app/package.json app/package-lock.json ./
 RUN npm ci --no-audit --no-fund
