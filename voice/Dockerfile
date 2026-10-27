@@ -9,8 +9,9 @@ COPY voice/pyproject.toml ./
 RUN uv pip install --system --no-cache -r pyproject.toml
 COPY voice/app ./app
 COPY voice/bot ./bot
-RUN useradd --system --uid 10001 voice && chown -R voice:voice /app
-USER voice
+# Its own user and group: Debian's base image already has a system group named voice.
+RUN groupadd --system --gid 10001 pipecat && useradd --system --uid 10001 --gid pipecat pipecat && chown -R pipecat:pipecat /app
+USER pipecat
 EXPOSE 7860
 HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=3 CMD curl -sf http://127.0.0.1:7860/health || exit 1
 # SIGTERM: the supervisor parks every session (the rooms rejoin on another task); the ECS stopTimeout is 120 s.
