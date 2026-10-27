@@ -90,7 +90,9 @@ RUN apt-get update \
 ENV NODE_ENV=production \
     HOST=0.0.0.0 \
     PORT=4322
-WORKDIR /app
+# As deep as the build's /src/lego-ai/app: the lockfile's link to the content kit (file:../../lego/content-kit)
+# resolves to the path it records, or npm ci discards the lockfile.
+WORKDIR /src/lego-ai/app
 COPY app/package.json app/package-lock.json ./
 # The content kit is a dev dependency (inlined into the server bundle), so it isn't installed here.
 RUN npm ci --omit=dev --no-audit --no-fund && npm cache clean --force
