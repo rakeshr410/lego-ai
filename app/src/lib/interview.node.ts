@@ -59,7 +59,6 @@ export type PlaylistPage = {
   slug: string;
   title: string;
   summary: string;
-  outline: string;
   /** What the page designs, and where its lessons end (coaching/landing.ts). */
   landing: PlaylistLanding;
   /** The system's mock interview the lessons prepare for, or null when it has none. */
@@ -229,7 +228,6 @@ export async function getPlaylistPages(): Promise<PlaylistPage[]> {
     slug: pl.slug,
     title: pl.title,
     summary: pl.summary,
-    outline: pl.outline,
     landing: playlistLanding(pl),
     interview: interviewOf(pl),
     lessons: pl.lessons.map((l) => ({

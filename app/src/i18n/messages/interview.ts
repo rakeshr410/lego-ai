@@ -360,7 +360,6 @@ export default messages({
   'playlist.pick': 'Or start any single lesson from the list.',
   'playlist.paused': 'Paused in lesson {n} · {minutes} min in',
   'playlist.resume': 'Resume',
-  'playlist.outline': 'How this playlist was made',
   'lesson.meta.title': '{lesson} · {playlist}',
   'lesson.meta.description': 'A {minutes}-minute whiteboard lesson with an AI coach: {title}.',
   'coach.summary.caveat': 'The statuses come from an AI’s reading of your answers. They can be wrong.',

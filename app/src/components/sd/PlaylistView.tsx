@@ -154,11 +154,6 @@ export default function PlaylistView({ page }: { page: PlaylistPage }) {
           )}
         </aside>
       </main>
-      <div className="lp-more">
-        <p className="lp-source">
-          <strong>{t("playlist.outline")}.</strong> {page.outline}
-        </p>
-      </div>
     </div>
   );
 }
