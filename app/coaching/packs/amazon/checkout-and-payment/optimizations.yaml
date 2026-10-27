@@ -1,0 +1,175 @@
+# Amazon checkout interview, optimizations: the priority rubric that picks five deep dives, then each as a row of techniques under a short heading: a Place order safe to repeat and an unknown outcome checked, card data and page hardening, form UX and accessibility, the bank's challenge and coming back, and the review page's speed. The lesson opens on the board so far: the review page, the scope, the requirements, the components and the order attempt's states with all their arrows, and CheckoutStore's JSON; the API, storage, polling and errors areas stay with lesson 2 so the kept board stays under 120 ids.
+id: amazon/checkout-and-payment/optimizations
+title: Where a bug costs money or trust
+source:
+  hash: "46e0ae259112"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: amazon/checkout-and-payment/interface-definition
+  assumes:
+    - "The attempt is quote_id, payment_method_id and key, saved to sessionStorage before the request; the server answers a repeated key with its first answer."
+    - "Targets: zero duplicate orders, zero card numbers in our code, LCP less than 2.5 s, INP less than 200 ms, route JS no more than 90 KB before the SDK."
+    - "GET /api/orders/by-key/{key} tells an unknown outcome without placing the order again; Outcome unknown on the board polls it."
+  carries:
+    - "Areas are scored 1 to 3 on money or trust lost, shoppers affected and how often; the top five get a deep dive, and internationalisation is covered elsewhere."
+    - "One key per attempt, saved before the POST, and the store's in-flight flag; an unknown outcome is polled at 1.5 s, 3 s, then every 5 s up to 90 s."
+    - "Hosted card fields, a CSP on /checkout that allows only our scripts and the processor, SRI on our versioned bundles, no third-party tags, and nothing card-shaped in telemetry."
+    - "Shipping autocomplete tokens, billing same as delivery by default, an error summary that takes focus, and focus moved to where the fix is."
+    - "The challenge in a labelled dialog, unsandboxed; a redirect resumes from the stored attempt. The review is server-rendered with its quote, and the SDK loads after first paint."
+  terms:
+    - term: in-flight flag
+      means: "The store's status, set at once when Place order is pressed, so further presses are ignored until the attempt ends."
+    - term: CSP
+      means: "The checkout route's policy header: scripts from our origins, a nonce and the processor; frames from the processor and its challenge host; connections to our API and the processor's."
+    - term: SRI
+      means: "The sha384 integrity hash, with crossorigin, on our versioned bundles; the processor's SDK, updated in place, is allowed by origin instead."
+board:
+  keep: [title, review, rp-deliver, rp-ship1, rp-ship2, rp-paying, rp-summary, rp-promo, rp-place, scope, as-heading, as-shipments, as-quote, out-heading, out-charging, out-signin, out-stay, out-wallets, out-tax, requirements, fr-heading, fr-review, fr-address, fr-delivery, fr-pay, fr-challenge, fr-decline, fr-once, fr-changed, fr-after, nfr-heading, nfr-duplicates, nfr-totals, nfr-cards, nfr-csp, nfr-lcp, nfr-inp, nfr-js, nfr-timeout, nfr-outcome, nfr-wcag, nfr-redundant, nfr-autofill, nfr-paste, components, c-checkout-page, c-address-form, c-payment-frame, c-saved-cards, c-hosted-fields, c-challenge, c-store, c-processor, c-service, c-api, machine, m-total, m-confirmed, m-ready, m-placing, m-unknown, m-challenge, m-declined, m-resend, m-history, af-to-store, pf-to-store, store-to-page, pf-to-processor, store-to-service, service-to-api, api-to-processor, ready-to-placing, placing-to-challenge, challenge-to-unknown, unknown-to-declined, placing-to-confirmed, placing-to-declined, placing-to-total, placing-to-unknown, unknown-to-confirmed, total-to-ready, declined-to-ready, state, store-json, js-quote, js-quote-more, js-status, js-sections, js-sections-more, js-address, js-address-more, js-payment, js-payment-more, js-attempt]
+  elements:
+    - { id: optimizations, kind: region, label: Optimizations, at: [61, 93], size: [58, 17] }
+    - { id: h-repeat, kind: note, label: safe to repeat, at: [62, 95], in: optimizations }
+    - { id: o-key, kind: box, label: a key per attempt, at: [71, 95], size: [11, 2], in: optimizations, tone: blue }
+    - { id: o-saved, kind: box, label: saved before POST, at: [83, 95], size: [11, 2], in: optimizations, tone: blue }
+    - { id: o-flag, kind: box, label: in-flight flag, at: [95, 95], size: [11, 2], in: optimizations, tone: blue }
+    - { id: o-poll, kind: box, label: "poll, never resend", at: [107, 95], size: [12, 2], in: optimizations, tone: blue }
+    - { id: h-card, kind: note, label: card data, at: [62, 98], in: optimizations }
+    - { id: o-hosted, kind: box, label: hosted card fields, at: [71, 98], size: [11, 2], in: optimizations, tone: blue }
+    - { id: o-csp, kind: box, label: CSP allow-list, at: [83, 98], size: [11, 2], in: optimizations, tone: blue }
+    - { id: o-sri, kind: box, label: SRI on our bundles, at: [95, 98], size: [11, 2], in: optimizations, tone: blue }
+    - { id: o-tags, kind: box, label: no third-party tags, at: [107, 98], size: [12, 2], in: optimizations, tone: blue }
+    - { id: h-form, kind: note, label: form and access, at: [62, 101], in: optimizations }
+    - { id: o-autofill, kind: box, label: autofill tokens, at: [71, 101], size: [11, 2], in: optimizations, tone: blue }
+    - { id: o-billing, kind: box, label: billing as delivery, at: [83, 101], size: [12, 2], in: optimizations, tone: blue }
+    - { id: o-summary, kind: box, label: error summary, at: [96, 101], size: [11, 2], in: optimizations, tone: blue }
+    - { id: o-focus, kind: box, label: focus on the fix, at: [108, 101], size: [11, 2], in: optimizations, tone: blue }
+    - { id: h-bank, kind: note, label: bank challenge, at: [62, 104], in: optimizations }
+    - { id: o-dialog, kind: box, label: labelled dialog, at: [71, 104], size: [11, 2], in: optimizations, tone: blue }
+    - { id: o-sandbox, kind: box, label: no sandbox, at: [83, 104], size: [11, 2], in: optimizations, tone: blue }
+    - { id: o-resume, kind: box, label: resume on return, at: [95, 104], size: [11, 2], in: optimizations, tone: blue }
+    - { id: h-speed, kind: note, label: review speed, at: [62, 107], in: optimizations }
+    - { id: o-ssr, kind: box, label: server-render quote, at: [71, 107], size: [12, 2], in: optimizations, tone: blue }
+    - { id: o-sdk, kind: box, label: SDK after first paint, at: [84, 107], size: [13, 2], in: optimizations, tone: blue }
+    - { id: o-abort, kind: box, label: newer quote aborts, at: [98, 107], size: [11, 2], in: optimizations, tone: blue }
+  arrows: []
+beats:
+  - point: "Mistakes here cost money or trust and this page draws attackers, so score each area 1 to 3 on money or trust lost, shoppers affected and how often it matters, and deep-dive the top five; internationalisation is already covered."
+    kind: decision
+    weight: supporting
+    teach:
+      - "Pick the work with a rubric: score each area 1 to 3 on the money or trust lost if it fails, how many shoppers it touches, and how often it matters. The top five get a deep dive."
+      - "Form UX and accessibility come out on top: every shopper fills those fields, and an error they cannot follow loses the sale. Then a repeat-safe Place order, since charging twice is the worst failure and phones lose answers all the time, and card data, since one injected script could read every card typed here."
+      - "The bank's challenge and the review page's speed come next. Internationalisation is already handled by the country prop and by formatting amounts from minor units."
+    draw: [optimizations]
+    check: Why does form UX and accessibility score highest of the areas?
+    answer: Every shopper fills those fields, and an error they cannot follow loses the sale.
+  - point: "One key per attempt, made with crypto.randomUUID when the review is shown and remade when the quote or method changes, saved to sessionStorage before the POST, with the store's in-flight flag set at once so a fast second click is ignored; the server dedupes by key."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Three layers stop a second order: the button stops the person, the store stops our own code, and the server's record of keys catches whatever is left."
+      - "A new key on every click lets a double click through, and one key for the whole page lets a new card replay an old decline. So one key per attempt, made when the review is shown for a quote and a method, and remade when either changes."
+      - "The attempt is written to sessionStorage before the POST leaves, and a page that loads and finds an unfinished one goes straight to checking. The press handler sets the store's status at once and ignores presses unless ready, since a disabled button only takes effect on the next render; the button also shows busy words."
+      - "Say it without drawing it: the server answers a repeated key with its first answer, a repeat while the first is still running gets 409, and a different body gets 422."
+    draw: [h-repeat, o-key, o-saved, o-flag]
+    check: Why isn't disabling the button enough to stop a double submit?
+    answer: "The disabled state lands on the next render, so a fast second click or Enter gets through; the store's flag is set at once and ignores presses unless ready."
+    misconceptions:
+      - "Make a new key on every press -> a double click or a retry would then make two orders."
+  - point: "A timeout, a dropped connection or a 5xx means checking, never a guess: poll by key at 1.5 s, 3 s, then every 5 s up to 90 s, following retry_after_ms; after 90 s a 404 unknown_key counts, the same key is sent once more, and if that fails the page links to Your orders."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Sending the order again with a fresh key after a timeout would make two orders. So the 25 second timeout, a dropped connection or a 5xx all lead to checking."
+      - "Poll by key at 1.5 seconds, then 3, then every 5 seconds up to 90, and follow the server's retry hint when it gives one."
+      - "If the request never arrived, the shopper must not wait forever: after 90 seconds a 404 unknown key counts, and the same key goes once more, which is safe because the server never saw it. If that fails too, the page links to Your orders."
+    draw: [o-poll]
+    check: The submit times out at 25 s. What does CheckoutService do?
+    answer: "It polls by key at 1.5 s, 3 s, then every 5 s up to 90 s; it never resubmits with a new key."
+  - point: "Hosted fields keep card numbers out of our code, and the rules cover the whole page: a CSP on /checkout allows only our scripts and the processor, no third-party tags run there, and SRI pins our versioned bundles while the SDK is allowed by origin."
+    kind: rule
+    weight: core
+    teach:
+      - "Hosted fields keep the digits out of our code, yet a script slipped into the checkout could replace the frame or draw fake fields on top of it, so the protections apply to the whole page. PaymentFrame gets a token with brand, last four and expiry, and saved cards are picked by token."
+      - "CSP on the checkout route: scripts from our origins, a nonce and the processor; frames from the processor and its challenge host; connections to our API and the processor's. No chat, A/B or ad tags on this page."
+      - "Our versioned bundles carry a sha384 integrity hash with crossorigin; the processor changes its SDK in place, so that one is allowed by origin instead."
+      - "Told, not drawn: since April 2025 a site embedding the iframe must show it resists script attacks, so keep a script inventory, CSP violation reports and alerts on change; and keep replay and click analytics off here, with events carrying outcome codes, brand and last four at most."
+    draw: [h-card, o-hosted, o-csp, o-sri, o-tags]
+    check: Why can't the processor's SDK get the same integrity hash as our own bundles?
+    answer: "The processor updates it in place at the same URL, so a pinned hash would break on its next release; it is allowed by origin instead."
+    misconceptions:
+      - "The iframe alone makes the page safe -> a script injected into the page could swap the frame or overlay fake fields, so the CSP and monitoring cover the whole page."
+  - point: "Make autofill land in the right fields: shipping-prefixed tokens on delivery, billing tokens on billing and the card tokens inside the iframe; a numeric keyboard only for digit-only postcodes; paste never blocked; billing same as delivery ticked by default."
+    kind: rule
+    weight: core
+    teach:
+      - "Autofill types most of these fields, so make it land right: shipping-prefixed tokens such as shipping postal-code on delivery, billing tokens on the billing form, and the card tokens inside the processor's iframe; real labels, one input per value."
+      - "A numeric keyboard only where postcodes are all digits; card fields are text inputs with a numeric keyboard, never number inputs. Paste is never blocked."
+      - "Billing same as delivery is ticked by default, and the billing form shows only when it is unticked: that is Redundant Entry, 3.3.7."
+    draw: [h-form, o-autofill, o-billing]
+    check: Autofill keeps putting the billing ZIP into the delivery form. What fixes it?
+    answer: "Shipping-prefixed tokens on the delivery fields, such as shipping postal-code, and billing tokens on the billing form."
+    misconceptions:
+      - "A digits-only keyboard suits every postcode -> a UK postcode has letters; the numeric keyboard is only for digit-only postcodes."
+  - point: "Make every error findable: aria-invalid and a described message on each bad field, a top summary with role alert that links each problem and takes focus, and focus moved to where the fix is after a decline or a changed quote."
+    kind: rule
+    weight: core
+    teach:
+      - "Invalid fields get aria-invalid and a message tied to them by aria-describedby. On submit, a summary at the top with role alert links each problem and takes focus."
+      - "A decline focuses the Paying with heading, a changed quote focuses its banner, and a polite live region reads new totals."
+    draw: [o-summary, o-focus]
+    check: The card is declined. Where does focus go, and why there?
+    answer: "To the Paying with heading, where the fix is, rather than staying on a disabled button."
+  - point: "The bank's challenge opens in a modal dialog with a heading, aria-modal and focus inside, the page behind inert, its frame unsandboxed at a size issuers support; a redirect is followed only after the attempt is saved, and the return URL reads it, disables Place order and polls by key."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Dialog first, a redirect only when asked: a modal with a heading, aria-modal and focus inside, the page behind inert. Leave the bank's frame unsandboxed, at a size issuers support: 390 by 400 on a phone, 600 by 400 on a desktop."
+      - "With the dialog the page stays loaded throughout. With a redirect the page is gone for roughly thirty seconds, and the attempt sits in sessionStorage until it returns; back at the checkout return URL, the page reads it, keeps Place order disabled and polls by key. The bank's done message never counts as paid."
+      - "Closing the dialog cancels through the processor and moves to checking; a challenge left unfinished comes back as a decline."
+    draw: [h-bank, o-dialog, o-sandbox, o-resume]
+    check: In the run, the bank approves the code and its frame says done. What does the page show while it finds out?
+    answer: "Checking your order, polling by key until the server answers; in this run the charge comes back declined."
+    misconceptions:
+      - "Coming back from the bank's redirect starts a fresh checkout -> the return URL reads the stored attempt, keeps Place order disabled and polls by key."
+  - point: "Keep LCP below 2.5 s, INP below 200 ms and route JS at no more than 90 KB by keeping the SDK and quote round trips off first paint: server-render the review with its quote, load the SDK after first paint, and let a newer quote request abort the older."
+    kind: rule
+    weight: core
+    teach:
+      - "The targets: LCP below 2.5 seconds, INP below 200 milliseconds, route JavaScript no more than 90 KB. To hold them, neither the processor's SDK nor a quote round trip may block the first paint."
+      - "Server-render the review with its quote, so the totals paint with the HTML instead of a spinner that waits for the JavaScript and the first quote."
+      - "Most shoppers pay with a saved card, so keep the processor's SDK off the critical path: preconnect, load it after first paint, and mount the card fields only when New card opens, behind a placeholder of the same size."
+      - "Fast clicks on delivery options race, and an older quote can land last. A newer change aborts the older request, and only the newest answer applies."
+    draw: [h-speed, o-ssr, o-sdk, o-abort]
+    check: Why load the processor's SDK after first paint?
+    answer: "Most shoppers use a saved card and never need it, so it must not hold up their page; preconnect, load it after first paint, and mount the fields only when New card opens."
+asks:
+  - ids: [o-key, o-saved, o-flag, o-poll]
+    beats: [2, 3]
+    question: "How would you make Place order safe to press twice, reload, or lose its answer? Name your ideas one at a time."
+    hints:
+      - What names one attempt, and when is it made?
+      - And what should the page do when the answer never comes?
+  - ids: [o-hosted, o-csp, o-sri, o-tags]
+    beats: [4]
+    question: "Attackers want this page most. How do you keep card data out of our code and stop a rogue script on it?"
+    hints:
+      - Who should own the card fields?
+      - And which scripts should be allowed to run on the checkout at all?
+  - ids: [o-autofill, o-billing, o-summary, o-focus]
+    beats: [5, 6]
+    question: "Every shopper fills this form. How do you make it quick to fill and its errors easy to find?"
+    hints:
+      - How does the browser know which saved address goes where?
+      - And when something is wrong, where should the shopper's attention go?
+  - ids: [o-ssr, o-sdk, o-abort]
+    beats: [8]
+    question: "How would you keep the review page fast to paint and quick to respond?"
+    hints:
+      - What could the server send with the first HTML?
+      - Most shoppers use a saved card. What does that let you postpone?
+task:
+  prompt: "Draw the five deep dives as rows: a Place order safe to repeat, card data and hardening, form UX and accessibility, the bank's challenge, and the review page's speed."
+  expects: [2, 3, 4, 5, 6, 7, 8]

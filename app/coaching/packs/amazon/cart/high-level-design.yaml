@@ -1,0 +1,163 @@
+# Cart interview, high-level design: drawn once the requirements are on the board; the cart as a versioned server resource, the components (the UI from the sketch, then the store, service, tab sync and guest cart behind it), then one edit followed through two tabs and a phone.
+id: amazon/cart/high-level-design
+title: Then the components
+source:
+  hash: "f3ce75bf1dde"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: amazon/cart/requirements-exploration
+  assumes:
+    - "The server owns the cart, prices, discounts, tax and the free-delivery threshold; the client never computes a total."
+    - "A line shows image, title, variant, a stepper with the line total, Delete and Save for later; the summary is the server's."
+    - "Other tabs follow in less than 1 s and other devices when looked at; no edit is silently overwritten; one mutation in flight per cart."
+  carries:
+    - "The server numbers each cart version; the browser holds the newest it saw, keeps unconfirmed intents over it, sends one change at a time naming its base version, and repaints from newer ones."
+    - "UI: CartPage (the /cart route, server-rendered with the cart inside), CartLine with QuantityStepper, LineActions and LineWarning, and CartBadge in the header."
+    - "Behind the UI: CartStore, CartService (the one caller of the Cart API), TabSync and GuestCart; a line hands the store intents and never calls the server."
+    - "One edit: the stepper shows the intent at once, totals stay Updating, one PATCH with If-Match goes 400 ms after the last press, the whole cart returns, and the matching intent is dropped."
+    - "Another tab takes a cart changed message only when its version is higher; a phone asks with If-None-Match when it is looked at again."
+  terms:
+    - term: version
+      means: "The cart's number on the server, raised by every change (7, then 8), and sent as its ETag."
+    - term: intent
+      means: "What the shopper asked of a line (set the filters to 3), shown at once and kept until a version confirms it."
+    - term: CartStore
+      means: "The browser's copy: the confirmed cart and its version, pending intents per line, one mutation in flight, and undo entries."
+    - term: CartService
+      means: "The one caller of the Cart API: adds If-Match and the CSRF token, gives up after 10 s, and returns typed results."
+    - term: TabSync
+      means: "Trades cart versions with other tabs on a BroadcastChannel, uses the storage event where that is missing, and refetches once the tab is visible again."
+board:
+  keep: [title, mock-up, mock-header, mock-item, mock-stepper, mock-actions, mock-totals, mock-free, mock-saved, requirements, fr-heading, fr-lines, fr-summary, fr-stepper, fr-delete, fr-save, fr-reprice, fr-stock, fr-free, fr-tabs, fr-race, fr-guest, nfr-heading, nfr-totals, nfr-overwrite, nfr-frame, nfr-inp, nfr-tabs, nfr-devices, nfr-burst, nfr-flight, nfr-lcp, nfr-js, nfr-a11y, nfr-announce, nfr-locale, scope, assume-heading, assume-lines, assume-wait, assume-undo, assume-free, out-heading, out-checkout, out-server]
+  elements:
+    - { id: components, kind: region, label: "Components", at: [1, 38], size: [59, 23] }
+    - { id: c-page, kind: box, label: "CartPage, server-rendered", at: [2, 41], size: [20, 2], in: components, tone: blue }
+    - { id: c-line, kind: region, label: "CartLine, one line", at: [2, 44], size: [20, 9], in: components, tone: blue }
+    - { id: c-stepper, kind: box, label: "QuantityStepper", at: [3, 46], size: [18, 2], in: c-line }
+    - { id: c-actions, kind: box, label: "LineActions", at: [3, 48], size: [18, 2], in: c-line }
+    - { id: c-warning, kind: box, label: "LineWarning", at: [3, 50], size: [18, 2], in: c-line }
+    - { id: c-store, kind: oval, label: "CartStore", at: [32, 41], size: [12, 8], in: components, tone: amber }
+    - { id: c-tabsync, kind: box, label: "TabSync", at: [50, 41], size: [9, 2], in: components }
+    - { id: c-guest, kind: box, label: "GuestCart", at: [50, 44], size: [9, 2], in: components }
+    - { id: c-badge, kind: box, label: "CartBadge", at: [50, 47], size: [9, 2], in: components, tone: blue }
+    - { id: c-service, kind: box, label: "CartService", at: [32, 51], size: [12, 2], in: components }
+    - { id: c-api, kind: box, label: "Cart API, black box", at: [32, 57], size: [12, 3], in: components, tone: grey }
+    - { id: flow, kind: region, label: "One edit, two tabs and a phone", at: [62, 38], size: [57, 23] }
+    - { id: fl-tab1, kind: box, label: "Tab 1, stepper shows 3", at: [63, 41], size: [12, 3], in: flow, tone: blue }
+    - { id: fl-server, kind: box, label: "Cart API", at: [106, 41], size: [12, 18], in: flow, tone: grey }
+    - { id: fl-reply, kind: note, label: "totals Updating, then the whole cart at version 8", at: [77, 45], in: flow, tone: amber }
+    - { id: fl-tab2, kind: box, label: "Tab 2, still at version 7", at: [63, 52], size: [12, 3], in: flow, tone: blue }
+    - { id: fl-newer, kind: note, label: "version 8 is newer, so tab 2 takes it, no request", at: [77, 53], in: flow, tone: green }
+    - { id: fl-phone, kind: box, label: "Phone, asleep at version 7", at: [63, 56], size: [12, 3], in: flow, tone: blue }
+  arrows:
+    - { id: store-to-page, from: c-store, to: c-page, label: "lines and summary" }
+    - { id: line-to-store, from: c-line, to: c-store, label: intents }
+    - { id: store-to-badge, from: c-store, to: c-badge, label: count }
+    - { id: store-to-service, from: c-store, to: c-service }
+    - { id: service-to-api, from: c-service, to: c-api, label: HTTP, both: true }
+    - { id: store-tabsync, from: c-store, to: c-tabsync, label: versions, both: true }
+    - { id: guest-to-store, from: c-guest, to: c-store, label: lines }
+    - { id: tab1-to-server, from: fl-tab1, to: fl-server, label: "one PATCH, If-Match c7", both: true }
+    - { id: tab1-to-tab2, from: fl-tab1, to: fl-tab2, label: cart changed }
+    - { id: phone-to-server, from: fl-phone, to: fl-server, label: "GET, If-None-Match c7, 304 if unchanged", dashed: true }
+beats:
+  - point: "The cart is a versioned server resource: the browser holds the newest version it has seen, lays the shopper's unconfirmed intents over it, sends one change at a time naming the version it started from, and repaints from any newer version."
+    kind: rule
+    weight: core
+    teach:
+      - "With the lists written, the overall shape. The server keeps the cart as numbered versions, and each change produces the next number."
+      - "The browser holds the most recent version it has received and puts over it the presses the server has not confirmed yet. It sends a single change at a time, saying which version it started from, and redraws whenever a higher version comes in."
+    draw: [components]
+    check: What does the browser keep of the cart, and what does it add on top?
+    answer: "The newest version the server sent; on top of it, the shopper's intents that no version has confirmed yet."
+    misconceptions:
+      - "The client keeps its own running cart and syncs it later -> the server's version is the cart; the client only adds unconfirmed intents on top of the last one it saw."
+  - point: "The UI is CartPage, the /cart route rendered on the server with the cart inside, laying out the lines, the Saved for later list and the summary column; each CartLine with its QuantityStepper, LineActions and LineWarning; and CartBadge in the header."
+    kind: component
+    weight: core
+    teach:
+      - "Turn the sketch into components. CartPage is the /cart route: it arrives rendered by the server with the cart already in it, and lays out the lines, the Saved for later list and the summary column."
+      - "Each product is a CartLine, which finds its line in the store by id. Inside it, a QuantityStepper that shows the pending intent, LineActions for Delete and Save for later, and LineWarning for a moved price or a sold-out item."
+      - "CartBadge is the header's cart link, named Cart, 5 items, with a polite live region."
+    draw: [c-page, c-line, c-stepper, c-actions, c-warning, c-badge]
+    check: Where does a CartLine get its line from?
+    answer: "From the store, by its id; the line hands the store the shopper's intents."
+  - point: "CartStore holds the confirmed cart and version, pending intents, one mutation in flight and undo entries; lines hand it intents and it feeds the page and the badge; CartService alone calls the Cart API, with If-Match, the CSRF token, a 10 s timeout and typed results."
+    kind: component
+    weight: core
+    teach:
+      - "CartStore is the browser's copy: the confirmed cart at its version, a pending quantity per line, at most one mutation on its way, and the undo entries. Lines give it intents; it gives the page its lines, summary and updating marks, and the badge its count."
+      - "CartService is the only thing that talks to the Cart API. It adds If-Match and the CSRF token, stops waiting after 10 seconds, and reports back with a typed result: committed, conflict or failed."
+    draw: [c-store, store-to-page, line-to-store, store-to-badge, c-service, store-to-service, c-api, service-to-api]
+    check: Which component is the only one that calls the Cart API?
+    answer: CartService; lines and the badge only talk to CartStore.
+    misconceptions:
+      - "Each line saves its own quantity to the server -> lines hand intents to CartStore, which sends one mutation at a time through CartService."
+  - point: "TabSync swaps versions with the other tabs over a BroadcastChannel named cart, uses the storage event where that is missing, and refetches once the tab is visible; GuestCart keeps a signed-out cart in localStorage as SKUs and quantities only."
+    kind: component
+    weight: core
+    teach:
+      - "TabSync trades versions with the other tabs over a BroadcastChannel called cart. Where that is missing it uses the storage event, and it refetches when the tab becomes visible."
+      - "GuestCart holds a signed-out shopper's cart in localStorage, nothing but SKUs and quantities, and passes those lines to the store to be priced or merged."
+    draw: [c-tabsync, store-tabsync, c-guest, guest-to-store]
+    check: What does GuestCart keep in localStorage?
+    answer: "Only SKUs and quantities; nothing priced."
+  - point: "One edit: two presses on the filters show 3 in the stepper at once while totals keep version 7 marked Updating; 400 ms after the last press one PATCH goes with If-Match c7, version 8 comes back whole (past $75, so delivery is free, badge 5), and the pending 3 now matches, so it is dropped."
+    kind: flow
+    weight: core
+    teach:
+      - "Walk one change through. Both tabs start on version 7. Two presses on the paper filters: the stepper says 3 straight away, while the filters' total and the summary keep their version 7 figures with an Updating mark."
+      - "Once 400 ms pass with no press, a single PATCH for quantity 3 goes out with If-Match c7. The reply is the whole cart at version 8: the subtotal is now over $75, so delivery is free, and the badge takes the server's 5. The pending 3 now equals the confirmed quantity, so the store drops it."
+    draw: [flow, fl-tab1, fl-server, tab1-to-server, fl-reply]
+    check: The shopper presses plus twice on the filters. What does the line show before the server answers?
+    answer: "Quantity 3 in the stepper; the line total and the summary keep the server's last values, marked Updating."
+    misconceptions:
+      - "Show the new line total as 3 times the unit price at once -> every amount is the server's, so the totals wait for the next version."
+  - point: "Tab 1 posts cart changed with version 8 and the whole cart on the cart channel; tab 2 takes it with no request because 8 is above its 7, and any version not above the one a tab shows is ignored."
+    kind: flow
+    weight: core
+    teach:
+      - "Tab 2 is still on version 7. Tab 1 puts a cart changed message on the channel carrying version 8 and the full cart; 8 beats 7, so tab 2 switches to it without asking the server."
+      - "A message may be delayed or overtaken by another, so a tab accepts a version only when it is higher than the one on its screen."
+    draw: [fl-tab2, tab1-to-tab2, fl-newer]
+    check: Tab 2 hears cart changed with version 8 while it already shows version 9. What does it do?
+    answer: It ignores it; only a higher version replaces what a tab shows.
+    misconceptions:
+      - "Apply every message as it arrives -> a late or repeated message would roll a tab back; only a higher version wins."
+  - point: "Delete removes the dripper on screen and sends the DELETE without waiting, so tab 2 gets version 9 and no checkout can still hold it; Undo puts it back where it was with a POST, and version 10 arrives priced again in both tabs."
+    kind: flow
+    weight: supporting
+    teach:
+      - "Now the shopper removes the dripper. It leaves the screen immediately, focus lands on the next line's title, and the DELETE is not held back: tab 2 receives version 9 and no checkout could still contain the dripper. Below $75 again, delivery is charged."
+      - "Undo returns the dripper to its old place with a POST; both tabs get version 10, priced afresh."
+    check: Why is the DELETE sent at once instead of after the Undo toast?
+    answer: So no other tab and no checkout can still count a line the shopper has taken out.
+  - point: "A phone asleep at version 7 catches up when it is looked at again: GET /api/cart with If-None-Match c7 returns version 8, or a 304 with no body when nothing changed."
+    kind: flow
+    weight: supporting
+    teach:
+      - "The phone has been in a pocket showing version 7. When it is visible again it asks for the cart with If-None-Match c7."
+      - "Here the cart did move, so version 8 comes back. Usually nothing changed while it slept, and then the answer is a 304 without a body, which costs next to nothing."
+    draw: [fl-phone, phone-to-server]
+    check: Why does the phone send If-None-Match when it becomes visible again?
+    answer: So an unchanged cart costs only a 304 with no body.
+asks:
+  - ids: [c-page, c-line, c-stepper, c-actions, c-warning, c-badge]
+    beats: [2]
+    question: "Looking at the sketch, what components would you split the cart into? Name them and I'll draw them."
+    hints:
+      - Start from the whole page, then one line.
+      - Each part of a line you drew could be a component of its own.
+      - And the cart link in the header?
+  - ids: [c-store, c-service, c-tabsync, c-guest]
+    beats: [3, 4]
+    question: "Now, what has to sit behind the UI to meet the requirements? Name the pieces."
+    hints:
+      - Where does the cart live in the browser, and who talks to the server?
+      - Look at the requirements again, the other tabs and the signed-out shopper.
+task:
+  prompt: "Draw the cart's components: CartPage, CartLine and its three parts, CartBadge, and behind them CartStore, CartService, TabSync and GuestCart, with the Cart API outside."
+  expects: [2, 3, 4]

@@ -1,0 +1,187 @@
+# Product detail page interview, interface definition: why HTML from the edge then plain HTTP, the page and the catalog as requests, the offers request with its JSON response (public or private), the add as a request with its body, response and replay, the errors in one shape, the store actions the components talk through, and the picker's props. Nothing is pushed.
+id: amazon/product-detail-page/interface-definition
+title: Requests, responses and errors
+source:
+  hash: "49193260064b"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: amazon/product-detail-page/data-model
+  assumes:
+    - "PricingService holds offers by SKU; CartStore holds the confirmed count, the version and pending adds keyed by add_id."
+    - "The edge caches the catalog shell a day and the public offers fragment 30 s; nothing personal enters a shared cache."
+    - "An offer carries its price as amount_minor and currency, availability, stock_hint, delivery, scope and as_of."
+  carries:
+    - "HTML from the edge, then plain HTTP: GETs cache at the CDN by URL; no GraphQL, no socket; a changed price is caught when the tab returns or when the cart prices the line."
+    - "GET /p/kw2210?finish=black&cap=0.9l returns one HTML with the page, the offers as embedded JSON and the JSON-LD; if the fragment fails, the price slot ships empty."
+    - "GET /api/offers?product=KW2210&region=us-w refreshes offers: anonymous is public, s-maxage 30; signed in is private, no-store, with the member price."
+    - "POST /api/cart/lines sends sku, quantity and add_id with a CSRF token, no price, no If-Match; 201 returns version, item_count and the priced line; a repeated add_id gets 200 and the first result."
+    - "Errors share one shape; 409 and 422 roll back, a timeout or 5xx retries once with the same add_id, offline sends nothing."
+    - "BuyBox, CartStore and PricingService talk through store actions; VariantPicker takes data and events only, and never fetches."
+  terms:
+    - term: add_id
+      means: An id made once per press of Add to cart; a retry of that press reuses it, so the server can return the first result.
+    - term: "private, no-store"
+      means: Cache headers that keep a response out of shared caches and out of every cache.
+    - term: replay
+      means: The server answering a repeated add_id with the result of the first request instead of adding again.
+board:
+  keep: [title, mock-up, phone, mock-header, mock-gallery, mock-title, mock-price, mock-options, mock-buy, mock-delivery, mock-below, requirements, fr-heading, fr-first, fr-gallery, fr-pick, fr-unbuyable, fr-cleared, fr-url, fr-add, fr-buy-now, fr-below, nfr-heading, nfr-lcp, nfr-add, nfr-inp, nfr-cls, nfr-fresh, nfr-private, nfr-client-price, nfr-one-line, nfr-a11y, nfr-seo, nfr-jsonld, nfr-locales, components, c-edge, c-server, browser, c-product-page, c-below, above-fold, c-gallery, c-picker, c-buy-box, c-pricing, c-cart-store, page-fold, page-below, pricing-buy, edge-html, edge-miss, pricing-server, cart-server, below-server, pricing-picker, picker-gallery, picker-buy, buy-cart, layers, l-shell, l-shell-note, l-offers, l-offers-note, l-private, l-private-note, l-cart, l-cart-note, l-community, l-community-note, statement, data-model, naive, need-product, need-skus, need-cart, naive-note, matrix, m-steel, m-black, m-copper, m-rule, m-status, m-words, m-clear, store, normalize, js-open, js-media, js-options, js-skus, js-offers, js-offer-price, js-offer-more, js-offer-tail, js-selection, js-picks, js-cart, js-pending, life-note, join-note, status-note, badge-note]
+  elements:
+    - { id: api, kind: region, label: "API", at: [60, 58], size: [59, 27] }
+    - { id: tr-chosen, kind: note, label: "HTML from the edge, then REST", at: [61, 60], in: api, tone: green }
+    - { id: tr-graphql, kind: note, label: "not GraphQL: its POSTs don't cache at the CDN", at: [61, 61], in: api, tone: red }
+    - { id: tr-socket, kind: note, label: "no socket: refetch when the tab returns", at: [61, 62], in: api, tone: red }
+    - { id: ep-page, kind: note, label: "GET /p/kw2210?finish=black&cap=0.9l", at: [61, 64], in: api, tone: blue }
+    - { id: res-page, kind: note, label: "one HTML: page, embedded offers, JSON-LD", at: [62, 65], in: api }
+    - { id: res-page-fail, kind: note, label: "fragment failed: empty price slot, fetch later", at: [62, 66], in: api, tone: red }
+    - { id: ep-product, kind: note, label: "GET /api/products/KW2210", at: [61, 68], in: api, tone: blue }
+    - { id: product-note, kind: note, label: "catalog JSON when arriving from the store's results", at: [62, 69], in: api }
+    - { id: ep-offers, kind: note, label: "GET /api/offers?product=KW2210&region=us-w", at: [61, 71], in: api, tone: blue }
+    - { id: res-offers-open, kind: note, label: "{ as_of, offers: { KW-BLK-09: {", at: [62, 72], in: api }
+    - { id: res-offers-price, kind: note, label: "price: { amount_minor: 4800, currency: USD },", at: [64, 73], in: api }
+    - { id: res-offers-stock, kind: note, label: "availability: low_stock, stock_hint: 3,", at: [64, 74], in: api }
+    - { id: res-offers-tail, kind: note, label: "delivery, scope: public } } }", at: [64, 75], in: api }
+    - { id: offers-public, kind: note, label: "anonymous: public, s-maxage 30", at: [62, 76], in: api, tone: green }
+    - { id: offers-private, kind: note, label: "signed in: private, no-store, member price", at: [62, 77], in: api, tone: red }
+    - { id: ep-cart, kind: note, label: "POST /api/cart/lines", at: [61, 79], in: api, tone: blue }
+    - { id: req-cart, kind: note, label: "{ sku: KW-BLK-09, quantity: 1, add_id: a7f3 }", at: [62, 80], in: api }
+    - { id: res-cart, kind: note, label: "201 { version: 7, item_count: 3,", at: [62, 81], in: api }
+    - { id: res-cart-line, kind: note, label: "line: { sku, quantity, unit_price } }", at: [64, 82], in: api }
+    - { id: no-price-note, kind: note, label: "no price sent, no If-Match: adds commute", at: [62, 83], in: api }
+    - { id: replay-note, kind: note, label: "same add_id again: 200, the first result", at: [62, 84], in: api, tone: green }
+    - { id: errors, kind: region, label: "Errors, one shape", at: [89, 60], size: [28, 9], in: api, tone: red }
+    - { id: err-409, kind: note, label: "409 out of stock: roll back, strike, clear", at: [90, 62], in: errors }
+    - { id: err-422, kind: note, label: "422 quantity limit: roll back, cap quantity", at: [90, 63], in: errors }
+    - { id: err-5xx, kind: note, label: "timeout or 5xx: retry once, same add_id", at: [90, 64], in: errors }
+    - { id: err-csrf, kind: note, label: "403 bad CSRF token: new token, retry once", at: [90, 65], in: errors }
+    - { id: err-rate, kind: note, label: "429 rate limited: wait with a countdown", at: [90, 66], in: errors }
+    - { id: err-gone, kind: note, label: "404 SKU retired: refetch, clear the pick", at: [90, 67], in: errors }
+    - { id: err-offline, kind: note, label: "offline: nothing sent, badge never moves", at: [90, 68], in: errors }
+    - { id: actions, kind: region, label: "Store actions", at: [89, 70], size: [28, 7], in: api, tone: amber }
+    - { id: act-requested, kind: note, label: "cart/addRequested by BuyBox: sku, quantity, add_id", at: [90, 72], in: actions }
+    - { id: act-succeeded, kind: note, label: "cart/addSucceeded by CartStore: version, item_count, line", at: [90, 73], in: actions }
+    - { id: act-retrying, kind: note, label: "cart/addRetrying by CartStore: add_id, attempt 2", at: [90, 74], in: actions }
+    - { id: act-failed, kind: note, label: "cart/addFailed by CartStore: add_id, error", at: [90, 75], in: actions }
+    - { id: act-offers, kind: note, label: "offers/updated by PricingService: sku, offer", at: [90, 76], in: actions }
+    - { id: props, kind: region, label: "VariantPicker props", at: [89, 78], size: [28, 6], in: api, tone: blue }
+    - { id: props-data, kind: note, label: "in: groups, skus, availability, value", at: [90, 80], in: props }
+    - { id: props-events, kind: note, label: "out: onChange with cleared groups, onPreview", at: [90, 81], in: props }
+    - { id: props-reason, kind: note, label: "unavailableText gives the localised reason", at: [90, 82], in: props }
+    - { id: props-rule, kind: note, label: "data and events only, it never fetches", at: [90, 83], in: props }
+  arrows: []
+beats:
+  - point: "The first paint is one cacheable HTML response from the edge, then plain HTTP, a few small GETs and one POST, which cache at the CDN by URL; GraphQL's POST queries don't cache there by default, and a socket for rare price changes costs more than refetching when the tab returns."
+    kind: decision
+    weight: core
+    teach:
+      - "Start with the transport. The first paint comes as one HTML response from the edge, which can be cached. After that the page needs only a handful of small GETs and a single POST, and a CDN caches a GET well, keyed by its URL."
+      - "GraphQL sends its queries as POSTs, and a CDN won't cache those unless told to; besides, this page has just two response shapes, and both are fixed. Pushing prices over a WebSocket or server-sent events would hold a socket open for every view, for changes that hardly ever come."
+      - "Nothing is pushed: a changed price is caught when the tab comes back, or when the cart prices the line."
+    draw: [api, tr-chosen, tr-graphql, tr-socket]
+    check: Why not push price changes to the page over a socket?
+    answer: "Price changes are rare, so a socket per view costs more than refetching when the tab comes back; and the cart prices the line anyway."
+  - point: "The page itself is GET /p/kw2210 with the picks in the query: one HTML document holding the page, the offers map as embedded JSON and the JSON-LD, cached at the edge by URL with no cookies; if the offers fragment fails, the price slot ships empty and BuyBox fetches after hydration."
+    kind: component
+    weight: core
+    teach:
+      - "Write the first request: GET p kw2210 with finish black and cap 0.9l. The edge looks the shell up by this URL, after throwing away parameters it doesn't know, like utm_source, and pulls in the offers fragment for the region the visitor is in."
+      - "What reaches the browser is a single HTML document: the page, the offers for all eight SKUs embedded as JSON, and the JSON-LD, marked no-cache for the browser. Neither cache key holds a cookie; the edge works out the region itself from where the request came from."
+      - "If the fragment fails, the edge still sends the shell, with the price slot kept at its size but empty, and BuyBox asks for the offers once it has hydrated. A shopper coming from the store's own results instead gets the catalog as JSON from GET api products KW2210."
+    draw: [ep-page, res-page, res-page-fail, ep-product, product-note]
+    check: The offers fragment fails at the edge. What does the shopper get?
+    answer: "The shell anyway, with the price slot reserved and empty; BuyBox fetches the offers after hydration."
+  - point: "GET /api/offers for the product and region refreshes every SKU's offer in one response, used when the tab returns, for a signed-in shopper's private offers, or after a failed fragment; anonymous it is public and cached 30 s, signed in it is private, no-store, with the member price."
+    kind: component
+    weight: core
+    teach:
+      - "Write the offers request: GET api offers with product KW2210 and region us-w. It is not part of every load, since the offers came in the HTML: the page calls it to refresh them, for a signed-in shopper's own offers, or when the fragment failed."
+      - "Write the response a key at a time: as_of, when it was true, then offers by SKU. KW-BLK-09 has a price of 4800 in minor units with currency USD, availability low_stock, stock_hint 3, its delivery window and scope public."
+      - "Anonymous, it comes back public with s-maxage 30 and stale-while-revalidate 30, so every shopper in the region can share one copy."
+      - "With the session cookie, the edge skips its cache altogether: no member is ever served the anonymous copy, and nothing private is kept. The answer holds the member price beside the list price and delivery to the saved address, marked private, no-store, and the member price never goes into the JSON-LD."
+    draw: [ep-offers, res-offers-open, res-offers-price, res-offers-stock, res-offers-tail, offers-public, offers-private]
+    check: Why does the signed-in offers response say private, no-store?
+    answer: "It can hold a member price and delivery to a saved address, which a shared cache must never serve to anyone else."
+    misconceptions:
+      - "Signed-in shoppers just need fresher prices -> the response is personal; private, no-store keeps it out of shared caches and every other cache."
+      - "The page fetches the offers on every load -> they arrive embedded in the HTML; the call is for a refresh, a signed-in shopper, or a failed fragment."
+  - point: "Add to cart is POST /api/cart/lines with the SKU, the quantity and an add_id, plus a CSRF token, and never a price or If-Match; 201 returns the cart version, the item count and the line with the unit price the server set."
+    kind: component
+    weight: core
+    teach:
+      - "Write the add: POST api cart lines, with the session cookie and a CSRF token. The body: sku KW-BLK-09, quantity 1, and an add_id made once per press."
+      - "No price, because the server prices the line. No If-Match either: adds commute, and versions matter on the cart page's edits."
+      - "The response, 201: version 7, item_count 3, and the line with its SKU, quantity and unit_price. That price is the truth; if it differs from the page's, the toast says so, and the offers map, the buy box and the JSON-LD take the new one."
+    draw: [ep-cart, req-cart, res-cart, res-cart-line, no-price-note]
+    check: "The server answers 201 with a unit price of $51.00 while the page showed $48.00. What happens?"
+    answer: "The toast says it was added at $51.00, and the offers map, the buy box and the JSON-LD take the new price."
+    misconceptions:
+      - "Send the price the shopper saw so the server can check it -> the request never carries a price; the response carries the one charged."
+  - point: "The add_id makes a retry safe: when no answer comes within 8 seconds, the retry sends the same body and add_id, and if the first request had landed, the server answers 200 with the first result, one kettle and not two."
+    kind: mechanism
+    weight: core
+    teach:
+      - "The train goes into a tunnel: the add is sent, and 8 seconds pass with no reply. Whether it reached the cart is unknown, so the page sends it again, unchanged, add_id included."
+      - "The server knows that add_id and returns what the first request produced, with 200: the same line, version 7, item_count 3. Nothing new is added."
+    draw: [replay-note]
+    check: The first add request times out. What does the retry send?
+    answer: The same body and the same add_id, so the server can return the first result if it landed.
+    misconceptions:
+      - "Make a new add_id for the retry -> a new id would add a second line if the first had landed; the retry reuses it."
+  - point: "Every error comes back in one shape with a code the stores read: 409 out of stock and 422 quantity limit roll the badge back and say why, a timeout or 5xx retries once with the same add_id before rolling back, and offline nothing is sent or queued."
+    kind: failure
+    weight: core
+    teach:
+      - "One shape for every error: a code, a message and the SKU. CartStore and PricingService read the code, and the page reacts."
+      - "409, out of stock: the badge drops back, the offers map now says that SKU is out of stock, the pick is cleared, and the page tells the shopper matte black 0.9 L has just sold out. 422, quantity limit: the badge drops back, the stepper stops at max_quantity, and the limit is explained beside it."
+      - "403, a CSRF failure: get a fresh token and try once more with the same add_id. 404, SKU not found: the SKU was retired after the shell was cached, so fetch the product again and clear the pick. 429, rate limited: the badge drops back and Add to cart stays off for retry_after_s seconds, counting down."
+      - "5xx or a timeout: the badge stays, and after a second the add goes again with the same add_id; if that fails too, the badge drops back with a banner, and Try again makes a new add_id. Offline: the page sends nothing and queues nothing, and the badge stays where it was."
+    draw: [errors, err-409, err-422, err-5xx, err-csrf, err-rate, err-gone, err-offline]
+    check: "An add comes back 409 out of stock. What does the page do?"
+    answer: "Rolls the badge back, marks the SKU out of stock in the offers map, clears the pick and says it just sold out."
+  - point: "The components talk through two small stores by actions: BuyBox sends cart/addRequested with the SKU, quantity and add_id; CartStore reports addSucceeded, addRetrying or addFailed; PricingService sends offers/updated with a SKU's new offer."
+    kind: component
+    weight: core
+    teach:
+      - "VariantPicker, BuyBox and the header never call each other: they share PricingService's offers map and CartStore, and changes travel as actions. Write each one with who sends it and what it carries."
+      - "BuyBox sends cart/addRequested with the SKU, the quantity and the add_id, and the badge becomes confirmed 2 plus pending 1. CartStore answers with addSucceeded, carrying the version, item_count and line, or addRetrying with the attempt, or addFailed with the error."
+      - "PricingService sends offers/updated with a SKU and its new offer, for instance after the server priced a line at $51.00, so the buy box and the JSON-LD show it from then on."
+      - "Sold out at the add: addFailed with 409, the badge goes back to 2, the SKU is marked out of stock so its tile is struck and the pick cleared, and the stock line says 0.6 L can still be had."
+    draw: [actions, act-requested, act-succeeded, act-retrying, act-failed, act-offers]
+    check: "The add comes back 409. Which action carries it, and what does the page show?"
+    answer: "cart/addFailed from CartStore; the badge rolls back to 2, the tile is struck, the pick cleared, and the stock line says what is still available."
+  - point: "VariantPicker is reused by the page and the quick-view dialog, so its props are data and events only: groups, SKUs, an availability lookup and the controlled value in, onChange with the cleared groups and onPreview out; it never fetches."
+    kind: component
+    weight: supporting
+    teach:
+      - "The picker also lives in the quick-view dialog, so all it takes is data and events. In: the option groups, the SKUs, an availability lookup backed by PricingService's map, and the value, which the route keeps in the query string."
+      - "Out: onChange with the picks, the SKU or null, and the groups whose pick was cleared; onPreview on hover or focus, so the gallery can prefetch that finish's first image. unavailableText gives the localised reason."
+      - "Inside it, each option group is a radiogroup labelled with its choice, such as Finish, Matte black, with one tab stop. A swatch is a radio whose name is the colour, written as text; a tile is a radio that turns aria-disabled when it can't be bought, points at its reason, and checks nothing on Space or a click."
+    draw: [props, props-data, props-events, props-reason, props-rule]
+    check: Why does VariantPicker never fetch?
+    answer: "It is reused by the page and the quick-view dialog, so it takes data and events only; its availability comes from PricingService's map."
+asks:
+  - ids: [ep-offers, res-offers-open, res-offers-price, res-offers-stock, res-offers-tail]
+    beats: [3]
+    question: "When the page needs fresh or personal offers, what request would it send, and what would one response hold? I'll write it down as you go."
+    hints:
+      - One request covers the whole product. What does it need to say?
+      - The response fills the offers in the store you just wrote. What does each SKU need?
+  - ids: [ep-cart, req-cart, res-cart, res-cart-line]
+    beats: [4]
+    question: "Now Add to cart. What does the request send, and what comes back?"
+    hints:
+      - What does the server need to know to add a line?
+      - And what should the request never carry?
+  - ids: [err-409, err-422, err-5xx, err-offline]
+    beats: [6]
+    frame: [errors]
+    question: "What can go wrong with an add, and what should the page do for each? Name them one at a time."
+    hints:
+      - What if the kettle sold out since the page loaded?
+      - And if the network drops?
+task:
+  prompt: "Write the page, catalog, offers and add requests, the offers response and the add's body and response as JSON, then the errors an add can meet and the store actions that carry them."
+  expects: [2, 3, 4, 5, 6, 7]

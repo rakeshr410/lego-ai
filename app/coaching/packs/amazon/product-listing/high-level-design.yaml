@@ -1,0 +1,178 @@
+# Product listing interview, high level design: drawn once the requirements are on the board; the UI split into components, the modules behind it and the one loop from a click to the screen, then the results screen step by step and the same search on a phone.
+id: amazon/product-listing/high-level-design
+title: Components and one loop
+source:
+  hash: "464e1ddba3cf"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: amazon/product-listing/requirements-exploration
+  assumes:
+    - "The page is the query with the total and sort, chips, the filters, a grid of product cards and page links."
+    - "The URL reproduces the page; results, total and every count describe the URL's query; on a phone filters apply together from a sheet."
+    - The components are drawn after the requirements.
+  carries:
+    - "UI: ResultsPage, the shell for the route /s, holds FacetPanel (CheckGroup, RadioGroup, PriceRange, AppliedChips) and ProductCard (ProductImage, PriceLine, AddToCart)."
+    - "Behind it: UrlState, the only reader and writer of the URL; ResultsStore, responses by query key with currentKey and appliedKey; SearchService, the only caller of the Search API."
+    - "One loop: a click writes params to the URL, the store derives a key and fetches it on a miss, and the page shows the applied entry."
+    - "While a key loads the old results stay dimmed with aria-busy; a response is applied only if its key is the URL's, and results, total and counts swap together."
+    - "An empty result carries relaxations; page links are real anchors."
+    - "On a phone the sheet edits a draft, asks for counts only, and Apply pushes one history entry; page 2 carries page one's snapshot token, and Back restores page one from the cache."
+  terms:
+    - term: query key
+      means: "The URL's search params in one canonical order, naming one question and one entry in the store."
+    - term: currentKey
+      means: The key the URL asks for right now.
+    - term: appliedKey
+      means: The key of the response on screen.
+    - term: relaxation
+      means: "A filter to remove from an empty result, with the total that would leave."
+board:
+  keep: [title, mock-up, mock-page, mock-toolbar, mock-chips, mock-filters, mock-card, card-image, card-title, card-rating, card-badges, card-cart, mock-pages, requirements, fr-heading, fr-grid, fr-filters, fr-counts, fr-chips, fr-sort, fr-url, fr-card, fr-empty, fr-phone, nfr-heading, nfr-lcp, nfr-js, nfr-inp, nfr-results, nfr-counts, nfr-cls, nfr-a11y, nfr-slider, nfr-crawl, nfr-noindex, scope, as-heading, as-page, as-filters, as-scale, as-kept, as-fresh, as-zone, out-heading, out-autocomplete, out-server, out-other]
+  elements:
+    - { id: components, kind: region, label: "Components", at: [1, 30], size: [65, 24] }
+    - { id: c-page, kind: region, label: "ResultsPage, route /s", at: [2, 32], size: [25, 14], in: components, tone: blue }
+    - { id: c-card, kind: region, label: "ProductCard", at: [3, 34], size: [11, 10], in: c-page, tone: blue }
+    - { id: c-image, kind: box, label: "ProductImage", at: [4, 36], size: [9, 2], in: c-card }
+    - { id: c-price, kind: box, label: "PriceLine", at: [4, 38], size: [9, 2], in: c-card }
+    - { id: c-cart, kind: box, label: "AddToCart", at: [4, 40], size: [9, 2], in: c-card }
+    - { id: c-facets, kind: region, label: "FacetPanel", at: [15, 34], size: [11, 11], in: c-page, tone: blue }
+    - { id: c-check, kind: box, label: "CheckGroup", at: [16, 36], size: [9, 2], in: c-facets }
+    - { id: c-radio, kind: box, label: "RadioGroup", at: [16, 38], size: [9, 2], in: c-facets }
+    - { id: c-range, kind: box, label: "PriceRange", at: [16, 40], size: [9, 2], in: c-facets }
+    - { id: c-chips, kind: box, label: "AppliedChips", at: [16, 42], size: [9, 2], in: c-facets }
+    - { id: url-state, kind: box, label: "UrlState", at: [34, 32], size: [11, 3], in: components, tone: amber }
+    - { id: results-store, kind: oval, label: "ResultsStore", at: [34, 41], size: [11, 3], in: components, tone: amber }
+    - { id: search-service, kind: box, label: "SearchService", at: [52, 41], size: [12, 3], in: components }
+    - { id: search-api, kind: box, label: "Search API, black box", at: [52, 50], size: [12, 3], in: components, tone: grey }
+    - { id: loop-note, kind: note, label: "results change only because the URL did", at: [2, 48], in: components, tone: amber }
+    - { id: screen, kind: region, label: "The results screen", at: [68, 30], size: [52, 13] }
+    - { id: s-first, kind: box, label: "first page, from the HTML", at: [69, 33], size: [15, 3], in: screen, tone: green }
+    - { id: s-click, kind: box, label: "a click, chip at once, old results dimmed", at: [86, 33], size: [15, 3], in: screen }
+    - { id: s-applied, kind: box, label: "results, total and counts swap together", at: [103, 33], size: [15, 3], in: screen, tone: green }
+    - { id: s-race, kind: box, label: "two quick clicks, older key cached", at: [69, 37], size: [15, 3], in: screen, tone: red }
+    - { id: s-empty, kind: box, label: "nothing matches, relaxations offered", at: [86, 37], size: [15, 3], in: screen, tone: amber }
+    - { id: s-pages, kind: box, label: "page links are real anchors", at: [103, 37], size: [15, 3], in: screen, tone: blue }
+    - { id: s-note, kind: note, label: "the count is announced once per applied response", at: [69, 41], in: screen }
+    - { id: phone, kind: region, label: "On a phone", at: [68, 45], size: [52, 10] }
+    - { id: p-sheet, kind: box, label: "Filters opens a sheet, a draft", at: [69, 48], size: [15, 3], in: phone }
+    - { id: p-count, kind: box, label: "counts only, after a 300 ms pause", at: [86, 48], size: [15, 3], in: phone, tone: amber }
+    - { id: p-apply, kind: box, label: "Show 212 results, one history entry", at: [103, 48], size: [15, 3], in: phone, tone: green }
+    - { id: p-page2, kind: note, label: "page 2 sends page one's snapshot token", at: [69, 52], in: phone }
+    - { id: p-back, kind: note, label: "Back, page one from the cache, scroll restored", at: [69, 53], in: phone }
+  arrows:
+    - { id: set-params, from: c-facets, to: url-state, label: setParams }
+    - { id: url-changed, from: url-state, to: results-store, label: new key }
+    - { id: store-service, from: results-store, to: search-service, label: on a miss, both: true }
+    - { id: service-api, from: search-service, to: search-api, label: GET }
+    - { id: store-page, from: results-store, to: c-page, label: applied }
+    - { id: first-to-click, from: s-first, to: s-click }
+    - { id: click-to-applied, from: s-click, to: s-applied }
+    - { id: sheet-to-count, from: p-sheet, to: p-count }
+    - { id: count-to-apply, from: p-count, to: p-apply }
+beats:
+  - point: "Turn the mock-up into components: ResultsPage is the shell for the route /s; inside it FacetPanel holds the check groups, the rating radio group, PriceRange and the applied chips, and turns a click into the next params; each ProductCard holds ProductImage, PriceLine and AddToCart."
+    kind: component
+    weight: core
+    teach:
+      - "Now that the requirements are written, split the page into components. ResultsPage is the shell for the route slash s: it holds the toolbar, the filter column, the grid and the page links."
+      - "FacetPanel is the filter column: CheckGroup for delivery and brand, RadioGroup for rating, PriceRange with two thumbs and a Go button, and AppliedChips, which removes one filter or clears them all. Whatever the shopper clicks, FacetPanel turns it into the next set of params and hands that on."
+      - "ProductCard is one result: ProductImage in a reserved square box, PriceLine, which formats the price from minor units, and AddToCart, which hands off to the cart."
+    draw: [components, c-page, c-card, c-image, c-price, c-cart, c-facets, c-check, c-radio, c-range, c-chips]
+    check: Which component turns a filter click into new search params, and which one shows a single result?
+    answer: "FacetPanel turns a click into the next params; ProductCard shows one result."
+  - point: "Behind the UI sit three modules: UrlState parses and validates the URL, builds the canonical key and pushes or replaces history; ResultsStore keeps each response under its key, with currentKey from the URL and appliedKey on screen; SearchService is the only caller of the Search API, a black box."
+    kind: component
+    weight: core
+    teach:
+      - "UrlState parses and validates the params, builds the canonical key, and owns pushState, replaceState and popstate."
+      - "ResultsStore keeps entries by key, each a status and a response. currentKey is what the URL asks for; appliedKey is what is on screen."
+      - "SearchService is the only caller of the search endpoints: one AbortController per key, an 8 second timeout and one retry for a 5xx. Outside the browser is the Search API: retrieval, ranking, facet counts and snapshot tokens, a black box."
+    draw: [url-state, results-store, search-service, search-api]
+    check: What is the difference between currentKey and appliedKey?
+    answer: "currentKey is the key the URL asks for; appliedKey is the key of the response on screen. They differ while a new response is loading."
+  - point: "Data flows in one loop: a click never fetches; FacetPanel calls setParams, UrlState writes the URL and reports the new key, ResultsStore fetches that key through SearchService only on a miss, and ResultsPage shows the applied entry."
+    kind: flow
+    weight: core
+    teach:
+      - "Draw the loop. FacetPanel calls setParams with the next params. UrlState writes them to the URL and reports urlChanged with the new key."
+      - "The store fetches that key through SearchService only on a miss; the service calls GET slash api slash search and hands back the response or an error. The store gives the applied entry and its status to ResultsPage."
+      - "A filter click, a chip removal, a sort, a page link, Back and Forward all change the URL. Results change only because the URL did."
+    draw: [set-params, url-changed, store-service, service-api, store-page, loop-note]
+    check: "The shopper ticks a brand box. What changes first, and what follows from it?"
+    answer: "Only the address bar, through UrlState, at first; the chip reads it, and the new key triggers the fetch."
+    misconceptions:
+      - "The checkbox sends its own request -> clicks only write params; the request follows from the key the new URL gives, so Back and a shared link behave like a click."
+  - point: "The screen moves in three steps: the first page arrives inside the HTML; a click updates the URL and the chip at once while the old results dim; the response swaps results, total and counts together, announced once."
+    kind: flow
+    weight: core
+    teach:
+      - "Walk the screen. The HTML carried the first 24 results and, embedded as JSON, the response itself, so the store begins with one entry and fetches nothing."
+      - "The shopper ticks Arrives tomorrow. UrlState pushes the new address and the chip appears straight away, since chips are read from the URL. The old cards stay, faded, with aria-busy, and the total still matches them; focus stays on the checkbox."
+      - "When that key's answer lands, the cards, the total and every count change in one render, the fading lifts, and the status region announces 212 results, once."
+    draw: [screen, s-first, s-click, first-to-click, s-applied, click-to-applied, s-note]
+    check: Why does the old total stay on screen while the new results are loading?
+    answer: "Because the total, the counts and the grid must all describe one and the same response; they change together when it lands."
+    misconceptions:
+      - "Clear the grid and show a spinner while loading -> the old results stay, dimmed with aria-busy, until the new results, total and counts land together."
+  - point: "Two quick clicks, 4 stars and up then Brightwell: the first request is aborted, and even if its body had arrived the store would refuse it, because its key is not the URL's; it is cached under its own key, and only the Brightwell response is applied."
+    kind: failure
+    weight: core
+    teach:
+      - "The shopper picks 4 stars and up, then Brightwell a moment later. The URL changes twice, and with it the key the store is after."
+      - "When the newer key comes, SearchService cancels the first request. Even if that body was already read, the store compares keys, finds it is not the URL's, and only caches it."
+      - "Just the answer for the URL's key is shown: three Brightwell kettles. The 97 from the step in between never reach the screen or the screen reader."
+    draw: [s-race]
+    check: "A reply for a key the URL has already left arrives. What does the store do with it?"
+    answer: "Stores it under its own key and leaves the screen alone; only the URL's key is ever applied, and having the older answer cached lets Back to that state skip the network."
+    misconceptions:
+      - "Apply whatever arrives last -> the last to arrive can be the older query; only the response whose key matches the URL is applied."
+  - point: "When narrowing the price to 12 to 20 dollars leaves nothing, the response brings relaxations: a filter to drop with the count that leaves, each a link to the URL without that filter."
+    kind: flow
+    weight: supporting
+    teach:
+      - "The shopper drags the price to 12 to 20 dollars and lets go. No kettle is left, so the response comes with relaxations, such as dropping Brightwell for 6 results."
+      - "Each relaxation is a link to the same URL minus that one filter."
+    draw: [s-empty]
+    check: "Narrowing the price to 12 to 20 dollars leaves zero kettles. What does the page offer?"
+    answer: "Relaxations from the same response: a filter to remove and how many results that gives, each a link to the URL without it."
+  - point: "On a phone the filters open in a sheet that edits a draft; after a 300 ms pause it asks for counts only and its button reads Show 212 results; pressing it pushes one history entry and puts focus back on the Filters button."
+    kind: flow
+    weight: core
+    teach:
+      - "At phone width the filter column turns into a sheet and the grid into a list, still rendered on the server. What the shopper picks in the sheet is a draft: the URL and the results behind it stay as they were."
+      - "Ticking Arrives tomorrow and pausing for 300 milliseconds makes FacetPanel ask for counts only, and the button now says Show 212 results. Within 2 days still shows 371, because picks in one group are alternatives."
+      - "Pressing the button closes the sheet, pushes one history entry for the whole draft, and returns focus to the Filters button. The page has often been prefetched, so the list changes at once."
+    draw: [phone, p-sheet, p-count, sheet-to-count, p-apply, count-to-apply]
+    check: "On a phone, the shopper ticks two filters in the sheet. What happens to the URL before they press the button?"
+    answer: "Nothing; the sheet edits a draft and asks only for counts. Pressing the button pushes one history entry for the whole draft."
+    misconceptions:
+      - "Each tick in the sheet reloads the results -> the sheet edits a draft; only counts are asked for until Apply."
+  - point: "Pages: the page links are real anchors that work before hydration; page 2 carries page one's snapshot token so it keeps the same ranking; and Back renders page one from the cache and scrolls back to the card the shopper was on."
+    kind: flow
+    weight: core
+    teach:
+      - "Back on the wide screen, the numbered links at the bottom are ordinary anchors, so they already work before the JavaScript hydrates, open in a new tab and are followed by crawlers. Once hydrated, a click pushes the new page, sends focus to the results heading and scrolls up to it."
+      - "On the phone, the shopper taps 2. UrlState pushes page 2, the rows fade, and when it arrives focus goes to the results heading. The request takes page one's snapshot token, so page 2 continues the same ranking even if the index has changed."
+      - "Back fires popstate. Page one is in the cache, so it shows without a request, and the scroll saved with that history entry puts the shopper back at the Brightwell kettle they were looking at."
+    draw: [s-pages, p-page2, p-back]
+    check: "On a phone the shopper goes to page 2 and then presses Back. What do they see, and does it cost a request?"
+    answer: "Page one, straight from the cache with no request, scrolled back to where they were by the position saved in that history entry."
+asks:
+  - ids: [c-page, c-card, c-image, c-price, c-cart, c-facets, c-check, c-radio, c-range, c-chips]
+    beats: [1]
+    question: "Looking at the mock-up, what components would you split the page into? Name them and I'll draw them."
+    hints:
+      - Start from the whole page, then the filter column, then one card.
+      - Each kind of filter control could be a part of its own.
+  - ids: [url-state, results-store, search-service, search-api]
+    beats: [2]
+    question: "Now, what has to sit behind the UI so the address bar reproduces the page and the numbers always agree? Name the pieces."
+    hints:
+      - Who reads and writes the address bar?
+      - Where do responses live once they arrive, and who fetches them?
+task:
+  prompt: "Draw the components and the one loop: FacetPanel to UrlState, the new key to ResultsStore, a miss to SearchService and the Search API, and the applied entry back to ResultsPage."
+  expects: [1, 2, 3]

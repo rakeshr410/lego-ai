@@ -1,0 +1,185 @@
+# Amazon checkout interview, high level design: drawn once the requirements are on the board (the review page's mock-up opens the lesson in the requirements pack, so this pack starts at the components). The components the page splits into and what sits behind them, one shopper's run before the press, then one order attempt as states (placing, the bank's challenge, an unknown outcome, the ways placing ends), where a new key is made, the answers that change the review at submit, and leaving the flow.
+id: amazon/checkout-and-payment/high-level-design
+title: The components, and one order attempt
+source:
+  hash: "b15a03a53ad4"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: amazon/checkout-and-payment/requirements-exploration
+  assumes:
+    - "Tax, fraud, the payment processor and the backend are black boxes; the design is the UI."
+    - "The review page is drawn; the requirements are written: totals from the quote, card data never ours, never a second order, an unknown outcome checked, Back never to a live checkout."
+  carries:
+    - "CheckoutPage holds AddressForm and PaymentFrame (saved cards, hosted fields, challenge dialog); CheckoutStore holds quote and attempt and feeds the page; CheckoutService alone calls the API."
+    - "The page holds tokens and a quote id, never a card number or a total of its own."
+    - "One order attempt: Ready, Placing, Bank challenge, Outcome unknown, Total changed, Declined, Confirmed; the key exists from Ready, retries and polls keep it, a new one comes only back at Ready."
+    - "From Outcome unknown: processing means poll again, found goes to Confirmed, declined to Declined, and a 404 unknown key after 90 s sends the same key once more."
+    - "After success the checkout's history entry is replaced by the confirmation URL, and Back lands on the emptied cart."
+  terms:
+    - term: CheckoutStore
+      means: "The client store that holds the server's quote, each section's status, and the one order attempt, and gives the page what it renders."
+    - term: CheckoutService
+      means: "The only caller of the checkout endpoints; it adds CSRF and the Idempotency-Key, times out the submit and polls by key."
+    - term: order attempt
+      means: "One try at placing the order: its key, the quote id, the payment method and a status."
+    - term: token
+      means: "What the processor gives back for a card: a reference the page can send, never the card's digits."
+board:
+  keep: [title, review, rp-deliver, rp-ship1, rp-ship2, rp-paying, rp-summary, rp-promo, rp-place, scope, as-heading, as-shipments, as-quote, out-heading, out-charging, out-signin, out-stay, out-wallets, out-tax, requirements, fr-heading, fr-review, fr-address, fr-delivery, fr-pay, fr-challenge, fr-decline, fr-once, fr-changed, fr-after, nfr-heading, nfr-duplicates, nfr-totals, nfr-cards, nfr-csp, nfr-lcp, nfr-inp, nfr-js, nfr-timeout, nfr-outcome, nfr-wcag, nfr-redundant, nfr-autofill, nfr-paste]
+  elements:
+    - { id: components, kind: region, label: Components, at: [1, 32], size: [58, 29] }
+    - { id: c-checkout-page, kind: region, label: "CheckoutPage, /checkout", at: [2, 34], size: [56, 9], in: components, tone: blue }
+    - { id: c-address-form, kind: box, label: "AddressForm, fields and suggestion", at: [3, 37], size: [14, 3], in: c-checkout-page }
+    - { id: c-payment-frame, kind: region, label: PaymentFrame, at: [19, 36], size: [38, 6], in: c-checkout-page }
+    - { id: c-saved-cards, kind: box, label: "SavedCardList, by token", at: [20, 38], size: [11, 3], in: c-payment-frame }
+    - { id: c-hosted-fields, kind: box, label: "HostedCardFields, processor iframe", at: [32, 38], size: [12, 3], in: c-payment-frame, tone: grey }
+    - { id: c-challenge, kind: box, label: "ChallengeDialog, labelled", at: [45, 38], size: [11, 3], in: c-payment-frame }
+    - { id: c-store, kind: oval, label: CheckoutStore, at: [3, 48], size: [24, 4], in: components, tone: amber }
+    - { id: c-processor, kind: box, label: "Payment processor, its own origin", at: [33, 50], size: [20, 3], in: components, tone: grey }
+    - { id: c-service, kind: box, label: CheckoutService, at: [3, 58], size: [18, 3], in: components }
+    - { id: c-api, kind: box, label: "Checkout API, black box", at: [33, 58], size: [20, 3], in: components, tone: grey }
+    - { id: machine, kind: region, label: One order attempt, at: [61, 36], size: [58, 29] }
+    - { id: m-total, kind: box, label: Total changed, at: [65, 38], size: [16, 3], in: machine, tone: amber }
+    - { id: m-confirmed, kind: box, label: "Confirmed, order number shown", at: [83, 38], size: [31, 3], in: machine, tone: green }
+    - { id: m-ready, kind: box, label: Ready to place, at: [62, 46], size: [10, 3], in: machine }
+    - { id: m-placing, kind: box, label: Placing, at: [77, 46], size: [10, 3], in: machine, tone: blue }
+    - { id: m-unknown, kind: box, label: Outcome unknown, at: [101, 46], size: [12, 3], in: machine, tone: amber }
+    - { id: m-challenge, kind: box, label: "Bank challenge, dialog or redirect", at: [83, 53], size: [22, 3], in: machine }
+    - { id: m-declined, kind: box, label: "Declined, every field kept", at: [62, 57], size: [51, 3], in: machine, tone: red }
+    - { id: m-resend, kind: note, label: "404 after 90 s: the same key once more", at: [62, 61], in: machine, tone: amber }
+    - { id: m-key-note, kind: note, label: a new key only on the way back to Ready, at: [62, 62], in: machine }
+    - { id: m-sold-out, kind: note, label: "sold out at submit: line dimmed, re-quoted", at: [62, 63], in: machine, tone: red }
+    - { id: m-expired, kind: note, label: "quote expired, same total: new key, goes ahead", at: [62, 64], in: machine }
+    - { id: m-history, kind: note, label: "after paying, history replaced by thanks", at: [90, 61], in: machine, tone: green }
+    - { id: m-back, kind: note, label: Back lands on the emptied cart, at: [90, 62], in: machine }
+    - { id: m-old-tab, kind: note, label: an old tab is told the cart was ordered, at: [90, 63], in: machine }
+  arrows:
+    - { id: af-to-store, from: c-address-form, to: c-store, label: address }
+    - { id: pf-to-store, from: c-payment-frame, to: c-store, label: token }
+    - { id: store-to-page, from: c-store, to: c-checkout-page, label: quote }
+    - { id: pf-to-processor, from: c-payment-frame, to: c-processor, label: create token }
+    - { id: store-to-service, from: c-store, to: c-service }
+    - { id: service-to-api, from: c-service, to: c-api, label: "quote, orders, by key" }
+    - { id: api-to-processor, from: c-api, to: c-processor, label: charge }
+    - { id: ready-to-placing, from: m-ready, to: m-placing, label: press }
+    - { id: placing-to-challenge, from: m-placing, to: m-challenge, label: "202" }
+    - { id: challenge-to-unknown, from: m-challenge, to: m-unknown, label: poll }
+    - { id: unknown-to-declined, from: m-unknown, to: m-declined, label: declined }
+    - { id: placing-to-confirmed, from: m-placing, to: m-confirmed, label: "201" }
+    - { id: placing-to-declined, from: m-placing, to: m-declined, label: "402" }
+    - { id: placing-to-total, from: m-placing, to: m-total, label: "409" }
+    - { id: placing-to-unknown, from: m-placing, to: m-unknown, label: timeout }
+    - { id: unknown-to-confirmed, from: m-unknown, to: m-confirmed, label: found }
+    - { id: total-to-ready, from: m-total, to: m-ready }
+    - { id: declined-to-ready, from: m-declined, to: m-ready }
+beats:
+  - point: "CheckoutPage is the route shell for /checkout; inside it AddressForm holds the address fields and the prompt that offers the server's suggestion, and PaymentFrame holds the saved cards by token, the processor's hosted card fields in an iframe, and a labelled challenge dialog."
+    kind: component
+    weight: core
+    teach:
+      - "Now the components the page splits into. CheckoutPage is the shell for the checkout route. AddressForm holds the address fields, with shipping autocomplete, and a prompt that offers the server's suggestion: use it, or keep mine."
+      - "PaymentFrame holds three parts: the saved cards, chosen by token; the hosted card fields, which are the processor's iframe on the processor's own origin; and the challenge dialog, a labelled dialog for the bank."
+    draw: [components, c-checkout-page, c-address-form, c-payment-frame, c-saved-cards, c-hosted-fields, c-challenge]
+    check: Where does the shopper type a new card number, and whose page is it?
+    answer: "Into the hosted card fields inside PaymentFrame, an iframe the payment processor serves from its own origin."
+    misconceptions:
+      - "The card inputs are part of our form -> they are the processor's iframe; our page never holds the digits."
+  - point: "Behind the UI, CheckoutStore holds the quote and the attempt and feeds the page; CheckoutService is the only door to the network, with three calls; the processor mounts the card fields and makes tokens; the Checkout API makes one order per key and charges through the processor."
+    kind: component
+    weight: core
+    teach:
+      - "AddressForm reports each address change to CheckoutStore. PaymentFrame asks the processor to mount its fields and create a token, then hands the store that token as the chosen method. The store holds the quote, with its id, totals, shipments and expiry, and the attempt: key, quote id, method and status."
+      - "The store gives the page what it renders: the quote, each section's status and the errors."
+      - "CheckoutService is the one door to the network: it adds CSRF and the Idempotency-Key, times out the submit at 25 seconds and polls by key. It makes three calls: the quote, the order with its key, and the read by key. The Checkout API prices, taxes, checks stock and fraud, makes one order per key, and charges through the processor, server to server."
+      - "Money only ever travels from the server's quote to the screen. The page holds tokens and a quote id, never a card number or a total of its own."
+    draw: [c-store, af-to-store, pf-to-store, store-to-page, c-processor, pf-to-processor, c-service, store-to-service, c-api, service-to-api, api-to-processor]
+    check: What does the page hold about the card, and about the money?
+    answer: A token for the card and the quote's id for the money; never a card number or a total it worked out.
+    misconceptions:
+      - "PaymentFrame passes the card details to CheckoutStore -> it hands back a token; the details stay in the processor's frame."
+  - point: "Before the press, a short ZIP is flagged by the field and in a top summary, the server's more precise address is offered but never applied for the shopper, and each delivery choice or code asks for a new quote, so shipping and tax change together with no arithmetic on the client."
+    kind: flow
+    weight: core
+    teach:
+      - "Walk one shopper's run. Autofill put in a four-digit ZIP. Checked on blur, the field keeps what was typed and is marked invalid; the error shows by the field and in a top summary that links to it."
+      - "With a valid ZIP, the server's check returns a fuller ZIP plus four. It is offered, use it or keep yours, and the typed address stays until the shopper chooses."
+      - "Picking one-day delivery for the shoes asks for a new quote: shipping and tax move together, and a polite live region reads the new total once. The code FALLRUN rides in the next quote request and comes back as a row the server priced."
+    check: The shopper picks one-day delivery. What happens to the total?
+    answer: The choice asks the server for a new quote; shipping and tax come back changed and the page shows that total, adding nothing itself.
+    misconceptions:
+      - "The server's corrected address replaces what the shopper typed -> it is offered; the typed address stays until the shopper picks."
+  - point: "In Ready to place the key for this quote and method already exists; the press tokenises the new card, saves the attempt to sessionStorage and posts it with the key; a 202 opens the bank's challenge, and when the bank's frame finishes, the page asks the server by key, which here answers declined."
+    kind: flow
+    weight: core
+    teach:
+      - "Draw one order attempt as states. In Ready to place, the review is shown for one quote and one method, and their key already exists. The press tokenises the new card in the processor's frame, saves the attempt, key k-7c21 with the quote and the token, to sessionStorage, and only then CheckoutService posts it with the key."
+      - "The server starts the charge, the bank wants a challenge, and the answer is 202. PaymentFrame opens a dialog with the bank's page; the attempt keeps its key."
+      - "The bank's frame finishing tells us nothing about the charge, so the status becomes Outcome unknown and the page asks the server by key. In this run, the answer is declined."
+    draw: [machine, m-ready, m-placing, ready-to-placing, m-challenge, placing-to-challenge, m-unknown, challenge-to-unknown, m-declined, unknown-to-declined]
+    check: In the run, the bank accepts the code and its frame closes. Why can the page not show the order as paid?
+    answer: "Finishing the challenge says nothing about the charge; the page asks the server by key, and in this run the answer is declined."
+    misconceptions:
+      - "Passing the challenge means the order is paid -> the charge can still be declined afterwards; the page asks by key."
+  - point: "Placing ends in one of five ways, 201 Confirmed, 202 challenge, 402 Declined, 409 Total changed, timeout Outcome unknown; Outcome unknown polls by key until it finds the order or a decline, and a 404 unknown key after 90 s sends the same key once more."
+    kind: flow
+    weight: core
+    teach:
+      - "Finish what can happen while placing. A 201 goes straight to Confirmed, with the order number shown. A 402 means the card was declined. A 409 carries a new quote and goes to Total changed. A second press while placing is ignored."
+      - "A timeout or a lost connection goes to Outcome unknown, which polls by key: while the answer is processing it waits and polls again, a found order goes to Confirmed, and a decline goes to Declined."
+      - "A 404 unknown key after 90 seconds means the request never reached the server, so the same key is sent once more. No path leads from an unknown outcome to a blind submit."
+    draw: [m-confirmed, placing-to-confirmed, placing-to-declined, m-total, placing-to-total, placing-to-unknown, unknown-to-confirmed, m-resend]
+    check: No answer comes back within 25 seconds of the press, and later the poll keeps saying 404 unknown key past 90 seconds. What does the page do at each step?
+    answer: "It moves to Outcome unknown and polls by key; once the 404 has lasted past 90 s, the request never arrived, so it sends the same key once more, never a new one."
+    misconceptions:
+      - "After a timeout, send the order again with a new key -> the order may exist; poll by key, and resend only the same key, only after a 404 past 90 s."
+  - point: "Every retry and poll reuses the key; only the way back to Ready, after a decline or a changed total, makes a new one, since the next request differs; the old key with a new card would get the old decline back or be refused as reused."
+    kind: rule
+    weight: core
+    teach:
+      - "From Declined, picking another method goes back to Ready with a new key; from Total changed, accepting the new total does the same."
+      - "A key stands for one exact request. Sending k-7c21 with a different card would get the old decline back, or be refused as a reused key with a different body."
+      - "So the saved Visa gets key k-9e04, the double click sends nothing, no answer comes within 25 seconds, and the second poll finds order R7-40318."
+    draw: [total-to-ready, declined-to-ready, m-key-note]
+    check: After the decline, the shopper picks the saved Visa. What happens to the idempotency key, and why?
+    answer: A new key is made, because the request now asks for something different; the old key would replay the decline or be refused as reused.
+    misconceptions:
+      - "Keep the same key so the server knows it is the same order -> a key stands for one exact request; another method is another request."
+  - point: "When something changed at submit, a sold-out line stays dimmed with its reason and the re-quote drops it, with nothing charged and the next press a new attempt; an expired quote whose re-quote has the same total goes ahead with the new quote and a new key."
+    kind: failure
+    weight: supporting
+    teach:
+      - "Two runs from the same finished review. The shoes sold out while the shopper was checking out: a 409 out of stock names them, their line stays dimmed with remove or save for later, and the new quote drops them, their promo and their shipment. Nothing was charged, and the next press is a new attempt."
+      - "The page was left open 25 minutes, so the quote expired: a 410, nothing done. The new quote came back with the same total, so the order goes ahead with it and a new key."
+    draw: [m-sold-out, m-expired]
+    check: The quote expired, and the new one has the same total. What happens?
+    answer: The order goes ahead with the new quote and a new key; nothing was done with the expired one.
+  - point: "After the order, the checkout's history entry is replaced by the confirmation URL, which renders from the order id; Back lands on the emptied cart, and an old checkout tab re-quotes and is told the cart was already ordered."
+    kind: flow
+    weight: core
+    teach:
+      - "On success the page replaces the checkout's history entry with the confirmation, orders R7-40318 thanks, and clears the stored attempt. The confirmation renders from the order id in its URL, so a reload shows it again and never submits."
+      - "Back lands on the cart, which the server emptied when it made the order. A second checkout tab asks for a quote when it comes back into view, hears the cart was already ordered, and points to the order."
+    draw: [m-history, m-back, m-old-tab]
+    check: After paying, the shopper presses Back. Where do they land, and why?
+    answer: "On the emptied cart: the checkout entry was replaced, not pushed, so no path through history leads back to a working Place order."
+    misconceptions:
+      - "Reloading the confirmation places the order again -> it renders from the order id in its URL and never submits."
+asks:
+  - ids: [c-checkout-page, c-address-form, c-payment-frame, c-saved-cards, c-hosted-fields, c-challenge]
+    beats: [1]
+    question: "Looking at the page, what components would you split it into? Name them and I'll draw them."
+    hints:
+      - Start from the whole page, then the address part, then the payment part.
+      - The payment part has a few pieces of its own, one of them not ours.
+  - ids: [c-store, c-processor, c-service, c-api]
+    beats: [2]
+    question: "Now, what sits behind the UI? Where do the quote and the order attempt live, and who talks to the network?"
+    hints:
+      - Something has to hold the server's total and the current try at ordering.
+      - And who turns a card into something the page may keep?
+task:
+  prompt: "Draw CheckoutPage with AddressForm and PaymentFrame, then CheckoutStore, CheckoutService, the processor and the Checkout API, and the order attempt's states with every way out of Placing and Outcome unknown, and where a new key is made."
+  expects: [1, 2, 4, 5, 6]

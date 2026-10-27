@@ -1,0 +1,112 @@
+# Cart interview, trade-offs: the eight choices the cart turns on, the picked option first and what it gave up, written one per line in the board's last area, then a short recap of the board.
+id: amazon/cart/trade-offs
+title: What each choice gave up
+source:
+  hash: "3c4933e23bf0"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: amazon/cart/optimizations
+  assumes:
+    - "Tabs exchange the whole cart over a BroadcastChannel and devices refetch when visible; nothing is pushed."
+    - "Quantities are target intents gathered for 400 ms; writes carry If-Match, and a 412 is refetched and replayed."
+    - "Delete is sent at once and Undo re-adds the line at its position; the guest merge takes the larger quantity per SKU."
+  carries:
+    - "Each choice was taken over named alternatives, its cost said out loud: a device current only when looked at, a 400 ms wait, totals a round trip behind, an extra trip on conflict."
+    - "Delete at once makes Undo a request that can fail; the larger quantity can undercount; a kept sold-out line takes space; a read-only offline cart cannot be edited on a train."
+  terms:
+    - term: trade-off
+      means: A choice taken for what it gives, with what it gives up said out loud.
+board:
+  keep: [optimizations, co, co-burst, co-delta, co-leave, co-flight, co-replay, tb, tb-cart, tb-newer, tb-storage, tb-visible, tb-every, gm, gm-ids, gm-max, gm-sum, gm-clear, ax, ax-badge, ax-polite, ax-focus, ax-undo, ax-words, rp, rp-html, rp-price, rp-stock, rp-saved, rp-limit]
+  elements:
+    - { id: trade-offs, kind: region, label: "Trade-offs", at: [73, 92], size: [29, 18] }
+    - { id: to-sync, kind: note, label: "BroadcastChannel and refetch, over push or polling", at: [74, 94], in: trade-offs }
+    - { id: to-absolute, kind: note, label: "absolute quantity, over a delta per press", at: [74, 96], in: trade-offs }
+    - { id: to-server, kind: note, label: "server totals only, over a client estimate", at: [74, 98], in: trade-offs }
+    - { id: to-version, kind: note, label: "If-Match and replay, over last write wins", at: [74, 100], in: trade-offs }
+    - { id: to-delete, kind: note, label: "delete at once with Undo, over a held delete", at: [74, 102], in: trade-offs }
+    - { id: to-merge, kind: note, label: "larger quantity per SKU, over sum or asking", at: [74, 104], in: trade-offs }
+    - { id: to-stock, kind: note, label: "keep out-of-stock lines, over removing them", at: [74, 106], in: trade-offs }
+    - { id: to-offline, kind: note, label: "read-only offline, over queued edits", at: [74, 108], in: trade-offs }
+  arrows: []
+beats:
+  - point: "A BroadcastChannel for tabs and a refetch on visibility for devices beat push and polling: tab sync costs no requests and no page holds a socket for rare updates, but a device is only current once looked at, and old browsers need the storage-event path."
+    kind: decision
+    weight: core
+    teach:
+      - "Say each trade-off as the choice, what it beat, and what it cost. First, keeping tabs and devices in step: a BroadcastChannel between tabs, a refetch when a device is shown again. Tab sync needs no requests since the cart rides in the message, no page keeps a socket open for the rare update, and a 412 catches whatever slips past."
+      - "The price: another device is current only once looked at, and browsers without the channel need the storage-event path. Push would update every device within a second but hold a socket on every store page for a handful of updates; polling is easiest to build, yet keeps every tab asking while nothing changes and can still lag by an interval."
+    draw: [trade-offs, to-sync]
+    check: What does the cart give up by not pushing changes from the server?
+    answer: "Another device is current only once the shopper next opens it; a 412 still catches an edit made on an old copy."
+  - point: "A target quantity gathered per line beats a delta per press: repeating it after a retry or replay is harmless and a burst costs one request, but the server hears of it only 400 ms after the last press."
+    kind: decision
+    weight: core
+    teach:
+      - "The shape of a quantity change: a target quantity, gathered per line. Repeating it after a retry or a replay does no harm, and a whole burst of presses costs one request; what it costs is 400 ms before the server hears of it."
+      - "A delta goes out the moment it is pressed, but repeated by a retry or a replay it counts twice, and every press is its own request."
+    draw: [to-absolute]
+    check: What does coalescing an absolute quantity cost the shopper?
+    answer: "The server hears of the change only 400 ms after the last press; in return a repeat is harmless and a burst is one request."
+  - point: "Totals from the server alone beat a client estimate: discounts, tax and the free-delivery threshold always come out right and cart and checkout read one source, but the totals lag the stepper by one round trip."
+    kind: decision
+    weight: core
+    teach:
+      - "Who works out the totals: only the server, with the client showing its most recent summary marked Updating. Discounts, tax and the free-delivery threshold always come out right, and the cart and checkout read from one source; the totals lag the stepper by one round trip."
+      - "A client estimate keeps pace with the stepper but is off as soon as a discount, a bundle or a tax rule comes into play, and then the shopper watches the figure change a second time."
+    draw: [to-server]
+    check: What does the shopper see change twice if the client estimates totals and the server corrects them?
+    answer: "The total: first the client's guess, then the server's figure once a discount, bundle or tax rule is taken into account."
+    misconceptions:
+      - "A client estimate is fine because the server corrects it -> it misses discounts, bundles and tax rules, so the total visibly jumps."
+  - point: "Writes that name their version with If-Match, replayed on a 412, beat last write wins, where an outdated tab wipes out a phone edit, and per-line versions, since the summary needs a cart version anyway; the cost is a round trip more on a clash and replay rules."
+    kind: decision
+    weight: core
+    teach:
+      - "When an edit races another: every write names its version with If-Match, and a 412 means refetch and replay. Nothing is lost or quietly overwritten and the shopper hears what changed; the bill is one more round trip on a clash and replay rules that must be right."
+      - "Last write wins is the simplest, yet a tab holding an old cart would wipe out an edit the shopper made on the phone. A version per line would stop edits to different lines from clashing, but the summary depends on all of them, so a cart version is needed regardless."
+    draw: [to-version]
+    check: Why not give each line its own version, so edits on different lines never conflict?
+    answer: "The summary depends on every line, so the cart still needs one version for its totals."
+  - point: "Sending the DELETE at once, with an Undo that re-adds the line in place, beats holding it until the toast closes: no tab or checkout sees a removed line and closing the tab loses nothing, but Undo becomes a request that can fail and re-prices the line."
+    kind: decision
+    weight: core
+    teach:
+      - "Removing a line: the DELETE goes straight away, and Undo puts the line back at the same place. No other tab and no checkout ever sees a line the shopper has taken out, and closing the tab loses nothing; but Undo becomes a request that might fail, and the returned line is priced afresh."
+      - "Waiting until the toast closes makes Undo local and certain, yet for those 10 seconds the server and the other tabs still count the line, and if the tab is closed the line simply stays."
+    draw: [to-delete]
+    check: What goes wrong if the delete is held until the Undo toast closes?
+    answer: "For 10 seconds the server and the other tabs still include the line, and if the tab closes the line stays in the cart."
+  - point: "The larger quantity per SKU beats summing, which double-buys and adds again on a retry, and asking, which puts a dialog in the way just after sign-in; the cost is a cart one short when the shopper truly wanted both."
+    kind: decision
+    weight: core
+    teach:
+      - "The guest merge rule: the larger quantity per SKU. An item added on both devices is never doubled, and running the merge again changes nothing; the cost is a cart one short when the shopper truly meant to have both."
+      - "Summing keeps every unit ever added, but buys duplicates and adds again when retried. Asking always gets what the shopper meant, but puts a dialog in front of them the moment they sign in, when they are heading to pay."
+    draw: [to-merge]
+    check: When does the larger-quantity rule get the merge wrong?
+    answer: "When the shopper really wanted both, say a kettle added on each device on purpose; it keeps one."
+  - point: "A sold-out line stays, dimmed and outside the total, offering Delete or Save for later, rather than being removed: the shopper sees what happened and decides, at the cost of space for something that cannot be bought."
+    kind: decision
+    weight: supporting
+    teach:
+      - "A sold-out line stays, dimmed and outside the total, still offering its two buttons: the shopper understands what happened and picks a way forward, and saving keeps the item within reach. It does use space for something that cannot be bought."
+      - "Taking it out automatically leaves a tidy cart, but things disappear with no explanation."
+    draw: [to-stock]
+    check: What does removing out-of-stock lines automatically cost?
+    answer: "Things disappear with no explanation; keeping the line lets the shopper understand and pick a way forward."
+  - point: "Offline the cart is read-only instead of queuing edits: nothing old lands on moved prices and it is easy to explain, though no quantity changes on a train; then a short recap of the whole board."
+    kind: decision
+    weight: supporting
+    teach:
+      - "With no network the cart becomes read-only and nothing is held back to send later: no old edit can land on prices that have since moved, and the behaviour is easy to explain, though no quantity can change on a train. Queued edits would work anywhere, but they land later on a cart whose prices or lines may have moved meanwhile, and any clash surfaces long after the shopper acted."
+      - "Then recap the board top to bottom in a few sentences: the sketch and the two lists, the components and one edit, the state and the API, the deep dives, and these choices."
+    draw: [to-offline]
+    check: Why not queue the shopper's edits while offline and replay them on reconnect?
+    answer: "They would land hours later on a cart whose prices or lines may have moved, and any clash would show up long after the shopper acted."
+task:
+  prompt: "Write the cart's trade-offs as lines of text, each the option picked over the ones it beat, and say what each gave up."
+  expects: [1, 2, 3, 4, 5, 6, 7, 8]

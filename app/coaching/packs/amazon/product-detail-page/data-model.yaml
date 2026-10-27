@@ -1,0 +1,167 @@
+# Product detail page interview, data model: what the components read, written first as JSON, then split by lifetime into a client store that grows key by key (the catalog with no prices, offers by SKU, the selection, the cart's pending adds), with the variant matrix and the rule that marks each option.
+id: amazon/product-detail-page/data-model
+title: Catalog, offers and the picks
+source:
+  hash: "8b28fb2a1658"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: amazon/product-detail-page/high-level-design
+  assumes:
+    - "VariantPicker and BuyBox read from PricingService's offers map; CartStore holds what the badge shows."
+    - "The catalog shell is cached a day and purged on edit; public offers 30 s; private offers never in a shared cache."
+    - "An impossible pick is cleared and said; the URL keeps the selection."
+  carries:
+    - "The catalog (product, media, option groups, SKUs) has no prices; offers are one per SKU, the whole product's map at once; the two are joined only by the SKU id."
+    - "An offer's price is amount_minor and currency; availability is in_stock, low_stock or out_of_stock; stock_hint only when low; scope public or private; as_of."
+    - "KW2210 is three finishes by three capacities: nine cells, eight SKUs, copper 0.6 L never made."
+    - "An option's status, available, sold_out or not_made, is judged against the other groups' picks, and derived, never stored."
+    - "Selection is the picks by group, null when cleared, and the SKU derived from them, mirrored in the query string."
+    - "The cart state is the confirmed count, the version and pending adds keyed by add_id; the badge is confirmed plus pending."
+  terms:
+    - term: variant matrix
+      means: The product's finishes by its capacities, each cell either a SKU or a combination never made.
+    - term: option status
+      means: "available, sold_out or not_made, worked out for each option value from the SKUs, the offers and the other picks."
+    - term: pending add
+      means: An add sent but not yet confirmed, kept by its add_id and counted in the badge.
+board:
+  keep: [title, mock-up, phone, mock-header, mock-gallery, mock-title, mock-price, mock-options, mock-buy, mock-delivery, mock-below, requirements, fr-heading, fr-first, fr-gallery, fr-pick, fr-unbuyable, fr-cleared, fr-url, fr-add, fr-buy-now, fr-below, nfr-heading, nfr-lcp, nfr-add, nfr-inp, nfr-cls, nfr-fresh, nfr-private, nfr-client-price, nfr-one-line, nfr-a11y, nfr-seo, nfr-jsonld, nfr-locales, components, c-edge, c-server, browser, c-product-page, c-below, above-fold, c-gallery, c-picker, c-buy-box, c-pricing, c-cart-store, page-fold, page-below, pricing-buy, edge-html, edge-miss, pricing-server, cart-server, below-server, pricing-picker, picker-gallery, picker-buy, buy-cart, layers, l-shell, l-shell-note, l-offers, l-offers-note, l-private, l-private-note, l-cart, l-cart-note, l-community, l-community-note, statement]
+  elements:
+    - { id: data-model, kind: region, label: "Data model", at: [1, 58], size: [58, 26] }
+    - { id: naive, kind: region, label: "what the components read", at: [2, 60], size: [22, 7], in: data-model, tone: red }
+    - { id: need-product, kind: note, label: "product: { title, brand, media, options,", at: [3, 62], in: naive }
+    - { id: need-skus, kind: note, label: "skus: [ { price, stock, delivery } ] },", at: [5, 63], in: naive }
+    - { id: need-cart, kind: note, label: "cart: { count }", at: [3, 64], in: naive }
+    - { id: naive-note, kind: note, label: "a price in a day-long cache goes stale", at: [2, 68], in: data-model, tone: red }
+    - { id: matrix, kind: region, label: "Variant matrix, KW2210", at: [2, 70], size: [26, 12], in: data-model }
+    - { id: m-steel, kind: note, label: "steel: 0.6 sold out, 0.9 $48, 1.2 $54", at: [3, 72], in: matrix }
+    - { id: m-black, kind: note, label: "black: 0.6 $42, 0.9 $48 three left, 1.2 sold out", at: [3, 73], in: matrix }
+    - { id: m-copper, kind: note, label: "copper: 0.6 not made, 0.9 $58, 1.2 $64", at: [3, 74], in: matrix }
+    - { id: m-rule, kind: note, label: "judged against the other groups' picks", at: [3, 76], in: matrix }
+    - { id: m-status, kind: note, label: "no SKU: not made; all out of stock: sold out", at: [3, 77], in: matrix }
+    - { id: m-words, kind: note, label: "sold out may return, not made never will", at: [3, 78], in: matrix }
+    - { id: m-clear, kind: note, label: "an impossible pick is cleared to null", at: [3, 80], in: matrix }
+    - { id: store, kind: region, label: "Client store", at: [29, 60], size: [30, 21], in: data-model, tone: amber }
+    - { id: js-open, kind: note, label: "{ catalog: { id: KW2210, title, brand,", at: [30, 62], in: store }
+    - { id: js-media, kind: note, label: "media: [ { id, kind, width, height, alt } ],", at: [33, 63], in: store }
+    - { id: js-options, kind: note, label: "options: [ { key, label, kind, values } ],", at: [33, 64], in: store }
+    - { id: js-skus, kind: note, label: "skus: [ { id: KW-BLK-09, options, media_ids } ] },", at: [33, 65], in: store }
+    - { id: js-offers, kind: note, label: "offers: { KW-BLK-09: { price: {", at: [31, 66], in: store }
+    - { id: js-offer-price, kind: note, label: "amount_minor: 4800, currency: USD },", at: [35, 67], in: store }
+    - { id: js-offer-more, kind: note, label: "availability: low_stock, stock_hint: 3, delivery,", at: [33, 68], in: store }
+    - { id: js-offer-tail, kind: note, label: "scope, as_of } },", at: [33, 69], in: store }
+    - { id: js-selection, kind: note, label: "selection: { picks: { finish: black,", at: [31, 70], in: store }
+    - { id: js-picks, kind: note, label: "capacity: null }, sku: null },", at: [35, 71], in: store }
+    - { id: js-cart, kind: note, label: "cart: { confirmed_count, version,", at: [31, 72], in: store }
+    - { id: js-pending, kind: note, label: "pending: [ { add_id, sku, quantity, status } ] } }", at: [33, 73], in: store }
+    - { id: life-note, kind: note, label: "catalog a day, offers seconds, the rest in the tab", at: [30, 75], in: store }
+    - { id: join-note, kind: note, label: "catalog and offers joined only by the SKU id", at: [30, 76], in: store }
+    - { id: status-note, kind: note, label: "option status derived, never stored", at: [30, 77], in: store }
+    - { id: badge-note, kind: note, label: "badge: confirmed count plus pending", at: [30, 78], in: store }
+  arrows:
+    - { id: normalize, from: naive, to: store, label: "split" }
+beats:
+  - point: "Derive the state from the components: Gallery reads the product's media, VariantPicker its option groups and SKUs, BuyBox the price, stock and delivery of the picked SKU, and the header badge the cart's count."
+    kind: component
+    weight: core
+    teach:
+      - "Start from the components on the board, not from an API. Walk them and write what each one reads, as JSON, a key at a time."
+      - "Gallery reads the product's media; VariantPicker its option groups and which SKUs exist; BuyBox the price, stock and delivery of the SKU that is picked; the badge the cart's count."
+    draw: [data-model, naive, need-product, need-skus, need-cart]
+    check: Where do you start when deciding the page's state?
+    answer: From the components; walk them and write down what each one reads.
+  - point: "Kept as the components read it, the price sits inside the product; but the product is rendered into the shell, cached a day and purged only on edits, so a price inside it would go stale or force constant purges."
+    kind: failure
+    weight: supporting
+    teach:
+      - "This shape puts price and stock on each SKU of the product. But the product is what the catalog shell is rendered from, cached for a day and purged only when the product is edited."
+      - "A price inside it would be up to a day old, or the shell would need a purge every time a price moved."
+    draw: [naive-note]
+    check: Why does the catalog's product carry no prices?
+    answer: "The product lives in the shell, kept a day and purged only when it is edited; a price there would either be out of date or need a purge every time it moved."
+  - point: "So split by lifetime: the catalog holds the product with its media, option groups and SKUs, and no prices; a SKU is one buyable combination, and a combination that is never made simply has no SKU."
+    kind: decision
+    weight: core
+    teach:
+      - "Split it by lifetime: the catalog is cached for a day, the offers for seconds, and the rest lives in the tab. Open the store as JSON. The catalog first: the product's id, KW2210, its title and brand, and its media, each with a kind, width, height and alt text."
+      - "Option groups, each with a key such as finish, a label, a kind, swatches or tiles, and its values. Then the SKUs: each has an id such as KW-BLK-09, its option values and its media ids."
+      - "A combination that is never made has no SKU at all. And no prices anywhere in the catalog."
+    draw: [store, normalize, js-open, js-media, js-options, js-skus, life-note]
+    check: How does the catalog say that a combination is never made?
+    answer: There is simply no SKU for it.
+  - point: "Offers are a separate type, one per SKU, the whole product's map at once: the price in minor units with a currency, the availability, a stock hint only when low, the delivery, public or private scope and when it was true; only the SKU id joins them to the catalog."
+    kind: component
+    weight: core
+    teach:
+      - "Next key: offers, by SKU id. KW-BLK-09's price is an amount in minor units, 4800, with its currency, USD. Availability is in_stock, low_stock or out_of_stock, and stock_hint, 3, appears only when stock is low."
+      - "Then the delivery window, the scope, public or private, and as_of, when the offer was true. One offer per SKU, and the whole product's map comes at once."
+      - "Catalog and offers meet only at the SKU id: one is cached for a day, the other for seconds."
+    draw: [js-offers, js-offer-price, js-offer-more, js-offer-tail, join-note]
+    check: What joins the catalog to the offers?
+    answer: Only the SKU id.
+    misconceptions:
+      - "An offer is fetched when its variant is picked -> there is one offer per SKU, and the whole product's map comes at once."
+  - point: "KW2210's matrix is three finishes by three capacities, nine cells: eight SKUs and one never made; steel 0.6 L and black 1.2 L are sold out, black 0.9 L has 3 left, and copper 0.6 L does not exist."
+    kind: component
+    weight: core
+    teach:
+      - "Write the matrix, a line per finish, with the capacities 0.6, 0.9 and 1.2 litres and each SKU's price."
+      - "Brushed steel: 0.6 L sold out, 0.9 L at $48, 1.2 L at $54. Matte black: 0.6 L at $42, 0.9 L at $48 with 3 left, 1.2 L sold out. Copper: 0.6 L never made, 0.9 L at $58, 1.2 L at $64."
+      - "The page answers every question about this grid from data it already has: which SKUs exist from the catalog, their stock from the offers."
+    draw: [matrix, m-steel, m-black, m-copper]
+    check: How many SKUs does KW2210 have, and why not nine?
+    answer: Eight; copper 0.6 L is never made, so it has no SKU.
+  - point: "An option's status is judged against the picks in the other groups, never its own: no matching SKU means not made, all matching SKUs out of stock means sold out; both strike the option, which stays focusable, with different words, and the status is derived, never stored."
+    kind: rule
+    weight: core
+    teach:
+      - "To mark a capacity, look at the SKUs with that capacity that match the other groups' picks. None: not made. All of them out of stock: sold out. Otherwise it is available."
+      - "Its own group is never part of the test, so the shopper can always move to another value in the same group. An offer that hasn't arrived yet counts as buyable; the server checks at the add."
+      - "Either way the option is struck but stays on screen and can still take focus; only the words change. Sold out can end when stock returns, while a combination that was never made will not appear, so there is no point waiting. The status is worked out each time, never stored."
+      - "When the offers are refetched, the statuses are worked out again: a shopper back on the tab after twenty minutes finds black 0.9 L sold out, and the pick is cleared with a message before Add is pressed."
+    draw: [m-rule, m-status, m-words, status-note]
+    check: "With copper picked, how is the 0.6 L capacity shown?"
+    answer: "Struck and still focusable, with not available in copper rather than sold out, because that combination is never made."
+    misconceptions:
+      - "Not made and sold out are the same state -> both strike the option, but one can come back and the other never will, so the shopper is told which."
+      - "Store each option's status -> it is derived from the SKUs, the offers and the other picks every time."
+  - point: "The selection is the picks by group, null for a cleared one, and the SKU derived from them, mirrored in the query string; a new pick that makes another group's pick impossible clears it to null."
+    kind: component
+    weight: core
+    teach:
+      - "Next key: selection. The picks by group, finish black and capacity null, because the switch to black cleared it. The SKU is derived from the picks, null until every group has one."
+      - "VariantPicker owns it, and it is mirrored in the query string. When a pick in one group makes another group's pick impossible, that pick becomes null."
+    draw: [js-selection, js-picks, m-clear]
+    check: "The shopper switches to matte black with 1.2 L picked. What does the selection hold afterwards?"
+    answer: "Finish black, capacity null and SKU null; 1.2 L was impossible in black, so it was cleared."
+  - point: "The cart state holds the confirmed count and the cart version from the server, plus the pending adds, each with its add id, SKU, quantity and status; the badge is the confirmed count plus the pending quantities."
+    kind: component
+    weight: core
+    teach:
+      - "Last key: cart, which CartStore owns. The confirmed count and the version, as the server last gave them."
+      - "Pending holds the adds sent but not confirmed, each with its add_id, SKU, quantity and status, sending or retrying. Close the store."
+      - "The badge is the confirmed count plus the pending quantities. Undoing an add just takes it out of pending; nobody has to work out what the number should go back to."
+    draw: [js-cart, js-pending, badge-note]
+    check: How is the badge's number computed while an add is in flight?
+    answer: The server's confirmed count plus the quantities of the pending adds.
+    misconceptions:
+      - "A counter goes up on every press -> the badge is the confirmed count plus pending adds, so a failed add is simply removed from pending."
+asks:
+  - ids: [need-product, need-skus, need-cart]
+    beats: [1]
+    question: "Walk the components: what does each one need to read? Name the fields and I'll write them as JSON."
+    hints:
+      - What does the gallery show, and what does the picker need to know?
+      - And what does the buy box show for the picked SKU?
+  - ids: [js-selection, js-picks, js-cart, js-pending]
+    beats: [7, 8]
+    question: "Besides the catalog and the offers, what does the tab itself have to hold? Name the keys and I'll write them."
+    hints:
+      - What has the shopper picked so far?
+      - And what does the badge count while an add is in flight?
+task:
+  prompt: "Write the client store as JSON, the catalog with no prices, the offers by SKU, the selection and the cart with its pending adds, then the variant matrix and the rule that marks an option."
+  expects: [3, 4, 5, 6, 7, 8]

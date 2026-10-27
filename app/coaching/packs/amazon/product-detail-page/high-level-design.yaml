@@ -1,0 +1,168 @@
+# Product detail page interview, high level design: the components, drawn once the requirements are written (the page's parts, the two stores behind them, the CDN edge above and the Commerce APIs below), then the page's data sorted by how fast it goes stale, then one pick and one add traced across the diagram.
+id: amazon/product-detail-page/high-level-design
+title: Components, and what changes how often
+source:
+  hash: "49a1df97a232"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: amazon/product-detail-page/requirements-exploration
+  assumes:
+    - "The page shows images, title, price and availability, one value per option group, quantity, Add to cart and Buy now, the delivery estimate, and more below."
+    - "Picks update without a reload, unbuyable options say why, the badge updates at once; LCP at most 2.5 s, Add to cart within 2 s."
+    - "Price and stock change within seconds, content a few times a month; no personal price in a shared cache."
+  carries:
+    - "The UI: ProductPage, the route shell; Gallery, VariantPicker and BuyBox above the fold, hydrated first; BelowFold as the shopper scrolls."
+    - "VariantPicker hands Gallery the finish's image set and BuyBox the SKU or null; PricingService holds every SKU's offer in one map, never computing a price; CartStore holds what the badge shows."
+    - "The CDN edge caches the shell a day and the offers fragment 30 s and stitches them into one HTML; the Commerce APIs, a black box, serve PricingService, CartStore and BelowFold."
+    - "Cache each piece only as long as it stays true; a per-shopper response never shares a cache key with a public one."
+    - "A finish change that makes the capacity impossible clears it; picks are answered from the offers map with no request; the badge moves before the server answers."
+  terms:
+    - term: catalog shell
+      means: "Title, brand, images, description, option lists, the SKU matrix and the HTML around them, with no prices; cached at the CDN for a day."
+    - term: public offers fragment
+      means: "Price, list price, availability and a regional delivery estimate for every SKU of the product, cached for 30 seconds."
+    - term: private offer
+      means: "A member price or delivery to the shopper's saved address; it never touches a shared cache."
+    - term: above the fold
+      means: "The group of Gallery, VariantPicker and BuyBox, the parts hydrated first."
+board:
+  keep: [title, mock-up, phone, mock-header, mock-gallery, mock-title, mock-price, mock-options, mock-buy, mock-delivery, mock-below, requirements, fr-heading, fr-first, fr-gallery, fr-pick, fr-unbuyable, fr-cleared, fr-url, fr-add, fr-buy-now, fr-below, nfr-heading, nfr-lcp, nfr-add, nfr-inp, nfr-cls, nfr-fresh, nfr-private, nfr-client-price, nfr-one-line, nfr-a11y, nfr-seo, nfr-jsonld, nfr-locales]
+  elements:
+    - { id: components, kind: region, label: "Components", at: [24, 3], size: [35, 50] }
+    - { id: c-edge, kind: box, label: "CDN edge", at: [37, 5], size: [21, 2], in: components }
+    - { id: browser, kind: region, label: "Browser", at: [25, 9], size: [33, 34], in: components }
+    - { id: c-product-page, kind: box, label: "ProductPage", at: [26, 12], size: [13, 2], in: browser, tone: blue }
+    - { id: c-below, kind: box, label: "BelowFold", at: [41, 12], size: [6, 2], in: browser, tone: blue }
+    - { id: above-fold, kind: region, label: "Above the fold", at: [26, 16], size: [14, 19], in: browser, tone: blue }
+    - { id: c-gallery, kind: box, label: "Gallery", at: [27, 18], size: [12, 2], in: above-fold }
+    - { id: c-picker, kind: box, label: "VariantPicker", at: [27, 25], size: [12, 2], in: above-fold }
+    - { id: c-buy-box, kind: box, label: "BuyBox", at: [27, 32], size: [12, 2], in: above-fold }
+    - { id: c-pricing, kind: box, label: "PricingService, offers map", at: [48, 25], size: [10, 9], in: browser, tone: amber }
+    - { id: c-cart-store, kind: box, label: "CartStore, badge", at: [27, 39], size: [12, 2], in: browser, tone: amber }
+    - { id: c-server, kind: box, label: "Commerce APIs", at: [26, 50], size: [32, 2], in: components, tone: grey }
+    - { id: layers, kind: region, label: "What changes how often", at: [60, 37], size: [46, 19] }
+    - { id: l-shell, kind: box, label: "catalog shell", at: [61, 39], size: [13, 2], in: layers, tone: amber }
+    - { id: l-shell-note, kind: note, label: "changes monthly, CDN keeps it a day, purged on edit", at: [75, 40], in: layers }
+    - { id: l-offers, kind: box, label: "public offers", at: [61, 42], size: [13, 2], in: layers, tone: amber }
+    - { id: l-offers-note, kind: note, label: "price and stock, seconds, CDN 30 s by product and region", at: [75, 43], in: layers }
+    - { id: l-private, kind: box, label: "private offer", at: [61, 45], size: [13, 2], in: layers, tone: red }
+    - { id: l-private-note, kind: note, label: "member price, per shopper, never in a shared cache", at: [75, 46], in: layers }
+    - { id: l-cart, kind: box, label: "cart count", at: [61, 48], size: [13, 2], in: layers, tone: amber }
+    - { id: l-cart-note, kind: note, label: "changes on every add, never cached", at: [75, 49], in: layers }
+    - { id: l-community, kind: box, label: "community", at: [61, 51], size: [13, 2], in: layers, tone: amber }
+    - { id: l-community-note, kind: note, label: "ratings and reviews, CDN 10 minutes, below the fold", at: [75, 52], in: layers }
+    - { id: statement, kind: note, label: "cache each piece only as long as it stays true", at: [61, 54], in: layers, tone: green }
+  arrows:
+    - { id: page-fold, from: c-product-page, to: above-fold }
+    - { id: page-below, from: c-product-page, to: c-below }
+    - { id: pricing-buy, from: c-pricing, to: c-buy-box, label: "offer for SKU" }
+    - { id: edge-html, from: c-edge, to: c-product-page, label: "HTML" }
+    - { id: edge-miss, from: c-edge, to: c-server, label: "on a miss", dashed: true }
+    - { id: pricing-server, from: c-pricing, to: c-server, label: "GET offers" }
+    - { id: cart-server, from: c-cart-store, to: c-server, label: "POST cart lines" }
+    - { id: below-server, from: c-below, to: c-server, label: "reviews, questions" }
+    - { id: pricing-picker, from: c-pricing, to: c-picker, label: "availability" }
+    - { id: picker-gallery, from: c-picker, to: c-gallery, label: "images" }
+    - { id: picker-buy, from: c-picker, to: c-buy-box, label: "SKU" }
+    - { id: buy-cart, from: c-buy-box, to: c-cart-store, label: "add" }
+beats:
+  - point: "With the requirements written, the drawing becomes components: ProductPage is the route shell, Gallery, VariantPicker and BuyBox sit above the fold and hydrate first, and BelowFold holds what comes as the shopper scrolls."
+    kind: component
+    weight: core
+    teach:
+      - "Now turn the mock-up into components, inside the browser. ProductPage is the shell for the product's route: it reads the selection from the query string, decides which parts hydrate when, and keeps the URL in step with the picks."
+      - "Above the fold, hydrated first: Gallery, the hero image, thumbnails and video; VariantPicker, one radio group per option; BuyBox, with price, stock, delivery, quantity, Add to cart and Buy now. Only the buy box needs JavaScript right away."
+      - "BelowFold holds the description, reviews summary, questions and similar items; each part hydrates only as it nears the viewport."
+    draw: [components, browser, c-product-page, above-fold, page-fold, c-gallery, c-picker, c-buy-box, c-below, page-below]
+    check: Which parts of the page hydrate first, and which wait?
+    answer: "Gallery, VariantPicker and BuyBox, above the fold, hydrate first; BelowFold waits until each part nears the viewport."
+  - point: "Two small stores sit behind the UI: PricingService holds the offers for every SKU in one map, the public ones from the HTML and private ones fetched, and never computes a price; CartStore holds what the badge shows."
+    kind: component
+    weight: core
+    teach:
+      - "PricingService keeps one map of offers by SKU, for every SKU of the product. The public offers arrive with the HTML; a signed-in shopper's private ones are fetched. It never computes a price."
+      - "BuyBox reads the offer for the picked SKU from it. CartStore is the header badge's truth: the confirmed count and the cart version from the server, plus the adds still waiting for an answer. BuyBox hands it each add."
+    draw: [c-pricing, pricing-buy, c-cart-store, buy-cart]
+    check: Where does BuyBox get the price it shows for the picked SKU?
+    answer: "From PricingService's map of offers by SKU, which came with the HTML; nothing in the browser computes a price."
+    misconceptions:
+      - "The page works the price out itself -> PricingService only holds the offers the server sent; it never computes a price."
+  - point: "Outside the browser, the CDN edge caches the catalog shell for a day and the public offers fragment for 30 seconds and stitches them into one HTML response, storing nothing personal; the Commerce APIs below are a black box that PricingService, CartStore and BelowFold call."
+    kind: component
+    weight: core
+    teach:
+      - "The page arrives as one HTML response from the CDN edge. It keeps the shell for a day, purged when the product is edited, and the offers fragment for 30 seconds, and joins the two; no cookie is part of either cache key."
+      - "When it misses, the edge goes to the Commerce APIs: catalog, pricing, inventory, delivery and carts, a black box that prices every cart line itself."
+      - "Three parts of the browser talk to them directly: PricingService fetches offers, CartStore posts the cart lines, and BelowFold asks for reviews, questions and similar items."
+    draw: [c-edge, edge-html, c-server, edge-miss, pricing-server, cart-server, below-server]
+    check: What does the edge send the browser on a visit, and what does it never store?
+    answer: "One HTML response, the day-old shell with the seconds-old public offers stitched in; it never stores anything personal."
+  - point: "The page's data is sorted by how fast it goes stale and whose it is: the catalog shell changes a few times a month and is cached a day, public offers change in seconds and are cached 30 s by product and region, and a private offer belongs to one shopper and is never shared."
+    kind: decision
+    weight: core
+    teach:
+      - "Sort what the page shows by how long it stays true. The catalog shell, title, brand, images, description, option lists and the SKU matrix, changes a few times a month: the CDN keeps it a day and purges it by product tag on an edit."
+      - "Public offers, price, list price, availability and a regional delivery estimate for every SKU, change in seconds to minutes: cached 30 seconds, keyed by product and region."
+      - "A private offer, a member price or delivery to the shopper's saved address, belongs to one shopper, so no shared cache ever holds it."
+    draw: [layers, l-shell, l-shell-note, l-offers, l-offers-note, l-private, l-private-note]
+    check: Why is the offers fragment cached apart from the catalog shell?
+    answer: "A price can be wrong within seconds, while the shell stays right for days; one lifetime can't suit both, so the shell gets a day, purged on edit, and the offers seconds."
+    misconceptions:
+      - "The shell is private and the fragment public -> both are public; they are split because they go stale at different speeds."
+  - point: "The cart count changes on every add and is never cached, and ratings, reviews and questions change over minutes to hours and are cached 10 minutes below the fold; the rule is to cache each piece only as long as it stays true."
+    kind: rule
+    weight: core
+    teach:
+      - "Two more layers. The cart count changes on every add, in any tab, so it is not cached: it comes from the cart API and CartStore."
+      - "The community layer, ratings summary, reviews and questions, changes over minutes to hours: the CDN keeps it 10 minutes and it is fetched below the fold."
+      - "The rule under the table: give each piece a cache life no longer than the time it stays right, and keep anything made for one shopper out of any cache key a public response uses."
+    draw: [l-cart, l-cart-note, l-community, l-community-note, statement]
+    check: What must never share a cache key with a public response?
+    answer: "A per-shopper response, such as a member price or delivery to a saved address."
+  - point: "A pick runs across the diagram: on matte black, VariantPicker reads availability from PricingService, the sold-out 1.2 L pick is cleared and said, and Gallery takes the black images; 0.9 L shows $48, only 3 left, with no request; the URL is replaced."
+    kind: flow
+    weight: core
+    teach:
+      - "Trace one visit. The shopper lands on the brushed steel 1.2 L kettle: one HTML from the edge, a day-old shell with a 12-second-old offers fragment, and the hero paints first. Steel 0.6 L is sold out, so its tile is already struck. Thumbnails are small lazy buttons; hovering or focusing one starts the full-size image, and the main image keeps its box."
+      - "They pick matte black. VariantPicker reads availability from PricingService: black 1.2 L is sold out, so the capacity pick is cleared, the stock line says why and the price becomes From $42.00. VariantPicker hands Gallery the black finish's image set, and the URL is replaced, not pushed."
+      - "Arrowing along the capacity tiles, the struck 1.2 L still takes focus and is read out with its reason, but it can't be picked."
+      - "They pick 0.9 L, and VariantPicker hands BuyBox that SKU: $48.00, only 3 left. The offer was already in the map that came with the HTML, so nothing is fetched, and the live region speaks once the pick settles."
+    draw: [pricing-picker, picker-gallery, picker-buy]
+    check: "The shopper picks matte black while 1.2 L is selected, and black 1.2 L is sold out. What happens to the capacity pick?"
+    answer: "It is cleared, and the stock line says 1.2 L is sold out in matte black; the price shows a range until a capacity is picked."
+    misconceptions:
+      - "Jump to the nearest size in stock without saying so -> the pick is cleared and said out loud, so the shopper can't end up adding a size they never chose."
+  - point: "Add to cart moves the badge from 2 to 3 before the server answers, and the button, busy, takes no second tap; the request carries the SKU, quantity and a new add id, never a price, and the server confirms cart version 7, or a failed add rolls the badge back."
+    kind: flow
+    weight: core
+    teach:
+      - "They press Add to cart. BuyBox hands the add to CartStore and the badge goes from 2 to 3 at once; while the add is in flight the button shows it is busy, and pressing it again does nothing."
+      - "CartStore sends the SKU, the quantity and a new add id, never a price. The server prices the line, checks stock and answers cart version 7 with three items, and the badge shows the server's count."
+      - "A second add that fails, even after its retry with the same add id, rolls the badge back to 3, and the selection is kept."
+    check: What does the add request carry, and what does it leave out?
+    answer: "The SKU, the quantity and an add id; never a price, which the server sets when it prices the line."
+asks:
+  - ids: [c-product-page, c-gallery, c-picker, c-buy-box, c-below]
+    beats: [1]
+    question: "Looking at the mock-up, which components would you split the page into? Name them and I'll draw them."
+    hints:
+      - Start with the page as a whole, then what sits above the fold.
+      - And everything under the buy box?
+  - ids: [c-pricing, c-cart-store]
+    beats: [2]
+    question: "Now, what has to sit behind the UI, in the browser? Name the pieces."
+    hints:
+      - Where do the price and stock of every SKU live once they've arrived?
+      - And what does the header badge read?
+  - ids: [l-shell, l-offers, l-private]
+    beats: [4]
+    question: "Sort the page's data by how fast it goes stale. What are the layers?"
+    hints:
+      - How often do the description and images change, compared with the price?
+      - And what belongs to one shopper only?
+task:
+  prompt: "Draw the components, ProductPage, Gallery, VariantPicker, BuyBox and BelowFold, PricingService and CartStore behind them, the CDN edge above and the Commerce APIs below, then sort the page's data into layers by how fast it goes stale."
+  expects: [1, 2, 3, 4]

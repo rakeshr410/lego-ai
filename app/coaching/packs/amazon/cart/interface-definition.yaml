@@ -1,0 +1,164 @@
+# Cart interview, interface: how changes travel (in an area of their own), then the API written as requests: the cart with one response written as JSON, the PATCH that names its version, the 412 and 409 answers, the other writes, the remaining errors, and inside a tab the actions and CartLine's props.
+id: amazon/cart/interface-definition
+title: Requests that name their version
+source:
+  hash: "65325bd4391e"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: amazon/cart/data-model
+  assumes:
+    - "The store keeps the server's Cart whole as confirmed at its version, with pending target quantities per line laid over it."
+    - "CartService is the one caller of the Cart API; TabSync tells other tabs about a committed version."
+    - "The guest cart in localStorage holds SKUs and quantities, no prices."
+  carries:
+    - "Plain HTTP for the cart; BroadcastChannel between tabs with the storage event as a fallback; a refetch on visibilitychange for other devices; no server push, no polling."
+    - "GET /api/cart returns the whole priced cart with an ETag, or a 304 for If-None-Match while the version is unchanged."
+    - "PATCH /api/cart/lines/{lineId} sets a target quantity with If-Match; 200 is the whole cart at the next version, 412 means the cart moved, 409 means too little stock."
+    - "DELETE returns what Undo needs; POST /api/cart/lines re-adds at a position; quote prices a guest cart; merge takes a merge_id so a retry gets the first answer."
+    - "Inside a tab, lines send quantityIntended; the store flushes 400 ms later; committed, conflicted, refetched and remoteChanged follow. CartLine renders only from props."
+  terms:
+    - term: If-Match
+      means: "The request header carrying the version a write is based on; when it no longer matches, the server applies nothing and answers 412."
+    - term: If-None-Match
+      means: "The request header carrying the version a tab shows; when it still matches, the answer is a 304 with no body."
+    - term: CSRF token
+      means: The token every cart mutation carries in X-CSRF-Token, renewed once if the server rejects it with a 403.
+board:
+  keep: [title, mock-up, mock-header, mock-item, mock-stepper, mock-actions, mock-totals, mock-free, mock-saved, requirements, fr-heading, fr-lines, fr-summary, fr-stepper, fr-delete, fr-save, fr-reprice, fr-stock, fr-free, fr-tabs, fr-race, fr-guest, nfr-heading, nfr-totals, nfr-overwrite, nfr-frame, nfr-inp, nfr-tabs, nfr-devices, nfr-burst, nfr-flight, nfr-lcp, nfr-js, nfr-a11y, nfr-announce, nfr-locale, scope, assume-heading, assume-lines, assume-wait, assume-undo, assume-free, out-heading, out-checkout, out-server, components, c-page, c-line, c-stepper, c-actions, c-warning, c-store, c-tabsync, c-guest, c-badge, c-service, c-api, store-to-page, line-to-store, store-to-badge, store-to-service, service-to-api, store-tabsync, guest-to-store, flow, fl-tab1, fl-server, fl-reply, fl-tab2, fl-newer, fl-phone, tab1-to-server, tab1-to-tab2, phone-to-server, state, reads, rd-open, rd-line-more, rd-avail, rd-summary, rd-summary-more, cart-state, st-open, st-rest, st-pending, st-flight, st-undo, st-status, money, outside, guest-json, g-open, g-close, tab-json, t-line]
+  elements:
+    - { id: travel, kind: region, label: "How changes travel", at: [33, 76], size: [27, 8] }
+    - { id: tr-rest, kind: note, label: "plain HTTP for the cart and its writes", at: [34, 78], in: travel, tone: green }
+    - { id: tr-bc, kind: note, label: "BroadcastChannel between tabs", at: [34, 79], in: travel, tone: green }
+    - { id: tr-storage, kind: note, label: "storage event when the channel is missing", at: [34, 80], in: travel, tone: green }
+    - { id: tr-visible, kind: note, label: "refetch on visibilitychange for devices", at: [34, 81], in: travel, tone: green }
+    - { id: tr-not, kind: note, label: "not server push, not polling", at: [34, 82], in: travel, tone: red }
+    - { id: api, kind: region, label: "API", at: [64, 63], size: [56, 16] }
+    - { id: get-req, kind: note, label: "GET /api/cart, If-None-Match c7", at: [65, 65], in: api, tone: blue }
+    - { id: get-resp, kind: region, label: "Response, the whole cart", at: [65, 66], size: [30, 8], in: api, tone: amber }
+    - { id: r-open, kind: note, label: "{ id: cart_5521, version: 8,", at: [66, 68], in: get-resp }
+    - { id: r-lines, kind: note, label: "lines: [ { id: filters, quantity: 3,", at: [68, 69], in: get-resp }
+    - { id: r-money, kind: note, label: "line_total: { amount_minor: 1950, currency: USD } } ],", at: [69, 70], in: get-resp }
+    - { id: r-summary, kind: note, label: "summary: { item_count: 5, total:", at: [68, 71], in: get-resp }
+    - { id: r-total, kind: note, label: "{ amount_minor: 9342, currency: USD } },", at: [69, 72], in: get-resp }
+    - { id: r-close, kind: note, label: "saved: [], notices: [] }", at: [68, 73], in: get-resp }
+    - { id: r-304, kind: note, label: "ETag c8, or a 304 with no body if unchanged", at: [65, 75], in: api, tone: green }
+    - { id: patch-req, kind: note, label: "PATCH /api/cart/lines/filters { quantity: 3 }", at: [96, 65], in: api, tone: blue }
+    - { id: patch-hdr, kind: note, label: "If-Match c7, CSRF token: 200 at version 8", at: [96, 66], in: api }
+    - { id: err-412, kind: note, label: "412 version_mismatch: refetch and replay", at: [96, 67], in: api, tone: red }
+    - { id: err-409, kind: note, label: "409 insufficient_stock: back to confirmed", at: [96, 68], in: api, tone: red }
+    - { id: del-req, kind: note, label: "DELETE /api/cart/lines/dripper, If-Match c8", at: [96, 70], in: api, tone: blue }
+    - { id: post-req, kind: note, label: "POST /api/cart/lines { sku, quantity, position }", at: [96, 71], in: api, tone: blue }
+    - { id: save-req, kind: note, label: "POST /api/cart/lines/dripper/save", at: [96, 72], in: api, tone: blue }
+    - { id: quote-req, kind: note, label: "POST /api/cart/quote { lines }", at: [96, 73], in: api, tone: blue }
+    - { id: merge-req, kind: note, label: "POST /api/cart/merge { merge_id, lines }", at: [96, 74], in: api, tone: blue }
+    - { id: err-gone, kind: note, label: "410 remove the line, 422 cap the stepper", at: [96, 76], in: api, tone: red }
+    - { id: err-other, kind: note, label: "401, 403, 5xx: retry once; offline: read-only", at: [96, 77], in: api, tone: red }
+    - { id: actions, kind: region, label: "Inside the tab", at: [64, 81], size: [28, 9] }
+    - { id: act-intended, kind: note, label: "quantityIntended { lineId, quantity }", at: [65, 83], in: actions }
+    - { id: act-flushed, kind: note, label: "flushed 400 ms later, with baseVersion", at: [65, 84], in: actions }
+    - { id: act-committed, kind: note, label: "committed, or conflicted, then refetched", at: [65, 85], in: actions }
+    - { id: act-remote, kind: note, label: "remoteChanged from TabSync { version, cart }", at: [65, 86], in: actions }
+    - { id: props-note, kind: note, label: "CartLine props: quantity, updating, density", at: [65, 87], in: actions, tone: blue }
+    - { id: child-note, kind: note, label: "stepper buttons at least 24 by 24 CSS px", at: [65, 88], in: actions, tone: blue }
+  arrows: []
+beats:
+  - point: "Plain HTTP carries the cart and its writes, since ETags and If-Match are standard; tabs talk over a BroadcastChannel, with the storage event as a fallback, and other devices refetch when shown again; server push and polling are left out."
+    kind: decision
+    weight: core
+    teach:
+      - "First, how changes travel. The cart and its writes are plain HTTP: versions as ETags and writes made conditional with If-Match are ordinary parts of it."
+      - "Tabs use a BroadcastChannel: it stays on one device and origin, needs no round trip, and the tab that posts never hears its own message. Where it is missing, TabSync writes the version into localStorage and the storage event sends the other tabs to refetch."
+      - "Other devices refetch on visibilitychange; carts seldom change, and a device only needs the right cart when someone looks at it. Push would keep a socket open on each page to deliver a handful of updates; polling would make every tab ask again and again for nothing."
+    draw: [travel, tr-rest, tr-bc, tr-storage, tr-visible, tr-not]
+    check: Why not keep a server push connection open to update other devices?
+    answer: "It keeps a socket open on each page for a handful of updates; refetching when the device is looked at again is enough for a cart."
+    misconceptions:
+      - "Live updates need a WebSocket -> tabs on one device talk over a BroadcastChannel, and other devices only need to be right when they are looked at."
+  - point: "GET /api/cart returns the whole cart at today's prices, with notices for lines changed since they were added, and its version as the ETag; the first page load embeds the same JSON, and If-None-Match gets a bodiless 304 if the version is unchanged."
+    kind: component
+    weight: core
+    teach:
+      - "Now the API, written as requests. The read is GET slash api slash cart, with If-None-Match c7, the version this tab holds; on first load the page already has the same JSON inside it."
+      - "Write one response a key at a time: the id and version 8; the lines, here the filters at quantity 3 with a line total of 1950 cents in USD; the summary, item count 5 and a total of 9342 cents in USD; then saved and the notices of what changed since adding."
+      - "It comes with ETag c8. When the version is unchanged, the answer is a 304 without a body: the tab leaves its screen alone and notes when it last checked."
+    draw: [api, get-req, get-resp, r-open, r-lines, r-money, r-summary, r-total, r-close, r-304]
+    check: What does a tab get back when it asks with If-None-Match and the cart has not changed?
+    answer: A 304 with no body; the tab leaves its screen as it is and records when it checked.
+  - point: "PATCH /api/cart/lines/{lineId} sets the line's quantity outright, with If-Match naming the base version and a CSRF token, so sending it twice gives the same cart; a 200 is the whole priced cart at the next version."
+    kind: component
+    weight: core
+    teach:
+      - "The write: PATCH slash api slash cart slash lines slash filters, with quantity 3 in the body, If-Match c7 and the CSRF token."
+      - "It sets the number rather than changing it by some amount, so repeating it leaves the cart the same. Success is a 200 with the whole priced cart at version 8 and ETag c8, which the store takes as confirmed."
+    draw: [patch-req, patch-hdr]
+    check: What does a successful PATCH return?
+    answer: "The whole priced cart at the next version, with its ETag."
+  - point: "A 412 version_mismatch means the cart moved and nothing was applied: keep the intents, refetch, replay those whose line remains (at most twice) and tell the shopper; a 409 insufficient_stock drops the intent, returns the stepper to confirmed and says Only 5 left, never lowering the quantity itself."
+    kind: failure
+    weight: core
+    teach:
+      - "If the cart has moved past c7, the If-Match check fails: the server changes nothing and answers 412 version_mismatch with the current version. The store keeps its intents, fetches the cart, reapplies each one whose line still exists, sends again at most twice, and says the cart was updated on another device. An API that reports a version clash as a 409 is handled the same way."
+      - "Asking for 8 filters with 5 in stock gets 409 insufficient_stock, available 5: the intent goes, the stepper returns to the confirmed number, and the line says Only 5 left. Setting it to 5 on the shopper's behalf would change the order without asking."
+    draw: [err-412, err-409]
+    check: A PATCH with If-Match c7 reaches a cart that is at version 9. What does the server do, and what does the client do next?
+    answer: "It applies nothing and answers 412; the client refetches, replays its intent on version 9 and tells the shopper."
+    misconceptions:
+      - "Treat a 412 as a failure and drop the edit -> it says the cart moved; refetch and replay the intent."
+      - "On 409, lower the quantity to what is available -> drop the intent and say Only 5 left; never change the order for the shopper."
+  - point: "The other writes: DELETE returns the next version and what Undo needs, POST /api/cart/lines re-adds a SKU at a position, priced again, POST on save sets a line aside; quote prices a guest cart, and merge takes a merge_id."
+    kind: component
+    weight: supporting
+    teach:
+      - "DELETE on the dripper with If-Match c8 returns version 9 plus the SKU, quantity and position Undo needs; an already-missing line gets 410, which counts as success."
+      - "POST slash api slash cart slash lines, with SKU, quantity and position, serves Undo and Move to cart, priced afresh, so the price can differ. POST on a line's save takes it out of the subtotal and badge, keeping its SKU, not its price."
+      - "POST slash api slash cart slash quote prices a guest's SKUs with no version, since nothing is stored. At sign-in, POST slash api slash cart slash merge sends a merge_id and the lines: the larger quantity per SKU, a repeated merge_id gets the original answer, and the device clears its copy only after the 200."
+    draw: [del-req, post-req, save-req, quote-req, merge-req]
+    check: Why does the merge request carry a merge_id?
+    answer: So a retried merge returns the first answer instead of merging twice.
+  - point: "The other errors share one shape: 410 removes the line and drops its intent, 422 caps the stepper at the limit, 401 opens sign-in and retries once, 403 renews the CSRF token once, 5xx is retried once after 1 s, and offline or a 10 s timeout rolls back to a read-only cart with nothing queued."
+    kind: failure
+    weight: supporting
+    teach:
+      - "Every error has one shape, a code and a message. 410 line_gone: the line was deleted elsewhere or withdrawn, so it goes, its intent with it, and the shopper is told once. 422 quantity_limit: cap the stepper and give the limit in words."
+      - "401 keeps the cart, opens sign-in in a dialog and retries once; 403 fetches a new CSRF token and retries once; a 5xx is retried once after a second, the calls being idempotent, then the intent is dropped with a message."
+      - "With no network, or no answer after 10 seconds, the intents roll back and the cart becomes read-only under a banner until it is online and fetched again. No edit waits in a queue."
+    draw: [err-gone, err-other]
+    check: The network drops while a quantity change is pending. What does the cart do?
+    answer: "Rolls the intent back and goes read-only with a banner, then refetches when back online; nothing is queued."
+  - point: "Inside the tab, lines and the badge only dispatch and read: a press becomes quantityIntended with an absolute quantity; the store flushes it 400 ms after the last press with its base version, or deletes it if it equals confirmed; then committed, or conflicted and refetched."
+    kind: flow
+    weight: supporting
+    teach:
+      - "Inside a tab, lines and the badge do two things: send actions and read the store. Every press becomes quantityIntended with the line and the absolute quantity; gathering presses is the store's job, not the line's."
+      - "When a press brings a line back to its confirmed number, the store deletes the intent and nothing is sent. Otherwise its timer fires 400 ms after the last press with flushed and the base version; the answer is committed with the new cart, or conflicted on a 412 and then refetched, and the store moves on to the next line on the newest version. remoteChanged arrives from TabSync."
+    draw: [actions, act-intended, act-flushed, act-committed, act-remote]
+    check: Where does the gathering of presses live, in CartLine or in the store?
+    answer: "In the store; CartLine reports every press as an absolute quantity."
+  - point: "CartLine renders only from props, on the cart page and in the compact drawer: quantity is the intent if any, updating greys the total, maxQuantity disables plus; the stepper is named with the item, minus becomes Delete at 1, buttons no smaller than 24 by 24 CSS px."
+    kind: component
+    weight: supporting
+    teach:
+      - "CartLine draws only from its props and never touches the network. One component covers both the cart page and the small drawer shown after Add to cart, whose compact density hides Save for later. Its quantity is the pending intent when there is one; updating greys the total and marks the line busy; maxQuantity switches plus off at the limit, with the reason in words."
+      - "Inside it, the QuantityStepper's input is named Quantity, Paper filters; at 1 its minus turns into a trash icon called Delete Paper filters; no button is smaller than 24 by 24 CSS pixels. LineWarning is linked to the stepper through aria-describedby, and LineActions are real buttons carrying the item's name."
+    draw: [props-note, child-note]
+    check: What does the minus button of the filters' stepper become when the quantity is 1?
+    answer: "A trash icon labelled Delete Paper filters."
+asks:
+  - ids: [tr-rest, tr-bc, tr-storage, tr-visible, tr-not]
+    beats: [1]
+    question: "A change in one tab has to reach the other tabs, and the shopper's phone. What ways do you know for that? Name each one."
+    hints:
+      - Tabs on the same device can talk to each other directly.
+      - The server could push, or the client could ask.
+  - ids: [get-req, r-open, r-lines, r-money, r-summary, r-total, r-close, patch-req, patch-hdr]
+    beats: [2, 3]
+    question: "What would the request for the cart look like, and the one that changes a quantity? I'll write them down as you go."
+    hints:
+      - The read is one endpoint. What does the response carry, and how does it say which version it is?
+      - The write has to say which version it was based on. Where does that go?
+task:
+  prompt: "Write the cart's API as requests: the GET with one response as JSON, the PATCH with its If-Match, and what 412 and 409 mean for the client."
+  expects: [2, 3, 4]

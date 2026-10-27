@@ -1,0 +1,173 @@
+# Orders and tracking interview, the prompt and the requirements: the title on the board (Your Orders and the order page of an Amazon-like store; the server a black box, we design the UI), the questions that shape the design, then the functional and non-functional lists, one fact a line, the working numbers and what is out of scope.
+id: amazon/order-tracking/requirements-exploration
+title: The prompt, then two lists
+source:
+  hash: "888d8470e9cb"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: null
+  assumes: []
+  carries:
+    - "The interview designs Your Orders and the order page of an Amazon-like store; the server is a black box that owns every status and rule, and we design the UI in the browser."
+    - "A delivery status lives on the shipment, not the order: one order can split into shipments that move independently, so a card shows one status line per shipment."
+    - "We assume a status should be fresh within one polling interval while the page is visible: about 2 minutes once out for delivery, 5 before."
+    - "Functional: newest first with a status per shipment; range, tabs, search and pages in the URL; live updates; only allowed actions; detail page, Buy it again, invoice, offline reading."
+    - "Non-functional: LCP below 2.5 s; route JS at most 80 KB; a change shown within 2 min out for delivery, 5 before; zero requests while hidden; unchanged checks get 304; no polling at terminal statuses."
+    - "Non-functional: every 409 shows the new status; zero duplicate cancels; CLS below 0.1; WCAG 2.2 AA; at most one polite announcement a batch; every locale; no order data stored; Cache-Control private."
+    - "Working numbers: 10 orders a page, page 1 rendered on the server; 0 to 3 active orders on a page; base wait 5 min, 2 min out for delivery; the longest wait no more than 4 times the base."
+  terms:
+    - term: order
+      means: One purchase on Your Orders, with its date, total and ship-to; it can split into several shipments.
+    - term: shipment
+      means: The part of an order that travels as one parcel and carries a delivery status.
+    - term: active order
+      means: An order with a shipment that is not yet delivered, cancelled or returned; most orders on a page are delivered, so only 0 to 3 are active.
+    - term: functional requirement
+      means: What the shopper can see or do on the orders pages.
+    - term: non-functional requirement
+      means: How well the pages must work, one metric a line, tied to a target that can be checked.
+    - term: LCP
+      means: Largest Contentful Paint, when the largest piece of content shows; here it should be less than 2.5 s on a phone.
+    - term: CLS
+      means: Cumulative Layout Shift, how much content jumps under the reader; here a status that changes or grows must not push the cards below it.
+board:
+  keep: []
+  elements:
+    - { id: title, kind: note, label: "Design Amazon orders and tracking", at: [52, 0] }
+    - { id: requirements, kind: region, label: "Requirements", at: [1, 3], size: [57, 35] }
+    - { id: fr-heading, kind: note, label: "Functional", at: [2, 6], in: requirements }
+    - { id: fr-newest, kind: note, label: "newest first: date, total, ship-to, status per shipment", at: [2, 8], in: requirements }
+    - { id: fr-filter, kind: note, label: "filter by time range, switch between three tabs", at: [2, 10], in: requirements }
+    - { id: fr-search, kind: note, label: "search by product name or order number", at: [2, 12], in: requirements }
+    - { id: fr-pages, kind: note, label: "page by number; tab, range, search and page in the URL", at: [2, 14], in: requirements }
+    - { id: fr-live, kind: note, label: "an order on its way updates while the page is open", at: [2, 16], in: requirements }
+    - { id: fr-actions, kind: note, label: "only actions the status allows, a refusal shows why", at: [2, 18], in: requirements }
+    - { id: fr-detail, kind: note, label: "order detail: lines, totals, address, payment, timeline", at: [2, 20], in: requirements }
+    - { id: fr-again, kind: note, label: "Buy it again adds to the cart like the product page", at: [2, 22], in: requirements }
+    - { id: fr-invoice, kind: note, label: "a printable invoice", at: [2, 24], in: requirements }
+    - { id: fr-offline, kind: note, label: "offline, orders stay readable, actions need a connection", at: [2, 26], in: requirements }
+    - { id: nfr-heading, kind: note, label: "Non-functional", at: [33, 6], in: requirements }
+    - { id: nfr-lcp, kind: note, label: "LCP should be less than 2.5 s", at: [33, 8], in: requirements }
+    - { id: nfr-js, kind: note, label: "route JavaScript no more than 80 KB", at: [33, 10], in: requirements }
+    - { id: nfr-out, kind: note, label: "out for delivery, shown in no more than 2 min", at: [33, 12], in: requirements }
+    - { id: nfr-shipped, kind: note, label: "shipped or preparing, shown within 5 min", at: [33, 14], in: requirements }
+    - { id: nfr-hidden, kind: note, label: "zero requests while the tab is hidden", at: [33, 16], in: requirements }
+    - { id: nfr-304, kind: note, label: "unchanged checks: all answered with 304", at: [33, 18], in: requirements }
+    - { id: nfr-terminal, kind: note, label: "no polling at terminal statuses", at: [33, 20], in: requirements }
+    - { id: nfr-409, kind: note, label: "409s shown with the new status: all of them", at: [33, 22], in: requirements }
+    - { id: nfr-dupes, kind: note, label: "zero duplicate cancels", at: [33, 24], in: requirements }
+    - { id: nfr-cls, kind: note, label: "CLS should stay below 0.1", at: [33, 26], in: requirements }
+    - { id: nfr-wcag, kind: note, label: "should meet WCAG 2.2 AA at least", at: [33, 28], in: requirements }
+    - { id: nfr-announce, kind: note, label: "no more than one polite announcement per batch", at: [33, 30], in: requirements }
+    - { id: nfr-locale, kind: note, label: "locales: every supported one, right to left too", at: [33, 32], in: requirements }
+    - { id: nfr-storage, kind: note, label: "zero order data in browser storage", at: [33, 34], in: requirements }
+    - { id: nfr-private, kind: note, label: "responses marked Cache-Control private", at: [33, 36], in: requirements }
+    - { id: as-heading, kind: note, label: "Assumptions", at: [2, 30], in: requirements }
+    - { id: as-pages, kind: note, label: "10 orders a page, 0 to 3 of them active", at: [2, 31], in: requirements, tone: amber }
+    - { id: as-wait, kind: note, label: "base wait 5 min, 2 min out for delivery", at: [2, 32], in: requirements, tone: amber }
+    - { id: as-longest, kind: note, label: "longest wait no more than 4 times the base", at: [2, 33], in: requirements, tone: amber }
+    - { id: scope-out, kind: note, label: "out: courier map, returns wizard, reviews", at: [2, 35], in: requirements, tone: grey }
+    - { id: scope-out-more, kind: note, label: "out: notifications, placing the order", at: [2, 36], in: requirements, tone: grey }
+  arrows: []
+  lists:
+    - { id: fr-list, in: requirements, at: [2, 8], step: 2, slots: 11, width: 30, items: [fr-newest, fr-filter, fr-search, fr-pages, fr-live, fr-actions, fr-detail, fr-again, fr-invoice, fr-offline] }
+    - { id: nfr-list, in: requirements, at: [33, 8], step: 2, slots: 15, width: 24, items: [nfr-lcp, nfr-js, nfr-out, nfr-shipped, nfr-hidden, nfr-304, nfr-terminal, nfr-409, nfr-dupes, nfr-cls, nfr-wcag, nfr-announce, nfr-locale, nfr-storage, nfr-private] }
+beats:
+  - point: "The prompt is the orders pages of an Amazon-like store, Your Orders and the order detail; the server is a black box that owns every status and rule, so what we design is the UI in the browser."
+    kind: rule
+    weight: core
+    teach:
+      - "Write the title: design Amazon orders and tracking, meaning Your Orders and the order page of an Amazon-like store."
+      - "We treat the server as a black box: it owns every status and every rule. We design the UI that runs in the browser."
+      - Two or three sentences, no question, and nothing about how the board is laid out; the learner sees that from the board itself.
+    draw: [title]
+  - point: "A few questions shape the design; the one that matters most is where a delivery status lives: on the shipment, because one order can split into shipments that move independently."
+    kind: requirement
+    weight: core
+    teach:
+      - "Ask a few questions before writing anything. The one that shapes the design most is where a delivery status lives: on the shipment, not the order. One order can split into parcels that travel on their own, so a card needs a status line for each."
+      - "We also assume how fresh a status must be: within one polling interval while the page is visible, about 2 minutes once out for delivery and 5 before, since carriers scan only a few times a day."
+    draw: [requirements]
+    check: "Where does a delivery status live, on the order or on each shipment, and why?"
+    answer: "On the shipment; one order can split into shipments that move independently, so each gets its own status line."
+    misconceptions:
+      - "An order has one status -> an order can split into shipments that move on their own; status lives on each shipment."
+  - point: "Functional, first half: orders newest first with date, total, ship-to and a status per shipment; filter by time range and switch tabs; search by product or order number; numbered pages with everything in the URL; and an order on its way updates while the page is open."
+    kind: requirement
+    weight: core
+    teach:
+      - "Write the functional list as plain numbered lines. Orders come newest first, each with its date, total, ship-to and a delivery status for every shipment."
+      - "The shopper filters by time range (30 days, 3 months, a year or all time) and switches between three tabs: Orders, Buy again and Not yet shipped. Search finds an order by product name or order number."
+      - "History pages by number. Tab, range, search and page all live in the URL, so they survive a reload, Back and a shared link. And an order that is on its way updates while the page is open."
+    draw: [fr-heading, fr-newest, fr-filter, fr-search, fr-pages, fr-live]
+    check: "Why keep the tab, range, search and page in the URL?"
+    answer: "So the view survives a reload and Back, and a shared link opens the same page."
+  - point: "Second half: only the actions the status allows, and a refusal explains itself with the new status; an order detail page; Buy it again adds to the cart as the product page does; a printable invoice; and offline, shown orders stay readable."
+    kind: requirement
+    weight: core
+    teach:
+      - "The shopper sees only the actions the status allows. When the server refuses one anyway, the refusal says why and shows the new status."
+      - "Opening an order shows its lines, totals, address, payment and a shipment timeline. Buy it again adds to the cart exactly as the product page does, and the invoice can be printed."
+      - "Offline, the orders already shown stay readable, and the actions say they need a connection."
+    draw: [fr-actions, fr-detail, fr-again, fr-invoice, fr-offline]
+    check: "The shopper presses Cancel, but the parcel has just left and the server refuses. What should the page show?"
+    answer: "Why it was refused and the shipment's new status, not a generic error."
+    misconceptions:
+      - "A refused action is just an error message -> the refusal explains itself and the card shows the new status."
+  - point: "Non-functional, one metric a line with its target: LCP less than 2.5 s, route JavaScript no more than 80 KB; a change shown within 2 minutes out for delivery, 5 before; zero requests while hidden, 304 for unchanged checks, no polling at terminal statuses."
+    kind: metric
+    weight: core
+    teach:
+      - "One metric per line, each tied to its number. LCP should be less than 2.5 seconds, so the first page reads quickly on a phone. Route JavaScript no more than 80 KB."
+      - "Freshness: out for delivery, a change shows in no more than 2 minutes; shipped or preparing, within 5."
+      - "Server cost: zero requests while the tab is hidden, every unchanged check answered with 304, and no polling at terminal statuses. Staying fresh should cost almost nothing when nothing changes, and nothing when nobody looks."
+    draw: [nfr-heading, nfr-lcp, nfr-js, nfr-out, nfr-shipped, nfr-hidden, nfr-304, nfr-terminal]
+    check: "Which three lines keep the server's cost of freshness down?"
+    answer: "Zero requests while the tab is hidden, unchanged checks answered with 304, and no polling at terminal statuses."
+  - point: "Then correctness, stability, access, locales and privacy: every 409 shows the new status, zero duplicate cancels; CLS below 0.1; WCAG 2.2 AA, at most one polite announcement a batch; every supported locale; no order data in browser storage, responses private."
+    kind: metric
+    weight: core
+    teach:
+      - "Every refusal, a 409, shows the new status, and there are zero duplicate cancels; a refusal must never look like a generic error. CLS should stay below 0.1, so a status that grows never pushes the cards below it."
+      - "WCAG 2.2 AA at least, with no more than one polite announcement per batch of changes. Every supported locale, right to left too: dates, money and plurals follow the locale, and a delivery date never moves a day across time zones."
+      - "Zero order data in browser storage, and responses marked Cache-Control private, so nothing outlives the session on a shared computer."
+    draw: [nfr-409, nfr-dupes, nfr-cls, nfr-wcag, nfr-announce, nfr-locale, nfr-storage, nfr-private]
+    check: "Why should no order data go to browser storage?"
+    answer: "So order data never outlives the session on a shared computer."
+  - point: "Write the working numbers: 10 orders a page with page 1 rendered on the server; 0 to 3 active orders on a page, since most are delivered; a base wait of 5 minutes once shipped, 2 once out for delivery, and at most 4 times the base after unchanged checks."
+    kind: metric
+    weight: supporting
+    teach:
+      - "Ten orders a page, and the first page is rendered on the server. Only 0 to 3 of them are active, because most orders are already delivered."
+      - "The base wait between checks is 5 minutes for a shipped order and 2 once it is out for delivery. After checks that find nothing new, the longest wait is 4 times the base."
+    draw: [as-heading, as-pages, as-wait, as-longest]
+    check: "Why are only 0 to 3 orders on a page active?"
+    answer: "Most orders are already delivered, so only a few on any page are still on their way."
+  - point: "Say the scope out loud: the list with tabs, range, search and pages, cards with a status per shipment, the detail and timeline, fresh statuses, gated actions, Buy it again and the invoice; courier map, returns wizard, reviews, notifications and checkout are out."
+    kind: rule
+    weight: supporting
+    teach:
+      - "In scope: Your Orders with its tabs, range, search and pages; order cards with a status per shipment; the order detail and its timeline; keeping active statuses fresh; status-gated actions and their races; Buy it again through the cart store; the printable invoice."
+      - "Out: carrier integration and a live courier map, which is the carrier's black box; the returns wizard and labels, which this page only offers; writing reviews; email and app notifications, a backend service; and placing the order, which belongs to checkout and payment."
+    draw: [scope-out, scope-out-more]
+    check: "The interviewer asks for a live map of the courier. What fits the plan?"
+    answer: "Say it is out of scope, the carrier's black box, and keep going."
+asks:
+  - list: fr-list
+    beats: [3, 4]
+    question: "What should Your Orders let the shopper do? Tell me one at a time, and I'll write them down."
+    hints:
+      - Think about why someone opens their orders, and how they find an old one.
+      - And what they can do to an order while it is on its way?
+  - list: nfr-list
+    beats: [5, 6]
+    question: "Now, how well should it work? Name a quality, and a number if you have one in mind."
+    hints:
+      - Think about the first load on a phone, and how fresh a delivery status must be.
+      - And what keeping it fresh costs the server, and who else must be able to use the page?
+task:
+  prompt: "Write the functional and non-functional lists as numbered lines of plain text, one fact a line, with a measurable target on every non-functional line, then the working numbers."
+  expects: [3, 4, 5, 6]

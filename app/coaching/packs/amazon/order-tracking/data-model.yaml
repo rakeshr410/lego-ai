@@ -1,0 +1,140 @@
+# Orders and tracking interview, data model: what an OrderCard reads, written as one nested order, then normalized into OrdersStore written as JSON that grows key by key (orders and shipments by id, list pages by query, pending actions), the client-only state, and how long each order stays fresh.
+id: amazon/order-tracking/data-model
+title: Derive the state, then normalize it
+source:
+  hash: "8dfdfc6256d8"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: amazon/order-tracking/high-level-design
+  assumes:
+    - "An OrderCard shows one order, its date, total and ship-to, and a status line per shipment with the buttons its status allows."
+    - "OrdersStore holds what the cards read; StatusPoller watches active orders on screen; OrderActions sends a cancel."
+    - "A shipment's status is a server-owned state machine, from placed to delivered, cancelled or returned."
+  carries:
+    - "State is derived from the components: an OrderCard reads one order (date, total, ship-to) with each shipment's status, estimate and items; the page response sends shipments inline."
+    - "OrdersStore keeps orders and shipments by id, stored once whichever page or search brought them in; an order points to its shipments by id."
+    - "List pages are kept by query (tab, range, search, page) and hold only ids, with the total, page count and as_of."
+    - "Client only: one pending action per shipment with its idempotency key; StatusPoller's watched ids, ETag, wait and failures; one announcement per check."
+    - "fresh_until comes from the least settled shipment: 0 s cancel requested, 30 s active, 1 h delivered, the session once final; list pages 60 s."
+  terms:
+    - term: normalized store
+      means: A store where each order and shipment is kept once in a map by id, and records refer to each other by id instead of nesting.
+    - term: fresh_until
+      means: The time until which the store trusts an order without asking the server, set from its least settled shipment.
+    - term: query key
+      means: The tab, range, search and page that name one list page in the store.
+    - term: least settled shipment
+      means: The order's shipment whose status the store can trust for the shortest time; it sets fresh_until for the whole order.
+board:
+  keep: [title, requirements, fr-heading, fr-newest, fr-filter, fr-search, fr-pages, fr-live, fr-actions, fr-detail, fr-again, fr-invoice, fr-offline, nfr-heading, nfr-lcp, nfr-js, nfr-out, nfr-shipped, nfr-hidden, nfr-304, nfr-terminal, nfr-409, nfr-dupes, nfr-cls, nfr-wcag, nfr-announce, nfr-locale, nfr-storage, nfr-private, as-heading, as-pages, as-wait, as-longest, scope-out, scope-out-more, mock-up, mk-screen, mk-tabs, mk-search, mk-range, mk-count, mk-blender, mk-head, mk-status, mk-buttons, mk-skillet, mk-socks, mk-lamp, mk-pages, components, c-orders-page, c-order-card, page-to-card, c-status-line, c-action-buttons, c-order-detail, c-store, page-to-store, store-to-card, c-poller, card-to-poller, c-service, poller-to-service, service-to-store, c-api, service-to-api, c-actions, card-to-actions, actions-to-service, c-cart, actions-to-cart, status, st-placed, st-preparing, st-shipped, st-out, st-delivered, a-place-prep, a-prep-ship, a-ship-out, a-out-del, st-cancelled, a-place-cancel, st-cancel-req, a-prep-req, a-req-cancel, a-req-ship, st-exception, a-out-exc, st-returned, a-del-ret, st-actions-note, st-proposes, st-base-note, st-req-note, st-stop-note]
+  elements:
+    - { id: state, kind: region, label: "State", at: [1, 40], size: [57, 23] }
+    - { id: naive, kind: region, label: "what an OrderCard reads", at: [2, 42], size: [21, 6], in: state, tone: red }
+    - { id: need-order, kind: note, label: "order: { placed_at, total, ship_to_name,", at: [3, 44], in: naive }
+    - { id: need-shipments, kind: note, label: "shipments: [ { status, eta,", at: [5, 45], in: naive }
+    - { id: need-items, kind: note, label: "items } ] }", at: [7, 46], in: naive }
+    - { id: naive-note, kind: note, label: "the same order copied into every page and search", at: [2, 49], in: state, tone: red }
+    - { id: store, kind: region, label: "OrdersStore, normalized", at: [30, 42], size: [27, 19], in: state, tone: amber }
+    - { id: js-orders, kind: note, label: "{ orders: { W4-58213: { placed_at, total,", at: [31, 44], in: store }
+    - { id: js-order-more, kind: note, label: "ship_to_name, shipment_ids, etag,", at: [35, 45], in: store }
+    - { id: js-order-end, kind: note, label: "fetched_at, fresh_until } },", at: [35, 46], in: store }
+    - { id: js-shipments, kind: note, label: "shipments: { shipment_id: { order_id, status,", at: [33, 47], in: store }
+    - { id: js-shipments-more, kind: note, label: "status_changed_at, eta, delivered_at,", at: [37, 48], in: store }
+    - { id: js-shipments-end, kind: note, label: "return_by, items } },", at: [37, 49], in: store }
+    - { id: js-pages, kind: note, label: "pages: { query_key: { ids, total_count,", at: [33, 50], in: store }
+    - { id: js-pages-more, kind: note, label: "page_count, as_of, fetched_at } },", at: [37, 51], in: store }
+    - { id: js-pending, kind: note, label: "pendingActions: { shipment_id: { kind: cancel,", at: [33, 52], in: store }
+    - { id: js-pending-more, kind: note, label: "idempotency_key, state } } }", at: [37, 53], in: store }
+    - { id: fresh-req, kind: note, label: "cancel requested: fresh 0 s, every render checks", at: [31, 55], in: store, tone: green }
+    - { id: fresh-active, kind: note, label: "fresh 30 s while active, 1 h once delivered", at: [31, 56], in: store, tone: green }
+    - { id: fresh-final, kind: note, label: "cancelled or returned: kept for the session", at: [31, 57], in: store, tone: green }
+    - { id: fresh-pages, kind: note, label: "list pages hold ids only, fresh for 60 s", at: [31, 58], in: store, tone: green }
+    - { id: client, kind: region, label: "client only", at: [2, 51], size: [26, 7], in: state, tone: amber }
+    - { id: poll-watch, kind: note, label: "StatusPoller: { watched, etag, wait_ms,", at: [3, 53], in: client }
+    - { id: poll-more, kind: note, label: "last_check_at, failures }", at: [5, 54], in: client }
+    - { id: announce, kind: note, label: "announcement: { text, order_ids }", at: [3, 56], in: client }
+  arrows:
+    - { id: normalize, from: naive, to: store, label: normalize }
+beats:
+  - point: "Derive the state from the components: an OrderCard reads one order, its date, total and ship-to name, and for each shipment its status, delivery estimate and items; the page response sends each order this way, shipments inline."
+    kind: component
+    weight: core
+    teach:
+      - "Start from the components we just drew, not from a store shape. Each OrderCard needs one order, so write what it reads as JSON, a key at a time."
+      - "The order's placed date, its total and the ship-to name for the card's header. Then its shipments, each with a status for the status line, a delivery estimate, and the items."
+      - "The page response sends each order like this, shipments inline, along with its id and ETag, plus the page number, page count, total count and as_of."
+    draw: [state, naive, need-order, need-shipments, need-items]
+    check: "Where do you start when deciding the client's state?"
+    answer: "From the components: walk them and write down what each one reads."
+  - point: "Kept as each response sends it, the same order arrives on page 1 and again from a search, so it is held twice and a fresher status on one copy leaves the other behind."
+    kind: failure
+    weight: supporting
+    teach:
+      - "That shape works for one page. But the blender is on page 1 and turns up again in a search for blender, so it is held twice."
+      - "When the poller learns it is out for delivery, one copy changes and the other still says shipped."
+    draw: [naive-note]
+    check: "In the nested shape, what goes wrong when the same order is on a page and in a search result?"
+    answer: "It is held twice, so a newer status on one copy leaves the other copy stale."
+  - point: "Normalize: OrdersStore keeps orders and shipments by id, each stored once whichever page or search brought it in; an order points to its shipments by id and carries its ETag, fetched_at and fresh_until, and the shipment is the unit that has a status."
+    kind: decision
+    weight: core
+    teach:
+      - "So normalize, splitting each response into records by id. Open the store and add orders by id: the blender's order keeps its placed date and total (minor units plus a currency), the ship-to name, its shipment ids, its ETag, when it was fetched and until when it is fresh."
+      - "Then shipments by id, the unit that has a status: its order id, the status and when it last changed, its estimate as a date-only range, when it was delivered, the return-by date and its items."
+      - "Now the search result and page 1 point at one blender, and a new status is one write that every card showing it reads."
+    draw: [store, normalize, js-orders, js-order-more, js-order-end, js-shipments, js-shipments-more, js-shipments-end]
+    check: "The blender goes out for delivery. In the normalized store, what changes?"
+    answer: "One shipment record under shipments; every card showing the blender reads it from there."
+    misconceptions:
+      - "Status belongs on the order record -> the shipment is the unit with a status; an order lists its shipment ids."
+  - point: "List pages are their own key, kept by query (tab, range, search and page): each holds only the ids in order, the total and page count, the as_of time and when it was fetched; the cards read the orders from the store."
+    kind: component
+    weight: core
+    teach:
+      - "The list's order is not a property of any order, so it gets its own key: pages, one entry per query key, made of tab, range, search and page."
+      - "Each holds the ids in order, the total count, the page count, the as_of time from the server, and when it was fetched. Ids only: the cards read the orders from the store, so a fresher copy of an order always wins."
+    draw: [js-pages, js-pages-more]
+    check: "Why does a list page hold only ids?"
+    answer: "So each order is kept once; the cards read it from the store, and the freshest copy wins whichever page shows it."
+  - point: "Some state is the client's own: one pending action per shipment with its idempotency key and state; StatusPoller's watched ids, ETag for that id set, wait, last check and failures; and one announcement per check."
+    kind: component
+    weight: core
+    teach:
+      - "Close the store with pendingActions by shipment: at most one, of kind cancel, with its idempotency_key and whether it is in flight or failed. The server never sends this; it is the client's own."
+      - "Beside the store, StatusPoller keeps one poll state per page: the watched order ids, the ETag for that exact set of ids, the current wait, the last check and the count of failures."
+      - "And an announcement, batched per check: its text and the order ids it is about."
+    draw: [js-pending, js-pending-more, client, poll-watch, poll-more, announce]
+    check: "Which of these never comes from the server: a shipment's status, a pending action, or the poller's wait?"
+    answer: "The pending action and the poller's wait; they are client-only state."
+  - point: "fresh_until follows the least settled shipment: 0 s while a cancel is requested, 30 s while active, 1 h once delivered, the session once final, 60 s for a list page; a fresh order renders with no request, a stale one renders at once and revalidates."
+    kind: mechanism
+    weight: core
+    teach:
+      - "How long the store trusts an order depends on its least settled shipment. While a cancel is requested, 0 seconds: a decision is pending, so every render checks. Placed through out for delivery, or after a failed attempt, 30 seconds, because the warehouse and the carrier change it."
+      - "Delivered, an hour: only the shopper's own return changes it, through this client. Cancelled or returned are final, kept until a reload or sign-out. A list page is fresh for 60 seconds."
+      - "A fresh order renders from the store with no request. A stale one still renders at once, then revalidates with its ETag."
+    draw: [fresh-req, fresh-active, fresh-final, fresh-pages]
+    check: "The store fetched the socks' order 20 minutes ago, and the list renders its card again. Does it ask the server?"
+    answer: "No. A delivered order is trusted for an hour after it was fetched, so the card renders from the store."
+    misconceptions:
+      - "A stale order shows a spinner until it is fetched again -> it renders at once from the store and revalidates with its ETag."
+  - point: "One field, the shipment's status, drives four decisions: which buttons show, whether it is polled, how long the store trusts it, and how a change is announced."
+    kind: rule
+    weight: supporting
+    teach:
+      - "Point at the status key on the shipment. It picks the buttons, decides whether the poller watches it, sets fresh_until, and shapes the announcement when it changes."
+    check: "Name the four things a shipment's status decides."
+    answer: "The buttons shown, whether it is polled, how long the store trusts it, and how a change is announced."
+asks:
+  - ids: [need-order, need-shipments, need-items]
+    beats: [1]
+    question: "Walk the components: what does one OrderCard need to read? Name the fields and I'll write them as JSON."
+    hints:
+      - Look at the card's header. What does it show about the order?
+      - And the status lines, one per shipment?
+task:
+  prompt: "Write OrdersStore as JSON: orders and shipments by id, list pages by query, pending actions by shipment, then the poller's state and how long each order stays fresh."
+  expects: [3, 4, 5, 6]

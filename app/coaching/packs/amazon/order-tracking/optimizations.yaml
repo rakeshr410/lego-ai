@@ -1,0 +1,156 @@
+# Orders and tracking interview, optimizations: the five deep dives the rubric picks, each in its own area. The polling budget (filters that decide whether a request goes out, then how often, and what it saves for one tab and across every open tab), status-gated actions and their races, accessibility of status and timeline, dates, money and locales, security and privacy, then the loading, empty and offline states. The keep leaves out the functional lines, the first state sketch and most of the mock-up, to stay within 120 ids.
+id: amazon/order-tracking/optimizations
+title: Fresh for almost nothing, and honest buttons
+source:
+  hash: "e881133d9220"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: amazon/order-tracking/interface-definition
+  assumes:
+    - "Targets: zero requests while hidden, 304 for unchanged checks, no polling at terminal statuses; every 409 shows the new status, zero duplicate cancels; WCAG 2.2 AA, CLS below 0.1."
+    - "StatusPoller sends one batched GET /api/orders/status with If-None-Match; base wait 5 min, 2 min out for delivery, 30 s cancel requested."
+    - "POST /api/orders/{id}/cancel carries an Idempotency-Key and answers 200, 202 or 409 with the current shipment."
+    - "OrdersPage owns the one polite live region; OrderCard reports whether it is on screen."
+  carries:
+    - "A request goes out only while the tab is visible, only for cards on screen, and only for active statuses."
+    - "One batched GET per page; 304 with no body when unchanged; each 304 doubles the wait up to 4 times the base; failures back off with jitter."
+    - "One tab open an hour: 120 requests at a fixed 30 s, 40 paused while hidden, about 2 with backoff; across 400,000 tabs, about 13,300 a second becomes about 190."
+    - "One allowedActions table, a 409 that carries the truth, focus to the card heading, one pending action and one key per cancel."
+    - "Timeline as an ordered list, one polite message per check; estimates formatted in UTC; ownership checked on the server, nothing in browser storage."
+    - "Edge states: skeletons only on a client navigation with nothing cached; an empty search offers all time; offline keeps the last update time."
+  terms:
+    - term: catch-up check
+      means: The check StatusPoller makes at once when the tab becomes visible and the last check is older than the base wait.
+    - term: jitter
+      means: A random share of the backoff wait, so tabs that failed together do not all retry at the same moment.
+    - term: date-only estimate
+      means: A delivery estimate sent as a calendar date, not an instant, and formatted in UTC so it never moves a day.
+board:
+  keep: [title, requirements, nfr-heading, nfr-lcp, nfr-js, nfr-out, nfr-shipped, nfr-hidden, nfr-304, nfr-terminal, nfr-409, nfr-dupes, nfr-cls, nfr-wcag, nfr-announce, nfr-locale, nfr-storage, nfr-private, as-heading, as-pages, as-wait, as-longest, mock-up, mk-screen, mk-skillet, mk-socks, mk-lamp, components, c-orders-page, c-order-card, page-to-card, c-status-line, c-action-buttons, c-order-detail, c-store, page-to-store, store-to-card, c-poller, card-to-poller, c-service, poller-to-service, service-to-store, c-api, service-to-api, c-actions, card-to-actions, actions-to-service, c-cart, actions-to-cart, status, st-placed, st-preparing, st-shipped, st-out, st-delivered, a-place-prep, a-prep-ship, a-ship-out, a-out-del, st-cancelled, a-place-cancel, st-cancel-req, a-prep-req, a-req-cancel, a-req-ship, st-exception, a-out-exc, st-returned, a-del-ret, st-actions-note, st-proposes, st-base-note, st-req-note, st-stop-note, state, store, js-orders, js-order-more, js-order-end, js-shipments, js-shipments-more, js-shipments-end, js-pages, js-pages-more, js-pending, js-pending-more, fresh-req, fresh-active, fresh-final, fresh-pages, client, poll-watch, poll-more, announce, api, if-transport, if-reads, if-get-orders, if-orders-res1, if-orders-res2, if-orders-res3, if-get-order, if-order-res, if-order-res2, if-order-304, if-order-404, if-error-shape, if-error-note, if-status, if-get-status, if-status-etag, if-status-res1, if-status-res2, if-status-304, if-cancel, if-post-cancel, if-cancel-key, if-cancel-200, if-cancel-202, if-cancel-409]
+  elements:
+    - { id: opt, kind: region, label: "Optimizations", at: [1, 65], size: [57, 32] }
+    - { id: opt-rubric, kind: note, label: "deep dives: polling, races, access, dates, privacy", at: [2, 67], in: opt }
+    - { id: opt-poll, kind: region, label: "Polling budget", at: [2, 69], size: [55, 10], in: opt, tone: green }
+    - { id: opt-visible, kind: box, label: "tab visible", at: [3, 71], size: [8, 2], in: opt-poll, tone: green }
+    - { id: opt-onscreen, kind: box, label: "card on screen", at: [12, 71], size: [9, 2], in: opt-poll, tone: green }
+    - { id: opt-active, kind: box, label: "active status", at: [22, 71], size: [9, 2], in: opt-poll, tone: green }
+    - { id: opt-batched, kind: box, label: "one batched GET", at: [32, 71], size: [10, 2], in: opt-poll, tone: green }
+    - { id: opt-304, kind: box, label: "304, no body", at: [43, 71], size: [8, 2], in: opt-poll, tone: green }
+    - { id: opt-doubling, kind: note, label: "a 304 doubles the wait, up to 4 times base", at: [3, 74], in: opt-poll }
+    - { id: opt-backoff, kind: note, label: "errors back off with jitter, after Retry-After", at: [30, 74], in: opt-poll }
+    - { id: opt-per-tab, kind: note, label: "one tab an hour: 120 fixed, 40 paused, about 2 backing off", at: [3, 75], in: opt-poll }
+    - { id: opt-naive, kind: note, label: "fixed 30 s polling: about 13,300 requests a second", at: [3, 76], in: opt-poll, tone: red }
+    - { id: opt-ours, kind: note, label: "this design: about 190, some 70 times fewer", at: [30, 76], in: opt-poll, tone: green }
+    - { id: opt-races, kind: region, label: "Races", at: [2, 81], size: [27, 6], in: opt }
+    - { id: opt-one-table, kind: note, label: "one allowedActions table for list and detail", at: [3, 83], in: opt-races }
+    - { id: opt-409, kind: note, label: "409 applies the new status, focus to the heading", at: [3, 84], in: opt-races }
+    - { id: opt-pending, kind: note, label: "one pending cancel, same Idempotency-Key", at: [3, 85], in: opt-races }
+    - { id: opt-access, kind: region, label: "Accessibility", at: [30, 81], size: [27, 6], in: opt }
+    - { id: opt-timeline, kind: note, label: "timeline as a list, aria-current on one step", at: [31, 83], in: opt-access }
+    - { id: opt-polite, kind: note, label: "one polite message per check, focus never moved", at: [31, 84], in: opt-access }
+    - { id: opt-locale, kind: region, label: "Dates and locales", at: [2, 89], size: [27, 6], in: opt }
+    - { id: opt-dates, kind: note, label: "date-only estimates formatted in UTC", at: [3, 91], in: opt-locale }
+    - { id: opt-words, kind: note, label: "today and tomorrow in words, money in minor units", at: [3, 92], in: opt-locale }
+    - { id: opt-rtl, kind: note, label: "right to left through logical properties", at: [3, 93], in: opt-locale }
+    - { id: opt-security, kind: region, label: "Security and privacy", at: [30, 89], size: [27, 6], in: opt }
+    - { id: opt-owner, kind: note, label: "ownership checked on every read and write", at: [31, 91], in: opt-security }
+    - { id: opt-csrf, kind: note, label: "SameSite cookies and a CSRF token on POSTs", at: [31, 92], in: opt-security }
+    - { id: opt-storage, kind: note, label: "nothing in browser storage, responses private", at: [31, 93], in: opt-security }
+    - { id: opt-edge, kind: note, label: "edge states: skeletons, search all time, last updated", at: [2, 96], in: opt }
+  arrows: []
+beats:
+  - point: "Rate each area on impact, users affected and how often it matters, and dive into the top five, the polling budget first; a request goes out only while the tab is visible, only for cards on screen, and only for orders whose status is still active."
+    kind: mechanism
+    weight: core
+    teach:
+      - "The hard parts are what staying fresh costs, actions that race the warehouse, and a status that changes while someone reads or listens. Score each area 1 to 3 on impact, users affected and how often it matters, and take the top five. The polling budget scores highest, because naive polling multiplies load by every idle tab."
+      - "First, whether a request goes out at all. Only while the tab is visible: the timer is cleared when the tab is hidden or the page is left, and on return it checks at once if the last check is older than the base wait. A tab left open overnight asks nothing."
+      - "Only cards on screen: an IntersectionObserver on each active card unwatches it once it scrolls away. Only active statuses: terminal ones have no base wait, so they are never watched."
+    draw: [opt, opt-rubric, opt-poll, opt-visible, opt-onscreen, opt-active]
+    check: "The shopper leaves the tab hidden for 17 minutes. What goes out, and what happens on return?"
+    answer: "Nothing while hidden; on return the last check is older than the base wait, so the poller checks at once."
+    misconceptions:
+      - "The browser already throttles hidden tabs, so nothing is needed -> the poller clears its own timer; throttling is browser policy, not design."
+  - point: "Then how often: one batched GET per page on one timer at the smallest base; an unchanged answer is a 304 with no body; each 304 doubles the wait up to 4 times the base and any change resets it; failures back off with jitter, never before Retry-After."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Three active cards make one request, not three: one GET for the sorted ids, on one timer that uses the smallest base among them."
+      - "It sends the set's last ETag in If-None-Match, so a check that finds nothing new downloads nothing. A parcel resting at a hub for two days needs no check every 5 minutes: each 304 doubles the wait, up to 4 times the base, and any change brings it back to the base."
+      - "When the server is struggling, the open tabs must not all hit it together: back off exponentially with jitter, up to 10 minutes, and never sooner than Retry-After."
+    draw: [opt-batched, opt-304, opt-doubling, opt-backoff]
+    check: "A parcel sits at a hub for two days. How does the poller avoid checking it every 5 minutes?"
+    answer: "Each 304 doubles the wait, up to 4 times the base, so 20 minutes; any change resets it to the base."
+  - point: "In numbers: one tab with a shipped order, open an hour and visible for 20 minutes, makes 120 requests on a fixed 30 s poll, 40 when paused while hidden, about 2 with backoff; across 400,000 tabs, about 13,300 a second becomes about 190."
+    kind: metric
+    weight: core
+    teach:
+      - "Start with one tab holding a shipped order, open an hour and visible for 20 minutes. A fixed 30 second poll makes 120 requests; pausing while hidden cuts that to 40; backing off from 5 minutes, about 2."
+      - "Across the fleet, assume 400,000 orders tabs open at peak: a fixed 30 second poll is about 13,300 requests a second. Half show an active order on screen and 35 percent of those are visible, so 70,000 tabs poll at all; at an average wait of 6 minutes that is about 190 a second, some 70 times fewer."
+      - "Most of the saving comes from not asking, rather than from a longer interval, and most of what is left are 304s with no body."
+    draw: [opt-per-tab, opt-naive, opt-ours]
+    check: "Where does most of the saving come from?"
+    answer: "From not asking at all, in hidden tabs and for orders nobody is looking at, rather than from the interval."
+  - point: "Actions race the warehouse: one allowedActions function for list and detail; a 409 carries the current shipment, which the store applies, with a message chosen by its code; focus moves to the card heading; one pending action per shipment and one Idempotency-Key per cancel stop a double cancel."
+    kind: mechanism
+    weight: core
+    teach:
+      - "allowedActions is one pure function of the status plus two facts from the server, the return-by date and whether the address is locked. Both pages use it, so the list can't offer Cancel while the order page doesn't."
+      - "On a refusal the store applies the shipment that came with the 409, and the card picks its message by the error code instead of showing the server's wording. The pressed button is gone, so focus moves to the card heading and the message is announced politely."
+      - "A double click or a retry must not send two cancels: one pending action per shipment disables its buttons, and every attempt reuses the same key until it settles."
+    draw: [opt-races, opt-one-table, opt-409, opt-pending]
+    check: "The shopper double-clicks Cancel. Why does only one cancel happen?"
+    answer: "The first click records the shipment's one pending action, which disables its buttons, and every attempt reuses the same Idempotency-Key until it settles."
+    misconceptions:
+      - "Show the server's error text -> the message is chosen by the error code, and the card shows the new status."
+  - point: "Status changes are accessible: the timeline is an ordered list with aria-current on exactly one step, badges say the status in words, one polite region present from the first render says one sentence per check that changed something, and polling never moves focus."
+    kind: rule
+    weight: core
+    teach:
+      - "A coloured bar tells a screen reader nothing. The timeline is an ordered list, one item per step, with aria-current step on exactly one, and CSS draws the bar from it. Badges name the status in words, not only in colour."
+      - "One role status region, there from the first render, speaks one sentence per check that changed something: 2 orders updated, blender out for delivery, skillet shipped. Cards update in place by key, so polling never takes focus; only the shopper's own action moves it."
+    draw: [opt-access, opt-timeline, opt-polite]
+    check: "Two orders change in one check. What does a screen reader user hear?"
+    answer: "One polite sentence for the batch, naming both changes; focus stays where it was."
+  - point: "A delivery date is a calendar date, not an instant: estimates arrive as dates and are formatted in UTC, or Tuesday turns into Monday west of UTC; near dates read as today and tomorrow; money comes in minor units with its currency; the timeline follows right to left."
+    kind: rule
+    weight: core
+    teach:
+      - "A date-only string parses as midnight UTC. Shown in local time, an estimate of Tuesday 13 October turns into Monday 12 for a shopper west of UTC, so the API sends estimates as dates and the client formats them in the UTC time zone."
+      - "Close to today, words beat dates: today and tomorrow, against the viewer's own date. Event times are instants, shown in the viewer's zone. Money comes as whole minor units with its currency, never as a floating-point number, and counts go through plural rules, so never 1 orders."
+      - "In Arabic or Hebrew the timeline must run the other way, so it uses logical properties, inline start and end, and follows the document's direction."
+    draw: [opt-locale, opt-dates, opt-words, opt-rtl]
+    check: "An estimate of Tuesday 13 October shows as Monday for a shopper west of UTC. What went wrong, and what is the fix?"
+    answer: "The date-only string was parsed as UTC midnight and shown in local time; format estimates with the UTC time zone."
+  - point: "Order ids in URLs are guessable, so the server checks ownership on every read and write and answers 404; a cancel needs SameSite=Lax cookies and a CSRF token; nothing goes to browser storage, responses are private, and sign-out clears the store."
+    kind: rule
+    weight: core
+    teach:
+      - "Changing W4-58213 to W4-58214 in the URL must not show a stranger's address: the server checks ownership on every read and write and answers 404. Against another site posting a cancel: SameSite=Lax session cookies and a CSRF token on every POST; the idempotency key replaces neither."
+      - "On a library computer, nothing goes to localStorage or IndexedDB, responses are private, no-cache, and sign-out clears the store. Telemetry carries action names and status codes, never search queries; the invoice is rendered on the server under the same checks, noindex and private."
+    draw: [opt-security, opt-owner, opt-csrf, opt-storage]
+    check: "Why does the Idempotency-Key not protect against a forged cancel?"
+    answer: "It only makes repeats safe; a forged POST is stopped by SameSite=Lax cookies and the CSRF token."
+  - point: "Loading, empty and offline states say what to do next: skeleton rows only on a client navigation with nothing cached, an empty search repeats the query and range and offers all time, and offline the shown orders keep their last update time while actions say they need a connection."
+    kind: rule
+    weight: supporting
+    teach:
+      - "Skeleton rows show only when a client navigation has nothing cached, such as picking 2025 as the range; they hold the cards' height and stay hidden from assistive tech while the list is busy."
+      - "A search with no match repeats the query and range and offers the same search across all time. Offline, the shown orders stay, marked with their last update time; polling pauses until the connection is back, and actions say they need one."
+    draw: [opt-edge]
+    check: "A search for a toaster in 2025 finds nothing. What should the page offer?"
+    answer: "It repeats the query and the range, and offers the same search across all time."
+asks:
+  - ids: [opt-visible, opt-onscreen, opt-active, opt-batched, opt-304]
+    beats: [1, 2]
+    frame: [opt, opt-rubric, opt-poll]
+    question: "Keeping statuses fresh could cost the server a lot. How would you keep the number of requests down? Name your ideas one at a time."
+    hints:
+      - When does nobody need an answer at all?
+      - And when a request does go out, how can it cost less?
+task:
+  prompt: "Draw the polling budget, the filters that decide whether a request goes out and what makes it cheap, then write the notes for races, accessibility, dates and privacy, each in its own area."
+  expects: [1, 2, 4, 5, 6]

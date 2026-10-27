@@ -1,0 +1,217 @@
+# Orders and tracking interview, high level design: drawn once the requirements are on the board. A mock-up of Your Orders first (only what the shopper sees; it comes after the requirements here because the article draws the screen in its high level design section), then the components derived from it (OrdersPage with its OrderCards, the order page, and OrdersStore, StatusPoller, OrderActions, OrdersService and CartStore behind them), one visit walked over them, then the shipment's status as a state machine that decides the buttons and the polling.
+id: amazon/order-tracking/high-level-design
+title: Components, then the status machine
+source:
+  hash: "f2b4df999653"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: amazon/order-tracking/requirements-exploration
+  assumes:
+    - "A delivery status lives on the shipment; a card shows one status line per shipment."
+    - "The requirements are written: only actions the status allows, live updates while the page is open, zero requests while hidden, 304 for unchanged checks, no polling at terminal statuses."
+    - "Base wait 5 min, 2 min out for delivery; 0 to 3 active orders on a page."
+  carries:
+    - "The mock-up: Your Orders with three tabs, search, a range, a count, a card per order (blender, skillet, socks, lamp) and page links; a card shows the order, a status line and its buttons."
+    - "The UI: OrdersPage (route /orders, URL query, the one polite live region) holding OrderCards (a ShipmentStatusLine per shipment, ActionButtons), and OrderDetailPage (/orders/{id})."
+    - "Behind the UI: OrdersStore (orders and shipments by id, pages by query), StatusPoller, OrderActions, OrdersService (the only HTTP caller) and the cart topic's CartStore; the Orders API is a black box."
+    - "OrdersPage loads a page from the store by query; cards never fetch: they read the store, ask the poller to watch them, and pass pressed buttons to OrderActions."
+    - "Page 2 carries page 1's as_of and a stable order (placed date, then id); a search goes into the URL, resets to page 1 and widens to all time."
+    - "Shipment status is a server-owned state machine: placed, preparing, shipped, out for delivery, delivered, with cancelled, cancellation requested, a failed delivery attempt and returned."
+    - "allowedActions(status) is one table for list and detail; the status sets the base wait (5 min, 2 out for delivery, 30 s cancel requested); delivered, cancelled, returned are never polled."
+  terms:
+    - term: OrdersStore
+      means: The client store holding orders and shipments by id, each with its ETag and a freshness deadline, and list pages by query.
+    - term: StatusPoller
+      means: Keeps active orders on screen fresh with one batched conditional request per page, paused while the tab is hidden.
+    - term: OrderActions
+      means: Derives the allowed actions from status, sends a cancel with an idempotency key, and turns a 409 into the new status plus an explanation.
+    - term: allowedActions
+      means: One pure table from a shipment's status (plus facts from the server) to the buttons a card or the order page shows.
+    - term: base wait
+      means: The poll interval a status sets; 5 minutes, 2 out for delivery, 30 seconds while a cancel is requested.
+board:
+  keep: [title, requirements, fr-heading, fr-newest, fr-filter, fr-search, fr-pages, fr-live, fr-actions, fr-detail, fr-again, fr-invoice, fr-offline, nfr-heading, nfr-lcp, nfr-js, nfr-out, nfr-shipped, nfr-hidden, nfr-304, nfr-terminal, nfr-409, nfr-dupes, nfr-cls, nfr-wcag, nfr-announce, nfr-locale, nfr-storage, nfr-private, as-heading, as-pages, as-wait, as-longest, scope-out, scope-out-more]
+  elements:
+    - { id: mock-up, kind: region, label: "Mock-up", at: [60, 3], size: [59, 30] }
+    - { id: mk-screen, kind: region, label: "Your Orders screen", at: [61, 5], size: [57, 27], in: mock-up }
+    - { id: mk-tabs, kind: box, label: "tabs: Orders, Buy again, Not yet shipped", at: [62, 7], size: [24, 2], in: mk-screen, tone: grey }
+    - { id: mk-search, kind: box, label: "search all orders", at: [87, 7], size: [14, 2], in: mk-screen, tone: grey }
+    - { id: mk-range, kind: box, label: "past 3 months", at: [102, 7], size: [14, 2], in: mk-screen, tone: grey }
+    - { id: mk-count, kind: note, label: "23 orders placed in the past 3 months", at: [62, 10], in: mk-screen }
+    - { id: mk-blender, kind: region, label: "blender order card", at: [62, 12], size: [55, 7], in: mk-screen }
+    - { id: mk-head, kind: box, label: "order number, date, total, ship-to", at: [63, 14], size: [21, 3], in: mk-blender, tone: blue }
+    - { id: mk-status, kind: box, label: "Shipped, arriving today by 8 PM", at: [85, 14], size: [18, 3], in: mk-blender, tone: blue }
+    - { id: mk-buttons, kind: box, label: "Track package, View order", at: [104, 14], size: [12, 3], in: mk-blender, tone: blue }
+    - { id: mk-skillet, kind: box, label: "skillet: preparing, arriving Tue 13 Oct, Cancel items", at: [62, 20], size: [55, 2], in: mk-screen }
+    - { id: mk-socks, kind: box, label: "socks: delivered, Return or replace, Buy it again, Invoice", at: [62, 23], size: [55, 2], in: mk-screen }
+    - { id: mk-lamp, kind: box, label: "lamp: cancelled and refunded, Buy it again", at: [62, 26], size: [55, 2], in: mk-screen }
+    - { id: mk-pages, kind: box, label: "Page 1 of 3, Next", at: [62, 29], size: [18, 2], in: mk-screen, tone: grey }
+    - { id: components, kind: region, label: "Components", at: [60, 35], size: [59, 30] }
+    - { id: c-orders-page, kind: box, label: "OrdersPage", at: [61, 38], size: [18, 3], in: components, tone: blue }
+    - { id: c-order-card, kind: region, label: "OrderCard", at: [61, 43], size: [18, 12], in: components, tone: blue }
+    - { id: c-status-line, kind: box, label: "ShipmentStatusLine", at: [62, 45], size: [16, 2], in: c-order-card }
+    - { id: c-action-buttons, kind: box, label: "ActionButtons", at: [62, 49], size: [16, 2], in: c-order-card }
+    - { id: c-order-detail, kind: box, label: "OrderDetailPage", at: [61, 58], size: [18, 3], in: components, tone: blue }
+    - { id: c-store, kind: oval, label: "OrdersStore", at: [86, 38], size: [13, 7], in: components, tone: amber }
+    - { id: c-poller, kind: box, label: "StatusPoller", at: [86, 47], size: [13, 3], in: components }
+    - { id: c-actions, kind: box, label: "OrderActions", at: [86, 52], size: [13, 3], in: components }
+    - { id: c-cart, kind: box, label: "CartStore", at: [86, 60], size: [13, 3], in: components, tone: grey }
+    - { id: c-service, kind: box, label: "OrdersService", at: [105, 38], size: [13, 17], in: components }
+    - { id: c-api, kind: box, label: "Orders API, black box", at: [105, 60], size: [13, 3], in: components, tone: grey }
+    - { id: status, kind: region, label: "Shipment status", at: [60, 67], size: [59, 17] }
+    - { id: st-placed, kind: box, label: "placed", at: [61, 70], size: [10, 3], in: status, tone: blue }
+    - { id: st-preparing, kind: box, label: "preparing", at: [73, 70], size: [10, 3], in: status, tone: blue }
+    - { id: st-shipped, kind: box, label: "shipped", at: [85, 70], size: [10, 3], in: status, tone: blue }
+    - { id: st-out, kind: box, label: "out for delivery", at: [97, 70], size: [10, 3], in: status, tone: blue }
+    - { id: st-delivered, kind: box, label: "delivered", at: [109, 70], size: [10, 3], in: status, tone: green }
+    - { id: st-cancelled, kind: box, label: "cancelled", at: [61, 75], size: [10, 3], in: status, tone: grey }
+    - { id: st-cancel-req, kind: box, label: "cancellation requested", at: [73, 75], size: [10, 3], in: status, tone: amber }
+    - { id: st-exception, kind: box, label: "delivery attempt failed", at: [97, 75], size: [10, 3], in: status, tone: red }
+    - { id: st-returned, kind: box, label: "returned", at: [109, 75], size: [10, 3], in: status, tone: grey }
+    - { id: st-actions-note, kind: note, label: "buttons come from allowedActions, one table for both pages", at: [61, 80], in: status }
+    - { id: st-proposes, kind: note, label: "the client proposes, the server decides", at: [91, 80], in: status }
+    - { id: st-base-note, kind: note, label: "the status sets the wait: 5 min, 2 out for delivery", at: [61, 81], in: status }
+    - { id: st-req-note, kind: note, label: "30 s while a cancellation is requested", at: [61, 82], in: status }
+    - { id: st-stop-note, kind: note, label: "delivered, cancelled and returned are never polled", at: [61, 83], in: status }
+  arrows:
+    - { id: page-to-card, from: c-orders-page, to: c-order-card }
+    - { id: page-to-store, from: c-orders-page, to: c-store, label: load page }
+    - { id: store-to-card, from: c-store, to: c-order-card, label: order }
+    - { id: card-to-poller, from: c-order-card, to: c-poller, label: watch }
+    - { id: poller-to-service, from: c-poller, to: c-service, label: statuses }
+    - { id: service-to-store, from: c-service, to: c-store, label: result }
+    - { id: service-to-api, from: c-service, to: c-api }
+    - { id: card-to-actions, from: c-order-card, to: c-actions, label: action }
+    - { id: actions-to-service, from: c-actions, to: c-service, label: cancel }
+    - { id: actions-to-cart, from: c-actions, to: c-cart, label: add line }
+    - { id: a-place-prep, from: st-placed, to: st-preparing }
+    - { id: a-prep-ship, from: st-preparing, to: st-shipped }
+    - { id: a-ship-out, from: st-shipped, to: st-out }
+    - { id: a-out-del, from: st-out, to: st-delivered }
+    - { id: a-place-cancel, from: st-placed, to: st-cancelled }
+    - { id: a-prep-req, from: st-preparing, to: st-cancel-req }
+    - { id: a-req-cancel, from: st-cancel-req, to: st-cancelled }
+    - { id: a-req-ship, from: st-cancel-req, to: st-shipped, dashed: true }
+    - { id: a-out-exc, from: st-out, to: st-exception, both: true }
+    - { id: a-del-ret, from: st-delivered, to: st-returned }
+beats:
+  - point: "With the requirements written, sketch what the shopper sees on Your Orders: tabs, search and a range along the top, a count, one card per order with the newest first, and page links; a card shows the order, a status line and the buttons that status offers."
+    kind: component
+    weight: core
+    teach:
+      - "Now sketch the screen the shopper sees. Along the top, three tabs, Orders, Buy again and Not yet shipped, then a search box and the time range, past 3 months. Under them, a count, then one card per order, newest first: the blender, the skillet, the socks and the lamp. Page links sit at the bottom."
+      - "Zoom into the blender's card. Its header shows the order number, the date, the total and who it ships to, user 1 here. Its status line says Shipped, arriving today by 8 PM, and its buttons are Track package and View order."
+      - "The other cards offer other buttons: the skillet, still being prepared, offers Cancel items; the delivered socks offer Return or replace."
+      - Only what the screen shows; how it works comes next.
+    draw: [mock-up, mk-screen, mk-tabs, mk-search, mk-range, mk-count, mk-blender, mk-head, mk-status, mk-buttons, mk-skillet, mk-socks, mk-lamp, mk-pages]
+    check: "Why does the skillet's card offer Cancel items when the blender's does not?"
+    answer: "Each card's buttons follow its order's status: the skillet is still being prepared, the blender has shipped."
+  - point: "Turn the screen into components: OrdersPage is the route /orders with the URL's tab, range, search and page and the one polite live region; each OrderCard shows one order, a ShipmentStatusLine per shipment and its ActionButtons; OrderDetailPage is /orders/{id}."
+    kind: component
+    weight: core
+    teach:
+      - "Now the components, read off the mock-up. OrdersPage is the route /orders: it takes tab, range, search and page from the URL, draws the toolbar, the list and the page links, and owns the page's one polite live region."
+      - "Each card is an OrderCard: a ShipmentStatusLine for every shipment, with its height reserved, then the ActionButtons its status allows."
+      - "OrderDetailPage is the route /orders/{id}, with the lines, totals, a shipment timeline and the invoice link. While open, it watches its own order."
+    draw: [components, c-orders-page, c-order-card, page-to-card, c-status-line, c-action-buttons, c-order-detail]
+    check: "Why does an OrderCard have a status line per shipment rather than one per order?"
+    answer: "Status lives on the shipment, and one order can split into shipments that move independently."
+  - point: "Behind the cards: OrdersStore holds orders and shipments by id and pages by query, and OrdersPage loads its page from it; StatusPoller keeps active cards on screen fresh; OrderActions takes pressed buttons; OrdersService is the only HTTP caller; Buy it again reuses CartStore."
+    kind: component
+    weight: core
+    teach:
+      - "The server decides every status; the client only holds a copy that knows how old it is. OrdersStore keeps orders and shipments by id, each with its ETag and a deadline set by its status, and list pages by query. OrdersPage asks it for the page that matches its query, and each card reads its order from it."
+      - "A card on screen asks StatusPoller to watch it. The poller checks the page's watched orders in one batched conditional request, and goes quiet while the tab is hidden."
+      - "OrdersService is the one piece that calls the server: it adds the CSRF token and If-None-Match, times out GETs, and hands the store typed results, a 304 meaning unchanged. The Orders API is a black box to us."
+      - "A pressed button goes to OrderActions, which sends a cancel with an idempotency key and turns a 409 into the new status plus an explanation. Buy it again calls addLine on the cart topic's CartStore, the same path as Add to cart on the product page, so no second cart can drift apart."
+    draw: [c-store, page-to-store, store-to-card, c-poller, card-to-poller, c-service, poller-to-service, service-to-store, c-api, service-to-api, c-actions, card-to-actions, actions-to-service, c-cart, actions-to-cart]
+    check: "Does an OrderCard fetch its own status? Who does?"
+    answer: "No; it reads the store and asks StatusPoller to watch it. The poller asks OrdersService, the only HTTP caller, and the result lands in OrdersStore."
+    misconceptions:
+      - "Each card polls the server for its own order -> one StatusPoller sends one batched request for the page's watched orders."
+      - "Buy it again needs its own call -> it goes through CartStore's addLine, like Add to cart on the product page."
+  - point: "One visit: after a hidden tab the poller checks at once and the blender's line changes in place, announced once; then the skillet's cancel loses the race with shipping, and the 409's shipment is applied rather than shown as an error."
+    kind: flow
+    weight: core
+    teach:
+      - "Walk one visit over the mock-up. Page 1 arrives rendered from the server, and the poller watches only the blender and the skillet, the active ones. While the shopper is on another tab, nothing goes out. On return the last check is older than the base wait, so it checks at once: the blender is out for delivery, its line changes in its reserved space, and the live region says so once."
+      - "Then the shopper cancels the skillet. OrderActions sends it with a fresh Idempotency-Key and disables only that card's buttons; nothing shows as cancelled yet. The skillet had just been scanned onto a truck, so a 409 comes back with the shipment as it stands: the card shows Shipped and Track package, says what to do instead, and puts focus on its heading."
+    check: "The cancel comes back 409 not_cancellable. What does the card do?"
+    answer: "It applies the shipment from the response, so it shows Shipped and Track package instead of Cancel, explains what the shopper can do instead, and moves focus to the card heading."
+    misconceptions:
+      - "Show the order as cancelled at once -> this is the request most likely to be refused, so the card waits for the server."
+  - point: "The next page and a search keep the list steady: page 2 carries page 1's as_of and a stable order, placed date then id, and the timer stops since nothing there is active; a search goes into the URL, resets to page 1, widens to all time, and shows the blender with the status the store already holds."
+    kind: mechanism
+    weight: supporting
+    teach:
+      - "Next goes to page 2 with page 1's as_of in the URL, so a new order can't push one from page 1 onto page 2. Orders sort by placed date, then order id, both newest first, so two orders from one day never swap. Nothing on page 2 is active, so the poller's timer stops."
+      - "A search for blender goes into the URL; the page resets to 1 and the range widens to all time, because people search when they don't remember when they ordered. The blender is the same record in the store, so it shows the status already held."
+    check: "A search finds the blender that page 1 already showed. Which status does the result show?"
+    answer: "The one the store already holds; it is the same record, so it shows out for delivery."
+    misconceptions:
+      - "Page 2 is cut from the list as it stands now -> it carries page 1's as_of, so a new order can't shift it."
+  - point: "Only the server changes a shipment's status, along a state machine: placed, preparing, shipped, out for delivery, delivered; the client reads the same machine to pick buttons and to decide whether to keep checking."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Draw the main path. Placed, then preparing when picking starts, shipped when the label is scanned, out for delivery when it is loaded on the van, delivered on the delivery scan."
+      - "The blender goes from placed to delivered over four days, and its status changes only a handful of times. So checking every few minutes while someone is looking is enough."
+    draw: [status, st-placed, st-preparing, a-place-prep, st-shipped, a-prep-ship, st-out, a-ship-out, st-delivered, a-out-del]
+    check: "Who moves a shipment from one status to the next?"
+    answer: "Only the server, on events from the warehouse, the carrier, returns and the buyer's own requests; the client only reads the status to pick buttons and decide whether to keep checking."
+  - point: "Cancel while placed and it is cancelled; cancel while preparing and it becomes a request the warehouse must confirm, or it ships anyway; a failed delivery attempt goes out again; a delivered parcel can come back as returned."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Cancel while placed and the order is cancelled, with a refund. Cancel while preparing and it becomes cancellation requested: the warehouse confirms and it is cancelled, or the parcel had already left and it is shipped. Cancelling a preparing shipment is a request, not a promise."
+      - "Out for delivery can fail when nobody is home, and the parcel goes out again on the next attempt. Delivered becomes returned when the item comes back before its return date."
+    draw: [st-cancelled, a-place-cancel, st-cancel-req, a-prep-req, a-req-cancel, a-req-ship, st-exception, a-out-exc, st-returned, a-del-ret]
+    check: "A cancel is accepted as a request while the skillet is preparing. What can happen next?"
+    answer: "The warehouse confirms and it is cancelled, or the parcel had already left and it becomes shipped."
+    misconceptions:
+      - "An accepted cancel always ends in cancelled -> while preparing it is only a request; the parcel may already have left."
+  - point: "allowedActions(status) is one table for the card and the order page, and the same status sets the base wait, 5 minutes, 2 out for delivery, 30 seconds while a cancel is requested, with no polling at delivered, cancelled or returned; the client proposes, the server decides."
+    kind: rule
+    weight: core
+    teach:
+      - "Read the buttons off the status. Cancel while placed or preparing; Change address only while placed; Track while shipped, out for delivery or after a failed attempt; Return or replace after delivery until the return date; Invoice once shipped, never for a cancelled order; Buy it again at every status."
+      - "The same status sets the poll: a 5 minute base, 2 minutes out for delivery, 30 seconds while a cancel is requested. Delivered, cancelled and returned are never polled, though delivered still allows a return."
+      - "The order page, from GET /api/orders/{id}, takes its line actions from the same table, so list and detail never disagree. When a check finds the blender delivered, polling stops and its actions become Return or replace, Buy it again and Invoice."
+      - "The buttons only leave out what would certainly fail. The server still judges every action and answers with the status it now holds, so the card simply updates."
+    draw: [st-actions-note, st-proposes, st-base-note, st-req-note, st-stop-note]
+    check: "If the client already hides impossible buttons, why does the server still check every action?"
+    answer: "The client's copy of the status can be old; the server decides from the status at that moment, and its refusal carries the current status."
+    misconceptions:
+      - "Hiding the button is protection enough -> the client's copy can be stale; the server re-checks every action."
+asks:
+  - ids: [mk-tabs, mk-search, mk-range, mk-count, mk-blender, mk-head, mk-status, mk-buttons, mk-skillet, mk-socks, mk-lamp, mk-pages]
+    beats: [1]
+    question: "Picture Your Orders on an Amazon-like store. What does the shopper see, top to bottom? I'll draw it as you say it."
+    hints:
+      - What sits along the top, to switch views or find an order?
+      - How is each order shown, and what does one card tell the shopper?
+      - And how do you reach older orders?
+  - ids: [c-orders-page, c-order-card, c-status-line, c-action-buttons, c-order-detail]
+    beats: [2]
+    question: "Looking at the mock-up, what components would you split the orders pages into? Name them and I'll draw them."
+    hints:
+      - Start from the page, then one order on it.
+      - What does a card show for each shipment, and under it?
+  - ids: [c-store, c-poller, c-service, c-actions, c-cart, c-api]
+    beats: [3]
+    question: "Now, what has to sit behind the cards to meet the requirements? Name the pieces."
+    hints:
+      - Where do the orders live once they arrive, and who keeps the active ones fresh?
+      - Who talks to the server, and what happens when a button is pressed?
+  - ids: [st-placed, st-preparing, st-shipped, st-out, st-delivered]
+    beats: [6]
+    question: "What statuses does a shipment go through, from the moment it is ordered? I'll draw them in order."
+    hints:
+      - What happens in the warehouse before the parcel leaves?
+      - And after it leaves, on its last day?
+task:
+  prompt: "Sketch Your Orders as the shopper sees it, then draw the components, OrdersPage with an OrderCard, the order page, and OrdersStore, StatusPoller, OrderActions, OrdersService and CartStore behind them, then the shipment's status as a state machine."
+  expects: [1, 2, 3, 6, 7]

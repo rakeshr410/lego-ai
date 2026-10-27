@@ -1,0 +1,154 @@
+# Orders and tracking interview, interface: plain HTTP, then the endpoints written as requests with their JSON responses. Pages and the order page on one side (as_of, ETag and 304, 404), the batched status check and the cancel in areas of their own on the other (Idempotency-Key, 200, 202, 409), the error cases, and how the store and StatusPoller use them.
+id: amazon/order-tracking/interface-definition
+title: Conditional GETs and one racing POST
+source:
+  hash: "384e0091adbc"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: amazon/order-tracking/data-model
+  assumes:
+    - "OrdersStore keeps orders and shipments by id, each with its ETag, fetched_at and fresh_until, and list pages by query with as_of."
+    - "OrdersService is the only HTTP caller; StatusPoller watches active orders on screen; OrderActions sends the cancel."
+    - "A cancel while preparing is only a request the warehouse confirms; delivered, cancelled and returned are never polled."
+  carries:
+    - "Plain HTTP: conditional GETs that return 304 when nothing changed, and one POST that is safe to repeat; no SSE or WebSocket."
+    - "GET /api/orders with tab, range, q, page and as_of: ten orders by placed_at then id, descending; page 1 returns as_of, later pages send it back."
+    - "GET /api/orders/{id} answers 304 with no body on a matching If-None-Match, and 404, never 403, for another shopper's order."
+    - "GET /api/orders/status?ids= is the poller's batched check, up to 20 sorted ids; 200 with shipments and a new ETag, or 304."
+    - "POST /api/orders/{id}/cancel with an Idempotency-Key: 200 cancelled, 202 cancel_requested, or 409 not_cancellable with the current shipment."
+    - "Cards and pages never fetch; they read the store and dispatch actions. A 304 only bumps freshness, with no re-render."
+  terms:
+    - term: conditional GET
+      means: A GET that sends the last ETag in If-None-Match, so the server can answer 304 Not Modified with no body.
+    - term: ETag
+      means: A validator the server sends with a response; the client sends it back to ask whether anything changed.
+    - term: as_of
+      means: The time of page 1's snapshot, returned with page 1 and sent back with later pages so new orders don't shift them.
+    - term: Idempotency-Key
+      means: A key sent with the cancel; the same key always gets the same answer, so a retry never cancels twice.
+board:
+  keep: [title, requirements, fr-heading, fr-newest, fr-filter, fr-search, fr-pages, fr-live, fr-actions, fr-detail, fr-again, fr-invoice, fr-offline, nfr-heading, nfr-lcp, nfr-js, nfr-out, nfr-shipped, nfr-hidden, nfr-304, nfr-terminal, nfr-409, nfr-dupes, nfr-cls, nfr-wcag, nfr-announce, nfr-locale, nfr-storage, nfr-private, as-heading, as-pages, as-wait, as-longest, scope-out, scope-out-more, mock-up, mk-screen, mk-blender, mk-head, mk-status, mk-buttons, mk-skillet, mk-socks, mk-lamp, mk-pages, components, c-orders-page, c-order-card, page-to-card, c-status-line, c-action-buttons, c-order-detail, c-store, page-to-store, store-to-card, c-poller, card-to-poller, c-service, poller-to-service, service-to-store, c-api, service-to-api, c-actions, card-to-actions, actions-to-service, c-cart, actions-to-cart, status, st-placed, st-preparing, st-shipped, st-out, st-delivered, a-place-prep, a-prep-ship, a-ship-out, a-out-del, st-cancelled, a-place-cancel, st-cancel-req, a-prep-req, a-req-cancel, a-req-ship, st-exception, a-out-exc, st-returned, a-del-ret, st-actions-note, st-proposes, st-base-note, st-req-note, st-stop-note, state, naive, need-order, need-shipments, need-items, naive-note, store, normalize, js-orders, js-order-more, js-order-end, js-shipments, js-shipments-more, js-shipments-end, js-pages, js-pages-more, js-pending, js-pending-more, fresh-req, fresh-active, fresh-final, fresh-pages, client, poll-watch, poll-more, announce]
+  elements:
+    - { id: api, kind: region, label: "API", at: [60, 86], size: [59, 23] }
+    - { id: if-transport, kind: note, label: "plain HTTP: conditional GETs, and one POST that may race", at: [61, 88], in: api }
+    - { id: if-reads, kind: region, label: "Orders and order pages", at: [61, 90], size: [29, 17], in: api }
+    - { id: if-get-orders, kind: note, label: "GET /api/orders?tab=orders&range=3m&q=&page=2&as_of=...", at: [62, 92], in: if-reads, tone: blue }
+    - { id: if-orders-res1, kind: note, label: "{ orders: [ { id, placed_at, total, ship_to_name,", at: [63, 93], in: if-reads }
+    - { id: if-orders-res2, kind: note, label: "etag, shipments: [ { id, status, items } ] } ],", at: [65, 94], in: if-reads }
+    - { id: if-orders-res3, kind: note, label: "page: 2, page_count: 3, total_count: 23, as_of }", at: [64, 95], in: if-reads }
+    - { id: if-get-order, kind: note, label: "GET /api/orders/W4-58213", at: [62, 97], in: if-reads, tone: blue }
+    - { id: if-order-res, kind: note, label: "{ id, placed_at, total, ship_to, payment,", at: [63, 98], in: if-reads }
+    - { id: if-order-res2, kind: note, label: "shipments: [ { id, status, return_by, events } ] }", at: [65, 99], in: if-reads }
+    - { id: if-order-304, kind: note, label: "If-None-Match matches: 304, no body", at: [63, 100], in: if-reads, tone: green }
+    - { id: if-order-404, kind: note, label: "another shopper's order: 404, never 403", at: [63, 101], in: if-reads }
+    - { id: if-error-shape, kind: note, label: "errors: { error: { code, message }, shipment }", at: [62, 103], in: if-reads, tone: red }
+    - { id: if-error-note, kind: note, label: "401: sign in, then repeat; 429: wait for Retry-After", at: [62, 104], in: if-reads, tone: red }
+    - { id: if-status, kind: region, label: "Status check", at: [91, 90], size: [28, 8], in: api }
+    - { id: if-get-status, kind: note, label: "GET /api/orders/status?ids=W4-58190,W4-58213", at: [92, 92], in: if-status, tone: blue }
+    - { id: if-status-etag, kind: note, label: "If-None-Match: e41", at: [93, 93], in: if-status }
+    - { id: if-status-res1, kind: note, label: "{ shipments: [ { id, order_id, status,", at: [93, 94], in: if-status }
+    - { id: if-status-res2, kind: note, label: "status_changed_at, eta } ] }", at: [95, 95], in: if-status }
+    - { id: if-status-304, kind: note, label: "unchanged: 304, and the wait doubles", at: [93, 96], in: if-status, tone: green }
+    - { id: if-cancel, kind: region, label: "Cancel", at: [91, 99], size: [28, 9], in: api }
+    - { id: if-post-cancel, kind: note, label: "POST /api/orders/W4-58190/cancel", at: [92, 101], in: if-cancel, tone: blue }
+    - { id: if-cancel-key, kind: note, label: "Idempotency-Key: k-3fa1, CSRF token", at: [93, 102], in: if-cancel }
+    - { id: if-cancel-200, kind: note, label: "200 { shipment: { status: cancelled, refund } }", at: [93, 103], in: if-cancel }
+    - { id: if-cancel-202, kind: note, label: "202 { shipment: { status: cancel_requested } }", at: [93, 104], in: if-cancel }
+    - { id: if-cancel-409, kind: note, label: "409 { error: { code: not_cancellable }, shipment }", at: [93, 105], in: if-cancel, tone: red }
+  arrows: []
+beats:
+  - point: "Plain HTTP fits: conditional GETs for pages, details and the status check, and one POST for cancel; server-sent events would keep a connection per tab open for hours for perhaps one change, a WebSocket has nothing to carry upward, and push and email are the backend's job."
+    kind: decision
+    weight: core
+    teach:
+      - "Choose the transport first: plain HTTP. Reads are conditional GETs, which answer 304 when nothing has changed; the only write that can race is a POST that is safe to send twice and explains a refusal."
+      - "A shipment moves a few times over several days, so a batched GET every few minutes while the page is visible is cheaper than an open connection. A server-sent stream would sit open per tab for hours to carry maybe one change. A WebSocket has nothing to send upward, and no change here must land within the second."
+      - "Push notifications and email belong to the backend, for when the page is closed; they add to the page rather than replace it."
+    draw: [api, if-transport]
+    check: "Why not server-sent events for status changes?"
+    answer: "A shipment changes only a few times over days; a stream would hold a connection per tab for hours for perhaps one event, while a batched GET every few minutes costs less."
+  - point: "The list is GET /api/orders with tab, range, q, page and as_of: ten orders by placed_at then id, both descending; page 1 returns as_of and later pages send it back, so new orders don't shift them."
+    kind: component
+    weight: core
+    teach:
+      - "Write the request: GET slash api slash orders, with the tab (Orders, Buy again or Not yet shipped), the range (30 days, 3 months, a year or all), the search q, which matches titles and order numbers, and the page. Same-origin cookies say who is asking."
+      - "Write the response as JSON: orders, each with id, placed date, total, ship-to name, its ETag and its shipments inline; then page, page count, total count and as_of. It is sent private, no-cache."
+      - "Ten orders a page, by placed date and then id, both descending. Page 1 returns as_of; later pages pass it back, the as_of from page one, so orders placed since don't shift them."
+    draw: [if-reads, if-get-orders, if-orders-res1, if-orders-res2, if-orders-res3]
+    check: "A new order is placed while the shopper is on page 1. Why does page 2 not shift?"
+    answer: "Page 2 sends back as_of from page 1, so it is cut from the same snapshot."
+    misconceptions:
+      - "Page 2 is cut from the orders as they are now -> it passes page 1's as_of back, so new orders don't shift it."
+  - point: "One order is GET /api/orders/{id}, with its lines, totals, address, payment and shipment events; on a matching If-None-Match it answers 304 with no body, and another shopper's order answers 404, never 403."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Write the order page's request: GET slash api slash orders slash W4-58213, sending the ETag it holds in If-None-Match."
+      - "Changed, it answers 200 with the order: id, placed date, total, ship-to, payment, and each shipment with its status, return-by date and events, from preparing to delivered, plus a new ETag. Unchanged, it answers 304 with no body; the ETag and Cache-Control repeat, and the store only moves fetched_at and fresh_until on."
+      - "An order id that belongs to another shopper answers 404, never 403."
+    draw: [if-get-order, if-order-res, if-order-res2, if-order-304, if-order-404]
+    check: "The order has not changed since its last ETag. What comes back, and what does the store do?"
+    answer: "A 304 with no body; the store only bumps fetched_at and fresh_until."
+    misconceptions:
+      - "A 304 sends the order again -> it has no body; only the ETag and Cache-Control repeat."
+  - point: "The poller's check is one batched GET /api/orders/status?ids= for up to 20 orders, the ids sorted so a set always has one URL and one validator; with If-None-Match it gets 200 with the shipments and a new ETag, or 304, and then the wait doubles, up to 4 times the base."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Write the status check: GET slash api slash orders slash status, with the ids of the skillet and the blender, sorted. Up to 20 orders go in one request, and a given set always has the same URL and the same validator."
+      - "It sends If-None-Match e41. Changed: 200 with each shipment's id, order id, status, when it changed and its estimate, and the new ETag e42. Unchanged: 304, and the poller doubles its wait, up to 4 times the base."
+      - "The script sends it with the default cache mode, so the browser passes it on as it is and the page sees the 304 itself."
+    draw: [if-status, if-get-status, if-status-etag, if-status-res1, if-status-res2, if-status-304]
+    check: "Why sort the ids in the status request?"
+    answer: "So the same set of orders always has the same URL and the same validator."
+  - point: "Cancel is POST /api/orders/{id}/cancel with an Idempotency-Key; the server decides from the status at that moment: 200 cancelled with a refund, 202 cancel_requested, or 409 not_cancellable with the current shipment, and the same key always gets the same answer."
+    kind: decision
+    weight: core
+    teach:
+      - "Write the cancel: POST slash api slash orders slash W4-58190 slash cancel, with the item ids and a reason, the Idempotency-Key k-3fa1 and the CSRF token."
+      - "Three answers. 200: the shipment is cancelled, with the refund. 202: cancel requested; the card says so, and it is polled at a 30 second base. 409 not_cancellable: the error plus the shipment as it is now; OrderActions applies the shipment and shows its own message."
+      - "A key, once used, always gets the same answer back. So after a server error the cancel is retried once with the same key, and it can never cancel twice."
+    draw: [if-cancel, if-post-cancel, if-cancel-key, if-cancel-200, if-cancel-202, if-cancel-409]
+    check: "The cancel gets a 5xx and is retried once. Why can it not cancel twice?"
+    answer: "It carries the same Idempotency-Key, and the same key always gets the same answer."
+    misconceptions:
+      - "A 409 is just an error to show -> it carries the current shipment, which the store applies."
+  - point: "Errors share one shape, a code and a message plus the current shipment where it matters, and who reacts depends on whether it was a page, a poll or an action: a 401 signs in and repeats, a 429 makes a poll wait for Retry-After and an action re-enable."
+    kind: rule
+    weight: core
+    teach:
+      - "Every error has one shape: a code and a message, plus the current shipment when the status explains the refusal. Who reacts depends on whether it was a page, a poll or an action."
+      - "401 means the session ran out. The page stays as it is, polling stops, sign-in opens, and then the request goes again; a cancel goes again with the key it already had."
+      - "429 or 503: a poll waits at least as long as Retry-After; an action turns its button back on with a message, and a POST is never retried on a timer."
+    draw: [if-error-shape, if-error-note]
+    check: "A poll and a cancel both get 429 with Retry-After. What does each do?"
+    answer: "The poll waits at least Retry-After before checking again; the cancel re-enables its button with a message and is never retried on a timer."
+  - point: "Cards and pages never fetch: they read the store and dispatch actions such as pageRequested, statusesUnchanged and cancelRequested; an OrderCard takes an order id and reports a pressed action and whether it is on screen."
+    kind: component
+    weight: supporting
+    teach:
+      - "Between components it is store actions, not fetches. A URL change requests a page, drawn at once if cached and fetched if missing or older than 60 seconds. An unchanged check only bumps freshness, so nothing re-renders. A cancel request records a pending action, so only that card's buttons disable."
+      - "OrderCard knows nothing of HTTP or timers: it takes an order id, reports the button pressed, and reports from an IntersectionObserver whether it is on screen, which watches or unwatches it."
+    check: "A status check comes back 304. What does the store do, and does anything re-render?"
+    answer: "It bumps fetched_at and fresh_until only; nothing re-renders."
+  - point: "StatusPoller's loop: a terminal order is never watched; a new id set drops the old ETag; the timer stops while hidden or once the page is left, and a return checks at once if the last check is older than the base; a 200 resets the wait, a 304 doubles it, a failure backs off."
+    kind: mechanism
+    weight: supporting
+    teach:
+      - "Watching an order at a terminal status does nothing, and a new set of ids drops the old ETag, since the set needs a validator of its own. The timer is cleared when the tab is hidden or the page is left. Back on the tab or back from the back-forward cache, it checks at once if the last check is older than the base wait; coming online, it checks too."
+      - "A 200 resets the wait to the base, a 304 doubles it up to 4 times the base, and a failure backs off with jitter, up to 10 minutes and never sooner than Retry-After."
+    check: "Why does the poller drop its ETag when an order is added to the watched set?"
+    answer: "The ETag belongs to the answer for one exact set of ids; a new set needs a new validator."
+asks:
+  - ids: [if-get-orders, if-get-order, if-get-status, if-post-cancel]
+    beats: [2, 3, 4, 5]
+    question: "What requests does the client need from the server? Name each one, and I'll write it down as you go."
+    hints:
+      - One for the list, and one for a single order?
+      - And what does the poller ask, and what does the cancel button send?
+task:
+  prompt: "Write the endpoints as requests: the orders list with as_of, one order with its ETag, the batched status check, and the cancel with its key; then each one's JSON response."
+  expects: [2, 3, 4, 5]

@@ -1,0 +1,131 @@
+# Amazon checkout interview, data model: what each component reads, written as JSON lines, then CheckoutStore written as JSON that grows key by key (the quote as the server sent it, statuses, the address draft, the payment choice by token, the attempt). Where it is kept is its own area: the attempt in this tab's sessionStorage, and where each kind of data may and may not live.
+id: amazon/checkout-and-payment/data-model
+title: A quote, a draft and one attempt
+source:
+  hash: "56064f01e299"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: amazon/checkout-and-payment/high-level-design
+  assumes:
+    - "CheckoutStore holds the server's quote and the one order attempt and feeds the page; PaymentFrame hands back tokens, never card data."
+    - "The attempt's states are drawn: Ready, Placing, Bank challenge, Outcome unknown, Total changed, Declined, Confirmed; the page asks by key when the outcome is unknown."
+  carries:
+    - "State comes from who owns it: money from the server as a quote, what the shopper typed from the form, the order attempt from the client."
+    - "CheckoutStore: the quote as sent (amounts in minor units), quote_status, each section's status, the address draft, the payment choice by token, the attempt and the errors."
+    - "An attempt is quote_id, payment_method_id and key together; a new quote or a new card means a new key."
+    - "The attempt is written to this tab's sessionStorage before the first request; card numbers live only in the processor's iframe."
+  terms:
+    - term: minor units
+      means: "Amounts as whole numbers of the currency's smallest unit: 14363 is 143 dollars and 63 cents."
+    - term: order attempt
+      means: "The triple of quote_id, payment_method_id and idempotency key, with its status and, once there is one, the order id."
+    - term: payment_method_id
+      means: "The processor's token for a card: a reference the page may keep and send, never card data."
+board:
+  keep: [title, review, rp-deliver, rp-ship1, rp-ship2, rp-paying, rp-summary, rp-promo, rp-place, scope, as-heading, as-shipments, as-quote, out-heading, out-charging, out-signin, out-stay, out-wallets, out-tax, requirements, fr-heading, fr-review, fr-address, fr-delivery, fr-pay, fr-challenge, fr-decline, fr-once, fr-changed, fr-after, nfr-heading, nfr-duplicates, nfr-totals, nfr-cards, nfr-csp, nfr-lcp, nfr-inp, nfr-js, nfr-timeout, nfr-outcome, nfr-wcag, nfr-redundant, nfr-autofill, nfr-paste, components, c-checkout-page, c-address-form, c-payment-frame, c-saved-cards, c-hosted-fields, c-challenge, c-store, c-processor, c-service, c-api, machine, m-total, m-confirmed, m-ready, m-placing, m-unknown, m-challenge, m-declined, m-resend, m-key-note, m-sold-out, m-expired, m-history, m-back, m-old-tab, af-to-store, pf-to-store, store-to-page, pf-to-processor, store-to-service, service-to-api, api-to-processor, ready-to-placing, placing-to-challenge, challenge-to-unknown, unknown-to-declined, placing-to-confirmed, placing-to-declined, placing-to-total, placing-to-unknown, unknown-to-confirmed, total-to-ready, declined-to-ready]
+  elements:
+    - { id: state, kind: region, label: State, at: [1, 63], size: [29, 20] }
+    - { id: need-address, kind: note, label: "AddressForm: { address, errors },", at: [2, 65], in: state }
+    - { id: need-payment, kind: note, label: "PaymentFrame gives: { payment_method_id, brand, last4 },", at: [2, 66], in: state }
+    - { id: need-summary, kind: note, label: "CheckoutPage: { quote, sections },", at: [2, 67], in: state }
+    - { id: need-attempt, kind: note, label: "CheckoutService: { attempt: { key, quote_id, status } }", at: [2, 68], in: state }
+    - { id: store-json, kind: region, label: "CheckoutStore, as JSON", at: [2, 70], size: [27, 12], in: state, tone: amber }
+    - { id: js-quote, kind: note, label: "{ quote: { quote_id, expires_at, currency,", at: [3, 72], in: store-json }
+    - { id: js-quote-more, kind: note, label: "shipments, rows, total_minor, promo_results },", at: [5, 73], in: store-json }
+    - { id: js-status, kind: note, label: "quote_status: fresh,", at: [4, 74], in: store-json }
+    - { id: js-sections, kind: note, label: "sections: { one status per section,", at: [4, 75], in: store-json }
+    - { id: js-sections-more, kind: note, label: "complete, editing or invalid },", at: [6, 76], in: store-json }
+    - { id: js-address, kind: note, label: "address: { full_name, line1, line2, city,", at: [4, 77], in: store-json }
+    - { id: js-address-more, kind: note, label: "region, postal_code, country },", at: [6, 78], in: store-json }
+    - { id: js-payment, kind: note, label: "payment: { kind, payment_method_id,", at: [4, 79], in: store-json }
+    - { id: js-payment-more, kind: note, label: "brand, last4, exp },", at: [6, 80], in: store-json }
+    - { id: js-attempt, kind: note, label: "attempt, errors: [] }", at: [4, 81], in: store-json }
+    - { id: storage, kind: region, label: Storage, at: [32, 63], size: [27, 20] }
+    - { id: session-json, kind: region, label: "sessionStorage, this tab only", at: [33, 65], size: [23, 6], in: storage, tone: amber }
+    - { id: ss-open, kind: note, label: "{ idempotency_key, quote_id,", at: [34, 67], in: session-json }
+    - { id: ss-more, kind: note, label: "payment_method_id, status, order_id }", at: [36, 68], in: session-json }
+    - { id: ss-note, kind: note, label: written before the first request, at: [34, 69], in: session-json, tone: green }
+    - { id: where-card, kind: note, label: "card number and code: in the processor's iframe", at: [33, 73], in: storage, tone: red }
+    - { id: where-token, kind: note, label: "token, brand, last four, expiry: store and order", at: [33, 75], in: storage }
+    - { id: where-quote, kind: note, label: "quote and totals: only as the server sent them", at: [33, 77], in: storage }
+    - { id: where-key, kind: note, label: "the key: store and this tab's sessionStorage", at: [33, 79], in: storage }
+    - { id: where-address, kind: note, label: "address draft: store, never analytics", at: [33, 81], in: storage }
+  arrows: []
+beats:
+  - point: "Derive the state from the components, written as what each reads: AddressForm the typed address and its errors, PaymentFrame gives a token with brand and last four, CheckoutPage the quote and section statuses, CheckoutService the one order attempt."
+    kind: component
+    weight: core
+    teach:
+      - "Start from the components we drew and write what each one reads, as JSON. AddressForm: the address as it was typed, and its errors. PaymentFrame gives back a payment method token, the brand and the last four, never the card itself."
+      - "CheckoutPage: the quote, which comes from the server, and each section's status. CheckoutService: the order attempt, which belongs to the client and has to outlive a reload or a trip to the bank's page."
+    draw: [state, need-address, need-payment, need-summary, need-attempt]
+    check: Where do you start when deciding the checkout's state?
+    answer: "From the components and what each reads: the typed address and its errors, a payment token, the server's quote with section statuses, and the order attempt."
+  - point: "The store keeps the quote exactly as the server sent it, its id, expiry, currency, shipments, total rows, total_minor in minor units and the promo results; the page formats those amounts and adds nothing up."
+    kind: component
+    weight: core
+    teach:
+      - "Open CheckoutStore as JSON, a key at a time. First the quote, as sent: its id, when it expires, twenty minutes on, and the currency. Then the shipments, each with its line ids, options and the selected one."
+      - "The rows, each a kind, a label and an amount: items, promo, shipping, tax. The total in minor units: 14363 is 143 dollars and 63 cents. And what happened to each promo code."
+      - The page formats those amounts with the locale's currency formatter; it never adds them up or rounds them itself.
+    draw: [store-json, js-quote, js-quote-more]
+    check: The summary has to show 14363 in US dollars. What does the page do with that number?
+    answer: "Formats the minor units with the locale's currency formatter; it adds nothing up and recomputes nothing."
+    misconceptions:
+      - "Recompute the total from the rows to double-check -> the client formats amounts, it never calculates them."
+  - point: "Beside the quote sit quote_status, which is fresh, refreshing or stale, and a status for each section of the review: complete, editing or invalid."
+    kind: component
+    weight: supporting
+    teach:
+      - "Add quote_status: fresh, refreshing or stale. Then sections, one status per section of the review: complete, editing or invalid."
+      - There is one such state per checkout tab.
+    draw: [js-status, js-sections, js-sections-more]
+    check: What can a section's status be?
+    answer: Complete, editing or invalid.
+  - point: "The address draft holds what was typed, kept through errors, and the payment choice is a reference, never card data: saved or new card, the payment_method_id token, brand, last four and expiry; the attempt and the errors close the store."
+    kind: component
+    weight: core
+    teach:
+      - "Add address: full name, two lines, city, region, postal code and country; it is what was typed, and it stays while there are errors."
+      - "Add payment: a saved card or a new card, the payment method id, which is a token, then the brand, last four and expiry. That is all the store ever knows about a card. Close the store with the attempt and the errors."
+    draw: [js-address, js-address-more, js-payment, js-payment-more, js-attempt]
+    check: The shopper typed a new card into the processor's fields. Which parts of it end up in CheckoutStore?
+    answer: A payment method token, the brand, the last four digits and the expiry; never the number or the security code.
+    misconceptions:
+      - "Keep the number and expiry so the form can be refilled after a decline -> the processor's iframe keeps what was typed; the store holds only the token, brand, last four and expiry."
+  - point: "The order attempt, an idempotency key from crypto.randomUUID with the quote_id, the payment_method_id, a status and later the order id, is written to this tab's sessionStorage before the first request, so a reload or the bank's redirect can still ask about that key."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Now where it is kept. Draw sessionStorage, this tab only, and write the attempt: its idempotency key, made with crypto.randomUUID, the quote id, the payment method id, a status, and the order id once one exists. The status is submitting, challenge, checking, confirmed, declined or repriced, the states drawn earlier."
+      - "Write it before the first request leaves, not when the answer comes back. A reload or the bank's redirect can strike while the request is still out, and the page then needs the key to ask what happened."
+      - "Think of an attempt as three things together: quote id, payment method id and key. A new quote or a new card means a new key; sending the same three again gets the same answer back."
+    draw: [storage, session-json, ss-open, ss-more, ss-note]
+    check: The bank's redirect takes the tab away while the order request is still out. What lets the page find out what happened when it comes back?
+    answer: The attempt and its key were saved to this tab's sessionStorage before the request left, so the page reads the key and asks the server by it.
+    misconceptions:
+      - "Save the attempt once the answer arrives -> the answer may never arrive; the key has to be stored already while the request is out, which is when a reload or redirect hits."
+  - point: "Each kind of data has one home: card number and code only in the processor's iframe; token, brand, last four and expiry in the store and the order; the quote only as sent; the key in the store and this tab's sessionStorage; the address draft in the store, never analytics."
+    kind: rule
+    weight: core
+    teach:
+      - "Card number and security code: the processor's iframe, then the processor; never our JavaScript, servers, URLs, logs, analytics or session replay. Token, brand, last four and expiry: the store and the order, outside PCI scope."
+      - "Quote and totals: the store, only as the server sent them, never anything the client computed. The key: the store and this tab's sessionStorage; never localStorage, cookies, or anything built from personal data. The address draft: the store, the address book only when asked, never analytics payloads."
+    draw: [where-card, where-token, where-quote, where-key, where-address]
+    check: Where may the card number appear on our side?
+    answer: "Nowhere: it lives in the processor's iframe and the processor, never in our JavaScript, servers, URLs, logs, analytics or replay."
+    misconceptions:
+      - "The idempotency key can go in localStorage -> it belongs to this tab's attempt, so it lives in the store and this tab's sessionStorage only."
+asks:
+  - ids: [need-address, need-payment, need-summary, need-attempt]
+    beats: [1]
+    question: "Walk the components: what does each one need to read? Name them and I'll write them down."
+    hints:
+      - Start with the address form and the payment part. What may each hold?
+      - And what must the service still know after a reload?
+task:
+  prompt: "Write CheckoutStore as JSON: the quote as the server sent it, the statuses, the address draft, the payment choice by token, then the attempt in this tab's sessionStorage."
+  expects: [2, 4, 5]

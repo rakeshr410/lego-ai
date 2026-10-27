@@ -1,0 +1,174 @@
+# Product listing interview, optimizations: the areas ranked, then five deep dives each in its own board area, techniques as short boxes (the URL as the source of truth, racing requests and consistent counts, first load and layout, accessibility, caching), and internationalisation and security in brief. The lesson opens on the page, the requirements, the components, the question and the store, and the search request and response; the rest of lesson 2's detail is left off so the whole of this lesson's board stays in view to the end.
+id: amazon/product-listing/optimizations
+title: Five deep dives, two in brief
+source:
+  hash: "0c3e36821aa3"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: amazon/product-listing/interface-definition
+  assumes:
+    - "Targets: LCP less than 2.5 s and CLS below 0.1 at p75, INP less than 200 ms, route JavaScript no more than 90 KB, zero frames with another query's counts, WCAG 2.2 AA."
+    - "UrlState owns the URL and the query key; ResultsStore keeps entries by key with currentKey and appliedKey; SearchService aborts per key."
+    - "The search is a GET with the canonical query, public for 60 s with stale-while-revalidate 300; the response carries image width and height."
+  carries:
+    - "Areas are scored on impact, reach and frequency: five go deep, internationalisation and security briefly, offline last."
+    - "The URL is the only copy of the filters: a canonical key, one writer, push for committed changes and replace for fixes, manual scroll restoration, filters reset page."
+    - "A response is applied by key, not arrival order; old requests are aborted; late answers are cached; every number comes from one entry; results dim, never blank."
+    - "First load: the server renders 24 cards with the response embedded, the first row is prioritised, image boxes are reserved, srcset right-sizes, filters work as a form."
+    - "Accessibility: native controls, focus kept, focus to the heading only on a page change, one polite count, aria-busy, a two-thumb slider."
+    - "Caching: one URL per question, nothing personal in the body, stale up to 300 s, store entries under 60 s with no request, prefetching the next step."
+  terms:
+    - term: canonical key
+      means: "The search params with tracking tags and defaults dropped, q normalised and pairs sorted by name, so equal questions are equal strings."
+    - term: LCP element
+      means: On this page, usually an image in the first row.
+    - term: status region
+      means: "A polite region outside the grid, with role status, updated only when a response is applied."
+board:
+  keep: [title, mock-up, mock-page, mock-toolbar, mock-chips, mock-filters, mock-card, card-image, card-title, card-rating, card-badges, card-cart, mock-pages, requirements, fr-heading, fr-grid, fr-filters, fr-counts, fr-chips, fr-sort, fr-url, fr-card, fr-empty, fr-phone, nfr-heading, nfr-lcp, nfr-js, nfr-inp, nfr-results, nfr-counts, nfr-cls, nfr-a11y, nfr-slider, nfr-crawl, nfr-noindex, components, c-page, c-card, c-image, c-price, c-cart, c-facets, c-check, c-radio, c-range, c-chips, url-state, results-store, search-service, search-api, loop-note, set-params, url-changed, store-service, service-api, store-page, state, url, u-open, u-more, u-brand, u-key, store, st-open, st-entry, st-response, st-response-more, st-current, st-applied, st-pure, api, t-get, req-1, req-2, response, r-open, r-items, r-image, r-price, r-rest, r-facets, r-cache]
+  elements:
+    - { id: opt-url, kind: region, label: "URL as the source of truth", at: [1, 84], size: [29, 12] }
+    - { id: o-url-drop, kind: box, label: "drop utm and defaults", at: [2, 86], size: [13, 2], in: opt-url, tone: grey }
+    - { id: o-url-norm, kind: box, label: "tidy q, sort by name", at: [16, 86], size: [13, 2], in: opt-url, tone: green }
+    - { id: o-url-writer, kind: box, label: "only UrlState writes", at: [2, 89], size: [13, 2], in: opt-url, tone: blue }
+    - { id: o-url-push, kind: box, label: "push or replace", at: [16, 89], size: [13, 2], in: opt-url, tone: blue }
+    - { id: o-url-scroll, kind: box, label: "manual scroll restore", at: [2, 92], size: [13, 2], in: opt-url, tone: blue }
+    - { id: o-url-reset, kind: box, label: "a filter resets page", at: [16, 92], size: [13, 2], in: opt-url, tone: blue }
+    - { id: opt-race, kind: region, label: "Racing requests and counts", at: [31, 84], size: [29, 12] }
+    - { id: o-race-key, kind: box, label: "match on the key", at: [32, 86], size: [13, 2], in: opt-race, tone: green }
+    - { id: o-race-abort, kind: box, label: "abort the old key", at: [46, 86], size: [13, 2], in: opt-race, tone: blue }
+    - { id: o-race-late, kind: box, label: "late answers cached", at: [32, 89], size: [13, 2], in: opt-race, tone: amber }
+    - { id: o-race-one, kind: box, label: "one source of numbers", at: [46, 89], size: [13, 2], in: opt-race, tone: amber }
+    - { id: o-race-dim, kind: box, label: "dim, don't blank", at: [32, 92], size: [13, 2], in: opt-race, tone: green }
+    - { id: opt-load, kind: region, label: "First load and layout", at: [61, 84], size: [29, 12] }
+    - { id: o-load-ssr, kind: box, label: "server renders page 1", at: [62, 86], size: [13, 2], in: opt-load, tone: green }
+    - { id: o-load-priority, kind: box, label: "first row prioritised", at: [76, 86], size: [13, 2], in: opt-load, tone: green }
+    - { id: o-load-reserve, kind: box, label: "image boxes reserved", at: [62, 89], size: [13, 2], in: opt-load, tone: blue }
+    - { id: o-load-srcset, kind: box, label: "srcset 160 to 640", at: [76, 89], size: [13, 2], in: opt-load, tone: blue }
+    - { id: o-load-form, kind: box, label: "filters as a form", at: [62, 92], size: [13, 2], in: opt-load, tone: blue }
+    - { id: o-load-height, kind: box, label: "grid keeps its height", at: [76, 92], size: [13, 2], in: opt-load, tone: blue }
+    - { id: opt-a11y, kind: region, label: "Accessibility", at: [1, 97], size: [29, 12] }
+    - { id: o-a11y-native, kind: box, label: "native controls", at: [2, 99], size: [13, 2], in: opt-a11y, tone: blue }
+    - { id: o-a11y-focus, kind: box, label: "focus stays put", at: [16, 99], size: [13, 2], in: opt-a11y, tone: blue }
+    - { id: o-a11y-heading, kind: box, label: "focus moves on paging", at: [2, 102], size: [13, 2], in: opt-a11y, tone: blue }
+    - { id: o-a11y-status, kind: box, label: "one polite count", at: [16, 102], size: [13, 2], in: opt-a11y, tone: green }
+    - { id: o-a11y-busy, kind: box, label: "aria-busy on the grid", at: [2, 105], size: [13, 2], in: opt-a11y, tone: blue }
+    - { id: o-a11y-slider, kind: box, label: "two-thumb slider", at: [16, 105], size: [13, 2], in: opt-a11y, tone: blue }
+    - { id: opt-cache, kind: region, label: "Caching responses", at: [31, 97], size: [29, 12] }
+    - { id: o-cache-url, kind: box, label: "one URL per question", at: [32, 99], size: [13, 2], in: opt-cache, tone: green }
+    - { id: o-cache-private, kind: box, label: "nothing personal", at: [46, 99], size: [13, 2], in: opt-cache, tone: red }
+    - { id: o-cache-swr, kind: box, label: "stale up to 300 s", at: [32, 102], size: [13, 2], in: opt-cache, tone: green }
+    - { id: o-cache-store, kind: box, label: "store hit, no request", at: [46, 102], size: [13, 2], in: opt-cache, tone: green }
+    - { id: o-cache-prefetch, kind: box, label: "prefetch next step", at: [32, 105], size: [13, 2], in: opt-cache, tone: blue }
+    - { id: opt-intl, kind: region, label: "i18n and security, briefly", at: [61, 97], size: [29, 9] }
+    - { id: o-intl-format, kind: box, label: "Intl formats, plurals", at: [62, 99], size: [13, 2], in: opt-intl }
+    - { id: o-intl-rtl, kind: box, label: "right-to-left layout", at: [76, 99], size: [13, 2], in: opt-intl }
+    - { id: o-sec-text, kind: box, label: "query shown as text", at: [62, 102], size: [13, 2], in: opt-intl, tone: red }
+    - { id: o-sec-allow, kind: box, label: "allowlist of params", at: [76, 102], size: [13, 2], in: opt-intl, tone: red }
+  arrows: []
+beats:
+  - point: "Rank the areas by impact if they fail, shoppers affected and how often they matter: the URL as state, racing requests and counts, first load, accessibility and caching go deep; internationalisation and security get a few lines; offline comes last."
+    kind: decision
+    weight: supporting
+    teach:
+      - "Before any technique, rank the areas. Score each from 1 to 3 on how bad a failure would be, how many shoppers it touches, and how often it comes up."
+      - "Five come out on top and get a deep dive: the URL as state with Back and Forward, racing requests and consistent counts, first load and layout stability, accessibility, and caching. Internationalisation and security get a few lines each."
+      - "Offline scores lowest: a search needs the network anyway, and cached entries still render on Back."
+    check: Why does offline rank lowest for this page?
+    answer: "Searching needs the network; at most, cached entries still render on Back."
+  - point: "The URL is the only copy of the filters: UrlState drops tracking tags and defaults, tidies q and sorts the pairs by name into a canonical key; only UrlState writes the URL, pushing committed changes and replacing fixes; scroll is restored by hand; and a filter change resets the page."
+    kind: rule
+    weight: core
+    teach:
+      - "If a store held the filters and the URL mirrored it, every Back press would be a sync problem; here the URL is the only copy. A pasted link loses utm_source, sort featured and page 1; q is trimmed, its spaces collapsed and lowercased; and the pairs are sorted by name, so a pasted link and a click share one key. replaceState writes that form once."
+      - "Only UrlState touches location; the others call setParams and hear urlChanged. A committed filter, sort, page or the sheet's Apply is pushed; canonicalising, a bad-param fix and saving scroll are replaced, so Back never crawls through twenty price values. popstate takes the same path as a click."
+      - "Scroll restoration is manual: scrollY is saved in history.state and applied once the results render. A change to the query, filters or sort drops page and snapshot."
+    draw: [opt-url, o-url-drop, o-url-norm, o-url-writer, o-url-push, o-url-scroll, o-url-reset]
+    check: "The shopper is on page 4 and adds a filter that leaves only one page. What should happen to the URL?"
+    answer: "page and snapshot are dropped, so the shopper lands on page 1 of the new results instead of an empty page 4."
+    misconceptions:
+      - "Push an entry for every price value while dragging -> Back would crawl through them; only a committed change is pushed."
+  - point: "Apply a response only when its key is the URL's, whatever order it arrived in; abort the request nobody wants but keep the check, since a body can be read just before abort(); and cache a late answer under its own key."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Two clicks 160 milliseconds apart. With no abort and no key check, the slow older reply lands last, and 97 kettles of every brand appear under a Brightwell chip."
+      - "So compare the response's key with currentKey. A request counter would break on Back, where the older key is the right one again. Abort the old request through its AbortController and swallow the AbortError, but keep the check; an answer that fails it goes into the LRU of 20 under its own key."
+    draw: [opt-race, o-race-key, o-race-abort, o-race-late]
+    check: "The shopper clicks a filter and then presses Back. Why would a rule of 'the newest request wins' go wrong here?"
+    answer: "After Back the older key is the one the URL wants again; a request counter would throw its correct answer away, while a key comparison accepts it."
+    misconceptions:
+      - "Aborting the old request is enough -> a body can be read just before abort(), so the key check still runs."
+  - point: "Read every number from the applied entry together, keep the old cards dimmed rather than blank while loading, and leave the filters usable."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Grid, total, facet counts, price bounds and relaxations all come from the applied entry; nothing is adjusted locally, so the page can never say 212 while the options add up to 97."
+      - "While loading, the old cards keep their size, faded, with aria-busy on the region; after 1 second a thin progress bar shows. FacetPanel stays live, so fixing a misclick is just a newer key."
+    draw: [o-race-one, o-race-dim]
+    check: Why not replace the grid with a spinner while the next answer loads?
+    answer: "The page would collapse and the shopper would lose their place; the old cards stay full size, faded, with aria-busy, until the new answer is applied."
+  - point: "A grid of images makes LCP an image: the server renders page one with its response embedded, the first row is fetched first, every image box is reserved, srcset right-sizes, the filters work as a form before hydration, and the grid keeps its height."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Rendered in the client, the route loads a shell, then JavaScript, then results, then images, so the LCP image is found last. Instead the server runs the search and streams the toolbar, facets and 24 cards as HTML with the response embedded, so image URLs arrive in the first bytes. First-row images get fetchpriority high and are never lazy; the rest load lazily."
+      - "Width and height from the API on every image, and aspect-ratio 1 on its box, give each card its final height before any image byte. A srcset of 160, 320 and 640 wide lets a phone pick a small file."
+      - "Facets are real inputs in a form that submits to slash s, so they work before hydration. When fewer results land, the old cards stay while dimmed, and the footer moves up once."
+    draw: [opt-load, o-load-ssr, o-load-priority, o-load-reserve, o-load-srcset, o-load-form, o-load-height]
+    check: "Of the 24 images on page one, which should the browser fetch first, and how do you tell it?"
+    answer: "The first row, where the LCP image usually is: fetchpriority high and no lazy loading; the rest load lazily."
+    misconceptions:
+      - "Lazy-load every image -> the first row holds the LCP image, so it loads eagerly at high priority; only the rest are lazy."
+  - point: "Native checkboxes and radios in a fieldset per facet; focus stays on the option clicked and moves only on a page change; one polite count per applied response; aria-busy while the keys differ; each price thumb a slider in the tab order."
+    kind: rule
+    weight: core
+    teach:
+      - "Native checkboxes and radios, a fieldset with a legend per facet, the count in the label: Brightwell, 54 results. Options are keyed by facet and value, so the one clicked keeps its focus; only a page change moves focus, to the results heading."
+      - "A status region outside the grid changes only when a response is applied, saying 212 results, once. aria-busy is true on the results region while currentKey and appliedKey differ."
+      - "Each price thumb has role slider, sits in the tab order and reads its formatted price; the min and max fields are the way round dragging."
+    draw: [opt-a11y, o-a11y-native, o-a11y-focus, o-a11y-heading, o-a11y-status, o-a11y-busy, o-a11y-slider]
+    check: "A keyboard user ticks a brand and the results update. Where is their focus now?"
+    answer: "Still on that checkbox; focus moves only on a page change, to the results heading."
+    misconceptions:
+      - "Announce every response as it arrives -> only the applied response is announced, once, in a polite status region."
+  - point: "Call the API with the canonical URL so repeats share one cache entry, keep anything personal out of the body, let caches serve stale for up to 300 s while revalidating, apply store entries under 60 s old with no request, and prefetch the likely next step."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Searches repeat across shoppers and on every Back. With the canonical query string, a pasted link, a click and a relaxation with the same filters hit one entry at the edge and in the browser. Only public product data and a coarse zone's delivery line go in the body."
+      - "With stale-while-revalidate 300, for five minutes after expiry a cache may hand out the old response while fetching a new one, so for those five minutes shoppers are not all kept waiting for the origin."
+      - "The store's entries under 60 seconds old are applied with no request; older ones at once, then revalidated. Prefetch page one when the sheet's count arrives, and the next page when the pointer rests on Next. A cached price may be stale; the product page and checkout confirm it."
+    draw: [opt-cache, o-cache-url, o-cache-private, o-cache-swr, o-cache-store, o-cache-prefetch]
+    check: "What could go wrong if the search response carried the shopper's name?"
+    answer: "The response is cached publicly and shared, so a shared cache could hand one shopper's details to another."
+    misconceptions:
+      - "The same search spelled two ways still shares a cache entry -> only the canonical URL makes it one entry; two spellings are two entries and neither stays warm."
+  - point: "Briefly, prices and counts follow the shopper's locale with Intl.NumberFormat and Intl.PluralRules, layouts use logical properties for right-to-left, the reflected query is rendered as text, and unknown params are dropped by an allowlist."
+    kind: rule
+    weight: supporting
+    teach:
+      - "Intl.NumberFormat formats prices from minor units and a currency code, and counts too; Intl.PluralRules picks 1 result or 3 results. Logical CSS properties flip the facet column and the slider for Arabic or Hebrew."
+      - "The query shows in the heading, so it is rendered as text, never HTML, and capped at 200 characters. UrlState keeps an allowlist of params and values, and sort variants and deep filter mixes get noindex."
+    draw: [opt-intl, o-intl-format, o-intl-rtl, o-sec-text, o-sec-allow]
+    check: "Someone shares a link with markup hidden in q. What stops it running on the page?"
+    answer: "The query is rendered as text, never as HTML, and capped at 200 characters."
+asks:
+  - ids: [o-load-ssr, o-load-priority, o-load-reserve, o-load-srcset, o-load-form, o-load-height]
+    beats: [5]
+    question: "The first row should paint almost at once on a phone, and nothing should jump. What would you do? Name techniques one at a time and I'll write each down."
+    hints:
+      - Where is the first page rendered, and when are the image URLs known?
+      - And what stops an image from pushing the title and price down?
+  - ids: [o-a11y-native, o-a11y-focus, o-a11y-heading, o-a11y-status, o-a11y-busy, o-a11y-slider]
+    beats: [6]
+    question: "How would you make the filters, the count and the pages work for keyboard and screen reader users? Name your ideas one at a time."
+    hints:
+      - What kind of controls are the filters, and where does focus go after a click?
+      - And how does a screen reader hear the new result count?
+task:
+  prompt: "Write how a pasted link becomes the query key, then the rules that keep the numbers on screen consistent while clicks race."
+  expects: [2, 3, 4]

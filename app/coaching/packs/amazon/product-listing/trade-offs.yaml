@@ -1,0 +1,121 @@
+# Product listing interview, trade-offs: the seven calls this design made, each written as the choice over what it rejected, with what it costs; the last one closes with a recap of what is on the board. Everything the optimizations part drew stays in view.
+id: amazon/product-listing/trade-offs
+title: Seven calls and what they cost
+source:
+  hash: "4cbc1b572c3e"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: amazon/product-listing/optimizations
+  assumes:
+    - "Every filter, sort and page lives in the URL; UrlState pushes committed changes and replaces fixes."
+    - "A response is applied only when its key is the URL's, and old requests are aborted."
+    - "Results, total and facet counts come in one response; a phone sheet uses a separate count endpoint."
+    - "The first page is server-rendered with its response embedded; numbered pages of 24 with a snapshot token."
+  carries:
+    - "Numbered pages of 24 over load more or endless scroll; live filters on desktop and an Apply sheet on a phone."
+    - "Filter state in the URL with the store derived from it; push per committed change, replace for fixes."
+    - "Abort and check the key on arrival; counts in the same response as the results; the first page server-rendered."
+  terms:
+    - term: trade-off
+      means: "A choice made with its cost in view, beside the options it rejected."
+board:
+  keep: [title, mock-up, mock-page, mock-toolbar, mock-chips, mock-filters, mock-card, card-image, card-title, card-rating, card-badges, card-cart, mock-pages, requirements, fr-heading, fr-grid, fr-filters, fr-counts, fr-chips, fr-sort, fr-url, fr-card, fr-empty, fr-phone, nfr-heading, nfr-lcp, nfr-js, nfr-inp, nfr-results, nfr-counts, nfr-cls, nfr-a11y, nfr-slider, nfr-crawl, nfr-noindex, components, c-page, c-card, c-image, c-price, c-cart, c-facets, c-check, c-radio, c-range, c-chips, url-state, results-store, search-service, search-api, loop-note, set-params, url-changed, store-service, service-api, store-page, state, url, u-open, u-more, u-brand, u-key, store, st-open, st-entry, st-response, st-response-more, st-current, st-applied, st-pure, api, t-get, req-1, req-2, response, r-open, r-items, r-image, r-price, r-rest, r-facets, r-cache, opt-url, o-url-drop, o-url-norm, o-url-writer, o-url-push, o-url-scroll, o-url-reset, opt-race, o-race-key, o-race-abort, o-race-late, o-race-one, o-race-dim, opt-load, o-load-ssr, o-load-priority, o-load-reserve, o-load-srcset, o-load-form, o-load-height, opt-a11y, o-a11y-native, o-a11y-focus, o-a11y-heading, o-a11y-status, o-a11y-busy, o-a11y-slider, opt-cache, o-cache-url, o-cache-private, o-cache-swr, o-cache-store, o-cache-prefetch, opt-intl, o-intl-format, o-intl-rtl, o-sec-text, o-sec-allow]
+  elements:
+    - { id: trade-offs, kind: region, label: "Trade-offs", at: [92, 84], size: [22, 25] }
+    - { id: td-pages, kind: note, label: "numbered pages of 24", at: [93, 86], in: trade-offs, tone: green }
+    - { id: td-pages-not, kind: note, label: "over load more, endless scroll", at: [93, 87], in: trade-offs, tone: grey }
+    - { id: td-apply, kind: note, label: "live on desktop, Apply on phone", at: [93, 89], in: trade-offs, tone: green }
+    - { id: td-apply-not, kind: note, label: "over live or Apply everywhere", at: [93, 90], in: trade-offs, tone: grey }
+    - { id: td-url, kind: note, label: "filters live in the URL", at: [93, 92], in: trade-offs, tone: green }
+    - { id: td-url-not, kind: note, label: "over a store mirrored to it", at: [93, 93], in: trade-offs, tone: grey }
+    - { id: td-history, kind: note, label: "push per change, replace fixes", at: [93, 95], in: trade-offs, tone: green }
+    - { id: td-history-not, kind: note, label: "over replacing every time", at: [93, 96], in: trade-offs, tone: grey }
+    - { id: td-stale, kind: note, label: "abort, then check the key", at: [93, 98], in: trade-offs, tone: green }
+    - { id: td-stale-not, kind: note, label: "over abort only, or request numbers", at: [93, 99], in: trade-offs, tone: grey }
+    - { id: td-counts, kind: note, label: "counts in the results response", at: [93, 101], in: trade-offs, tone: green }
+    - { id: td-counts-not, kind: note, label: "over a separate facets call", at: [93, 102], in: trade-offs, tone: grey }
+    - { id: td-render, kind: note, label: "first page server-rendered", at: [93, 104], in: trade-offs, tone: green }
+    - { id: td-render-not, kind: note, label: "over rendered in the client", at: [93, 105], in: trade-offs, tone: grey }
+  arrows: []
+beats:
+  - point: "Numbered pages of 24 over load more or endless scroll: shoppers can share and return to page 2, the footer stays reachable, each page is a link crawlers follow, and Back lands on a known page; the cost is a click and a wait, and offsets that hold only while the ranking does, hence the snapshot."
+    kind: decision
+    weight: core
+    teach:
+      - "Write each call as the choice over what it lost to. First, numbered pages of 24. A shopper can send or come back to page 2, the footer with its help and store links stays in reach, every page is a plain link for crawlers, and Back lands on page 2 itself, not on a scroll position the page has to rebuild."
+      - "The price: a click and a wait to see more, and page numbers are offsets that only hold while the ranking stays put, which is what the snapshot token is for. A cursor would not need one, but it gives up numbered pages a shopper can share."
+      - "Load more keeps earlier results on screen, but the URL then has to count the batches or Back drops them. Endless scroll needs no click, but the footer is out of reach, a place in the list is hard to share or find again, and crawlers still need page URLs."
+    draw: [trade-offs, td-pages, td-pages-not]
+    check: "The results are already split into numbered pages. Why does the API still hand out a snapshot token?"
+    answer: "Page numbers are offsets that only hold while the ranking stays still; the snapshot keeps page 2 on page 1's ranking."
+    misconceptions:
+      - "Endless scroll suits every listing -> it fits aimless browsing; shoppers comparing products need pages they can share, a footer they can reach and a known place on Back."
+  - point: "Live filters on desktop and a sheet with Apply on a phone: on desktop each click shows its effect beside the filters, while on a phone the sheet hides the results, so choices go in together with a count preview; the cost is two modes for one component and the count endpoint."
+    kind: decision
+    weight: core
+    teach:
+      - "On desktop each click shows its result right next to the filters. On a phone the sheet covers the results, so the choices go in together, and the button's count tells the shopper what they will get."
+      - "It costs one component with two modes, and a count endpoint for the phone. Live everywhere would reload results hidden under the sheet on every tick, each with its own history entry; Apply everywhere would add an extra click on desktop that people forget."
+    draw: [td-apply, td-apply-not]
+    check: Why not apply every filter live on a phone too?
+    answer: "The sheet hides the results, so every tick would reload results nobody can see and add a history entry each."
+  - point: "Filter state lives in the URL with the store derived from it, over a client store mirrored to the URL: links, reloads, Back and Forward rebuild the page and there is one copy to keep; the cost is a string form and validation for every value, and long URLs."
+    kind: decision
+    weight: core
+    teach:
+      - "With the filters only in the URL, a link, a reload, Back or Forward always rebuilds the page, and there is no second copy to keep in step."
+      - "In exchange, every value needs a string form and a check, and long mixes of filters make long URLs. A store mirrored into the URL could keep rich types, but then two copies must agree, popstate being the hard case, and a reload before the mirror catches up loses the state."
+    draw: [td-url, td-url-not]
+    check: "If the filters lived in a client store and were copied into the URL, what would break?"
+    answer: "The two copies have to be reconciled, especially on popstate, and a reload before the copy is written loses the state."
+  - point: "Push a history entry per committed change and replace for fixes, over replacing every time: Back undoes the last filter and canonical rewrites leave no trace; the cost is that after six filters, leaving takes six Back presses."
+    kind: decision
+    weight: supporting
+    teach:
+      - "Pushing on each committed change lets Back undo the last filter, while canonical rewrites and bad-param fixes leave nothing behind. The catch: after six filters it takes six presses of Back to leave the page."
+      - "Replacing every time leaves in one press, but Back can no longer undo a filter, and Forward does nothing within the page."
+    draw: [td-history, td-history-not]
+    check: What does the shopper lose if every filter change replaces the history entry?
+    answer: "Back can no longer undo a filter, and Forward is useless inside the page."
+  - point: "Abort the old request and check the key on arrival, over abort alone or request numbers: it saves bandwidth, is safe when a body beats abort(), and is right after Back as well as after fast clicks; the cost is two mechanisms to maintain."
+    kind: decision
+    weight: core
+    teach:
+      - "Using both saves bandwidth, stays safe when a body is read just before abort(), and gives the right answer after Back as well as after quick clicks; the cost is keeping two mechanisms."
+      - "Abort on its own is simpler, yet a response already delivered still gets applied. A request counter needs no abort support, but it downloads answers no one will read and turns away the right answer after Back."
+    draw: [td-stale, td-stale-not]
+    check: "Why isn't numbering the requests and keeping only the newest enough?"
+    answer: "After Back the older query is the right one again, and a counter would reject its correct response; it also downloads answers nobody reads."
+  - point: "Total and facet counts come in the same response as the results, over a separate facets request: the page can never show numbers from two queries and each change costs one request; the cost is a slightly larger response and counting on every results request."
+    kind: decision
+    weight: core
+    teach:
+      - "With one response, the numbers on screen can never come from two different queries, and each filter change costs a single request."
+      - "The response grows a little, and the server counts on every results request. A separate facets call would let results show before the counts are ready, but for a moment the two answers can disagree."
+    draw: [td-counts, td-counts-not]
+    check: What can a separate facets request show the shopper that one response never can?
+    answer: "For a moment, counts from one query beside results from another, because the two responses can disagree."
+  - point: "The first page is rendered on the server and streamed with its data embedded, over a client-rendered page: images are found in the first bytes, crawlers get real content and filters work as a form before hydration; the cost is a server path that runs the search, and hydration time on slow phones."
+    kind: decision
+    weight: core
+    teach:
+      - "Streaming the first page from the server with its data embedded puts image URLs in the first bytes, which helps LCP, gives crawlers and link previews real content, and lets the filters work as a form before hydration. In return the server needs a rendering path that runs the search, and slow phones pay for hydration."
+      - "A client-rendered page gets a static shell that caches well, but results and images wait on JavaScript and a second request, and the department pages that ought to be indexed come off worse."
+      - "Then recap from the top of the board down: the mock-up and the requirements, the components and their loop, the question in the URL and the store of answers, the request and its response, the deep dives, and these seven calls."
+    draw: [td-render, td-render-not]
+    check: Which requirement does server rendering the first page mainly serve, and what does it cost?
+    answer: "LCP less than 2.5 s, since images are found in the first bytes, and crawlable department pages; the cost is a server path that runs the search and hydration time on slow phones."
+asks:
+  - ids: [td-pages, td-apply, td-url, td-history, td-stale, td-counts, td-render]
+    beats: [1, 2, 3, 4, 5, 6, 7]
+    question: "Which calls did this design make, and what did each one beat? Name them one at a time and I'll write each down."
+    hints:
+      - How does the shopper get to more results, pages or scrolling? And when do filters apply on a phone?
+      - Where do the filters live, and what does a filter click do to history?
+      - Where do the counts come from, and where is the first page rendered?
+task:
+  prompt: "Write the seven calls this design made, each as the choice over what it rejected, and say one cost of each."
+  expects: [1, 2, 3, 5, 6, 7]

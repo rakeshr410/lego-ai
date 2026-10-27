@@ -1,0 +1,168 @@
+# Cart interview, optimizations: the rubric that picks four deep dives (coalescing and conflicts, tabs and devices, the guest merge, accessibility), each in its own area of the board, the next-morning screen said in words, and the lower-scoring areas said and not written.
+id: amazon/cart/optimizations
+title: Time and place
+source:
+  hash: "66266cdfa220"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: amazon/cart/interface-definition
+  assumes:
+    - "A line intent is a target quantity; the store keeps one mutation in flight per cart with its base version."
+    - "PATCH names its base version with If-Match; a 412 means the cart moved and nothing was applied."
+    - "TabSync posts cart changed with the version and the whole cart; other devices refetch with If-None-Match when visible."
+    - "The guest cart in localStorage holds SKUs and quantities; quote prices it and merge takes a merge_id."
+  carries:
+    - "The cart is tiny; what makes it hard is timing and location: presses outrunning the network, one cart changed in two spots, a guest cart running into an account cart."
+    - "One target per line, sent 400 ms after the last press; one mutation in flight per cart; a 412 is refetched and replayed, at most twice, with one banner."
+    - "Tabs post the whole cart and a higher version wins with the receiver's intents on top; a device refetches when shown after 30 s; TabSync runs on every page with the badge."
+    - "The guest merge keeps the larger quantity per SKU, capped at the limit, repeatable by merge_id, and clears localStorage only after the 200."
+    - "Accessibility: the badge named with its count, one polite announcement once settled, focus to the next line, an Undo that waits, and every change said in words."
+  terms:
+    - term: coalescing
+      means: "Holding a line's presses until 400 ms after the last one and sending only the latest target quantity."
+    - term: replay
+      means: "After a 412, applying the kept intents again on the refetched version and sending them anew."
+    - term: settled
+      means: "Nothing pending and nothing in flight, the moment the subtotal is announced."
+board:
+  keep: [title, mock-up, mock-header, mock-item, mock-stepper, mock-actions, mock-totals, mock-free, mock-saved, requirements, fr-heading, fr-lines, fr-summary, fr-stepper, fr-delete, fr-save, fr-reprice, fr-stock, fr-free, fr-tabs, fr-race, fr-guest, nfr-heading, nfr-totals, nfr-overwrite, nfr-frame, nfr-inp, nfr-tabs, nfr-devices, nfr-burst, nfr-flight, nfr-lcp, nfr-js, nfr-a11y, nfr-announce, nfr-locale, components, c-page, c-line, c-stepper, c-actions, c-warning, c-store, c-tabsync, c-guest, c-badge, c-service, c-api, store-to-page, line-to-store, store-to-badge, store-to-service, service-to-api, store-tabsync, guest-to-store, flow, fl-tab1, fl-server, fl-reply, fl-tab2, fl-newer, fl-phone, tab1-to-server, tab1-to-tab2, phone-to-server, state, reads, rd-open, rd-line-more, rd-avail, rd-summary, rd-summary-more, cart-state, st-open, st-rest, st-pending, st-flight, st-undo, st-status, money, outside, guest-json, g-open, g-close, tab-json, t-line, travel, tr-rest, tr-bc, tr-storage, tr-visible, tr-not, api, get-req, get-resp, r-open, r-lines, r-money, r-summary, r-total, r-close, r-304, patch-req, patch-hdr, err-412, err-409, del-req, post-req, save-req, quote-req, merge-req, err-gone, err-other, actions, act-intended, act-flushed, act-committed, act-remote, props-note, child-note]
+  elements:
+    - { id: optimizations, kind: region, label: "Optimizations", at: [1, 92], size: [70, 18] }
+    - { id: co, kind: region, label: "Coalescing and conflicts", at: [2, 94], size: [22, 7], in: optimizations }
+    - { id: co-burst, kind: note, label: "three presses, one PATCH for 4", at: [3, 96], in: co, tone: green }
+    - { id: co-delta, kind: note, label: "deltas retried land 5, not 4", at: [3, 97], in: co, tone: red }
+    - { id: co-leave, kind: note, label: "pagehide: flush with fetch keepalive", at: [3, 98], in: co }
+    - { id: co-flight, kind: note, label: "one mutation in flight per cart", at: [3, 99], in: co }
+    - { id: co-replay, kind: note, label: "412: refetch, replay, one banner", at: [3, 100], in: co }
+    - { id: tb, kind: region, label: "Tabs and devices", at: [26, 94], size: [22, 7], in: optimizations }
+    - { id: tb-cart, kind: note, label: "post the whole cart, not a ping", at: [27, 96], in: tb, tone: green }
+    - { id: tb-newer, kind: note, label: "higher version wins, own intents on top", at: [27, 97], in: tb }
+    - { id: tb-storage, kind: note, label: "no channel: compare versions in storage", at: [27, 98], in: tb }
+    - { id: tb-visible, kind: note, label: "shown after 30 s: refetch, If-None-Match", at: [27, 99], in: tb }
+    - { id: tb-every, kind: note, label: "TabSync on every page with the badge", at: [27, 100], in: tb }
+    - { id: gm, kind: region, label: "Guest merge", at: [50, 94], size: [20, 7], in: optimizations }
+    - { id: gm-ids, kind: note, label: "SKUs and quantities, priced by quote", at: [51, 96], in: gm }
+    - { id: gm-max, kind: note, label: "larger quantity per SKU, capped", at: [51, 97], in: gm, tone: green }
+    - { id: gm-sum, kind: note, label: "summing buys a second kettle", at: [51, 98], in: gm, tone: red }
+    - { id: gm-clear, kind: note, label: "same merge_id, clear after the 200", at: [51, 99], in: gm }
+    - { id: ax, kind: region, label: "Accessibility", at: [2, 103], size: [25, 7], in: optimizations }
+    - { id: ax-badge, kind: note, label: "badge named Cart, 5 items", at: [3, 105], in: ax }
+    - { id: ax-polite, kind: note, label: "one polite announcement once settled", at: [3, 106], in: ax }
+    - { id: ax-focus, kind: note, label: "focus to the next line's title", at: [3, 107], in: ax }
+    - { id: ax-undo, kind: note, label: "Undo pauses, Removed this visit list", at: [3, 108], in: ax }
+    - { id: ax-words, kind: note, label: "named buttons, busy and warnings in words", at: [3, 109], in: ax }
+    - { id: rp, kind: region, label: "Opened the next morning", at: [29, 103], size: [27, 7], in: optimizations }
+    - { id: rp-html, kind: note, label: "the HTML holds the cart priced now", at: [30, 105], in: rp }
+    - { id: rp-price, kind: note, label: "a changed price in words, one banner counts", at: [30, 106], in: rp }
+    - { id: rp-stock, kind: note, label: "sold out: kept, dimmed, out of the subtotal", at: [30, 107], in: rp }
+    - { id: rp-saved, kind: note, label: "Save for later: below the cart, focus moves on", at: [30, 108], in: rp }
+    - { id: rp-limit, kind: note, label: "too many: Only 5 left, choose 5 or fewer", at: [30, 109], in: rp }
+  arrows: []
+beats:
+  - point: "The cart is tiny, so its difficulty is timing and location: presses outrunning the network, one cart changed in two places, a guest cart meeting an account cart; scoring areas on impact, reach and frequency picks four deep dives, and the rest stay small."
+    kind: decision
+    weight: supporting
+    teach:
+      - "The cart itself is tiny; what makes it hard is timing and location: presses that outrun the network, one cart changed in two spots, and a guest cart that runs into an account cart at sign-in."
+      - "Give each area 1 to 3 for how bad a failure is, how many shoppers it reaches and how often it comes up, and dive into the best four: coalescing and version conflicts, tabs and devices, accessibility, and the guest merge."
+      - "The others get a sentence each: the page arrives with today's priced cart, so there is no loading state, and the route stays within 90 KB; Intl formats money and plurals; the server prices and checks everything itself; offline, the cart can only be read."
+    draw: [optimizations]
+    check: Which areas does the rubric pick for deep dives?
+    answer: "Coalescing and version conflicts, tabs and devices in step, accessibility of edits and totals, and the guest cart merge."
+  - point: "Each press sets the line's target and restarts a 400 ms timer, so three quick presses send one PATCH for 4 and pressing back to confirmed cancels; a tab closing mid-burst flushes on pagehide; deltas would land 5 once a lost reply is retried."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Three presses on the filters inside a third of a second: each one overwrites the line's intent and restarts its timer, so 400 ms after the last a single PATCH carries 4 with If-Match c7. Pressing back down to the confirmed number cancels the intent."
+      - "A request per press would cost three versions and a flickering total; plus one per press in parallel is worse, since a lost reply is retried and the cart holds 5 instead of 4."
+      - "If the tab closes inside the window, pagehide sends what is pending with fetch keepalive; should that fail too, the next visit just shows the confirmed quantity."
+    draw: [co, co-burst, co-delta, co-leave]
+    check: The shopper presses plus three times within 330 ms. With coalescing, what reaches the server?
+    answer: "One PATCH with the absolute quantity 4, sent 400 ms after the last press."
+    misconceptions:
+      - "Send each press at once so the server is never behind -> it costs a request and a version per press, and deltas double-count on a retry."
+  - point: "Only one mutation is in flight per cart, since two built on the same version guarantee the second a 412; a press while a line is in flight just replaces its intent, which is sent on the new version if it still differs from confirmed and dropped if it now matches."
+    kind: mechanism
+    weight: core
+    teach:
+      - "The whole cart has at most one change on the wire. Two requests built on one version would hand the second a certain 412, so the next change waits for the answer that brings the newest version."
+      - "A press while a line's request is out just replaces its intent. When the 200 lands, that intent goes out again on the new version if it still differs from the confirmed number, and is dropped if it now matches."
+    draw: [co-flight]
+    check: Why not send the next line's change while the first one is still in flight?
+    answer: "Both would name the same version, so the second would certainly get a 412."
+    misconceptions:
+      - "Send the next line's change while the first is in flight to save time -> both name the same version, so the second is sure to get a 412."
+  - point: "A 412 means the cart moved: the phone set the filters to 2 while this tab, still at version 7, asks for a second kettle; nothing is applied, the store refetches version 8, sends kettle 2 again on it, and version 9 keeps both, with one banner; a line gone on refetch drops its intent."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Follow a clash. The phone set the filters to 2, making version 8; the laptop tab, still on 7, asks for a second kettle. Its PATCH gets a 412 and nothing changes; the store fetches version 8, sees the kettle line is still there, and sends kettle 2 again. Version 9 holds both edits, and a single banner explains that another device changed the cart."
+      - "At most two replays. A line missing from the refetched cart loses its intent and the shopper is told; a 409, 422, 5xx or lost network rolls the line back with a reason, and the next press or Retry begins again. Dropping the intent would ignore the shopper; resending on version 7 would just fail again."
+    draw: [co-replay]
+    check: The phone changed the filters while this tab, still at version 7, sends a kettle change. What happens?
+    answer: "The PATCH gets a 412 and nothing is applied; the store refetches version 8, replays the kettle intent on it, both edits survive, and one banner explains."
+    misconceptions:
+      - "Treat the 412 as a failure and drop the kettle change -> the cart only moved; refetch, replay the intent on the new version, and tell the shopper."
+  - point: "Tabs post the whole priced cart, not a ping, and a higher version wins with the receiver's intents on top; without the channel, a stored version number triggers a refetch only when higher; a device shown after 30 s refetches; TabSync runs wherever the badge is."
+    kind: mechanism
+    weight: core
+    teach:
+      - "A bare ping would make every open tab call the server after each change, so the committing tab posts the full priced cart with its version and the others adopt it directly. Only a higher version is taken, so a late or doubled message cannot pull a tab backwards, and the tab's own pending intents stay on top."
+      - "With no BroadcastChannel, the version number goes into a localStorage key, and a tab refetches only if that number beats its own. A device shown again after more than 30 seconds refetches with If-None-Match; even without it, its first edit would meet a 412 and recover."
+      - "TabSync runs on any page with the badge, not only the cart; since the server pushes nothing, tabs need no elected leader or shared socket."
+    draw: [tb, tb-cart, tb-newer, tb-storage, tb-visible, tb-every]
+    check: Why post the whole cart on the channel rather than a message that says the cart changed?
+    answer: "So the other tabs take it without a request; a bare ping would send every open tab to refetch on every change."
+  - point: "A guest cart keeps SKUs and quantities, never prices, and is priced by quote on every open; at sign-in the merge takes the larger quantity per SKU, capped at the limit, so a kettle in both carts stays one, a retried merge_id changes nothing, and the key is cleared only after the 200."
+    kind: decision
+    weight: core
+    teach:
+      - "A price kept on the device goes stale overnight and can be edited in dev tools, so the guest cart stores only SKU, quantity and time added, under a versioned key, and is priced through the quote each time it opens."
+      - "At sign-in the guest cart has a kettle, a dripper and filters; the account cart has a kettle and two packs of filters. Adding gives two kettles and three packs, and a retry would add again; the larger count per SKU, up to the limit, gives one kettle, one dripper and two packs, however often it runs."
+      - "A retry with the same merge_id gets back the original result, and the device forgets its key only once the 200 arrives, so a failed merge loses nothing."
+    draw: [gm, gm-ids, gm-max, gm-sum, gm-clear]
+    check: At sign-in the guest cart has 1 kettle and the account cart has 1 kettle. What does the merged cart hold, and why?
+    answer: "One kettle: the larger quantity per SKU, which never buys a duplicate and gives the same cart if the merge is retried."
+    misconceptions:
+      - "Add the guest quantities to the account cart -> summing buys items added twice by accident and adds again on a retried merge."
+  - point: "The badge is named with its count, pluralised for the locale; one polite status region reads the subtotal once settled; a deleted line hands focus to the next line's title; the 10 s Undo stops while hovered or focused, and a list of removed lines keeps it reachable."
+    kind: rule
+    weight: core
+    teach:
+      - "The badge link's name holds the count and the noun, in the locale's plural, Cart, 5 items, and updates quietly. A single polite status region, present from load, speaks the subtotal once nothing is pending or in flight; not per press or version, never for another tab."
+      - "A deleted line takes its focused button with it, so focus is placed on the following line's heading, failing that the one before, failing that the empty-cart heading; Undo returns it to the restored line."
+      - "A 10 second toast may disappear before a screen-reader user arrives at it, so hovering or focusing it stops the clock, and a list of lines removed this visit, after the last line, keeps Undo with no deadline."
+    draw: [ax, ax-badge, ax-polite, ax-focus, ax-undo]
+    check: The shopper presses plus three times. How many times does the screen reader announce the subtotal?
+    answer: "Once, when the change has settled, with nothing pending or in flight."
+    misconceptions:
+      - "Announce every change so nothing is missed -> every press, version and other tab would be read aloud; one polite announcement per settled change."
+  - point: "Next morning the HTML holds today's prices; a changed price is said in words with one banner counting changes, a sold-out line stays dimmed and out of the subtotal, Save for later sends it below the cart, and nothing relies on colour: named buttons, aria-busy, warnings in words."
+    kind: rule
+    weight: core
+    teach:
+      - "Next morning the page arrives with the cart priced today, so yesterday's numbers never show. The kettle costs more: its line says so in a sentence, naming the old $48.00, one banner counts the prices that moved, and the summary carries the server's fresh figures."
+      - "The dripper sold out: its line remains, greyed, with the reason and Delete and Save for later, and leaves the subtotal, so delivery costs again. Saving moves it under the cart with a View toast, focus on the next line. Asking for 8 filters with 5 left brings back Only 5 left, choose 5 or fewer."
+      - "No signal is colour alone: stepper buttons carry the item's name, plus is disabled at the limit with the reason in text, the warning is linked by aria-describedby, and a pending line has aria-busy with Updating by the total."
+    draw: [ax-words, rp, rp-html, rp-price, rp-stock, rp-saved, rp-limit]
+    check: The kettle's price went up overnight. How does the cart tell the shopper?
+    answer: "Its line says in a sentence that the price rose from the old one, one banner counts the changed prices, and the summary shows the server's new figures."
+asks:
+  - ids: [co-burst, co-leave, co-flight, co-replay]
+    beats: [2, 3, 4]
+    question: "The shopper presses faster than the network answers, sometimes from two places at once. How would you keep that safe and cheap? Name your ideas one at a time."
+    hints:
+      - What if three presses only cost one request?
+      - And what should happen when the server says the cart has moved on?
+  - ids: [ax-badge, ax-polite, ax-focus, ax-undo]
+    beats: [7]
+    question: "Lines vanish, totals move and Undo is timed. What would you do so the cart works with a keyboard and a screen reader?"
+    hints:
+      - What does the screen reader hear on the cart link, and when totals change?
+      - Where should focus go when the line it was on disappears?
+task:
+  prompt: "Draw the four deep dives: coalescing and conflicts, tabs and devices, the guest merge and accessibility, each with its main techniques."
+  expects: [2, 3, 4, 5, 6, 7, 8]

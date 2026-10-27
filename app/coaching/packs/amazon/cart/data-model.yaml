@@ -1,0 +1,142 @@
+# Cart interview, data model: what each view reads, then the store written as JSON key by key: the server's Cart kept whole as confirmed at one version, the client-only keys laid over it (pending intents, the mutation in flight, undo entries, status), money in minor units, and, in an area of their own, the guest cart in localStorage and the message between tabs.
+id: amazon/cart/data-model
+title: One cart, one version
+source:
+  hash: "3401e1e74ea3"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: amazon/cart/high-level-design
+  assumes:
+    - "CartLine finds its line in CartStore by id; CartBadge shows the item count; the summary is the server's."
+    - "The browser holds the newest version the server sent and lays the shopper's unconfirmed intents over it."
+    - "A guest cart lives on the device until sign-in; TabSync tells other tabs when a version is committed."
+  carries:
+    - "Every priced number comes in one Cart at one version, held whole as confirmed and swapped only for a higher version, never patched."
+    - "On top, the store keeps only what the server has no way to know: pending intents per line, the mutation in flight with its base version, undo entries, a status and the last fetch time."
+    - "A line intent is a target quantity, never a step; rolling back is deleting the intent."
+    - "Money is an integer of minor units with its currency, formatted with Intl.NumberFormat, never a float and never summed by the client."
+    - "Outside the store: the guest cart in localStorage keeps SKUs, quantities and times, no prices; the tab message carries the version and the whole cart."
+  terms:
+    - term: confirmed
+      means: "The last whole Cart the server returned, at its version; every figure with money on the screen reads from it."
+    - term: pending
+      means: "The shopper's intents by line id, target quantities not yet confirmed by a version."
+    - term: minor units
+      means: "Money counted in the currency's smallest unit as an integer, cents for USD: $6.50 is 650."
+board:
+  keep: [title, mock-up, mock-header, mock-item, mock-stepper, mock-actions, mock-totals, mock-free, mock-saved, requirements, fr-heading, fr-lines, fr-summary, fr-stepper, fr-delete, fr-save, fr-reprice, fr-stock, fr-free, fr-tabs, fr-race, fr-guest, nfr-heading, nfr-totals, nfr-overwrite, nfr-frame, nfr-inp, nfr-tabs, nfr-devices, nfr-burst, nfr-flight, nfr-lcp, nfr-js, nfr-a11y, nfr-announce, nfr-locale, scope, assume-heading, assume-lines, assume-wait, assume-undo, assume-free, out-heading, out-checkout, out-server, components, c-page, c-line, c-stepper, c-actions, c-warning, c-store, c-tabsync, c-guest, c-badge, c-service, c-api, store-to-page, line-to-store, store-to-badge, store-to-service, service-to-api, store-tabsync, guest-to-store, flow, fl-tab1, fl-server, fl-reply, fl-tab2, fl-newer, fl-phone, tab1-to-server, tab1-to-tab2, phone-to-server]
+  elements:
+    - { id: state, kind: region, label: "State", at: [1, 63], size: [30, 21] }
+    - { id: reads, kind: region, label: "what the views read", at: [2, 65], size: [28, 7], in: state }
+    - { id: rd-open, kind: note, label: "{ line: { title, variant, image, quantity, max_quantity,", at: [3, 67], in: reads }
+    - { id: rd-line-more, kind: note, label: "unit_price, price_when_added, line_total,", at: [5, 68], in: reads }
+    - { id: rd-avail, kind: note, label: "availability, notices },", at: [5, 69], in: reads }
+    - { id: rd-summary, kind: note, label: "summary: { item_count, subtotal, delivery,", at: [4, 70], in: reads }
+    - { id: rd-summary-more, kind: note, label: "free_delivery_remaining, tax_estimate, total } }", at: [6, 71], in: reads }
+    - { id: cart-state, kind: region, label: "CartState", at: [2, 73], size: [28, 8], in: state, tone: amber }
+    - { id: st-open, kind: note, label: "{ confirmed: { id, version: 7, lines,", at: [3, 75], in: cart-state }
+    - { id: st-rest, kind: note, label: "saved, summary, notices },", at: [5, 76], in: cart-state }
+    - { id: st-pending, kind: note, label: "pending: { filters: { quantity: 3 } },", at: [4, 77], in: cart-state }
+    - { id: st-flight, kind: note, label: "in_flight: { kind: set, base_version: 7 },", at: [4, 78], in: cart-state }
+    - { id: st-undo, kind: note, label: "undo: [ { sku, quantity, position } ],", at: [4, 79], in: cart-state }
+    - { id: st-status, kind: note, label: "status: syncing, last_fetched_at }", at: [4, 80], in: cart-state }
+    - { id: money, kind: note, label: "money: { amount_minor: 650, currency: USD }", at: [2, 82], in: state, tone: amber }
+    - { id: outside, kind: region, label: "Outside the store", at: [33, 63], size: [27, 11] }
+    - { id: guest-json, kind: region, label: "GuestCart in localStorage, no prices", at: [34, 65], size: [22, 4], in: outside, tone: amber }
+    - { id: g-open, kind: note, label: "{ schema: 1, lines: [ { sku, quantity,", at: [35, 67], in: guest-json }
+    - { id: g-close, kind: note, label: "added_at } ], updated_at }", at: [37, 68], in: guest-json }
+    - { id: tab-json, kind: region, label: "TabSync message", at: [34, 70], size: [25, 3], in: outside, tone: amber }
+    - { id: t-line, kind: note, label: "{ type: cart/changed, version: 8, cart, from_tab }", at: [35, 72], in: tab-json }
+  arrows: []
+beats:
+  - point: "Derive the state from the views: a line reads title, variant, image, quantity and its limit, unit price, price when added, line total, availability and notices; the summary reads item count, subtotal, delivery, free-delivery remaining, tax and total; the badge reads the item count."
+    kind: component
+    weight: core
+    teach:
+      - "Begin from the components on the board, not from a store shape: ask what each one needs on screen, and write it as JSON, a key at a time."
+      - "A CartLine needs its title, variant, image, quantity and the most allowed, the unit price and the price when it was added, the line total, and its availability and notices for the warning. The summary needs the item count, subtotal, delivery, what is left for free delivery, estimated tax and total; the badge takes the item count from it."
+      - "All of these are the server's. The only number on screen the shopper sets is the quantity in the stepper."
+    draw: [state, reads, rd-open, rd-line-more, rd-avail, rd-summary, rd-summary-more]
+    check: Where do you start when deciding the cart's client state?
+    answer: "From the views: what each one reads, a line, the summary and the badge."
+  - point: "Everything with a price comes as one Cart at one version, from GET /api/cart and from every mutation; the store keeps it whole as confirmed, every line as sent, and replaces it only with a higher version, never patching a number."
+    kind: decision
+    weight: core
+    teach:
+      - "So the store keeps the server's Cart just as it came. Open CartState: confirmed, the whole Cart, with its id, version 7 and its lines, each one exactly as the server sent it, then the saved list, the summary and the notices. The version also travels as the ETag, c7."
+      - "A notice gives a line's reason for changing: price up, price down, out of stock or limit lowered. Availability is in stock, low stock or out of stock."
+      - "The read and every mutation answer with the whole priced cart, so confirmed is simply exchanged for a higher version."
+    draw: [cart-state, st-open, st-rest]
+    check: A response with version 8 arrives while the store already holds version 9. What happens to confirmed?
+    answer: Nothing; confirmed is replaced only by a higher version.
+    misconceptions:
+      - "Update the subtotal in the store when a quantity changes -> the client never computes totals; the next confirmed Cart brings them."
+  - point: "The first client-only key is pending: a target quantity per line, never a step, so resending it or replaying it on a later version never applies it twice; the stepper shows pending if there is one, else confirmed, and rolling back is deleting the intent."
+    kind: decision
+    weight: core
+    teach:
+      - "Now add only what the server has no way of knowing. First pending: by line id, the quantity the shopper asked for, the filters at 3."
+      - "It is a target, set to 3, never a step like plus 2. Sent a second time after a timeout or a conflict, a target leaves the cart where it should be; a step sent twice is applied twice."
+      - "The stepper reads pending when there is one, otherwise confirmed; the money figures, the badge and the warnings read confirmed only. Undoing an intent means deleting it."
+    draw: [st-pending]
+    check: Why does a line intent hold an absolute quantity rather than a change like plus 2?
+    answer: "Sending a target again, or replaying it on a later version, gives the same cart; a step would be applied twice."
+    misconceptions:
+      - "Plus 2 and set to 3 are the same thing -> after a retry or a replay, plus 2 is added again; set to 3 is not."
+  - point: "The rest of the client-only state is the mutation in flight with its kind and base version, the undo entries with what re-adding needs (SKU, quantity, position, title, expiry), a status of idle, syncing, refetching or offline, and the last fetch time."
+    kind: component
+    weight: supporting
+    teach:
+      - "in_flight is the single mutation on its way: its kind, one of set, delete, add, save or merge, and the version it started from."
+      - "undo keeps, for each removed line, what it takes to put it back: SKU, quantity, position, title and when the offer runs out. Then status, idle, syncing, refetching or offline, and the time of the last fetch; close the store."
+    draw: [st-flight, st-undo, st-status]
+    check: What does an undo entry need to hold?
+    answer: "Enough to re-add the line: its SKU, quantity and position, its title, and when the offer expires."
+  - point: "Money travels as an integer of minor units with its currency, 650 and USD for $6.50, never a float; the client only formats it, with Intl.NumberFormat in the shopper's locale, and does no sums."
+    kind: rule
+    weight: core
+    teach:
+      - "Every amount in the Cart has one shape: amount_minor, a whole number of cents, beside the currency code. $6.50 travels as 650 and USD."
+      - "Decimal arithmetic in floating point drifts by tiny amounts, and how a price is written depends on its currency. So the client only formats these integers, with Intl.NumberFormat in the shopper's locale, and never sums them."
+    draw: [money]
+    check: Why is money sent as amount_minor and currency rather than a decimal number?
+    answer: "Floating-point sums drift, and the currency decides the formatting; the client only formats integers of minor units."
+    misconceptions:
+      - "A decimal like 6.5 is fine for prices -> float arithmetic drifts; prices travel as integers of minor units with a currency."
+  - point: "Outside the store, the guest cart sits in localStorage under a versioned key with SKUs, quantities and the time each went in, and never a price, since stored data can be old or hand-edited; the server prices it whenever the cart opens."
+    kind: component
+    weight: supporting
+    teach:
+      - "Two things live outside the store. First the guest cart, written as JSON: a schema number, lines of SKU, quantity and the time each was added, and when it was last updated."
+      - "It never holds a price: what sits in localStorage may be old or changed by hand, so the server prices the guest cart every time it is opened."
+    draw: [outside, guest-json, g-open, g-close]
+    check: What does the guest cart in localStorage contain?
+    answer: "SKUs, quantities and the time each went in, with a schema number and update time; nothing priced."
+  - point: "The message TabSync posts after a commit carries its type, cart changed, the version, the whole cart and the sending tab, so a receiving tab can take it without a request."
+    kind: component
+    weight: supporting
+    teach:
+      - "Second, what TabSync posts after every commit: its type, cart changed, the new version, the full cart and the tab it came from."
+      - "Because the cart rides along, the tab that receives it makes no request; the version tells it whether to take it."
+    draw: [tab-json, t-line]
+    check: Why does the tab message carry the whole cart and not just a notice that something changed?
+    answer: So the receiving tab can take the newer cart without making a request.
+asks:
+  - ids: [rd-open, rd-line-more, rd-avail, rd-summary, rd-summary-more]
+    beats: [1]
+    question: "Walk the components: what does each one need to read? Name the fields and I'll write them as JSON."
+    hints:
+      - Look at one line on the sketch. What does it show, and what could its warning need?
+      - And the summary, and the badge in the header?
+  - ids: [st-pending, st-flight, st-undo, st-status]
+    beats: [3, 4]
+    question: "The server sends the whole cart. What does the client need to keep that the server can't know yet?"
+    hints:
+      - The shopper has pressed plus, but nothing is confirmed. Where does that live?
+      - And a line that was just deleted, which the shopper may want back?
+task:
+  prompt: "Write CartState as JSON: confirmed, the whole Cart at its version, then pending, in_flight, undo and status; then the guest cart and the tab message outside it."
+  expects: [2, 3, 4, 6, 7]

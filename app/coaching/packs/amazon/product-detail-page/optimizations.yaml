@@ -1,0 +1,198 @@
+# Product detail page interview, optimizations: eight areas scored, five deep dives each in its own area (caching by volatility, the hero image, the accessible variant picker, hydration cost, a reliable Add to cart), then a line each for the areas that scored lower. The lesson opens on the board so far, minus the secondary notes that do not fit the keep.
+id: amazon/product-detail-page/optimizations
+title: Fast first load, reliable adds
+source:
+  hash: "1e18c7eceaec"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: amazon/product-detail-page/interface-definition
+  assumes:
+    - "Targets: LCP at most 2.5 s at p75, Add to cart within 2 s, INP at most 200 ms, CLS at most 0.1, a public offer at most 60 s old."
+    - "The edge stitches a day-long catalog shell and a 30 s offers fragment into one HTML; private offers come from the offers API, private, no-store."
+    - "Option status is derived and an impossible pick cleared; the badge is confirmed plus pending adds keyed by add_id."
+  carries:
+    - "Caching: shell a day, offers 30 s, stitched at the edge; no cookies in a cache key; stale-if-error 5 min or an empty slot; old tabs refetch past 60 s, or show the offer's age."
+    - "Hero: a plain img in the HTML, never lazy, fetchpriority high on it alone, srcset 480, 960 and 1440 with sizes, width and height reserved; thumbnails, video and zoom wait."
+    - "Picker: radio groups; aria-disabled keeps unbuyable options reachable with a reason; one polite announcement 400 ms after the last change; replaceState keeps picks in the URL."
+    - "Hydration: islands, gallery, picker and buy box first in at most 70 KB; below the fold within 600 px; a real form with early clicks replayed; offers embedded once."
+    - "Add to cart: badge is confirmed plus pending; busy button; one retry with the same add_id; rollback on 409, 422 or a second failure; never a price; no offline queue."
+  terms:
+    - term: fetchpriority
+      means: An attribute that tells the browser how early to fetch a resource; high on the hero image only.
+    - term: aria-disabled
+      means: Marks an option unavailable while keeping it focusable, unlike the disabled attribute; the page must refuse to check it itself.
+    - term: island
+      means: A part of the page whose code loads and hydrates on its own schedule.
+    - term: stale-while-revalidate
+      means: Lets a cache serve a slightly old response at once while it fetches a fresh one.
+board:
+  keep: [title, mock-up, phone, mock-header, mock-gallery, mock-title, mock-price, mock-options, mock-buy, mock-delivery, mock-below, requirements, fr-heading, fr-first, fr-gallery, fr-pick, fr-unbuyable, fr-cleared, fr-url, fr-add, fr-buy-now, fr-below, nfr-heading, nfr-lcp, nfr-add, nfr-inp, nfr-cls, nfr-fresh, nfr-private, nfr-client-price, nfr-one-line, nfr-a11y, nfr-seo, nfr-jsonld, nfr-locales, components, c-edge, c-server, browser, c-product-page, c-below, above-fold, c-gallery, c-picker, c-buy-box, c-pricing, c-cart-store, page-fold, page-below, pricing-buy, edge-html, edge-miss, pricing-server, cart-server, below-server, pricing-picker, picker-gallery, picker-buy, buy-cart, layers, l-shell, l-shell-note, l-offers, l-offers-note, l-private, l-private-note, l-cart, l-cart-note, l-community, l-community-note, statement, data-model, matrix, m-steel, m-black, m-copper, m-rule, m-status, m-words, store, js-open, js-media, js-options, js-skus, js-offers, js-offer-price, js-offer-more, js-offer-tail, js-selection, js-picks, js-cart, js-pending, badge-note, api, ep-page, res-page, ep-offers, res-offers-open, res-offers-price, res-offers-stock, res-offers-tail, offers-public, offers-private, ep-cart, req-cart, res-cart, res-cart-line, no-price-note, replay-note, errors, err-409, err-422, err-5xx, err-offline, actions, act-requested, act-succeeded, act-retrying, act-failed, act-offers]
+  elements:
+    - { id: opt-caching, kind: region, label: "Caching by volatility", at: [1, 86], size: [26, 11] }
+    - { id: oc-hit, kind: note, label: "shell hit ratio at least 95%", at: [2, 88], in: opt-caching }
+    - { id: oc-age, kind: note, label: "offer age no more than 60 s", at: [2, 89], in: opt-caching }
+    - { id: oc-split, kind: note, label: "shell a day, offers 30 s, stitched at the edge", at: [2, 90], in: opt-caching, tone: green }
+    - { id: oc-cookies, kind: note, label: "no cookies in a cache key, region in the URL", at: [2, 91], in: opt-caching }
+    - { id: oc-stale, kind: note, label: "a stale price is fine, the add has the real one", at: [2, 92], in: opt-caching }
+    - { id: oc-failure, kind: note, label: "stale-if-error 5 min, else an empty price slot", at: [2, 93], in: opt-caching }
+    - { id: oc-hygiene, kind: note, label: "drop unknown params like utm, sort the rest", at: [2, 94], in: opt-caching }
+    - { id: oc-return, kind: note, label: "old tab refetches past 60 s, or shows the age", at: [2, 95], in: opt-caching }
+    - { id: opt-hero, kind: region, label: "Hero image and first load", at: [28, 86], size: [26, 11] }
+    - { id: oh-lcp, kind: note, label: "LCP below 1.8 s as the goal", at: [29, 88], in: opt-hero }
+    - { id: oh-bytes, kind: note, label: "hero no more than 120 KB on a phone", at: [29, 89], in: opt-hero }
+    - { id: oh-html, kind: note, label: "a plain img in the HTML, never lazy", at: [29, 90], in: opt-hero, tone: green }
+    - { id: oh-priority, kind: note, label: "fetchpriority high on the hero only", at: [29, 91], in: opt-hero }
+    - { id: oh-srcset, kind: note, label: "srcset 480, 960, 1440 with sizes for the slot", at: [29, 92], in: opt-hero }
+    - { id: oh-box, kind: note, label: "width and height reserve the square", at: [29, 93], in: opt-hero }
+    - { id: oh-thumbs, kind: note, label: "96 px lazy thumbnails, video on activation", at: [29, 94], in: opt-hero }
+    - { id: oh-swap, kind: note, label: "a hovered finish's first image is prefetched", at: [29, 95], in: opt-hero }
+    - { id: opt-picker, kind: region, label: "Variant picker, accessible", at: [55, 86], size: [26, 11] }
+    - { id: op-radio, kind: note, label: "one radio group per option, arrows move", at: [56, 88], in: opt-picker }
+    - { id: op-disabled, kind: note, label: "aria-disabled keeps sold out reachable", at: [56, 89], in: opt-picker, tone: green }
+    - { id: op-reasons, kind: note, label: "sold out or not made, each with its reason", at: [56, 90], in: opt-picker }
+    - { id: op-clear, kind: note, label: "a cleared pick is said in the stock line", at: [56, 91], in: opt-picker }
+    - { id: op-live, kind: note, label: "one polite announcement, 400 ms after", at: [56, 92], in: opt-picker }
+    - { id: op-url, kind: note, label: "replaceState keeps the picks in the URL", at: [56, 93], in: opt-picker }
+    - { id: op-names, kind: note, label: "swatches carry the finish name as text", at: [56, 94], in: opt-picker }
+    - { id: opt-hydration, kind: region, label: "Hydration cost", at: [1, 98], size: [26, 12] }
+    - { id: oy-bundle, kind: note, label: "one 310 KB bundle ignores taps 1.6 s longer", at: [2, 100], in: opt-hydration, tone: red }
+    - { id: oy-target, kind: note, label: "buy box islands no more than 70 KB of JS", at: [2, 101], in: opt-hydration }
+    - { id: oy-order, kind: note, label: "gallery, picker and buy box hydrate first", at: [2, 102], in: opt-hydration, tone: green }
+    - { id: oy-below, kind: note, label: "below the fold loads within 600 px", at: [2, 103], in: opt-hydration }
+    - { id: oy-form, kind: note, label: "Add to cart is a real form, early taps replayed", at: [2, 104], in: opt-hydration }
+    - { id: oy-offers, kind: note, label: "offers embedded once, only signed in fetches", at: [2, 105], in: opt-hydration }
+    - { id: oy-switch, kind: note, label: "a switch rerenders gallery, price, stock only", at: [2, 106], in: opt-hydration }
+    - { id: opt-cart, kind: region, label: "Add to cart, reliable", at: [28, 98], size: [24, 12] }
+    - { id: oa-badge, kind: note, label: "badge is confirmed plus pending adds", at: [29, 100], in: opt-cart, tone: amber }
+    - { id: oa-busy, kind: note, label: "while busy, the button takes no second tap", at: [29, 101], in: opt-cart }
+    - { id: oa-retry, kind: note, label: "a lost answer: retry with the same add_id", at: [29, 102], in: opt-cart }
+    - { id: oa-rollback, kind: note, label: "409, 422 or a second failure: roll back", at: [29, 103], in: opt-cart, tone: red }
+    - { id: oa-price, kind: note, label: "never send a price, name a new one", at: [29, 104], in: opt-cart }
+    - { id: oa-tabs, kind: note, label: "item_count counts other tabs' adds", at: [29, 105], in: opt-cart }
+    - { id: oa-offline, kind: note, label: "offline: no queue, the badge stays", at: [29, 106], in: opt-cart }
+    - { id: opt-also, kind: region, label: "Also handled", at: [55, 98], size: [26, 10] }
+    - { id: oo-jsonld, kind: note, label: "JSON-LD from the same public offer", at: [56, 100], in: opt-also }
+    - { id: oo-variants, kind: note, label: "a ProductGroup, one canonical product URL", at: [56, 101], in: opt-also }
+    - { id: oo-escape, kind: note, label: "escape JSON inside a script tag", at: [56, 102], in: opt-also }
+    - { id: oo-money, kind: note, label: "money and dates formatted with Intl", at: [56, 103], in: opt-also }
+    - { id: oo-rtl, kind: note, label: "right to left: logical CSS properties", at: [56, 104], in: opt-also }
+  arrows: []
+beats:
+  - point: "Eight areas are scored on impact, reach and how often they matter, and five get a deep dive; first, caching by volatility: the shell cached a day and purged on edit, the offers fragment 30 seconds, stitched into one HTML at the edge."
+    kind: decision
+    weight: core
+    teach:
+      - "A product page is judged in its first two seconds and at Add to cart. Score eight areas from 1 to 3 on impact if it fails, shoppers affected and how often it matters: caching, the hero image, the variant picker, hydration and Add to cart get a deep dive; structured data, internationalisation and offline a line each."
+      - "Caching first. Give the whole page a single lifetime and it is either too short for the shell or too long for the price. So the shell is cached a day and purged by product tag on edit, the offers fragment 30 seconds, and the edge includes the fragment in the shell, so the HTML still carries the price."
+      - "Targets, a line each: a shell hit ratio of at least 95 percent, and a public offer no more than 60 seconds old; and no personal data in a shared cache."
+    draw: [opt-caching, oc-hit, oc-age, oc-split]
+    check: Why not give the whole page one cache lifetime?
+    answer: "One lifetime is too short for the shell or too long for the price; the shell is cached a day and the offers 30 s, stitched together at the edge."
+  - point: "Keep the caches safe: public resources never read cookies and the region goes in the URL; a stale price is fine because the add carries the real one; a slow fragment falls back to a stale copy or an empty slot; unknown parameters are dropped; an old tab refetches."
+    kind: mechanism
+    weight: core
+    teach:
+      - "A fragment that read the session cookie would be cached under a key without it, and one member's price would reach the whole region. So public resources never read cookies, the region goes in the fragment's URL, and anything per shopper comes from the offers API with private, no-store."
+      - "stale-while-revalidate keeps responses fast while the edge refreshes; the price shown is advisory and the add response carries the real one. If pricing is slow: a short include timeout, a stale copy for up to 5 minutes, otherwise an empty reserved price slot that BuyBox fills after hydration."
+      - "Tracking parameters would make every link a new cache key, so the edge drops unknown ones and sorts finish and cap. Back on an old tab, or through the back/forward cache, PricingService refetches the offers when they are over 60 seconds old; if that refetch times out, the page keeps the last offer it had and shows how old it is, such as prices as of 10:42, instead of emptying the buy box."
+      - "A signed-in member's offers come from that private call after hydration: BuyBox swaps in the member price and keeps the list price beside it, while the JSON-LD stays on the public price."
+    draw: [oc-cookies, oc-stale, oc-failure, oc-hygiene, oc-return]
+    check: "A public fragment reads the session cookie but is cached under a key without it. What goes wrong?"
+    answer: One member's price is cached and served to every shopper in the region; public resources must never read cookies.
+    misconceptions:
+      - "The fragment can read a cookie to learn the region -> the region goes in the fragment's URL; public resources never read cookies."
+  - point: "The hero is almost always the LCP element: a plain img in the server HTML, never lazy, fetchpriority high on it alone, a srcset of 480, 960 and 1440 wide with sizes for its slot, and width and height that reserve its square, while thumbnails, video and zoom wait."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Targets, a line each: LCP at most 2.5 seconds at p75, with a goal below 1.8; hero bytes on a phone no more than 120 KB; CLS no more than 0.1."
+      - "An image set by JavaScript, or lazy-loaded, starts only after scripts run. The server renders a plain img for the chosen finish's first image, never lazy, so the preload scanner finds it. Images start at low priority until layout, so fetchpriority high goes on the hero, and only the hero."
+      - "srcset with 480, 960 and 1440 wide versions and sizes for the real slot, 560 pixels on desktop and full width on phones. Width and height from the catalog's media reserve the square, and the price slot keeps its height even when empty."
+      - "Thumbnails are 96 pixel lazy images, the video thumb is a poster whose player loads on activation, and the 2,400 pixel zoom image waits for the first hover or pinch. Hovering or focusing a swatch prefetches the first image of that finish at low priority, and the old image stays until the new one has decoded."
+    draw: [opt-hero, oh-lcp, oh-bytes, oh-html, oh-priority, oh-srcset, oh-box, oh-thumbs, oh-swap]
+    check: Which attribute should the hero image not have, and why?
+    answer: "loading lazy; it delays the image until layout decides it is in view, and the hero is always in view, so it should start at once."
+    misconceptions:
+      - "Lazy-load every gallery image, the hero too -> the hero is never lazy; it is in the HTML with fetchpriority high, and only the thumbnails are lazy."
+  - point: "Options are radio groups, one tab stop each, arrows moving and checking; an unavailable option gets aria-disabled, not disabled, so it stays reachable with its reason and is never checked; a cleared pick is said, one polite announcement follows 400 ms after the last change, and the URL is replaced."
+    kind: rule
+    weight: core
+    teach:
+      - "A row of plain buttons sounds like nine unrelated buttons. Use a radiogroup labelled with the group and its value, and radios with aria-checked; Tab enters on the checked radio, and arrow keys move, check and wrap."
+      - "aria-disabled, unlike disabled, keeps a sold-out option in the arrow-key order, and aria-describedby points at its reason; the picker refuses to check it, so arrows focus it and Space and click do nothing. Sold out says sold out in matte black, not made says not available in copper, and a diagonal strike means colour is never the only cue."
+      - "A cleared pick becomes null, the stock line says why, and Add to cart asks for a capacity. One polite live region in the buy box speaks 400 ms after the last change, so arrowing across swatches doesn't stack announcements, and focus never moves."
+      - "replaceState writes the picks to the URL on every change, and the server reads the same parameters. Each swatch's accessible name is its finish."
+    draw: [opt-picker, op-radio, op-disabled, op-reasons, op-clear, op-live, op-url, op-names]
+    check: An unavailable capacity tile gets focus by arrow key. What should happen?
+    answer: It is focused and announced with its reason, and nothing is checked.
+    misconceptions:
+      - "Use the disabled attribute for sold-out options -> it takes them out of the keyboard order, so the reason is never heard; aria-disabled keeps them reachable."
+  - point: "Server HTML looks ready before it works, so hydrate in islands: gallery, picker and buy box first from one small chunk of at most 70 KB, below the fold only within 600 px of the viewport; a real form with replayed early clicks keeps Add to cart working, and embedded offers mean no refetch."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Compare one whole-page bundle: 310 KB that must run before anything responds, so the page looks ready but ignores taps about 1.6 seconds longer. With islands, Gallery, VariantPicker and BuyBox hydrate first from one small chunk, at most 70 KB compressed, and Add to cart works within 2 seconds."
+      - "Reviews, questions and similar items load their code and data when an IntersectionObserver sees them within 600 pixels of the viewport; until then they are plain HTML."
+      - "Add to cart is a real form, so it works without JavaScript, and a tiny inline script records early clicks and replays them after hydration. The offers map is embedded JSON that PricingService reads once and the islands subscribe to, so only a signed-in shopper causes a fetch; and a variant switch re-renders only the gallery, the price line and the stock line."
+    draw: [opt-hydration, oy-bundle, oy-target, oy-order, oy-below, oy-form, oy-offers, oy-switch]
+    check: What does moving the reviews into an island loaded on visibility mainly improve?
+    answer: How soon the buy box responds, and the data spent by shoppers who never scroll.
+    misconceptions:
+      - "A page that has painted is ready -> its widgets don't respond until their code runs; islands get the buy box working first, and the real form with replayed clicks catches earlier taps."
+  - point: "The badge is always the confirmed count plus pending adds, so every exit is simple: a press makes a new add_id and raises the badge, a busy button ignores a second tap, a timeout or 5xx retries once with the same add_id, and a 409, a 422 or a second failure rolls the add back."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Each press makes a new add_id and counts as pending, so the badge goes up at once. While it is sending, the button is busy and further presses do nothing; what the button can't stop, such as a retry after a timeout, the add_id covers."
+      - "A 201 confirms it and the badge takes the server's item_count. A timeout or a 5xx waits a second and resends with the same add_id, and a replayed 200 confirms it too."
+      - "A 409 or a 422, or a second failure, rolls it back: removed from pending, the badge drops, and the page says why. Try again is a new press with a new add_id."
+    draw: [opt-cart, oa-badge, oa-busy, oa-retry, oa-rollback]
+    check: The retry after a timeout fails too. What happens to the badge, and what does Try again send?
+    answer: "The add is removed from pending, so the badge drops back, with a banner; Try again is a new press with a new add_id."
+  - point: "Never send a price, and name a changed one in the toast; take item_count from every response so other tabs' adds count; and offline, queue nothing, say the cart hasn't changed and leave the badge alone."
+    kind: rule
+    weight: supporting
+    teach:
+      - "A tampered or stale price must never become the charged one: the request carries SKU, quantity and add_id only, and a different unit price in the response is named in the toast."
+      - "CartStore takes item_count from every response, so its count includes adds made in other tabs; pushing it to those tabs is the cart page's design."
+      - "An add queued in a tunnel would fire later at a new price. So there is no queue: the page says the cart hasn't changed, and the badge never moves."
+    draw: [oa-price, oa-tabs, oa-offline]
+    check: Why not queue an add made offline and send it later?
+    answer: "It could fire later at a price that has changed; instead the page says the cart hasn't changed and the badge stays."
+  - point: "The lower-scored areas get a line each: the JSON-LD written from the same public offer as the visible price, a ProductGroup with one canonical URL, JSON escaped inside script tags, money and dates through Intl, and logical CSS for right-to-left."
+    kind: rule
+    weight: supporting
+    teach:
+      - "Structured data: the edge writes the visible price and the JSON-LD from one public offer, and a new public price rewrites both; private offers never touch it. Variants are a ProductGroup with hasVariant, each preselected by its own URL, with the product's one canonical link."
+      - "Escape the less-than sign when writing JSON into a script tag, so a product title can't break out and inject markup. Money arrives in minor units with a currency and is formatted with Intl, dates too, and the gallery's arrows and swipe follow the writing direction through logical CSS."
+    draw: [opt-also, oo-jsonld, oo-variants, oo-escape, oo-money, oo-rtl]
+    check: Why is the JSON-LD written from the same object as the visible price?
+    answer: "So search engines get the price the shopper sees, never a different or stale one, and never a member price."
+asks:
+  - ids: [oh-html, oh-priority, oh-srcset, oh-box, oh-thumbs, oh-swap]
+    beats: [3]
+    frame: [opt-hero, oh-lcp, oh-bytes]
+    question: "The hero image is the LCP element. How would you get it on screen fast on a phone? Name techniques one at a time and I'll write each down."
+    hints:
+      - How does the browser find the image, and how important does it think it is?
+      - And its size, and everything else in the gallery?
+  - ids: [op-radio, op-disabled, op-reasons, op-clear, op-live, op-url, op-names]
+    beats: [4]
+    frame: [opt-picker]
+    question: "How would you make the variant picker work by keyboard and screen reader, sold-out options included?"
+    hints:
+      - What kind of control is one choice out of several?
+      - And how does someone who can't see the strike learn why an option is unavailable?
+  - ids: [oy-order, oy-below, oy-form, oy-offers, oy-switch]
+    beats: [5]
+    frame: [opt-hydration, oy-bundle, oy-target]
+    question: "The page paints early but ignores taps until its JavaScript runs. How would you make Add to cart work sooner?"
+    hints:
+      - Does every part of the page need its code at once?
+      - And what if the shopper taps before any code has run?
+task:
+  prompt: "Draw the five deep dives as areas and write each technique in its area, with the targets it serves."
+  expects: [1, 3, 4, 5, 6]

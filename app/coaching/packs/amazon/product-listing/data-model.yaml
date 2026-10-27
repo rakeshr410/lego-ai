@@ -1,0 +1,166 @@
+# Product listing interview, data model: what each component reads, the question parsed from the URL as JSON with its query key, the store of answers by key written key by key, the two client-only drafts, and the results region's states. The lesson opens on the board so far without the assumptions and scope.
+id: amazon/product-listing/data-model
+title: The question, the answer, the store
+source:
+  hash: "806311184d86"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: amazon/product-listing/high-level-design
+  assumes:
+    - "UrlState is the only reader and writer of the URL; ResultsStore keeps responses by query key; SearchService is the only caller of the Search API."
+    - "A click writes params to the URL; the store fetches the URL's key on a miss and applies a response only when its key is the URL's."
+    - "On a phone the filter sheet edits a draft and asks for counts only until Apply."
+  carries:
+    - "The URL holds the question, the response the answer, and the store keeps answers by question."
+    - "Search params: q, dept, delivery, rating, price, brand, sort and page, defaults left out; the query key is the params sorted, built by the client."
+    - "ResultsStore: entries by query key, an LRU of 20, each with status, response, error and fetched_at; currentKey from the URL, appliedKey on screen."
+    - "A response carries facets (key, label, kind, options with counts or price bounds) and, when empty, relaxations (a param to remove and the total it leaves)."
+    - "The screen shows only the entry at appliedKey; results, total, facet counts and relaxations are read from it together, never edited in place."
+    - "Only two drafts are client-only: FacetDraft for the phone sheet and PriceDraft while a thumb is dragged."
+    - "The results region is showing, dimmed, empty with ways out, or failed with the old results under a banner."
+  terms:
+    - term: search params
+      means: "The choices parsed and validated from the URL: q, dept, delivery, rating, price, brand, sort and page."
+    - term: entry
+      means: "One answer in the store, under its query key: a status, the response, an error and when it was fetched."
+    - term: minor units
+      means: "A price as a whole number of the currency's smallest unit, with its currency code."
+board:
+  keep: [title, mock-up, mock-page, mock-toolbar, mock-chips, mock-filters, mock-card, card-image, card-title, card-rating, card-badges, card-cart, mock-pages, requirements, fr-heading, fr-grid, fr-filters, fr-counts, fr-chips, fr-sort, fr-url, fr-card, fr-empty, fr-phone, nfr-heading, nfr-lcp, nfr-js, nfr-inp, nfr-results, nfr-counts, nfr-cls, nfr-a11y, nfr-slider, nfr-crawl, nfr-noindex, components, c-page, c-card, c-image, c-price, c-cart, c-facets, c-check, c-radio, c-range, c-chips, url-state, results-store, search-service, search-api, loop-note, set-params, url-changed, store-service, service-api, store-page, screen, s-first, s-click, s-applied, s-race, s-empty, s-pages, s-note, first-to-click, click-to-applied, phone, p-sheet, p-count, p-apply, p-page2, p-back, sheet-to-count, count-to-apply]
+  elements:
+    - { id: state, kind: region, label: "State", at: [1, 57], size: [59, 22] }
+    - { id: reads, kind: region, label: "what each component reads", at: [2, 59], size: [27, 9], in: state }
+    - { id: rd-card, kind: note, label: "ProductCard: one product summary", at: [3, 61], in: reads }
+    - { id: rd-page, kind: note, label: "ResultsPage: items, total, relaxations", at: [3, 62], in: reads }
+    - { id: rd-facets, kind: note, label: "FacetPanel: facets, choices from the URL", at: [3, 63], in: reads }
+    - { id: rd-chips, kind: note, label: "AppliedChips: the filters in the URL", at: [3, 64], in: reads }
+    - { id: rd-source, kind: note, label: "the URL the question, the response the answer", at: [3, 66], in: reads, tone: amber }
+    - { id: url, kind: region, label: "UrlState, the question", at: [2, 69], size: [27, 8], in: state, tone: amber }
+    - { id: u-open, kind: note, label: "{ q, dept, delivery: [tomorrow],", at: [3, 71], in: url }
+    - { id: u-more, kind: note, label: "rating, price: { min, max },", at: [5, 72], in: url }
+    - { id: u-brand, kind: note, label: "brand: [brightwell], sort, page }", at: [5, 73], in: url }
+    - { id: u-key, kind: note, label: "key: brand=brightwell&delivery=tomorrow&q=…", at: [3, 74], in: url }
+    - { id: u-defaults, kind: note, label: "featured and page 1 left out", at: [3, 75], in: url, tone: grey }
+    - { id: store, kind: region, label: "ResultsStore, answers by key", at: [31, 59], size: [28, 12], in: state, tone: amber }
+    - { id: st-open, kind: note, label: "{ entries: {", at: [32, 61], in: store }
+    - { id: st-entry, kind: note, label: "key: { status: ready, error, fetched_at,", at: [34, 62], in: store }
+    - { id: st-response, kind: note, label: "response: { key, total, items, facets,", at: [36, 63], in: store }
+    - { id: st-response-more, kind: note, label: "page, page_count, snapshot, relaxations } } },", at: [36, 64], in: store }
+    - { id: st-current, kind: note, label: "currentKey,", at: [33, 65], in: store }
+    - { id: st-applied, kind: note, label: "appliedKey }", at: [33, 66], in: store }
+    - { id: st-status, kind: note, label: "an LRU of 20 entries, each loading, ready or error", at: [32, 68], in: store, tone: grey }
+    - { id: st-pure, kind: note, label: "the screen shows the entry at appliedKey", at: [32, 69], in: store, tone: green }
+    - { id: drafts, kind: region, label: "Client-only drafts", at: [31, 72], size: [24, 6], in: state }
+    - { id: d-facet, kind: note, label: "facetDraft: { params, preview_total }", at: [32, 74], in: drafts }
+    - { id: d-price, kind: note, label: "priceDraft: { min, max, dragging }", at: [32, 75], in: drafts }
+    - { id: states, kind: region, label: "The results region", at: [1, 84], size: [70, 19] }
+    - { id: m-shown, kind: box, label: "Showing results", at: [3, 88], size: [12, 2], in: states, tone: green }
+    - { id: m-dimmed, kind: box, label: "Old results dimmed", at: [28, 88], size: [12, 2], in: states }
+    - { id: m-stale, kind: note, label: "older key: cached only", at: [42, 92], in: states, tone: grey }
+    - { id: m-failed, kind: box, label: "Old kept, banner", at: [55, 88], size: [13, 2], in: states, tone: red }
+    - { id: m-empty, kind: box, label: "No results, ways out", at: [28, 100], size: [12, 2], in: states, tone: amber }
+  arrows:
+    - { id: m-miss, from: m-shown, to: m-dimmed, label: "miss, then key matches", both: true }
+    - { id: m-error, from: m-dimmed, to: m-failed, label: "error, then Retry or online", both: true }
+    - { id: m-zero, from: m-dimmed, to: m-empty, label: "total 0, way out", both: true }
+beats:
+  - point: "Derive the state from what each component reads: ProductCard one product summary; ResultsPage the items, total and relaxations of a response; FacetPanel the response's facets and the URL's choices; AppliedChips the URL. The URL holds the question, the response the answer."
+    kind: component
+    weight: core
+    teach:
+      - "Walk the components we drew. ProductCard reads one product summary, only what it draws: id, title, brand, image, price, rating, badges, the delivery promise, and the offer id Add to cart needs."
+      - "ResultsPage reads the items, the total and, when nothing matches, the relaxations, all from one response. FacetPanel reads the facets and their counts from that response, and which options are chosen from the URL. AppliedChips reads only the URL."
+      - "So the URL holds the question, the response holds the answer, and the store keeps answers by question."
+    draw: [state, reads, rd-card, rd-page, rd-facets, rd-chips, rd-source]
+    check: Where does the page get the chosen filters, and where the facet counts?
+    answer: "The chosen filters from the URL; the facet counts, with the grid, total and relaxations, from the response."
+  - point: "UrlState parses and validates the URL into search params, q, dept, delivery, rating, price, brand, sort and page, leaving out the defaults, and builds the query key by sorting them, so the client derives the key itself."
+    kind: component
+    weight: core
+    teach:
+      - "Write the question as JSON, a key at a time: q, trimmed with spaces collapsed; dept; the delivery options, here tomorrow; rating, 3 or 4, and price as a min and a max in whole currency units, both optional and unset here; the brands, here brightwell."
+      - "Sort defaults to featured and page to 1, and defaults are left out. The query key is the params that are set, sorted by name: brand brightwell, delivery tomorrow, then q."
+      - "The client builds that key from the URL alone; the server only echoes it back so a response can be matched."
+    draw: [url, u-open, u-more, u-brand, u-key, u-defaults]
+    check: "The total, the facet counts and the query key all appear in a response. Which of them could the client have worked out without the server?"
+    answer: "The query key; UrlState builds it from the URL, and the server only echoes it so a response can be matched."
+    misconceptions:
+      - "Keep sort featured and page 1 in the key -> defaults are left out, so the same question always gives the same key."
+  - point: "ResultsStore keeps entries by query key, an LRU of 20, each with a status of loading, ready or error, the response, an error and when it was fetched; currentKey comes from the URL and appliedKey is what is on screen."
+    kind: component
+    weight: core
+    teach:
+      - "Open the store as JSON. entries, by query key, at most 20, the least recently used dropped. Each entry: its status, loading, ready or error; an error code with a retry after; and fetched_at."
+      - "The response is one coherent answer: the key echoed for matching, the total, the items, the facets, the page and page count, a snapshot token good for 10 minutes, and relaxations and a spelling when nothing matches."
+      - "Each facet has a key, a label and a kind, check, radio or range, and either options with a value, label, count and selected flag, or price bounds. A relaxation is one param to remove and the total that would leave."
+      - "Close with two keys: currentKey, from the URL, and appliedKey, the one on screen."
+    draw: [store, st-open, st-entry, st-response, st-response-more, st-current, st-applied, st-status]
+    check: Why keep both currentKey and appliedKey?
+    answer: "currentKey is what the URL asks for and appliedKey what is on screen; a response is applied only when its key equals currentKey, so while a key loads the two differ."
+    misconceptions:
+      - "Keep only the latest response -> the store keeps answers by key, so Back to a key it holds shows at once."
+  - point: "The screen is a pure function of the entry at appliedKey: results, total, facet counts and relaxations are read from it together and never edited in place."
+    kind: rule
+    weight: core
+    teach:
+      - "One rule under the store: the screen shows only the entry at appliedKey."
+      - "Results, total, facet counts and relaxations are all read from that entry, together. Nothing is patched locally, so the numbers on screen always come from one answer."
+    draw: [st-pure]
+    check: A filter is removed. Can the client adjust the total itself until the response comes?
+    answer: "No; the total, the counts and the results are read together from the applied entry and never edited in place."
+    misconceptions:
+      - "Subtract the filtered-out products from the total locally -> numbers are never edited in place; they change together when the matching response is applied."
+  - point: "Prices travel as amount_minor and a currency rather than a formatted string, so the client formats them in the shopper's locale with Intl.NumberFormat and can compare or sort them without parsing text."
+    kind: decision
+    weight: supporting
+    teach:
+      - "A price is a whole number of minor units with a currency code. Whole numbers avoid floating-point rounding."
+      - "The browser formats it in the shopper's locale with Intl.NumberFormat, and the client can compare or sort prices without parsing text."
+    check: "Why does the API send a price as a whole number and a currency code instead of ready-made text like 44 dollars?"
+    answer: "The client formats it in the shopper's locale with Intl.NumberFormat, and integers in minor units compare and sort without parsing or rounding errors."
+  - point: "Only two pieces of state are client-only drafts: FacetDraft, the phone sheet's params and preview total, dropped when the sheet closes, and PriceDraft, the min, max and whether a thumb is being dragged."
+    kind: component
+    weight: core
+    teach:
+      - "Everything else lives in the URL or the store. The two exceptions are drafts."
+      - "facetDraft holds the sheet's params and the preview total from the count request. Closing the sheet drops it; only Apply turns it into a URL, as one history entry."
+      - "priceDraft holds min, max and whether a thumb is being dragged, while it moves."
+    draw: [drafts, d-facet, d-price]
+    check: "On a phone, the shopper has ticked three filters in the sheet but not pressed the button yet. Where do those choices live?"
+    answer: "In a FacetDraft, dropped if the sheet closes; only Apply writes them to the URL, as one history entry."
+    misconceptions:
+      - "Push each tick in the sheet to the URL -> a draft is not linkable state; one Apply makes one history entry."
+  - point: "Showing results and old results dimmed: a cached key renders at once, a miss dims the old results and fetches, a response for another key is only cached, and the one whose key matches is applied and announced."
+    kind: mechanism
+    weight: core
+    teach:
+      - "Draw the results region's states. Showing results: appliedKey equals currentKey. If the URL moves to a key already cached, it renders at once, and is revalidated when over 60 seconds old."
+      - "On a miss the old results dim, with aria-busy and the chips already new, and the key is fetched; another URL change aborts it and fetches the newer key. An answer whose key is not currentKey is only cached, and nothing on screen changes."
+      - "The answer whose key matches is applied and announced, and the region is back to showing results."
+    draw: [states, m-shown, m-dimmed, m-miss, m-stale]
+    check: "While the old results are dimmed, an answer for an older key lands. What changes on screen?"
+    answer: "Nothing; it fails the key check and is only cached. The screen changes when the answer for currentKey is applied."
+    misconceptions:
+      - "A late response for an older key moves the page back to it -> it fails the key check, is cached, and the screen does not change."
+  - point: "Two other ends: a matching answer with a total of 0 shows no results with ways out, and a relaxation link is just another URL change; after an error and one retry the old results stay, undimmed, under a banner until Retry or the online event."
+    kind: mechanism
+    weight: core
+    teach:
+      - "When the matching answer has a total of 0, it is applied and announced as no results, with the relaxations and spelling from the response. Following a relaxation is just another URL change, so the region dims and fetches again."
+      - "After an error and one retry, the old results stay, undimmed, under a banner. Retry, or the browser coming back online, fetches currentKey again; a new URL change fetches the new key."
+    draw: [m-failed, m-error, m-empty, m-zero]
+    check: "The shopper picks a sort in a tunnel; the request times out at 8 s and the retry fails. What does the page show?"
+    answer: "The old results, undimmed, under a banner; Retry or the online event fetches the current key again, and the sorted results replace the old ones."
+asks:
+  - ids: [rd-card, rd-page, rd-facets, rd-chips]
+    beats: [1]
+    question: "Walk the components: what does each one need to read, and where does it come from? I'll write it down."
+    hints:
+      - What does one product card show?
+      - Which of it is the shopper's choice, and which is the server's answer?
+task:
+  prompt: "Write the search params with their query key, and ResultsStore as JSON: entries by key with status, response, error and fetched_at, then currentKey and appliedKey."
+  expects: [2, 3, 4]

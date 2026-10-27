@@ -1,0 +1,186 @@
+# Cart interview, requirements: the prompt as a title, the cart sketched as the shopper sees it (only what the requirements name), then the functional and non-functional lists, one fact a line, every non-functional line tied to its target, and the assumptions and scope. The components come next.
+id: amazon/cart/requirements-exploration
+title: The cart, then two lists
+source:
+  hash: "559dae634d5c"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: null
+  assumes: []
+  carries:
+    - "We design the browser side of an Amazon-like store's cart page and header badge; the server is a black box that keeps the cart and owns prices, discounts, tax and the free-delivery threshold."
+    - "On screen: the header and Cart badge; lines with image, title, variant, stepper, line total, Delete and Save for later; the summary with free-delivery progress; a Saved for later list."
+    - "Functional: server totals, an instant stepper, delete with undo, Save for later, price and stock changes on open, free-delivery progress, tabs and devices in step, no lost edit, guest merge."
+    - "Non-functional: correctness first (no client total, no silent overwrite), feedback in one frame, INP at most 200 ms, other tabs under 1 s, LCP at most 2.5 s, JS at most 90 KB."
+    - "Also: no more than 1 request per line per burst and 1 mutation in flight per cart, WCAG 2.2 AA with one announcement per settled change, every supported locale."
+    - "Assumed: 1 to 8 lines, presses gathered for 400 ms, a 10 s Undo, free delivery from $75; left out: checkout, adding to the cart, holding stock, promo rules, pricing and tax."
+  terms:
+    - term: line
+      means: One product in the cart with its quantity, shown with its image, title, variant and line total.
+    - term: summary
+      means: "The server's subtotal, delivery, estimated tax and total for the whole cart."
+    - term: Saved for later
+      means: A list of items the shopper set aside from this order; each can be moved back into the cart.
+    - term: guest cart
+      means: The cart of a signed-out shopper, kept on the device and joined to the account cart at sign-in.
+    - term: INP
+      means: "The responsiveness target for presses, Delete and Undo: no more than 200 ms."
+board:
+  keep: []
+  elements:
+    - { id: title, kind: note, label: "Design the Amazon cart", at: [54, 0] }
+    - { id: mock-up, kind: region, label: "Mock-up", at: [1, 3], size: [20, 22] }
+    - { id: mock-header, kind: box, label: "Store header, Cart badge", at: [2, 6], size: [18, 2], in: mock-up, tone: blue }
+    - { id: mock-item, kind: box, label: "a line: image, title, variant", at: [2, 9], size: [18, 2], in: mock-up, tone: blue }
+    - { id: mock-stepper, kind: box, label: "stepper and line total", at: [2, 11], size: [18, 2], in: mock-up, tone: blue }
+    - { id: mock-actions, kind: box, label: "Delete, Save for later", at: [2, 13], size: [18, 2], in: mock-up, tone: blue }
+    - { id: mock-totals, kind: box, label: "subtotal, delivery, tax, total", at: [2, 16], size: [18, 2], in: mock-up, tone: blue }
+    - { id: mock-free, kind: box, label: "free delivery progress", at: [2, 18], size: [18, 2], in: mock-up, tone: blue }
+    - { id: mock-saved, kind: box, label: "Saved for later list", at: [2, 21], size: [18, 2], in: mock-up, tone: blue }
+    - { id: requirements, kind: region, label: "Requirements", at: [23, 3], size: [58, 33] }
+    - { id: fr-heading, kind: note, label: "Functional", at: [24, 6], in: requirements }
+    - { id: fr-lines, kind: note, label: "each line: image, title, variant, quantity, total", at: [24, 8], in: requirements }
+    - { id: fr-summary, kind: note, label: "summary: the server's subtotal, delivery, tax, total", at: [24, 10], in: requirements }
+    - { id: fr-stepper, kind: note, label: "stepper moves the quantity at once, totals once priced", at: [24, 12], in: requirements }
+    - { id: fr-delete, kind: note, label: "delete a line, and undo the deletion", at: [24, 14], in: requirements }
+    - { id: fr-save, kind: note, label: "move a line to Saved for later, and back", at: [24, 16], in: requirements }
+    - { id: fr-reprice, kind: note, label: "on open, a changed price shows old and new", at: [24, 18], in: requirements }
+    - { id: fr-stock, kind: note, label: "out-of-stock lines stay, left out of the total", at: [24, 20], in: requirements }
+    - { id: fr-free, kind: note, label: "shows how far the cart is from free delivery", at: [24, 22], in: requirements }
+    - { id: fr-tabs, kind: note, label: "other tabs follow without a reload, devices when viewed", at: [24, 24], in: requirements }
+    - { id: fr-race, kind: note, label: "an edit that races another is never silently lost", at: [24, 26], in: requirements }
+    - { id: fr-guest, kind: note, label: "a guest cart merges into the account cart at sign-in", at: [24, 28], in: requirements }
+    - { id: nfr-heading, kind: note, label: "Non-functional", at: [53, 6], in: requirements }
+    - { id: nfr-totals, kind: note, label: "no total computed on the client", at: [53, 8], in: requirements }
+    - { id: nfr-overwrite, kind: note, label: "no edit silently overwritten", at: [53, 10], in: requirements }
+    - { id: nfr-frame, kind: note, label: "press, Delete and Undo feedback within one frame", at: [53, 12], in: requirements }
+    - { id: nfr-inp, kind: note, label: "INP no more than 200 ms", at: [53, 14], in: requirements }
+    - { id: nfr-tabs, kind: note, label: "other tabs in step in less than 1 s", at: [53, 16], in: requirements }
+    - { id: nfr-devices, kind: note, label: "other devices in step by their next view", at: [53, 18], in: requirements }
+    - { id: nfr-burst, kind: note, label: "no more than 1 request per line per burst", at: [53, 20], in: requirements }
+    - { id: nfr-flight, kind: note, label: "no more than 1 mutation in flight per cart", at: [53, 22], in: requirements }
+    - { id: nfr-lcp, kind: note, label: "LCP no more than 2.5 s", at: [53, 24], in: requirements }
+    - { id: nfr-js, kind: note, label: "route JavaScript no more than 90 KB", at: [53, 26], in: requirements }
+    - { id: nfr-a11y, kind: note, label: "meets WCAG 2.2 AA", at: [53, 28], in: requirements }
+    - { id: nfr-announce, kind: note, label: "exactly one announcement per settled change", at: [53, 30], in: requirements }
+    - { id: nfr-locale, kind: note, label: "prices and plurals right in all supported locales", at: [53, 32], in: requirements }
+    - { id: scope, kind: region, label: "Assumptions and scope", at: [83, 3], size: [24, 21] }
+    - { id: assume-heading, kind: note, label: "Assumed", at: [84, 6], in: scope }
+    - { id: assume-lines, kind: note, label: "1 to 8 lines, at most 50, plus 100 saved", at: [84, 8], in: scope, tone: amber }
+    - { id: assume-wait, kind: note, label: "presses gathered for 400 ms after the last", at: [84, 10], in: scope, tone: amber }
+    - { id: assume-undo, kind: note, label: "Undo lasts 10 s, paused on hover and focus", at: [84, 12], in: scope, tone: amber }
+    - { id: assume-free, kind: note, label: "free delivery from $75, set by the server", at: [84, 14], in: scope, tone: amber }
+    - { id: out-heading, kind: note, label: "Out of scope", at: [84, 17], in: scope }
+    - { id: out-checkout, kind: note, label: "checkout and payment, adding to the cart", at: [84, 19], in: scope, tone: grey }
+    - { id: out-server, kind: note, label: "holding stock, promo rules, pricing and tax", at: [84, 21], in: scope, tone: grey }
+  arrows: []
+  lists:
+    - { id: fr-list, in: requirements, at: [24, 8], step: 2, slots: 12, width: 28, items: [fr-lines, fr-summary, fr-stepper, fr-delete, fr-save, fr-reprice, fr-stock, fr-free, fr-tabs, fr-race, fr-guest] }
+    - { id: nfr-list, in: requirements, at: [53, 8], step: 2, slots: 14, width: 27, items: [nfr-totals, nfr-overwrite, nfr-frame, nfr-inp, nfr-tabs, nfr-devices, nfr-burst, nfr-flight, nfr-lcp, nfr-js, nfr-a11y, nfr-announce, nfr-locale] }
+beats:
+  - point: "The prompt: the cart of an Amazon-like store, its page and the badge in the header, used by signed-in shoppers and by guests; the server is a black box that keeps the cart and every number in it, so what we design is the UI in the browser."
+    kind: rule
+    weight: core
+    teach:
+      - "Write the title. The task is the cart page of an Amazon-like store and the cart badge in its header, for shoppers who are signed in and for guests. Here a shopper edits quantities, removes lines, sets items aside and moves on to checkout."
+      - "The server is a black box: it stores the cart, prices it, applies discounts and estimates tax. We design the UI, the part in the browser. Then go straight to the sketch."
+      - Two or three sentences, no question, and nothing about how the board is laid out; the learner sees that from the board itself.
+    draw: [title]
+  - point: "Sketch what the shopper sees: the header with its Cart badge; one line per product with image, title, variant, a stepper beside the line total, Delete and Save for later; the server's summary with free-delivery progress; and a Saved for later list."
+    kind: component
+    weight: core
+    teach:
+      - "Draw only what is on the screen. Across the top, the store's header with the Cart badge. Below it the lines, one per product: a picture, the title and the variant, a stepper for the quantity next to that line's total, and two buttons, Delete and Save for later."
+      - "Then the summary: subtotal, delivery, estimated tax and total, every figure the server's, with a line saying how much more buys free delivery, or that the cart already gets it. Last, a Saved for later list of things put aside, any of which can go back into the cart."
+      - Nothing yet about how a line is stored or sent; that comes after the requirements.
+    draw: [mock-up, mock-header, mock-item, mock-stepper, mock-actions, mock-totals, mock-free, mock-saved]
+    check: What does one line of the cart show the shopper?
+    answer: "Its image, title and variant, a quantity stepper with the line total, and the Delete and Save for later buttons."
+  - point: "Functional requirements start from the sketch: lines with their details and the server's summary, a stepper that moves the quantity at once while totals wait for the server's price, delete with undo, and Save for later and back."
+    kind: requirement
+    weight: core
+    teach:
+      - "Now the functional list, one fact a line. Read the first ones off the sketch: what a line shows, and a summary that is the server's own arithmetic."
+      - "A press moves the quantity straight away, but the line total and the summary change only once the server has priced it. A deleted line can be brought back with undo, and a line can go to Saved for later and return."
+    draw: [requirements, fr-heading, fr-lines, fr-summary, fr-stepper, fr-delete, fr-save]
+    check: The shopper presses plus on a line. What changes at once, and what waits?
+    answer: "The quantity in the stepper changes at once; the line total and the summary wait until the server has priced the new quantity."
+    misconceptions:
+      - "The client can multiply the unit price by the quantity to update the total -> the server owns prices, discounts and tax; the client shows only the totals it last received."
+  - point: "Since prices and stock are checked again on every open, a price that moved since adding shows old and new, an out-of-stock line stays but leaves the total, and the summary shows the distance to free delivery."
+    kind: requirement
+    weight: core
+    teach:
+      - "Prices and stock are checked again each time the cart is opened, and again at checkout. So a line whose price moved since it was added shows both figures, the old and the new."
+      - "A sold-out line does not disappear: it stays in view, counts for nothing in the total, and still offers Delete and Save for later. And the summary tells the shopper how close the cart is to free delivery."
+    draw: [fr-reprice, fr-stock, fr-free]
+    check: A line went out of stock since the shopper added it. What does the cart do with it?
+    answer: "Keeps it visible, leaves it out of the total, and offers Delete and Save for later."
+    misconceptions:
+      - "An out-of-stock line should be removed from the cart -> it stays in view, outside the total, and still offers Delete and Save for later."
+  - point: "One cart is often open in several tabs and devices, sometimes edited in the same second: other tabs and their badge follow without a reload, devices when looked at, a colliding edit is never quietly dropped or written over, and a guest cart is merged into the account cart at sign-in."
+    kind: requirement
+    weight: core
+    teach:
+      - "The same cart is often open in several tabs and on more than one device, and two of them can edit it in the same second. A change made in one tab reaches the others and their badge with no reload; another device catches up when the shopper next looks at it."
+      - "When two edits collide, neither is quietly dropped or written over, and the shopper is told. A signed-out shopper keeps a cart on the device, merged into the account cart at sign-in; how the two combine is ours to decide."
+    draw: [fr-tabs, fr-race, fr-guest]
+    check: The cart is open in two tabs and the shopper changes a quantity in one. What must the other tab do?
+    answer: "Catch up without a reload, badge included; another device once the shopper next opens it."
+  - point: "Non-functional requirements, one metric a line tied to its target: correctness first (server totals for a known version, no edit lost, doubled or overwritten), then feedback within one frame, INP no more than 200 ms, other tabs in less than 1 s, devices by their next view."
+    kind: metric
+    weight: core
+    teach:
+      - "Write one metric per line, joined to its target by a relation: less than, no more than, within. Money is at stake, so correctness comes first and the rest give way to it: every total on screen was priced by the server for a version the client knows, and no edit is lost, counted twice or silently written over."
+      - "Presses, Delete and Undo must answer at once, even on a slow network: feedback within one frame, INP no more than 200 ms. Tabs on one device agree in under a second; another device by the time it is looked at."
+    draw: [nfr-heading, nfr-totals, nfr-overwrite, nfr-frame, nfr-inp, nfr-tabs, nfr-devices]
+    check: Which requirement do all the others give way to?
+    answer: "Correctness: every total shown was priced by the server for a known version, and no edit is lost, doubled or silently overwritten."
+  - point: "The rest bound requests, first load, access and language: one request per line per burst, one mutation in flight per cart, LCP no more than 2.5 s and route JavaScript no more than 90 KB on a mid-range phone, WCAG 2.2 AA with one announcement per settled change, and every supported locale."
+    kind: metric
+    weight: core
+    teach:
+      - "A run of quick presses must stay cheap: at most one request per line for the whole burst, and at most one mutation on its way for the entire cart."
+      - "The first view has to be usable at once, measured on a mid-range phone over 4G with a cold cache: LCP no more than 2.5 seconds, and no more than 90 KB of compressed JavaScript for the route."
+      - "Keyboard and screen-reader users get all of it, with nothing carried only by colour or speed: WCAG 2.2 AA, and one announcement for each change once it settles. Money and plurals follow the shopper's locale and currency, and the layout flips for right-to-left."
+    draw: [nfr-burst, nfr-flight, nfr-lcp, nfr-js, nfr-a11y, nfr-announce, nfr-locale]
+    check: The shopper presses plus five times quickly on one line. How many requests do the requirements allow for that burst?
+    answer: "One request for the burst on that line, and only one mutation in flight for the whole cart."
+  - point: "The working numbers are small, 1 to 8 lines (at most 50, plus 100 saved), presses gathered for 400 ms, a 10 s Undo and free delivery from $75; checkout, adding to the cart, holding stock, promo rules, pricing and tax are named and left out."
+    kind: rule
+    weight: supporting
+    teach:
+      - "Say the assumptions. A cart usually has 1 to 8 lines, never more than 50 plus 100 saved; priced, that is a few kilobytes, small enough for every response to hold the whole cart."
+      - "Presses on a line are gathered until 400 ms after the last one; Undo stays for 10 seconds and holds still while hovered or focused; free delivery begins at $75, a threshold the server owns. Offline, the last cart stays readable; signed-in edits are not saved up for later, since each changes the bill."
+      - "Left out: checkout and payment; adding items and choosing variants, the product page's job; reserving stock; promo code rules; and pricing, tax and recommendations, all the server's. Name them and move on."
+    draw: [scope, assume-heading, assume-lines, assume-wait, assume-undo, assume-free, out-heading, out-checkout, out-server]
+    check: Is holding stock for the items in a cart part of this design?
+    answer: "No; reserving stock is the server's decision, and the cart only shows what the server says about stock."
+asks:
+  - ids: [mock-header, mock-item, mock-stepper, mock-actions, mock-totals, mock-free, mock-saved]
+    beats: [2]
+    question: "Picture the cart page of a big online store. What do you see on it? I'll draw it as you say it."
+    hints:
+      - What sits in the header, on every page of the store?
+      - Take one product in the cart. What does its row show, and what can you do with it?
+      - And what adds it all up, next to the products?
+  - list: fr-list
+    beats: [3, 4, 5]
+    question: "What should the cart let the shopper do? Tell me one at a time, and I'll write them down."
+    hints:
+      - Think about changing a quantity, and taking something out.
+      - What if a price changed since the item was added?
+      - What if the same cart is open in another tab, or on a phone?
+  - list: nfr-list
+    beats: [6, 7]
+    question: "Now, how well should it work? Name a quality, and a target if you have one in mind."
+    hints:
+      - Money is involved. Whose totals can the shopper trust?
+      - How fast should a press feel, and how many requests should five quick presses cost?
+      - And the first load, on a phone?
+task:
+  prompt: "Sketch the cart as the shopper sees it, then write the functional and non-functional lists beside it as numbered lines of text, one short line each, every non-functional line tied to its target."
+  expects: [2, 3, 4, 5, 6, 7]

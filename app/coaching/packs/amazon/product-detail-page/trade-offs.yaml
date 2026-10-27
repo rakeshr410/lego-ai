@@ -1,0 +1,109 @@
+# Product detail page interview, trade-offs: the six calls the design made, each written as the choice over the alternatives an interviewer is likely to raise, with what the choice costs, then a recap of the board.
+id: amazon/product-detail-page/trade-offs
+title: Six calls, and what they cost
+source:
+  hash: "998aa1675371"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: amazon/product-detail-page/optimizations
+  assumes:
+    - "The edge stitches a cached shell and a public offers fragment; private offers are fetched by the client."
+    - "The offers for every SKU come in one map; the selection is in the URL through replaceState."
+    - "Unbuyable options are struck and aria-disabled; Add to cart is optimistic; the page hydrates as islands."
+  carries:
+    - "Price: shell plus a public offers fragment at the edge, private offers fetched; over client-only prices, origin rendering, or a whole page cached 60 s."
+    - "Offers: every SKU in one map; over a fetch per pick, which puts a spinner on every pick and hides the strikes."
+    - "Selection: query parameters with replaceState; over pushState, a path per variant, or no URL."
+    - "Unbuyable options: struck, aria-disabled, with a reason; over hiding them, the disabled attribute, or Notify me."
+    - "Add to cart: optimistic badge and busy button; hydration: islands, the buy box first."
+  terms:
+    - term: trade-off
+      means: A call the design made, with what it buys and what it costs against the alternatives.
+board:
+  keep: [title, mock-up, phone, mock-header, mock-gallery, mock-title, mock-price, mock-options, mock-buy, mock-delivery, mock-below, requirements, fr-heading, fr-first, fr-gallery, fr-pick, fr-unbuyable, fr-cleared, fr-url, fr-add, fr-buy-now, fr-below, nfr-heading, nfr-lcp, nfr-add, nfr-inp, nfr-cls, nfr-fresh, nfr-private, nfr-client-price, nfr-one-line, nfr-a11y, nfr-seo, nfr-jsonld, nfr-locales, components, c-edge, c-server, browser, c-product-page, c-below, above-fold, c-gallery, c-picker, c-buy-box, c-pricing, c-cart-store, page-fold, page-below, pricing-buy, edge-html, edge-miss, pricing-server, cart-server, below-server, pricing-picker, picker-gallery, picker-buy, buy-cart, layers, l-shell, l-shell-note, l-offers, l-offers-note, l-private, l-private-note, l-cart, l-cart-note, l-community, l-community-note, statement, opt-caching, oc-hit, oc-age, oc-split, oc-cookies, oc-stale, oc-failure, oc-hygiene, oc-return, opt-hero, oh-lcp, oh-bytes, oh-html, oh-priority, oh-srcset, oh-box, oh-thumbs, oh-swap, opt-picker, op-radio, op-disabled, op-reasons, op-clear, op-live, op-url, op-names, opt-hydration, oy-bundle, oy-target, oy-order, oy-below, oy-form, oy-offers, oy-switch, opt-cart, oa-badge, oa-busy, oa-retry, oa-rollback, oa-price, oa-tabs, oa-offline, opt-also, oo-jsonld, oo-variants, oo-escape, oo-money, oo-rtl]
+  elements:
+    - { id: trade-offs, kind: region, label: "Trade-offs", at: [83, 86], size: [29, 20] }
+    - { id: to-price, kind: note, label: "price: shell plus edge fragment, private by fetch", at: [84, 88], in: trade-offs, tone: green }
+    - { id: to-price-alt, kind: note, label: "over client-only prices, origin renders, a 60 s page", at: [85, 89], in: trade-offs }
+    - { id: to-offers, kind: note, label: "offers: every SKU in one map", at: [84, 91], in: trade-offs, tone: green }
+    - { id: to-offers-alt, kind: note, label: "over a fetch per pick: a spinner, no strikes", at: [85, 92], in: trade-offs }
+    - { id: to-url, kind: note, label: "selection: query parameters with replaceState", at: [84, 94], in: trade-offs, tone: green }
+    - { id: to-url-alt, kind: note, label: "over pushState, a path per variant, or no URL", at: [85, 95], in: trade-offs }
+    - { id: to-unbuyable, kind: note, label: "unbuyable: struck, aria-disabled, with a reason", at: [84, 97], in: trade-offs, tone: green }
+    - { id: to-unbuyable-alt, kind: note, label: "over hiding them, disabled, or Notify me", at: [85, 98], in: trade-offs }
+    - { id: to-add, kind: note, label: "Add to cart: optimistic badge, busy button", at: [84, 100], in: trade-offs, tone: green }
+    - { id: to-add-alt, kind: note, label: "over waiting for the server, or going to the cart", at: [85, 101], in: trade-offs }
+    - { id: to-hydrate, kind: note, label: "hydration: islands, the buy box first", at: [84, 103], in: trade-offs, tone: green }
+    - { id: to-hydrate-alt, kind: note, label: "over hydrating the whole page, or client rendering", at: [85, 104], in: trade-offs }
+  arrows: []
+beats:
+  - point: "The price is rendered from a cached shell with the public offers stitched in at the edge, private offers fetched by the client: price and JSON-LD in the HTML, a day-long shell, a seconds-old price and nothing personal shared, at the cost of an edge that includes fragments and two cache setups."
+    kind: decision
+    weight: core
+    teach:
+      - "Write each call as the choice over its alternatives. First, where the price is rendered: stitched at the edge into a cached shell, private offers fetched by the client. The price is paid in infrastructure: the edge must be able to pull a fragment into a page, and there are two cache setups to keep straight."
+      - "Caching a static shell and letting the client fetch every price is as simple as caching gets, but each visit starts with an empty or placeholder price, and crawlers read product markup built by script less dependably. Rendering each request at the origin always has the latest price, but distant regions wait longer for the first byte, and every view adds origin load, crawlers' views too."
+      - "Caching the whole page for 60 seconds works on any CDN, but the content gets rebuilt every minute though it hardly changes, and a personal price still can't be in it."
+    draw: [trade-offs, to-price, to-price-alt]
+    check: Why not cache the whole page for 60 seconds instead?
+    answer: "The content would be re-rendered every minute for no reason, and a personalised price would still have to be left out."
+  - point: "The offers for all of the product's SKUs come in one map, so a variant switch needs no request and every strike is known at once; the cost is a larger payload for products with hundreds of combinations, paged past 200 SKUs."
+    kind: decision
+    weight: core
+    teach:
+      - "Asking for one offer each time a variant is picked keeps every response small, but each pick then waits on a spinner, and no option can be struck until the shopper has tried it."
+      - "With every SKU in one map, a switch costs no request and all the strikes are there from the start. What it costs is size: a product with hundreds of combinations sends a big map, so beyond 200 SKUs it is paged."
+    draw: [to-offers, to-offers-alt]
+    check: What does fetching one offer per pick cost the shopper?
+    answer: "A spinner on every pick, and no strikes until they try an option."
+  - point: "The selection lives in query parameters updated with replaceState: shareable, kept on reload, Back leaves the page and search engines see one canonical product URL; the cost is one shell cache entry per combination seen."
+    kind: decision
+    weight: core
+    teach:
+      - "With pushState on each pick, Back can undo a pick, but a shopper who tried five swatches has to press Back five times to leave. Giving each variant its own path lets it rank alone, but leaves near-duplicate pages to manage and makes every switch a page navigation. Keeping the selection out of the URL loses the pick on a shared link or a reload."
+      - "Query parameters with replaceState keep links shareable and one canonical URL for search engines; the price is that the shell cache stores a copy for each combination that gets visited."
+    draw: [to-url, to-url-alt]
+    check: Why replaceState rather than pushState on each pick?
+    answer: "With pushState, Back has to step through each swatch the shopper tried before it leaves the page; replaceState keeps the URL current and Back leaves."
+    misconceptions:
+      - "Give each variant its own path so it can rank -> that means duplicate content and a navigation on every switch; query parameters keep one canonical URL."
+  - point: "Options that can't be bought are shown struck and focusable, with aria-disabled and a reason, so shoppers learn the size exists and whether to wait, keyboard and screen reader users too; the cost is that the picker must refuse to check them itself."
+    kind: decision
+    weight: core
+    teach:
+      - "Hiding them makes the list shorter, but it grows and shrinks as the other picks change, and nobody finds out that size exists. With the disabled attribute the browser blocks the option for nothing, but it drops out of Tab and the arrow keys, so a keyboard user never reaches it to hear why."
+      - "Letting them be picked, with Notify me in place of Add to cart, matches the radio pattern to the letter, but leaves the shopper holding a pick that can't be bought, with the picker and the buy box showing different selections."
+    draw: [to-unbuyable, to-unbuyable-alt]
+    check: What does the disabled attribute cost compared with aria-disabled?
+    answer: "The option drops out of Tab and the arrow keys, so keyboard and screen reader users never reach it to hear the reason."
+  - point: "Add to cart answers with an optimistic badge, a busy button and the server's count on reply: it feels instant and rollback is simple because pending adds are kept apart from the confirmed count; the cost is a rare visible rollback."
+    kind: decision
+    weight: core
+    teach:
+      - "Holding the badge until the server answers means it is never wrong, but on a phone network the wait feels long and tempts the shopper to tap again. Jumping to the cart after the add confirms it plainly, but pulls the shopper out of browsing, and they have to find their way back."
+      - "The optimistic badge feels instant, and because pending adds sit apart from the confirmed count, undoing one is simple. Its cost is a rollback the shopper occasionally sees."
+    draw: [to-add, to-add-alt]
+    check: What does waiting for the server before updating the badge cost?
+    answer: On a phone network the wait feels long, and the shopper is tempted to tap again.
+  - point: "The page becomes interactive as islands, the buy box first and the rest on visibility: Add to cart works about 1.6 s sooner in the example and shoppers who don't scroll never pay for reviews code; the cost is a build that supports islands and shared state kept outside them."
+    kind: decision
+    weight: core
+    teach:
+      - "Hydrating the whole page is the easiest to reason about, but the page seems ready well before it reacts, and each section added below the fold adds main-thread work. Rendering it all in the client keeps one way of rendering, but nothing, price or image, shows until the bundle has run, which hurts crawlers and cold visitors."
+      - "Islands, in turn, need a framework or build that supports them, and any state two islands share must be kept outside both."
+    draw: [to-hydrate, to-hydrate-alt]
+    check: What do islands cost, compared with hydrating the whole page?
+    answer: "A framework or build setup that supports islands, and any state shared between them kept outside them."
+  - point: "Close with a short recap of what is on the board: the mock-up and its two lists, the components and the layers by volatility, the five deep dives, and the six calls with what each costs."
+    kind: flow
+    weight: supporting
+    teach:
+      - "Recap the board in a few sentences, pointing only at the areas on it: the mock-up and the two lists, the components and what changes how often, the deep dives, and these six calls."
+      - "No new material here; name each area and the one idea it holds. The store and the API were taught in the last lesson; mention them in a sentence without pointing."
+asks: []
+task:
+  prompt: "For each of the six calls, write the choice and the alternatives an interviewer would raise, and say what the choice costs."
+  expects: [1, 2, 3, 4, 5, 6]

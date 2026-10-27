@@ -1,0 +1,183 @@
+# Product detail page interview, requirements: the prompt as a title note (the server a black box, we design the UI), a mock-up read off the functional checklist (only what the shopper sees), then the functional and non-functional lists, one fact a line, each line taught with the clarifying answer behind it; the scope is said, not written.
+id: amazon/product-detail-page/requirements-exploration
+title: The page, then two lists
+source:
+  hash: "7a4335cb6f1a"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: null
+  assumes: []
+  carries:
+    - "The interview designs the product detail page of an Amazon-like store, the UI in the browser; pricing, inventory and the delivery promise are a server black box."
+    - "The page shows images, title, brand, rating, price and availability, one value per option group, quantity, Add to cart and Buy now, the delivery estimate, and more below."
+    - "Functional: a pick updates price, stock, image and URL with no reload; unbuyable options say why; an impossible pick is cleared and said; the URL keeps the picks; the badge updates at once."
+    - "Non-functional, one metric a line, on a mid-range phone on 4G with nothing cached: LCP no more than 2.5 s at p75, Add to cart working within 2 s, INP no more than 200 ms, CLS no more than 0.1."
+    - "Also: public offer at most 60 s old, no personal price in a shared cache, no client price sent, one line per add id, WCAG 2.2 AA, offer in the HTML, JSON-LD equal to the visible price."
+    - "Price and stock change within seconds, content a few times a month; the shown price is advisory until the cart prices the line."
+  terms:
+    - term: shopper
+      means: The person on the page, who most often arrives cold from a search engine, an ad or a shared link.
+    - term: SKU
+      means: One buyable combination of a product's option values, such as the matte black 0.9 L kettle.
+    - term: add id
+      means: The id an add request carries, so a double tap or a retry never adds a second line.
+    - term: LCP
+      means: "Largest Contentful Paint; on this page, the target for the hero image and the price painting on a cold visit."
+    - term: INP
+      means: Interaction to Next Paint; the target for how quickly a tap is answered.
+    - term: CLS
+      means: Cumulative Layout Shift; the target for how still the page stays while it loads.
+board:
+  keep: []
+  elements:
+    - { id: title, kind: note, label: "Design the Amazon product detail page", at: [51, 0] }
+    - { id: mock-up, kind: region, label: "Mock-up", at: [1, 3], size: [22, 31] }
+    - { id: phone, kind: region, label: "Product page on a phone", at: [2, 5], size: [20, 28], in: mock-up }
+    - { id: mock-header, kind: box, label: "header with the cart badge", at: [3, 7], size: [18, 2], in: phone, tone: grey }
+    - { id: mock-gallery, kind: box, label: "images, thumbnails, video", at: [3, 10], size: [18, 3], in: phone, tone: blue }
+    - { id: mock-title, kind: box, label: "title, brand, rating", at: [3, 14], size: [18, 2], in: phone, tone: blue }
+    - { id: mock-price, kind: box, label: "price, availability", at: [3, 17], size: [18, 2], in: phone, tone: blue }
+    - { id: mock-options, kind: box, label: "one value per option group", at: [3, 20], size: [18, 2], in: phone, tone: blue }
+    - { id: mock-buy, kind: box, label: "quantity, Add to cart, Buy now", at: [3, 23], size: [18, 2], in: phone, tone: blue }
+    - { id: mock-delivery, kind: box, label: "delivery estimate", at: [3, 26], size: [18, 2], in: phone, tone: blue }
+    - { id: mock-below, kind: box, label: "description, reviews, more below", at: [3, 29], size: [18, 3], in: phone, dashed: true, tone: grey }
+    - { id: requirements, kind: region, label: "Requirements", at: [60, 3], size: [60, 31] }
+    - { id: fr-heading, kind: note, label: "Functional", at: [61, 6], in: requirements }
+    - { id: fr-first, kind: note, label: "images, title, brand, rating, price, stock, delivery", at: [61, 8], in: requirements }
+    - { id: fr-gallery, kind: note, label: "gallery by thumbnail, arrow keys or swipe, zoom, video", at: [61, 10], in: requirements }
+    - { id: fr-pick, kind: note, label: "a pick changes price, stock, image, URL, no reload", at: [61, 12], in: requirements }
+    - { id: fr-unbuyable, kind: note, label: "options that can't be bought stay visible, say why", at: [61, 14], in: requirements }
+    - { id: fr-cleared, kind: note, label: "an impossible pick is cleared, and the page says so", at: [61, 16], in: requirements }
+    - { id: fr-url, kind: note, label: "a shared or reloaded URL opens the same selection", at: [61, 18], in: requirements }
+    - { id: fr-add, kind: note, label: "choose a quantity, add to cart, badge updates at once", at: [61, 20], in: requirements }
+    - { id: fr-buy-now, kind: note, label: "Buy now goes straight to checkout with this SKU", at: [61, 22], in: requirements }
+    - { id: fr-below, kind: note, label: "description, reviews, questions, similar items below", at: [61, 24], in: requirements }
+    - { id: nfr-heading, kind: note, label: "Non-functional, mid-range phone on 4G", at: [92, 6], in: requirements }
+    - { id: nfr-lcp, kind: note, label: "LCP should be no more than 2.5 s at p75", at: [92, 8], in: requirements }
+    - { id: nfr-add, kind: note, label: "Add to cart should work within 2 s of opening", at: [92, 10], in: requirements }
+    - { id: nfr-inp, kind: note, label: "INP should be no more than 200 ms", at: [92, 12], in: requirements }
+    - { id: nfr-cls, kind: note, label: "CLS should be no more than 0.1", at: [92, 14], in: requirements }
+    - { id: nfr-fresh, kind: note, label: "a public offer no more than 60 s old", at: [92, 16], in: requirements }
+    - { id: nfr-private, kind: note, label: "no personal price ever in a shared cache", at: [92, 18], in: requirements }
+    - { id: nfr-client-price, kind: note, label: "no client-computed price is ever sent", at: [92, 20], in: requirements }
+    - { id: nfr-one-line, kind: note, label: "no more than one cart line per add id", at: [92, 22], in: requirements }
+    - { id: nfr-a11y, kind: note, label: "accessibility should meet WCAG 2.2 AA", at: [92, 24], in: requirements }
+    - { id: nfr-seo, kind: note, label: "the offer should be in the server HTML", at: [92, 26], in: requirements }
+    - { id: nfr-jsonld, kind: note, label: "JSON-LD price should equal the visible price", at: [92, 28], in: requirements }
+    - { id: nfr-locales, kind: note, label: "prices, dates and units in all store locales", at: [92, 30], in: requirements }
+  arrows: []
+  lists:
+    - { id: fr-list, in: requirements, at: [61, 8], step: 2, slots: 10, width: 30, items: [fr-first, fr-gallery, fr-pick, fr-unbuyable, fr-cleared, fr-url, fr-add, fr-buy-now, fr-below] }
+    - { id: nfr-list, in: requirements, at: [92, 8], step: 2, slots: 13, width: 27, items: [nfr-lcp, nfr-add, nfr-inp, nfr-cls, nfr-fresh, nfr-private, nfr-client-price, nfr-one-line, nfr-a11y, nfr-seo, nfr-jsonld, nfr-locales] }
+beats:
+  - point: "The prompt is to design the product detail page of an Amazon-like store; pricing, inventory and the delivery promise live on the server, a black box, so what we design is the UI in the browser."
+    kind: rule
+    weight: core
+    teach:
+      - "Write the title: design the Amazon product detail page. It is one product's page on the web, and a shopper often lands on it cold, straight from a search."
+      - "Pricing, inventory and the delivery promise belong to the server, a black box. We design the UI that runs in the browser: it shows what the server says, quickly, and never claims more. Then go straight to the mock-up."
+      - "Two or three sentences, no question, and nothing about how the board is laid out; the learner sees that from the board itself."
+    draw: [title]
+  - point: "Start with what the shopper sees on a phone: the header with the cart badge, the images with thumbnails and a video, title, brand and rating, price and availability, one value per option group, quantity with Add to cart and Buy now, the delivery estimate, and more below."
+    kind: component
+    weight: core
+    teach:
+      - "Draw a phone with one product's page on it, say a kettle that comes with a couple of option groups. At the top, the header with the cart badge, the count the shopper sees change when they add."
+      - "Then the images, with thumbnails to browse and the product video. Under them the title, brand and rating, then the price and whether it can be had."
+      - "Then a choice in each option group, and under it quantity, Add to cart and Buy now, with the delivery estimate. Further down come the description, a reviews summary, questions and similar items."
+      - "Only what the screen shows and what each part tells the shopper; how it loads and where its data comes from are discussed later."
+    draw: [mock-up, phone, mock-header, mock-gallery, mock-title, mock-price, mock-options, mock-buy, mock-delivery, mock-below]
+    check: What must the shopper already see when the page first loads?
+    answer: "The product's images, title, brand, rating, price, availability and delivery estimate."
+  - point: "Functional requirements say what the page does: all the shopper needs on first load, a gallery to browse and zoom, picks that change price, stock, image and URL with no reload, unbuyable options that say why, and an impossible pick cleared out loud."
+    kind: requirement
+    weight: core
+    teach:
+      - "Write the functional list beside the mock-up, one fact a line, read off the drawing. The first load already shows the images, title, brand, rating, price, availability and the delivery estimate."
+      - "The gallery works by thumbnail, arrow keys or swipe, with zoom and the product video. The shopper picks one value in each option group, and price, stock, image and URL follow without a reload."
+      - "The interviewer said a product has up to three option groups and a few dozen combinations; some don't exist and the rest sell out one at a time, so what can be bought in one group depends on the others."
+      - "So some options can't be bought with the other picks. They stay on screen, marked unavailable and with a reason. If a change in one group makes the pick in another impossible, that pick is cleared and the page says so."
+    draw: [requirements, fr-heading, fr-first, fr-gallery, fr-pick, fr-unbuyable, fr-cleared]
+    check: "The shopper changes one option group, and the value they had picked in another group can no longer be bought. What should happen?"
+    answer: That pick is cleared and the page says why; the option stays visible, marked unavailable with its reason.
+    misconceptions:
+      - "Hide the options that can't be bought -> they stay visible, are marked unavailable and say why."
+      - "Keep the old pick and let Add to cart fail later -> an impossible pick is cleared at once, and the page says so."
+  - point: "A shared or reloaded URL opens with the same selection; the shopper chooses a quantity and adds the SKU with the badge updating at once, or uses Buy now to go straight to checkout; the rest of the page appears below the buy box as they scroll."
+    kind: requirement
+    weight: core
+    teach:
+      - "The URL carries the selection, so a link someone shares for the matte black 0.9 L kettle opens with those picks already made, and so does a reload."
+      - "Quantity, then Add to cart: it adds the SKU and the header badge changes at once; the cart page itself is a separate design. Buy now skips the cart and goes to checkout with this SKU."
+      - "Description, reviews summary, questions and similar items come below the buy box as the shopper scrolls."
+    draw: [fr-url, fr-add, fr-buy-now, fr-below]
+    check: A shopper opens a shared link that named the matte black 0.9 L kettle. What should they see?
+    answer: The page with matte black and 0.9 L already selected, because the URL carries the selection.
+    misconceptions:
+      - "Open on the default variant and let them pick again -> the URL carries the selection, so the shared picks are already made."
+  - point: "Non-functional requirements say how well, one metric a line tied to its target, on a mid-range phone on 4G with nothing cached: LCP no more than 2.5 s at p75, Add to cart working within 2 s, INP no more than 200 ms, CLS no more than 0.1."
+    kind: metric
+    weight: core
+    teach:
+      - "Most shoppers arrive cold from a search engine, an ad or a shared link, often on a phone with nothing cached. So write the second list under that condition, a mid-range phone on 4G with an empty browser cache. One metric a line, and say how it relates to its number."
+      - "LCP should be no more than 2.5 seconds at the 75th percentile, so the hero image and the price paint fast on a cold visit. Add to cart should work within 2 seconds of opening, so the buy box answers before the rest of the page has loaded."
+      - "INP no more than 200 milliseconds, so a tap answers quickly. CLS no more than 0.1, so nothing jumps under the shopper."
+    draw: [nfr-heading, nfr-lcp, nfr-add, nfr-inp, nfr-cls]
+    check: Why does Add to cart get a target of its own, apart from LCP?
+    answer: "The buy box has to work within 2 s, before the rest of the page has loaded; painting fast is not the same as being able to add."
+  - point: "Freshness and correctness get a line each: a public offer at most 60 s old, no personal price in a shared cache, no client-computed price sent, and no more than one cart line per add id."
+    kind: metric
+    weight: core
+    teach:
+      - "Price and availability must be fresh to the second, while the description, images and option lists change at most a few times a month. So the public offer shown is no more than 60 seconds old."
+      - "The pricing service owns the price: most shoppers see their region's public price, a signed-in member may see a member price, and delivery dates depend on the address. A personal price never sits in a shared cache, so it can't reach another shopper."
+      - "The page's price is only advisory until the cart prices the line, so the client never sends a price; and a double tap or a retry makes no more than one line per add id."
+    draw: [nfr-fresh, nfr-private, nfr-client-price, nfr-one-line]
+    check: Who decides the price that ends up in the cart, and what does that mean for the add request?
+    answer: The server, when it prices the cart line; the request carries no price, and the price on the page is only advisory.
+    misconceptions:
+      - "Send the shown price with the add so the cart matches the page -> the server prices every line; the client sends no price."
+  - point: "Accessibility, search and locales get a line each: WCAG 2.2 AA, with unavailable options reachable and explained; the offer in the server HTML, with a JSON-LD price equal to the visible one; prices, dates and units in all store locales."
+    kind: metric
+    weight: core
+    teach:
+      - "Accessibility should meet WCAG 2.2 AA: every option and the gallery work by keyboard and screen reader, and an unavailable option can still be found, together with its reason."
+      - "The page is the main landing page from search, so crawlers need the title, images, price and availability in the HTML the server sends, and the price in the JSON-LD equals the one on screen."
+      - "Prices, dates and units follow the shopper's locale in every store, and for right-to-left languages the layout is mirrored."
+    draw: [nfr-a11y, nfr-seo, nfr-jsonld, nfr-locales]
+    check: What does accessibility ask of an option that can't be bought?
+    answer: It can still be reached by keyboard and screen reader, and it says why it is unavailable.
+  - point: "Commit to what you can finish, caching split by volatility, the variant matrix and the URL, the gallery, Add to cart with rollback, lazy islands and structured data, and name the rest as out: the cart page, checkout, full reviews, other sellers, recommendations."
+    kind: rule
+    weight: supporting
+    teach:
+      - "Say the scope out loud. In: how the page is rendered and cached, split by how volatile each part is; the variant matrix, availability and the selection in the URL; the gallery with thumbnails, zoom, swipe and video; Add to cart with an optimistic badge and rollback; below-the-fold islands loaded on visibility; structured data for search engines."
+      - "Out: the cart page and checkout, which are designs of their own; reviews beyond a glance; comparing other sellers' offers; recommendation ranking, a server black box. Say them, and move on."
+    check: Halfway through, the interviewer asks about the cart page's quantity edits. What fits the plan?
+    answer: Say the cart page is a separate design, out of scope for this round, and keep going.
+asks:
+  - ids: [mock-header, mock-gallery, mock-title, mock-price, mock-options, mock-buy, mock-delivery, mock-below]
+    beats: [2]
+    question: "Picture this product page on a phone, say a kettle that comes with a couple of option groups. What does the shopper see? I'll draw it as you say it."
+    hints:
+      - What's at the very top, and what does the shopper look at first?
+      - And what do they press to buy it?
+  - list: fr-list
+    beats: [3, 4]
+    question: "What should the page do for the shopper? Tell me one at a time, and I'll write them down."
+    hints:
+      - Think about what changes when the shopper picks a different option.
+      - And about a link someone shares, or the moment they press Add to cart.
+  - list: nfr-list
+    beats: [5, 6, 7]
+    question: "Now, how well should it work? Name a quality, and a number if you have one in mind."
+    hints:
+      - Think about a phone on 4G, arriving cold from search.
+      - And about the price, how fresh it is and whose it is.
+      - And about shoppers on a keyboard or a screen reader, and search engines.
+task:
+  prompt: Draw the product page as a mock-up, then write the functional and non-functional lists beside it as numbered lines of text, one short line each, with a target on every non-functional line.
+  expects: [2, 3, 4, 5, 6, 7]

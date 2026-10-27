@@ -1,0 +1,107 @@
+# Amazon checkout interview, trade-offs: the seven choices an interviewer will push on, each written as the chosen option and what it beat (page structure, card fields, when the key is made, after an unknown outcome, the challenge, Back after paying, who computes totals), then a short recap of what the board holds.
+id: amazon/checkout-and-payment/trade-offs
+title: The choices, and what they cost
+source:
+  hash: "7ebe58cc9ce7"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: amazon/checkout-and-payment/optimizations
+  assumes:
+    - "On the board: the review page, the components with the processor's hosted fields, the order attempt's states, CheckoutStore's JSON and the five deep dives."
+    - "Taught earlier and not redrawn: one key per attempt, polling by key, the replaced history entry, and totals sent back by quote id with the order."
+  carries:
+    - "One review page beats a wizard for returning shoppers; hosted fields beat a full redirect and our own inputs."
+    - "The key is made by the client with the review, per quote and method; after an unknown outcome, poll by key, then resend the same key once."
+    - "A dialog for the challenge, a redirect only when asked; replace the checkout history entry; totals from the server's quote."
+  terms:
+    - term: SAQ A
+      means: "The PCI self-assessment a merchant embedding the processor's fields can keep, if its page is protected against script attacks."
+board:
+  keep: [title, review, rp-deliver, rp-ship1, rp-ship2, rp-paying, rp-summary, rp-promo, rp-place, scope, as-heading, as-shipments, as-quote, out-heading, out-charging, out-signin, out-stay, out-wallets, out-tax, requirements, fr-heading, fr-review, fr-address, fr-delivery, fr-pay, fr-challenge, fr-decline, fr-once, fr-changed, fr-after, nfr-heading, nfr-duplicates, nfr-totals, nfr-cards, nfr-csp, nfr-lcp, nfr-inp, nfr-js, nfr-timeout, nfr-outcome, nfr-wcag, nfr-redundant, nfr-autofill, nfr-paste, components, c-checkout-page, c-address-form, c-payment-frame, c-saved-cards, c-hosted-fields, c-challenge, c-store, c-processor, c-service, c-api, machine, m-total, m-confirmed, m-ready, m-placing, m-unknown, m-challenge, m-declined, m-resend, m-history, af-to-store, pf-to-store, store-to-page, pf-to-processor, store-to-service, service-to-api, api-to-processor, ready-to-placing, placing-to-challenge, challenge-to-unknown, unknown-to-declined, placing-to-confirmed, placing-to-declined, placing-to-total, placing-to-unknown, unknown-to-confirmed, total-to-ready, declined-to-ready, state, store-json, js-quote, js-quote-more, js-status, js-sections, js-sections-more, js-address, js-address-more, js-payment, js-payment-more, js-attempt, optimizations, h-repeat, o-key, o-saved, o-flag, o-poll, h-card, o-hosted, o-csp, o-sri, o-tags, h-form, o-autofill, o-billing, o-summary, o-focus, h-bank, o-dialog, o-sandbox, o-resume, h-speed, o-ssr, o-sdk, o-abort]
+  elements:
+    - { id: tradeoffs, kind: region, label: Trade-offs, at: [1, 99], size: [58, 10] }
+    - { id: t-page, kind: note, label: "one review page, not a step-by-step wizard", at: [2, 101], in: tradeoffs, tone: green }
+    - { id: t-card, kind: note, label: "hosted fields, not a redirect or our own inputs", at: [2, 103], in: tradeoffs, tone: green }
+    - { id: t-key, kind: note, label: "key made with the review, not on every press", at: [2, 105], in: tradeoffs, tone: green }
+    - { id: t-unknown, kind: note, label: "poll by key, not a resend or an error page", at: [2, 107], in: tradeoffs, tone: green }
+    - { id: t-challenge, kind: note, label: "a dialog, redirect only when the processor asks", at: [31, 101], in: tradeoffs, tone: green }
+    - { id: t-back, kind: note, label: "replace history, not push or block Back", at: [31, 103], in: tradeoffs, tone: green }
+    - { id: t-totals, kind: note, label: "totals from the quote, not the client", at: [31, 105], in: tradeoffs, tone: green }
+  arrows: []
+beats:
+  - point: "One review page with editable sections beats a strict wizard: someone who has ordered before can check and pay on one screen, the total stays next to what changes it, and one route is server-rendered and resumed; the cost is a long page for a newcomer and a status per section."
+    kind: decision
+    weight: core
+    teach:
+      - "These are the choices an interviewer is likely to challenge; say the one we picked first. One review page with editable sections, any missing section opened first: someone who has ordered before can check everything and pay on one screen, the total stays next to everything that moves it, and a single route is server-rendered and resumed after a redirect."
+      - "The price: a first-time shopper faces a long page, and tracking a status for every section is more work than one step number. A wizard keeps screens short and progress simple, but makes returning shoppers walk through steps they do not need."
+    draw: [tradeoffs, t-page]
+    check: What does the one review page cost, compared with a wizard?
+    answer: "A newcomer faces a long page, and a status per section is more to track than one step number."
+  - point: "The processor's hosted fields in an iframe keep card data out of our code, servers and logs and keep SAQ A if the page resists script attacks; a full redirect has the smallest scope but sends the shopper off our site, and our own inputs route card numbers through our JavaScript."
+    kind: decision
+    weight: core
+    teach:
+      - "Hosted fields in the processor's iframe: card data never touches our code, servers or logs, and SAQ A still applies as long as the page is protected against script attacks. The price is limited styling, and the page still needs CSP and script monitoring."
+      - "Sending the shopper to the processor's own payment page gives the smallest scope, since the script rule does not cover full redirects, but the shopper is taken off our site in the middle of checkout. Our own inputs give full control, but every card number then flows through our JavaScript, and the PCI work grows a lot."
+    draw: [t-card]
+    check: Why not use our own inputs and let the processor's script tokenise them?
+    answer: "Every card number would flow through our JavaScript, and the PCI work grows a lot."
+  - point: "The client makes the key when the review is shown, one per quote and payment method: double clicks, retries and polls share it, a new card or total gets a fresh one, and no extra request is needed; the cost is storing it before sending and clearing it after."
+    kind: decision
+    weight: core
+    teach:
+      - "Made by the client when the review is shown, one per quote and payment method: a double click, a retry and a poll all reuse it, a new card or a new total gets a fresh one, and nothing extra is fetched. It has to be stored before sending and cleared afterwards."
+      - "A fresh key per press needs no storage, but then a double click or a retry places two orders. A key handed out by the server when the review loads costs one more request, and a single token for the page cannot tell a changed card from a retry."
+    draw: [t-key]
+    check: What goes wrong with a new key on every press?
+    answer: A double click or a retry places two orders.
+  - point: "After an unknown outcome, poll by key up to 90 s and then resend the same key once: no double charge and usually an answer in seconds, at the cost of a read-by-key endpoint and a waiting state; a resend with a new key, or an error page, both end in duplicate orders."
+    kind: decision
+    weight: core
+    teach:
+      - "Poll by key for up to 90 seconds, then resend the same key once: the shopper is never charged twice, and the answer usually comes within seconds. The price is a read-by-key endpoint and a waiting state."
+      - "Resending automatically with a new key is simple, yet it doubles the order every time the lost answer was a success. An error that tells the shopper to look in Your orders needs no endpoint, but people press again and end up with two orders."
+    draw: [t-unknown]
+    check: Why not just show an error after a lost answer and send the shopper to Your orders?
+    answer: People press Place order again and end up with two orders.
+  - point: "Show the bank's challenge in a modal dialog and redirect only when the processor asks: the page and its state stay put, at the cost of meeting the issuer frame's size and no-sandbox needs; always redirecting throws the page away on every challenge and leans on resume."
+    kind: decision
+    weight: supporting
+    teach:
+      - "A modal dialog, with a redirect only when the processor asks: the page and its state stay where they are, inside a labelled dialog. The dialog has to meet the issuer frame's size and no-sandbox needs."
+      - "Always redirecting means nothing to host, but each challenge throws the page away and the checkout depends on resuming."
+    draw: [t-challenge]
+    check: What does always redirecting to the bank cost?
+    answer: Each challenge throws the page away, and the checkout depends on resuming from the stored attempt.
+  - point: "After paying, replace the checkout history entry with the confirmation: Back goes to the page before checkout and the confirmation reloads by order id, though the filled checkout is gone; pushing a new entry leaves Back on a live checkout, and a leave-page prompt is limited by browsers."
+    kind: decision
+    weight: core
+    teach:
+      - "Replace the checkout entry with the confirmation: Back goes to the page before checkout, never to a working Place order, and the confirmation reloads from its order id. The price is that the filled-in checkout cannot be visited again."
+      - "Pushing the confirmation as a new entry is what any router does by default, but then Back reopens a live checkout. A leave-page prompt is explicit, but browsers restrict those prompts, and once the order is placed it only gets in the way."
+    draw: [t-back]
+    check: What goes wrong if the confirmation is pushed as a new history entry?
+    answer: Back reopens a live checkout.
+  - point: "Totals come from the server's quote, referenced by id at submit: one source of truth for tax, promos and rounding, and a moved price is caught before the charge, at the cost of a round trip per money choice; client totals checked at submit are instant, but the rules split and drift."
+    kind: decision
+    weight: core
+    teach:
+      - "The server's quote, sent back by id at submit: tax, promos and rounding have one source of truth, and a price that moved is caught by the quote id before the charge. The price is a round trip for every choice that touches money."
+      - "Totals worked out on the client and checked by the server at submit update instantly as options change, but the tax and promo rules then live in two places and slowly stop agreeing."
+    draw: [t-totals]
+    check: What does computing totals on the client, checked at submit, cost?
+    answer: Tax and promo rules live in two places and slowly stop agreeing.
+  - point: "Recap the board top to bottom: the review page and its scope, the requirements with their targets, the components, one order attempt as states, CheckoutStore as JSON, the five deep dives and these seven choices."
+    kind: rule
+    weight: supporting
+    teach:
+      - "A short recap, pointing along the board: the review page and the scope, the two lists with their targets, the components, one order attempt and its states, CheckoutStore as JSON, the five deep dives, and these seven choices."
+      - One or two sentences per area, no new facts, and no question.
+asks: []
+task:
+  prompt: "Write each choice with the option it beat: the page structure, the card fields, when the key is made, after an unknown outcome, the challenge, Back after paying, and who computes the totals."
+  expects: [1, 2, 3, 4, 5, 6, 7]

@@ -1,0 +1,114 @@
+# Orders and tracking interview, trade-offs: six decisions, each written as the choice and the cost it accepts, with the options it was weighed against said aloud: keeping status fresh, paging the history, where allowed actions come from, cancel feedback, searching, and keeping history on the device. Then a short recap of the board; the keep holds each earlier area's frame and its main contents, within the 120 ids allowed.
+id: amazon/order-tracking/trade-offs
+title: Six choices, each with its cost
+source:
+  hash: "e795f4bb136d"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: amazon/order-tracking/optimizations
+  assumes:
+    - "StatusPoller checks only active orders on screen while the tab is visible, with one batched conditional GET and a doubling wait."
+    - "Pages are numbered, ordered by placed_at then id, pinned by as_of, and kept in the URL with tab, range and search."
+    - "allowedActions(status) is one table for list and detail, and the server re-checks every action; a 409 carries the current shipment."
+    - "Nothing about orders is kept in browser storage; sign-out clears the store."
+  carries:
+    - "Conditional polling over server-sent events or push and reload: it matches how rarely a shipment changes; a change can take one base wait to show."
+    - "Numbered pages with as_of in the URL over infinite scroll or Load more: shareable and easy to return to; offsets need as_of."
+    - "Actions derived on the client and re-checked by the server over a server-sent list: same render as the status; a policy change needs a deploy."
+    - "Cancel waits for the server over an optimistic cancel; server search over filtering loaded pages; memory and the back-forward cache over IndexedDB."
+  terms:
+    - term: trade-off
+      means: A choice written with what it gains and the cost it accepts, with the options it was weighed against.
+    - term: back-forward cache
+      means: The browser keeping a page in memory so Back and Forward return to it as it was.
+board:
+  keep: [title, requirements, nfr-heading, as-heading, as-pages, as-wait, as-longest, components, c-orders-page, c-order-card, page-to-card, c-status-line, c-action-buttons, c-order-detail, c-store, page-to-store, store-to-card, c-poller, card-to-poller, c-service, poller-to-service, service-to-store, c-api, service-to-api, c-actions, card-to-actions, actions-to-service, c-cart, actions-to-cart, status, st-placed, st-preparing, st-shipped, st-out, st-delivered, st-cancelled, st-cancel-req, st-exception, st-returned, st-actions-note, st-proposes, st-base-note, st-req-note, st-stop-note, state, store, js-orders, js-order-more, js-order-end, js-shipments, js-shipments-more, js-shipments-end, js-pages, js-pages-more, js-pending, js-pending-more, fresh-req, fresh-active, fresh-final, fresh-pages, client, poll-watch, poll-more, announce, api, if-transport, if-reads, if-get-orders, if-orders-res1, if-orders-res2, if-orders-res3, if-get-order, if-order-res, if-order-res2, if-order-304, if-order-404, if-error-shape, if-error-note, if-status, if-get-status, if-status-etag, if-status-res1, if-status-res2, if-status-304, if-cancel, if-post-cancel, if-cancel-key, if-cancel-200, if-cancel-202, if-cancel-409, opt, opt-rubric, opt-poll, opt-visible, opt-onscreen, opt-active, opt-batched, opt-304, opt-doubling, opt-backoff, opt-per-tab, opt-naive, opt-ours, opt-races, opt-one-table, opt-409, opt-pending, opt-access, opt-timeline, opt-polite, opt-locale, opt-dates, opt-words, opt-rtl, opt-security, opt-owner, opt-csrf, opt-storage, opt-edge]
+  elements:
+    - { id: trade, kind: region, label: "Trade-offs", at: [1, 99], size: [57, 11] }
+    - { id: tr-fresh, kind: note, label: "status: conditional polling, not SSE or push", at: [2, 101], in: trade, tone: green }
+    - { id: tr-fresh-cost, kind: note, label: "cost: a change can take one base wait", at: [2, 102], in: trade, tone: red }
+    - { id: tr-pages, kind: note, label: "pages: numbered, with as_of, all in the URL", at: [2, 104], in: trade, tone: green }
+    - { id: tr-pages-cost, kind: note, label: "cost: offsets need as_of to stay stable", at: [2, 105], in: trade, tone: red }
+    - { id: tr-actions, kind: note, label: "actions: derived on the client, re-checked by the server", at: [2, 107], in: trade, tone: green }
+    - { id: tr-actions-cost, kind: note, label: "cost: a policy change needs a deploy", at: [2, 108], in: trade, tone: red }
+    - { id: tr-cancel, kind: note, label: "cancel: wait for the server, not optimistic", at: [31, 101], in: trade, tone: green }
+    - { id: tr-cancel-cost, kind: note, label: "cost: a second or two of Cancelling", at: [31, 102], in: trade, tone: red }
+    - { id: tr-search, kind: note, label: "search: on the server, across all time", at: [31, 104], in: trade, tone: green }
+    - { id: tr-search-cost, kind: note, label: "cost: one request per search", at: [31, 105], in: trade, tone: red }
+    - { id: tr-history, kind: note, label: "device: memory and the back-forward cache only", at: [31, 107], in: trade, tone: green }
+    - { id: tr-history-cost, kind: note, label: "cost: a cold visit always fetches page 1", at: [31, 108], in: trade, tone: red }
+  arrows: []
+beats:
+  - point: "Keep status fresh with conditional polling of active orders on screen in a visible tab: it matches how rarely a shipment changes and is free for hidden tabs and settled orders, at the cost of a change taking up to one base wait to show."
+    kind: decision
+    weight: core
+    teach:
+      - "Write the choice first, then its cost. Conditional polling, only for active orders on screen in a visible tab: a shipment changes so seldom that checking every few minutes keeps up, and hidden tabs and finished orders cost nothing. The price is that a change can sit unseen for up to one base wait."
+      - "A server-sent stream per tab would show changes within seconds and reconnect on its own, but it keeps a connection open for hours to carry a handful of events a day, and after every reconnect it still has to catch up."
+      - "Leaning on push notifications and a reload needs no client code at all, but whatever the open page shows goes out of date as soon as it loads, and a notification can be switched off or arrive late."
+    draw: [trade, tr-fresh, tr-fresh-cost]
+    check: "What does conditional polling give up compared with server-sent events, and why is that acceptable?"
+    answer: "A change can take one base wait to appear instead of seconds; a shipment changes only a few times a day, so holding a connection per tab for hours is not worth it."
+    misconceptions:
+      - "A live stream is always better than polling -> for a few events a day it holds a connection per tab for hours and still needs a catch-up after reconnects."
+  - point: "Page the history with numbered pages in a stable order, pinned by as_of and kept in the URL: a page can be shared, reloaded and returned to, which fits looking for one order; the cost is that offsets need as_of to stay stable."
+    kind: decision
+    weight: core
+    teach:
+      - "Numbered pages in a fixed order, pinned by as_of, all in the URL: a shopper can share a page, reload it or come back to it, which suits someone hunting for one particular order. The catch is that offsets only hold still because of as_of."
+      - "Infinite scroll with a cursor browses smoothly and pages never shift, but finding your way back to a spot deep in years of orders is hard. A Load more button with a cursor is steady and works well from the keyboard, but nothing in the URL records how far you got."
+    draw: [tr-pages, tr-pages-cost]
+    check: "Why numbered pages rather than infinite scroll for the order history?"
+    answer: "Shoppers look for one specific order; numbered pages in the URL can be shared, reloaded and returned to, which is hard in a long infinite list."
+  - point: "Derive allowed actions on the client from the status plus server facts, re-checked by the server: buttons change in the same render as the status and one pure table serves list and detail; the cost is that a policy change needs a deploy."
+    kind: decision
+    weight: core
+    teach:
+      - "Work the buttons out on the client from the status and the server's facts, and let the server check again: the buttons update in the very render that shows the new status, and a single pure table for list and detail is simple to test. Because the rules live in the client's code, changing a policy means shipping a new client."
+      - "The server could attach a list of allowed actions to each shipment instead: the policy would sit in one place and a new action would need no client release. But every poll would carry more, and the client would still need to know how to label each action."
+    draw: [tr-actions, tr-actions-cost]
+    check: "What would sending allowed actions from the server gain, and what would it cost?"
+    answer: "The policy in one place and new actions without a release; but bigger polls, and the client still needs labels for them."
+  - point: "Cancel waits for the server and disables only that shipment's buttons: it never shows a cancel that didn't happen and a refusal arrives with the real status; the cost is a second or two of Cancelling."
+    kind: decision
+    weight: core
+    teach:
+      - "Wait for the server, and disable only that shipment's buttons. The page can then never claim a cancel that the server refused, and a refusal comes with the shipment's true status. The shopper pays with a second or two of Cancelling."
+      - "An optimistic cancel feels instant, but it is most likely to be rolled back exactly in the race with shipping, and a refund message that is taken back costs the shopper's trust."
+    draw: [tr-cancel, tr-cancel-cost]
+    check: "Why not make the cancel optimistic?"
+    answer: "The cancel is the request most likely to be refused, in the race with shipping; a rollback then withdraws a cancel the shopper believed in."
+    misconceptions:
+      - "Every action should be optimistic -> an action likely to be refused should wait for the server."
+  - point: "Search on the server across all time, submitted as a form: it finds orders from years ago and keeps the query in the URL, at the cost of one request per search; filtering the loaded pages is instant but misses everything not loaded."
+    kind: decision
+    weight: supporting
+    teach:
+      - "Search on the server across all time, sent as a form: it reaches orders from years back, and the query sits in the URL. Each search costs one request."
+      - "Filtering the pages already in memory would answer instantly, but it can only find what has been loaded, and most of a long history hasn't."
+    draw: [tr-search, tr-search-cost]
+    check: "Why not filter the orders already on the client?"
+    answer: "It misses every order not yet loaded, and a shopper's history can run to years."
+  - point: "Keep history on the device in memory and the back-forward cache only: nothing is left behind on a shared computer and there is no storage schema to migrate; the cost is that a cold visit always fetches page 1."
+    kind: decision
+    weight: core
+    teach:
+      - "Memory and the back-forward cache only: a shared computer keeps nothing once the shopper leaves, and there is no stored format to migrate. The price is that a fresh visit always has to fetch page 1."
+      - "Saving orders in IndexedDB would start instantly and work offline, but addresses and purchases would outlast sign-out unless wiped with care, and an old status read offline would look like the truth."
+      - "Then a short recap down the board: the requirements, the components and the status machine, the store, the API, the polling budget and the races, and these six choices."
+    draw: [tr-history, tr-history-cost]
+    check: "What would persisting orders in IndexedDB risk?"
+    answer: "Addresses and purchases surviving sign-out on a shared computer, and stale statuses that look authoritative offline."
+asks:
+  - ids: [tr-fresh]
+    beats: [1]
+    question: "How would you keep the statuses fresh, and what else could you have chosen? Tell me your pick first."
+    hints:
+      - Think of how often a shipment's status actually changes.
+      - Could the server push instead, and what would that hold open?
+task:
+  prompt: "Write the six choices as lines, each with the cost it accepts underneath, and say which options each was weighed against."
+  expects: [1, 2, 3, 4, 6]

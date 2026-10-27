@@ -1,0 +1,98 @@
+# Designing Amazon's storefront on the whiteboard (docs/coaching.md): five interviews, one per Amazon article
+# (listing, product page, cart, checkout, orders), each three lessons over its article's six sections on one
+# growing board. Every part teaches one section, from the packs under coaching/packs/amazon.
+slug: amazon-storefront
+title: Design Amazon, on the whiteboard
+summary: "Fifteen whiteboard lessons with the coach: five frontend design interviews for an Amazon-like store, the product listing, the product page, the cart, checkout and payment, and orders and tracking, each from the prompt and requirements through components, state and the API to optimizations and trade-offs."
+outline: "The interviews follow a shopper's path through the store, in the order of Arrowbox's Amazon articles. Each lesson's parts follow its article's sections in order, and every pack is checked against its section."
+lessons:
+  - slug: listing-scope-and-components
+    title: "The Amazon product listing interview: scope and components"
+    summary: "The prompt, the results page drawn as the shopper sees it, the requirements written with their targets, then the components and the one loop from a click to the screen, on a wide screen and on a phone."
+    parts:
+      - { title: "The prompt, the page and two lists", minutes: 12, packs: [amazon/product-listing/requirements-exploration] }
+      - { title: "Components and one loop", minutes: 12, packs: [amazon/product-listing/high-level-design] }
+  - slug: listing-state-and-api
+    title: "The Amazon product listing interview: state and API"
+    summary: "The same board, continued. The question parsed from the URL, the store of answers by query key and the results region's states, then the search as a cacheable GET, its response, its errors and the components' props."
+    parts:
+      - { title: "The question, the answer, the store", minutes: 10, packs: [amazon/product-listing/data-model] }
+      - { title: "A GET with the canonical query", minutes: 12, packs: [amazon/product-listing/interface-definition] }
+  - slug: listing-performance-and-trade-offs
+    title: "The Amazon product listing interview: optimizations and trade-offs"
+    summary: "The board's last band. The URL as the source of truth, racing requests, first load, accessibility and caching, internationalisation and security in brief, then the seven calls the design made and a recap."
+    parts:
+      - { title: "Five deep dives, two in brief", minutes: 15, packs: [amazon/product-listing/optimizations] }
+      - { title: "Seven calls and what they cost", minutes: 8, packs: [amazon/product-listing/trade-offs] }
+  - slug: detail-scope
+    title: "The Amazon product detail page interview: scope and components"
+    summary: The prompt, the page drawn as a mock-up, the requirements written with their targets, then the components and the page's data sorted by how fast it goes stale.
+    parts:
+      - { title: "The page, then two lists", minutes: 12, packs: [amazon/product-detail-page/requirements-exploration] }
+      - { title: "Components, and what changes how often", minutes: 10, packs: [amazon/product-detail-page/high-level-design] }
+  - slug: detail-state-and-api
+    title: "The Amazon product detail page interview: state and API"
+    summary: The same board, continued. The state derived from the components and split by lifetime, the variant matrix and its rule, then the requests and responses, the add and its replay, and the errors.
+    parts:
+      - { title: "Catalog, offers and the picks", minutes: 10, packs: [amazon/product-detail-page/data-model] }
+      - { title: "Requests, responses and errors", minutes: 10, packs: [amazon/product-detail-page/interface-definition] }
+  - slug: detail-performance
+    title: "The Amazon product detail page interview: performance and trade-offs"
+    summary: The board's last band. Caching by volatility, the hero image, an accessible variant picker, hydration and a reliable Add to cart, then the six calls the design made and what each costs.
+    parts:
+      - { title: "Fast first load, reliable adds", minutes: 18, packs: [amazon/product-detail-page/optimizations] }
+      - { title: "Six calls, and what they cost", minutes: 7, packs: [amazon/product-detail-page/trade-offs] }
+  - slug: cart-scope-and-components
+    title: "The Amazon cart interview: scope and components"
+    summary: "The prompt, the cart sketched as the shopper sees it, the requirements written with their targets, then the components and one edit followed through two tabs and a phone."
+    parts:
+      - { title: "The prompt, the cart and two lists", minutes: 12, packs: [amazon/cart/requirements-exploration] }
+      - { title: "Then the components", minutes: 9, packs: [amazon/cart/high-level-design] }
+  - slug: cart-state-and-api
+    title: "The Amazon cart interview: state and API"
+    summary: "The same board, continued. The client state derived from the views and written as JSON, what lives outside the store, then how changes travel, the requests that name their version, and the actions inside a tab."
+    parts:
+      - { title: "One cart, one version", minutes: 8, packs: [amazon/cart/data-model] }
+      - { title: "Requests that name their version", minutes: 12, packs: [amazon/cart/interface-definition] }
+  - slug: cart-optimizations-and-trade-offs
+    title: "The Amazon cart interview: optimizations and trade-offs"
+    summary: "The board's last band. Coalescing and conflicts, tabs and devices, the guest merge, accessibility and the cart opened the next morning, then the choices the design made and what each gave up."
+    parts:
+      - { title: "Time and place", minutes: 14, packs: [amazon/cart/optimizations] }
+      - { title: "What each choice gave up", minutes: 8, packs: [amazon/cart/trade-offs] }
+  - slug: checkout-scope-and-components
+    title: "The Amazon checkout and payment interview: scope and components"
+    summary: "The prompt, the review page drawn as the shopper sees it, the functional and non-functional lists with their targets, then the components and one order attempt drawn as states."
+    parts:
+      - { title: "The prompt, the review page and two lists", minutes: 9, packs: [amazon/checkout-and-payment/requirements-exploration] }
+      - { title: "The components, and one order attempt", minutes: 11, packs: [amazon/checkout-and-payment/high-level-design] }
+  - slug: checkout-state-and-api
+    title: "The Amazon checkout and payment interview: state and API"
+    summary: "The same board, continued. The client state derived from the components and written as JSON, where the attempt and the card data live, then the four calls, their answers, which errors keep the key, and the components' props."
+    parts:
+      - { title: "A quote, a draft and one attempt", minutes: 8, packs: [amazon/checkout-and-payment/data-model] }
+      - { title: "Four calls and a key", minutes: 11, packs: [amazon/checkout-and-payment/interface-definition] }
+  - slug: checkout-optimizations-and-trade-offs
+    title: "The Amazon checkout and payment interview: optimizations and trade-offs"
+    summary: "The board's last band, beside the design so far. A Place order that is safe to repeat, card data and page hardening, form UX and accessibility, the bank's challenge and the review's speed, then the trade-offs an interviewer will push on, and a recap."
+    parts:
+      - { title: "Where a bug costs money or trust", minutes: 12, packs: [amazon/checkout-and-payment/optimizations] }
+      - { title: "The choices, and what they cost, then recap", minutes: 8, packs: [amazon/checkout-and-payment/trade-offs] }
+  - slug: orders-scope-and-components
+    title: "The Amazon orders and tracking interview: scope and components"
+    summary: The prompt, the questions that shape the design, the functional and non-functional lists with their numbers, then a mock-up of Your Orders, the components read off it, one visit, and the shipment's status as a state machine.
+    parts:
+      - { title: "The prompt, then two lists", minutes: 10, packs: [amazon/order-tracking/requirements-exploration] }
+      - { title: "Mock-up, components, then the status machine", minutes: 16, packs: [amazon/order-tracking/high-level-design] }
+  - slug: orders-state-and-api
+    title: "The Amazon orders and tracking interview: state and API"
+    summary: The same board, continued. The state derived from the cards and normalized into OrdersStore with its freshness rules, then the endpoints as requests and responses, the cancel and the error cases.
+    parts:
+      - { title: "Derive the state, then normalize it", minutes: 8, packs: [amazon/order-tracking/data-model] }
+      - { title: "Conditional GETs and one racing POST", minutes: 10, packs: [amazon/order-tracking/interface-definition] }
+  - slug: orders-optimizations-and-trade-offs
+    title: "The Amazon orders and tracking interview: optimizations and trade-offs"
+    summary: The board's last band. The polling budget, actions that race the warehouse, accessibility, dates, privacy and the edge states, then six choices with their costs and a recap.
+    parts:
+      - { title: "Fresh for almost nothing, and honest buttons", minutes: 15, packs: [amazon/order-tracking/optimizations] }
+      - { title: "Six choices, each with its cost", minutes: 7, packs: [amazon/order-tracking/trade-offs] }

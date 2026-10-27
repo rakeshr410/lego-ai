@@ -1,0 +1,196 @@
+# Product listing interview, requirements: the prompt (the server a black box, we design the UI), the results page drawn as a mock-up of what the shopper sees (following the article's gooseneck kettle results screen, only the parts the functional list names), then the functional and non-functional lists, one fact a line, and the assumptions and scope.
+id: amazon/product-listing/requirements-exploration
+title: The page, then two lists
+source:
+  hash: "63fb97495e98"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: null
+  assumes: []
+  carries:
+    - "The interview designs the client of an Amazon-like store's search results page; retrieval, ranking and counting are a server black box."
+    - "The page: the query with the total and the sort, chips for applied filters, filters for delivery, rating, price and brand, a grid of product cards and numbered page links."
+    - "A card shows its image, title and brand, rating and price, badges and a delivery line, and Add to cart; it links to the product page."
+    - "Functional: products for a query or department; filters for delivery, rating, price and brand, with counts; chips; sort; numbered pages."
+    - "Functional: the URL reproduces the page; cards link to the product and offer Add to cart; an empty result offers ways out; on a phone a filter sheet."
+    - "Non-functional: LCP less than 2.5 s at p75; route JS no more than 90 KB; INP less than 200 ms; new results in less than 600 ms at p75; zero frames with another query's counts."
+    - "Non-functional: CLS below 0.1 at p75; WCAG 2.2 AA; the APG multi-thumb slider; a crawlable link per page; noindex on sort variants."
+    - "Assumptions: 24 results a page, page one server-rendered; 3 to 6 filters a session; 20 responses kept by query; API fresh 60 s, then stale for 300 s while refreshing."
+  terms:
+    - term: facet
+      means: "A filter group with its options and their counts: delivery speed, rating, price range and brand."
+    - term: chip
+      means: An applied filter shown above the results, removable one by one or all at once.
+    - term: p75
+      means: The 75th percentile of page loads.
+board:
+  keep: []
+  elements:
+    - { id: title, kind: note, label: "Design the Amazon product listing page", at: [50, 0] }
+    - { id: mock-up, kind: region, label: "Mock-up", at: [1, 3], size: [30, 25] }
+    - { id: mock-page, kind: region, label: "Results page, wide screen", at: [2, 5], size: [28, 23], in: mock-up }
+    - { id: mock-toolbar, kind: box, label: "gooseneck kettle, total and sort", at: [3, 7], size: [26, 2], in: mock-page, tone: grey }
+    - { id: mock-chips, kind: box, label: "chips for applied filters", at: [3, 10], size: [26, 2], in: mock-page, dashed: true, tone: grey }
+    - { id: mock-filters, kind: box, label: "filters, delivery, rating, price, brand", at: [3, 13], size: [9, 11], in: mock-page, tone: blue }
+    - { id: mock-card, kind: region, label: "One card in the grid", at: [13, 13], size: [16, 12], in: mock-page }
+    - { id: card-image, kind: box, label: "product image", at: [14, 15], size: [14, 2], in: mock-card, tone: blue }
+    - { id: card-title, kind: box, label: "title and brand", at: [14, 17], size: [14, 2], in: mock-card, tone: blue }
+    - { id: card-rating, kind: box, label: "rating and price", at: [14, 19], size: [14, 2], in: mock-card, tone: blue }
+    - { id: card-badges, kind: box, label: "badges, delivery line", at: [14, 21], size: [14, 2], in: mock-card, tone: blue }
+    - { id: card-cart, kind: box, label: "Add to cart", at: [14, 23], size: [14, 2], in: mock-card, tone: blue }
+    - { id: mock-pages, kind: box, label: "numbered page links", at: [3, 26], size: [26, 2], in: mock-page, tone: grey }
+    - { id: requirements, kind: region, label: "Requirements", at: [33, 3], size: [52, 25] }
+    - { id: fr-heading, kind: note, label: "Functional", at: [34, 5], in: requirements }
+    - { id: fr-grid, kind: note, label: "grid for a query or department, total and sort", at: [34, 7], in: requirements }
+    - { id: fr-filters, kind: note, label: "filter by delivery, rating, price and brand", at: [34, 9], in: requirements }
+    - { id: fr-counts, kind: note, label: "each option shows how many results it leaves", at: [34, 11], in: requirements }
+    - { id: fr-chips, kind: note, label: "applied filters as chips, remove one or all", at: [34, 13], in: requirements }
+    - { id: fr-sort, kind: note, label: "change the sort, move between numbered pages", at: [34, 15], in: requirements }
+    - { id: fr-url, kind: note, label: "a link, a reload or Back shows the same page", at: [34, 17], in: requirements }
+    - { id: fr-card, kind: note, label: "each card links to its product, Add to cart", at: [34, 19], in: requirements }
+    - { id: fr-empty, kind: note, label: "when nothing matches, say so and offer ways out", at: [34, 21], in: requirements }
+    - { id: fr-phone, kind: note, label: "on a phone, a filter sheet applies together", at: [34, 23], in: requirements }
+    - { id: nfr-heading, kind: note, label: "Non-functional", at: [59, 5], in: requirements }
+    - { id: nfr-lcp, kind: note, label: "LCP should be less than 2.5 s at p75", at: [59, 7], in: requirements }
+    - { id: nfr-js, kind: note, label: "route JavaScript no more than 90 KB", at: [59, 9], in: requirements }
+    - { id: nfr-inp, kind: note, label: "INP should be less than 200 ms", at: [59, 11], in: requirements }
+    - { id: nfr-results, kind: note, label: "new results shown in less than 600 ms at p75", at: [59, 13], in: requirements }
+    - { id: nfr-counts, kind: note, label: "zero frames should show another query's counts", at: [59, 15], in: requirements }
+    - { id: nfr-cls, kind: note, label: "CLS should stay below 0.1 at p75", at: [59, 17], in: requirements }
+    - { id: nfr-a11y, kind: note, label: "accessibility should meet WCAG 2.2 AA", at: [59, 19], in: requirements }
+    - { id: nfr-slider, kind: note, label: "price slider should follow APG multi-thumb", at: [59, 21], in: requirements }
+    - { id: nfr-crawl, kind: note, label: "each page should have a crawlable link", at: [59, 23], in: requirements }
+    - { id: nfr-noindex, kind: note, label: "sort variants should carry noindex", at: [59, 25], in: requirements }
+    - { id: scope, kind: region, label: "Assumptions and scope", at: [87, 3], size: [24, 25] }
+    - { id: as-heading, kind: note, label: "Assumptions", at: [88, 5], in: scope }
+    - { id: as-page, kind: note, label: "24 results a page, page one server-rendered", at: [88, 7], in: scope }
+    - { id: as-filters, kind: note, label: "3 to 6 filters and 2 pages a session", at: [88, 9], in: scope }
+    - { id: as-scale, kind: note, label: "hundreds to tens of thousands of results", at: [88, 11], in: scope }
+    - { id: as-kept, kind: note, label: "20 responses kept in memory, by query", at: [88, 13], in: scope }
+    - { id: as-fresh, kind: note, label: "API fresh 60 s, stale while refreshing 300 s", at: [88, 15], in: scope }
+    - { id: as-zone, kind: note, label: "only personal input, a coarse delivery zone", at: [88, 17], in: scope }
+    - { id: out-heading, kind: note, label: "Out of scope", at: [88, 20], in: scope, tone: grey }
+    - { id: out-autocomplete, kind: note, label: "autocomplete in the header box", at: [88, 22], in: scope, tone: grey }
+    - { id: out-server, kind: note, label: "retrieval, ranking, counting, sponsored", at: [88, 24], in: scope, tone: grey }
+    - { id: out-other, kind: note, label: "product page, cart edits, home carousels", at: [88, 26], in: scope, tone: grey }
+  arrows: []
+  lists:
+    - { id: fr-list, in: requirements, at: [34, 7], step: 2, slots: 10, width: 24, items: [fr-grid, fr-filters, fr-counts, fr-chips, fr-sort, fr-url, fr-card, fr-empty, fr-phone] }
+    - { id: nfr-list, in: requirements, at: [59, 7], step: 2, slots: 10, width: 24, items: [nfr-lcp, nfr-js, nfr-inp, nfr-results, nfr-counts, nfr-cls, nfr-a11y, nfr-slider, nfr-crawl, nfr-noindex] }
+beats:
+  - point: "The prompt is the web results page of an Amazon-like store; finding, ranking and counting the products is a server black box, so what we design is the UI that runs in the browser."
+    kind: rule
+    weight: core
+    teach:
+      - "Write the title: design the Amazon product listing page. Say it is an Amazon-like store: a shopper types a query or opens a department and lands on a grid of products with filters beside them."
+      - "Finding, ranking and counting the products happen on the server, which we treat as a black box. We design the UI, the part in the browser. Then go straight to the mock-up."
+      - "Two or three sentences, no question, and nothing about how the board is laid out; the learner sees that from the board itself."
+    draw: [title]
+  - point: "Start with what the shopper sees after searching gooseneck kettle on a wide screen: the query with the total and the sort in use, chips for the filters applied, the filters, a grid of product cards, and numbered page links."
+    kind: component
+    weight: core
+    teach:
+      - "The shopper has searched for gooseneck kettle. Draw the results page on a wide screen. At the top, the query, how many results there are, and the sort in use."
+      - "Under it, a row of chips, one per applied filter, empty for now. The filters for delivery speed, rating, price and brand. Beside them, the grid of product cards. At the bottom, the numbered page links."
+      - "Only what the screen shows and what each part tells the shopper. How it works comes after the requirements."
+    draw: [mock-up, mock-page, mock-toolbar, mock-chips, mock-filters, mock-card, mock-pages]
+    check: What does the shopper see on the results page, top to bottom?
+    answer: "The query with the total and the sort; chips for applied filters; the filters beside the grid of product cards; numbered page links at the bottom."
+  - point: "Zoom into one card: the product image, the title and brand, the rating and price, badges and the delivery line, and an Add to cart button; the card links to the product's page."
+    kind: component
+    weight: core
+    teach:
+      - "Break one card into its parts, top to bottom, saying what each shows the shopper."
+      - "The product image. The title and the brand. The rating and the price. Badges, and the delivery line that says when it would arrive. And Add to cart, so the shopper can buy straight from the results."
+      - "The card as a whole takes the shopper to the product's own page. Only the parts here; how they are built comes later."
+    draw: [card-image, card-title, card-rating, card-badges, card-cart]
+    check: What does one product card show, and where does it lead?
+    answer: "Image, title, brand, rating, price, badges, the delivery line and Add to cart; it links to the product page."
+  - point: "Functional requirements, first half: a grid of products for a query or a department with the total and the sort; filters for delivery speed, rating, price range and brand, each option showing how many results it would leave; applied filters as chips; changing the sort and the page."
+    kind: requirement
+    weight: core
+    teach:
+      - "Read the functional list off the mock-up, one fact a line. The page shows a grid of products for a query or a department, with the total and the sort in use."
+      - "The shopper filters by delivery speed, rating, price and brand, and every option says how many results it would leave. The server works those numbers out and sends them in the same response as the results and the total."
+      - "Applied filters turn into chips, removable singly or all together. The shopper can change the sort and step through numbered pages."
+    draw: [requirements, fr-heading, fr-grid, fr-filters, fr-counts, fr-chips, fr-sort]
+    check: "The shopper looks at a brand in the filters. Who works out the number printed beside it?"
+    answer: "The server, in the same response as the results and the total, so the options, the total and the grid agree; the client never adjusts it."
+    misconceptions:
+      - "The client can work the counts out from the cards it has -> the server sends every count in the same response as the results and the total, so the options, the total and the grid always agree, and the client never adjusts them."
+      - "Ticking a second brand narrows the results further -> two picks in the same group widen the results; only a pick from another group narrows them."
+  - point: "Functional, second half: the address bar always rebuilds the page, so a link, a reload, Back or Forward shows the same query, filters, sort and page; cards link to the product and offer Add to cart; an empty result offers ways out; a phone applies filters from a sheet."
+    kind: requirement
+    weight: core
+    teach:
+      - "The address bar always rebuilds the page: a copied link, a reload, Back or Forward all bring back the same query, filters, sort and page."
+      - "Each card leads to its product page and has Add to cart. If nothing matches, the page says so and suggests a way out, such as dropping one filter or a corrected spelling."
+      - "On a phone the filters open in a sheet and go in together, from a button that already shows how many results that will give."
+    draw: [fr-url, fr-card, fr-empty, fr-phone]
+    check: "The shopper narrows to Arrives tomorrow, moves to page 2 and messages the address to a friend. What should open for the friend?"
+    answer: "Exactly that page: the same query, filter, sort and page number, because all of it is in the URL."
+    misconceptions:
+      - "The friend sees the same results only when signed in as the same shopper -> sign-in does not change which products appear; the URL alone reproduces the page."
+  - point: "Non-functional requirements, one metric a line, each tied to its target: LCP less than 2.5 s at p75, route JavaScript no more than 90 KB, INP less than 200 ms, new results shown in less than 600 ms at p75, and zero frames with another query's counts."
+    kind: metric
+    weight: core
+    teach:
+      - "One metric a line, each tied to its number by less than, below or no more than. LCP should be less than 2.5 seconds at p75, so the first row of products shows almost at once. Route JavaScript no more than 90 KB."
+      - "INP should be less than 200 milliseconds, so a filter click answers at once. New results should be shown in less than 600 milliseconds at p75."
+      - "Zero frames should show another query's counts: the results, the total and every count describe the query in the URL."
+    draw: [nfr-heading, nfr-lcp, nfr-js, nfr-inp, nfr-results, nfr-counts]
+    check: Which line keeps the numbers on screen in agreement, and what is its target?
+    answer: "Consistency: results, total and every facet count describe the URL's query, with zero frames showing another query's counts."
+  - point: "Then CLS below 0.1 at p75, accessibility meeting WCAG 2.2 AA, a price slider following the APG multi-thumb pattern, a crawlable link for each page, and noindex on sort variants."
+    kind: metric
+    weight: core
+    teach:
+      - "CLS should stay below 0.1 at p75, so nothing jumps as images load or results are replaced."
+      - "Accessibility should meet WCAG 2.2 AA, and the price slider should follow the APG multi-thumb pattern, so the filters, the pages and the count work by keyboard and screen reader."
+      - "Each numbered page should have a crawlable link, and sort variants should carry noindex, so department pages are indexed without their variants flooding the index."
+    draw: [nfr-cls, nfr-a11y, nfr-slider, nfr-crawl, nfr-noindex]
+    check: Why do sort variants of a department page get noindex?
+    answer: "So the variants of the same list do not flood the index; the department pages and their numbered pages stay indexable."
+  - point: "Fix the working numbers and the scope: 24 results a page with page one server-rendered, 3 to 6 filters a session, 20 responses kept by query, the API fresh for 60 s then served stale for 300 s while it refreshes; autocomplete, ranking, the product page and the cart are named, not designed."
+    kind: rule
+    weight: supporting
+    teach:
+      - "Write the assumptions. 24 results a page, the first page rendered on the server. A query has hundreds to tens of thousands of results; a session applies 3 to 6 filters and visits 2 pages. 20 responses are kept in memory, one per query."
+      - "The API is fresh for 60 seconds, then may be served stale for 300 seconds more while it refreshes. The only personal input is the delivery promise, which needs a coarse delivery zone."
+      - "In scope: the results route and its first page, facets and sort as URL state with Back and Forward, counts in step with results, racing clicks and late responses, pages versus endless scroll, the card, live filters and the phone sheet, and empty results."
+      - "Named but not designed: autocomplete in the header box, retrieval, ranking, facet counting and sponsored placements, the product page, editing the cart after Add to cart, and home page carousels."
+    draw: [scope, as-heading, as-page, as-filters, as-scale, as-kept, as-fresh, as-zone, out-heading, out-autocomplete, out-server, out-other]
+    check: "Halfway through, the interviewer asks about the suggestions that drop down under the header search box. How do you answer?"
+    answer: "That is out of scope, the autocomplete design's own topic; this page starts once a query has been submitted."
+asks:
+  - ids: [mock-toolbar, mock-chips, mock-filters, mock-card, mock-pages]
+    beats: [2]
+    question: "Picture the search results page on a wide screen, right after a search. What do you see on it? I'll draw it as you say it."
+    hints:
+      - What runs across the top, above the products?
+      - And what lets the shopper narrow the results down?
+  - ids: [card-image, card-title, card-rating, card-badges, card-cart]
+    beats: [3]
+    question: "Now zoom into one product in the grid. What does its card show?"
+    hints:
+      - What helps the shopper judge the product at a glance?
+      - And what can they do right from the card?
+  - list: fr-list
+    beats: [4, 5]
+    question: "What should this page do for the shopper? Tell me one at a time, and I'll write them down."
+    hints:
+      - Think about narrowing the results, and the numbers beside each filter.
+      - And what happens when the shopper copies the address bar, or presses Back?
+      - What if nothing matches at all?
+  - list: nfr-list
+    beats: [6, 7]
+    question: "Now, how well should it work? Name a quality, and a number if you have one in mind."
+    hints:
+      - Think about the first load on a phone, and how a filter click feels.
+      - And the numbers on screen, and things jumping as images load.
+task:
+  prompt: "Write the functional and non-functional lists beside the mock-up as numbered lines of text, one short line each, with a target on every non-functional line."
+  expects: [4, 5, 6, 7]

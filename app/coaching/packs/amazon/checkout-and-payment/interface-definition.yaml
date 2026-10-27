@@ -1,0 +1,179 @@
+# Amazon checkout interview, interface definition: plain HTTP from CheckoutService, then the quote, address check and order calls written as requests with JSON answers. Polling by key and the error codes get their own area: which answers keep the attempt's key and which need a new one. What passes between components, and the two components' props, each get a small area of their own.
+id: amazon/checkout-and-payment/interface-definition
+title: Four calls and a key
+source:
+  hash: "4de938082426"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: amazon/checkout-and-payment/data-model
+  assumes:
+    - "CheckoutService is the only caller of the network; the attempt is quote_id, payment_method_id and key, saved before the request."
+    - "Totals come only from the server's quote, in minor units; the payment choice is a token."
+  carries:
+    - "Plain HTTP from CheckoutService, each call with the CSRF token and session cookie: POST for quotes and orders, GET by key for status; polling only while the outcome is unknown, up to 90 s."
+    - "POST /api/checkout/quote whenever money changes, a newer call aborting the older; a rejected code is still a 200. POST /api/addresses/verify offers a suggestion."
+    - "POST /api/orders with an Idempotency-Key: 201 confirmed, 202 requires_action, 402 card_declined; a repeat with the same key gets the first answer."
+    - "GET /api/orders/by-key/{key}: processing, confirmed or declined, or 404 unknown_key, trusted only after 90 s."
+    - "400, 401, 409 attempt_in_progress, 5xx and timeouts keep the key; 402, 409 quote_changed, 409 out_of_stock, 410 and 422 lead to a new key."
+    - "AddressForm takes purpose, country, errors, suggestion, onSubmit and variant; PaymentFrame's props never carry card digits, only completeness, brand, last four and a token."
+  terms:
+    - term: Idempotency-Key
+      means: "The request header that names one order attempt; the server returns its first answer to any repeat of it."
+    - term: polling by key
+      means: "Asking GET /api/orders/by-key/{key} what happened to an attempt, without placing it again."
+    - term: requires_action
+      means: "The 202 answer to an order the bank wants to challenge; the challenge runs, then the page polls by key."
+    - term: publishable key
+      means: "PaymentFrame's processorKey: a key that can only create tokens."
+board:
+  keep: [title, review, rp-deliver, rp-ship1, rp-ship2, rp-paying, rp-summary, rp-promo, rp-place, scope, as-heading, as-shipments, as-quote, out-heading, out-charging, out-signin, out-stay, out-wallets, out-tax, requirements, fr-heading, fr-review, fr-address, fr-delivery, fr-pay, fr-challenge, fr-decline, fr-once, fr-changed, fr-after, nfr-heading, nfr-duplicates, nfr-totals, nfr-cards, nfr-csp, nfr-lcp, nfr-inp, nfr-js, nfr-timeout, nfr-outcome, nfr-wcag, nfr-redundant, nfr-autofill, nfr-paste, components, c-checkout-page, c-address-form, c-payment-frame, c-saved-cards, c-hosted-fields, c-challenge, c-store, c-processor, c-service, c-api, machine, m-total, m-confirmed, m-ready, m-placing, m-unknown, m-challenge, m-declined, m-resend, m-key-note, m-sold-out, m-expired, m-history, m-back, m-old-tab, af-to-store, pf-to-store, store-to-page, pf-to-processor, store-to-service, service-to-api, api-to-processor, ready-to-placing, placing-to-challenge, challenge-to-unknown, unknown-to-declined, placing-to-confirmed, placing-to-declined, placing-to-total, placing-to-unknown, unknown-to-confirmed, total-to-ready, declined-to-ready, state, need-address, need-payment, need-summary, need-attempt, store-json, js-quote, js-quote-more, js-status, js-sections, js-sections-more, js-address, js-address-more, js-payment, js-payment-more, js-attempt, storage, session-json, ss-open, ss-more, ss-note, where-card, where-token, where-quote, where-key, where-address]
+  elements:
+    - { id: api, kind: region, label: API, at: [61, 67], size: [58, 16] }
+    - { id: api-transport, kind: note, label: "plain HTTP from CheckoutService, no stream", at: [62, 69], in: api, tone: blue }
+    - { id: api-poll-note, kind: note, label: polling only while the outcome is unknown, at: [96, 69], in: api }
+    - { id: api-csrf, kind: note, label: every call sends the CSRF token and the session cookie, at: [62, 70], in: api }
+    - { id: ep-quote, kind: note, label: "POST /api/checkout/quote", at: [62, 71], in: api, tone: blue }
+    - { id: quote-body, kind: note, label: "{ cart_version, address_id, delivery, codes: FALLRUN }", at: [62, 72], in: api }
+    - { id: quote-res, kind: note, label: "200 { quote_id: q_58c7, expires_at, total_minor: 14363,", at: [62, 73], in: api, tone: amber }
+    - { id: quote-res-more, kind: note, label: "rows, promo_results: [ { code, status, message } ] }", at: [64, 74], in: api, tone: amber }
+    - { id: quote-called, kind: note, label: called whenever money changes, at: [96, 71], in: api }
+    - { id: quote-abort, kind: note, label: a newer call aborts the older, at: [96, 72], in: api }
+    - { id: quote-rejected, kind: note, label: a rejected code still answers 200, at: [96, 73], in: api }
+    - { id: ep-verify, kind: note, label: "POST /api/addresses/verify", at: [62, 75], in: api, tone: blue }
+    - { id: verify-res, kind: note, label: "200 { status: suggest, suggestion, differs }", at: [62, 76], in: api, tone: amber }
+    - { id: verify-note, kind: note, label: "offered, never swapped in", at: [96, 75], in: api }
+    - { id: ep-orders, kind: note, label: "POST /api/orders", at: [62, 77], in: api, tone: blue }
+    - { id: orders-key, kind: note, label: "Idempotency-Key: k-9e04", at: [62, 78], in: api, tone: blue }
+    - { id: orders-body, kind: note, label: "{ quote_id: q_58c7, payment_method_id, return_url }", at: [62, 79], in: api }
+    - { id: orders-201, kind: note, label: "201 { status: confirmed, order_id: R7-40318 }", at: [62, 80], in: api, tone: green }
+    - { id: orders-202, kind: note, label: "202 { status: requires_action, action: bank_challenge }", at: [62, 81], in: api, tone: amber }
+    - { id: orders-402, kind: note, label: "402 { error: { code: card_declined } }", at: [62, 82], in: api, tone: red }
+    - { id: key-note, kind: note, label: the key names the attempt, at: [96, 77], in: api }
+    - { id: repeat-note, kind: note, label: a repeat gets the first answer, at: [96, 78], in: api, tone: green }
+    - { id: errors, kind: region, label: Polling and errors, at: [1, 85], size: [58, 12] }
+    - { id: bykey-req, kind: note, label: "GET /api/orders/by-key/k-9e04", at: [2, 87], in: errors, tone: blue }
+    - { id: bykey-processing, kind: note, label: "{ status: processing, retry_after_ms: 3000 }", at: [2, 88], in: errors, tone: amber }
+    - { id: bykey-found, kind: note, label: "{ status: confirmed, order_id: R7-40318 }", at: [2, 89], in: errors, tone: amber }
+    - { id: bykey-declined, kind: note, label: "{ status: declined, error: card_declined }", at: [2, 90], in: errors, tone: amber }
+    - { id: bykey-404, kind: note, label: "404 unknown_key, trusted only after 90 s", at: [2, 91], in: errors }
+    - { id: err-ordered, kind: note, label: "409 cart_already_ordered: link the order", at: [2, 93], in: errors }
+    - { id: err-400, kind: note, label: "400 validation_failed: by the field, same key", at: [31, 87], in: errors }
+    - { id: err-401, kind: note, label: "401 auth_expired: sign in, same key", at: [31, 88], in: errors }
+    - { id: err-in-progress, kind: note, label: "409 attempt_in_progress: poll by key", at: [31, 89], in: errors }
+    - { id: err-5xx, kind: note, label: "5xx or timeout: poll, never a new key", at: [31, 90], in: errors, tone: green }
+    - { id: err-declined, kind: note, label: "402 card_declined: next method, new key", at: [31, 92], in: errors, tone: red }
+    - { id: err-changed, kind: note, label: "409 quote_changed: second press, new key", at: [31, 93], in: errors, tone: red }
+    - { id: err-stock, kind: note, label: "409 out_of_stock: lines dimmed, new key", at: [31, 94], in: errors, tone: red }
+    - { id: err-expired, kind: note, label: "410 quote_expired: re-quote, new key", at: [31, 95], in: errors, tone: red }
+    - { id: err-reused, kind: note, label: "422 key_reused: a bug, back to Ready", at: [31, 96], in: errors, tone: red }
+    - { id: c2c, kind: region, label: Between components, at: [61, 85], size: [26, 7] }
+    - { id: c2c-sections, kind: note, label: "each section reports, the store re-quotes", at: [62, 87], in: c2c }
+    - { id: c2c-key, kind: note, label: "a new payment method, a new key", at: [62, 88], in: c2c }
+    - { id: c2c-press, kind: note, label: Place order ignored while in flight, at: [62, 89], in: c2c }
+    - { id: props, kind: region, label: Component props, at: [89, 85], size: [30, 7] }
+    - { id: props-af, kind: note, label: "AddressForm: purpose, country, errors,", at: [90, 87], in: props }
+    - { id: props-af-more, kind: note, label: "suggestion, onSubmit, variant", at: [92, 88], in: props }
+    - { id: props-pf, kind: note, label: "PaymentFrame: savedMethods, processorKey, onReady,", at: [90, 89], in: props }
+    - { id: props-pf-more, kind: note, label: "onCompleteChange, onMethodChosen, onChallenge", at: [92, 90], in: props }
+  arrows: []
+beats:
+  - point: "Checkout needs only plain HTTP from CheckoutService, each call with the CSRF token and session cookie: POST for quotes and orders and GET by key for status, polling only while an outcome is unknown and never past 90 s; the processor's SDK runs in its own frames."
+    kind: decision
+    weight: core
+    teach:
+      - "Every call leaves from CheckoutService as plain HTTP: a quote each time money moves, one order per attempt carrying its key, and a read by key for when an answer goes missing. Each one carries the CSRF token and the session cookie."
+      - "Polling by key runs only while the outcome is unknown, after a lost answer or a challenge, and stops at 90 seconds. A stream of server-sent events would save a few requests, but the answer normally comes within seconds, and on a shaky network a stream is one more thing that can drop."
+      - Tokenising and the bank's challenge are calls to the processor's SDK from PaymentFrame; they run in the processor's frames and our page only gets the results.
+    draw: [api, api-transport, api-poll-note, api-csrf]
+    check: Why poll by key rather than keep a stream open for the order's outcome?
+    answer: "The answer normally comes within seconds, polling runs only while it is unknown and stops at 90 s, and on a shaky network a stream is one more thing that can drop."
+  - point: "POST /api/checkout/quote prices the cart for its version, an address, the delivery choices and codes whenever one changes, a newer call aborting the older, a rejected code still a 200; POST /api/addresses/verify answers ok, suggest or undeliverable, and a suggestion is only offered."
+    kind: component
+    weight: core
+    teach:
+      - "Write the request: POST api checkout quote, with the cart version, the address id, the delivery choice for each shipment, here one-day for shipment 1, and the codes, here FALLRUN. Nothing is charged or held."
+      - "Write the answer as JSON: quote id q_58c7, when it expires, the total in minor units, 14363, then the rows and the promo results. It is called whenever one of those inputs changes, and a newer call aborts the older one."
+      - "A code the server will not take still comes back as 200: the reason sits in the promo results, and the quote stands without the code."
+      - "Then POST api addresses verify, with the typed address. The answer is ok, suggest with the suggestion and the fields that differ, here the postal code and the letter case, or undeliverable. The suggestion is offered, never swapped in silently."
+    draw: [ep-quote, quote-body, quote-res, quote-res-more, quote-called, quote-abort, quote-rejected, ep-verify, verify-res, verify-note]
+    check: The shopper's promo code has ended. What status does the quote call return?
+    answer: "200, with the code marked rejected in promo_results and a quote that stands without it."
+    misconceptions:
+      - "A rejected code is an error response -> it is ordinary information in a 200; the quote is still usable."
+  - point: "POST /api/orders places the order for a quote id and a payment token, with an Idempotency-Key naming the attempt; it answers 201 confirmed with the order id, 202 requires_action for a bank challenge, or 402 card_declined, and any repeat of the key gets the first answer, so there is no second charge."
+    kind: component
+    weight: core
+    teach:
+      - "Write POST api orders. The Idempotency-Key header, here k-9e04, names the attempt. The body: the quote id, the payment method id, and a return URL for a bank redirect."
+      - "Answers: 201, confirmed, with order R7-40318 and its confirmation URL. 202, requires action, a bank challenge whose client secret PaymentFrame passes to the processor's SDK, after which the page polls by key. 402, card declined."
+      - The server returns its first answer to any repeat of the same key, so there is no second charge.
+    draw: [ep-orders, orders-key, orders-body, orders-201, orders-202, orders-402, key-note, repeat-note]
+    check: The same order request goes out twice with the same key. What happens?
+    answer: The server returns its first answer to the repeat; one order and one charge.
+  - point: "GET /api/orders/by-key/{key} answers what happened to an attempt without doing anything: processing with retry_after_ms, confirmed with the order id, declined with its error, or 404 unknown_key, which is trusted only after 90 s, when the same key is sent once more."
+    kind: component
+    weight: core
+    teach:
+      - "A separate area for polling and errors. Write GET api orders by key, k-9e04. It is used after a timeout, a finished challenge, or a reload that finds a stored attempt, and it changes nothing."
+      - "Still running: processing, retry after 3000 milliseconds. Found: confirmed, with the order id. Declined: the status and the card declined error, the answer that ended the challenge run."
+      - "A 404 unknown key is trusted only after 90 seconds; then the same key is sent once more."
+    draw: [errors, bykey-req, bykey-processing, bykey-found, bykey-declined, bykey-404]
+    check: When is a 404 unknown_key from the by-key call believed, and what follows?
+    answer: Only after 90 s; then the same key is sent once more.
+  - point: "Errors share one shape, and each says whether the key survives: 400 validation_failed goes to the fields and the summary, 401 auth_expired signs in and resends, 409 attempt_in_progress switches to polling, and a 5xx or a timeout means unknown, so poll by key and never make a new key."
+    kind: rule
+    weight: core
+    teach:
+      - "Errors share one shape: a code, a message, and a new quote or the fields where they apply. Write first the ones that keep the key."
+      - "400 validation failed: each error goes to its field and the top summary, which takes focus; same key. 401 auth expired: a sign-in modal over the page, then the same key again. 409 attempt in progress: the same key is still running, so poll."
+      - "A 5xx, a timeout or going offline: the outcome is unknown, so poll by key and never make a new key; offline waits for the online event before polling."
+    draw: [err-400, err-401, err-in-progress, err-5xx]
+    check: Place order gets a 500. What does CheckoutService do with the key?
+    answer: "Keeps it: the outcome is unknown, so it polls by key; a new key could make a second order."
+    misconceptions:
+      - "A server error means the order failed, so retry with a new key -> the order may exist; poll by key and never make a new one."
+  - point: "Answers that change the request lead to a new key: 402 card_declined waits for another method, 409 quote_changed asks for a second press, 409 out_of_stock dims lines, 410 quote_expired re-quotes, 422 key_reused is a bug; 409 cart_already_ordered links the order."
+    kind: rule
+    weight: core
+    teach:
+      - "402 card declined: a banner, every field kept, focus on Paying with; the next method gets a new key. 409 quote changed carries the new quote: render it, mark what moved, require a second press, new key."
+      - "409 out of stock names the lines: dim them with remove or save for later, re-quote, new key. 410 quote expired: re-quote; the same total carries on with a new key, and a different total is a quote change."
+      - "422 key reused means the key went out with a different body, a bug: log it, go back to Ready, new key. 409 cart already ordered: it was ordered elsewhere, so disable Place order and link the order."
+    draw: [err-declined, err-changed, err-stock, err-expired, err-reused, err-ordered]
+    check: Place order returns 409 quote_changed. What does the shopper see, and what happens to the key?
+    answer: "The new quote with what moved marked, and Place order needs a second press; the next request gets a new key."
+  - point: "Inside the page, each section reports to CheckoutStore, which re-quotes and owns the attempt; a newly chosen payment method brings a new key, and a press on Place order while an attempt is in flight is ignored."
+    kind: flow
+    weight: supporting
+    teach:
+      - "Between components: AddressForm, the delivery section and the promo field each send CheckoutStore an action, and the store asks for a new quote. It also owns the attempt."
+      - "A chosen payment method arrives with its id, brand and last four, and brings a new key. Place order is ignored while an attempt is in flight."
+    draw: [c2c, c2c-sections, c2c-key, c2c-press]
+    check: The shopper switches one shipment to one-day delivery. Who asks the server for the new quote?
+    answer: "CheckoutStore: the delivery section sends it an action, and the store re-quotes."
+  - point: "AddressForm, shared with the address book as a modal, takes purpose, country, errors, suggestion, onSubmit and variant; PaymentFrame takes savedMethods, a processorKey that only creates tokens, and callbacks that never carry card digits."
+    kind: component
+    weight: core
+    teach:
+      - "AddressForm is shared with the address book, where it opens as a modal; variant says page or modal. purpose, shipping or billing, prefixes every autocomplete token. country sets field order, labels, the postcode pattern and the keyboard: numeric for a US ZIP, the full keyboard for a UK postcode, which has letters; inputmode only picks the keyboard, and validation still runs."
+      - "errors come from local rules or a 400; suggestion is the verify call's correction, offered with Use it and Keep mine. onSubmit fires only when local rules pass: checkout re-quotes, the address book saves."
+      - "PaymentFrame: savedMethods holds brand, last four, expiry and token for each saved card; processorKey is a publishable key that can only create tokens; onReady fires when the iframe is mounted, with a same-height placeholder until then."
+      - "onCompleteChange is the only live signal from the fields, complete or not and the brand, never digits. onMethodChosen hands over the token, brand and last four. onChallenge resolves when the bank is done, not when the order is paid."
+    draw: [props, props-af, props-af-more, props-pf, props-pf-more]
+    check: A teammate wants PaymentFrame to report the card number so the store can check it. Which prop could carry it?
+    answer: "None: onCompleteChange reports only complete or not and the brand, onMethodChosen a token, brand and last four; the fields stay on the processor's origin."
+    misconceptions:
+      - "onChallenge resolving means the order is paid -> it resolves when the bank is done; the outcome still comes from polling by key."
+asks:
+  - ids: [ep-quote, ep-verify, ep-orders, orders-key]
+    beats: [2, 3]
+    question: "What calls does checkout make to the server, and what goes with Place order? I'll write each request as you name it."
+    hints:
+      - What happens each time the shopper changes something that affects money?
+      - And what makes pressing Place order twice safe?
+task:
+  prompt: "Write the calls as requests, the order's three answers as JSON, then the by-key call and which errors keep the attempt's key."
+  expects: [2, 3, 4, 5, 6]

@@ -1,0 +1,160 @@
+# Product listing interview, interface definition: why the search is a cacheable GET, the request and one page of its response written as JSON, then the empty answer, the count and cart endpoints in a column of their own, all in the API area; then, in the band below, the error cases, the events between components, and the props of FacetPanel and PriceRange.
+id: amazon/product-listing/interface-definition
+title: A GET with the canonical query
+source:
+  hash: "1a30e20425f4"
+review:
+  status: draft
+  provenance: ai-drafted
+  author: claude
+context:
+  after: amazon/product-listing/data-model
+  assumes:
+    - "The query key is the URL's search params, sorted, defaults left out; ResultsStore keeps entries by key and shows the one at appliedKey."
+    - "SearchService is the only caller of the Search API, with one AbortController per key, an 8 s timeout and one retry for a 5xx."
+    - "On a phone the sheet edits a FacetDraft and asks for counts only; PriceDraft holds a dragged thumb."
+  carries:
+    - "Searching is a GET with the canonical query string, cacheable by URL; not GraphQL over POST, no streaming, and a count endpoint only for the phone sheet."
+    - "GET /api/search with canonical params plus zone; a page returns key, total, page, page_count, snapshot, items and facets, with Cache-Control public, max-age=60, stale-while-revalidate=300."
+    - "An empty result returns total 0 and relaxations, each a link to the URL without that param, or a spelling."
+    - "GET /api/search/count answers a draft's total and facet counts; POST /api/cart/items adds an offer, quantity 1."
+    - "Errors have one shape: 400 drops a param, 404 goes to the last page, 410 drops the snapshot, 429 waits, 5xx retries once, a timeout or offline shows a banner."
+    - "Components talk through the URL and events; FacetPanel takes facets and the selection and reports a whole next selection; PriceRange commits on release, Enter, Go or 400 ms still."
+  terms:
+    - term: zone
+      means: "A coarse delivery zone, the only search input not in the page's URL, needed for the delivery promise."
+    - term: snapshot
+      means: "An opaque token from page 1 that keeps later pages on the same ranking for 10 minutes."
+board:
+  keep: [title, mock-up, mock-page, mock-toolbar, mock-chips, mock-filters, mock-card, card-image, card-title, card-rating, card-badges, card-cart, mock-pages, requirements, fr-heading, fr-grid, fr-filters, fr-counts, fr-chips, fr-sort, fr-url, fr-card, fr-empty, fr-phone, nfr-heading, nfr-lcp, nfr-js, nfr-inp, nfr-results, nfr-counts, nfr-cls, nfr-a11y, nfr-slider, nfr-crawl, nfr-noindex, components, c-page, c-card, c-image, c-price, c-cart, c-facets, c-check, c-radio, c-range, c-chips, url-state, results-store, search-service, search-api, loop-note, set-params, url-changed, store-service, service-api, store-page, screen, s-first, s-click, s-applied, s-race, s-empty, s-pages, s-note, first-to-click, click-to-applied, phone, p-sheet, p-count, p-apply, p-page2, p-back, sheet-to-count, count-to-apply, state, reads, rd-card, rd-page, rd-facets, rd-chips, rd-source, url, u-open, u-more, u-brand, u-key, u-defaults, store, st-open, st-entry, st-response, st-response-more, st-current, st-applied, st-status, st-pure, drafts, d-facet, d-price, states, m-shown, m-dimmed, m-stale, m-failed, m-empty, m-miss, m-error, m-zero]
+  elements:
+    - { id: api, kind: region, label: "API", at: [61, 57], size: [30, 20] }
+    - { id: t-get, kind: note, label: "GET, cacheable by its URL, not GraphQL over POST", at: [62, 59], in: api, tone: green }
+    - { id: req-1, kind: note, label: "GET /api/search?brand=brightwell&delivery=tomorrow", at: [62, 61], in: api, tone: blue }
+    - { id: req-2, kind: note, label: "&q=gooseneck+kettle&rating=4&zone=z-114", at: [64, 62], in: api, tone: blue }
+    - { id: response, kind: region, label: "Response, one page", at: [62, 64], size: [28, 11], in: api, tone: amber }
+    - { id: r-open, kind: note, label: "{ key, total: 3, page: 1, page_count: 1,", at: [63, 66], in: response }
+    - { id: r-items, kind: note, label: "snapshot: sn_7Qd2, items: [ { id, title, brand,", at: [64, 67], in: response }
+    - { id: r-image, kind: note, label: "image: { src, srcset, width, height, alt },", at: [66, 68], in: response }
+    - { id: r-price, kind: note, label: "price: { amount_minor: 4400, currency: USD },", at: [65, 69], in: response }
+    - { id: r-rest, kind: note, label: "rating, badges, delivery_promise, offer_id } ],", at: [65, 70], in: response }
+    - { id: r-facets, kind: note, label: "facets: [ { key, label, kind, options, bounds } ] }", at: [64, 71], in: response }
+    - { id: r-cache, kind: note, label: "public, max-age=60, stale-while-revalidate=300", at: [63, 73], in: response, tone: green }
+    - { id: more, kind: region, label: "Empty, count and cart", at: [92, 57], size: [27, 11] }
+    - { id: e-open, kind: note, label: "{ key, total: 0, items: [ ], relaxations: [", at: [93, 59], in: more }
+    - { id: e-relax, kind: note, label: "{ remove: { param: brand }, total: 6 } ] }", at: [95, 60], in: more }
+    - { id: c-req, kind: note, label: "GET /api/search/count?delivery=tomorrow&q=…", at: [93, 62], in: more, tone: blue }
+    - { id: c-res, kind: note, label: "{ key, total: 212, facets }", at: [95, 63], in: more }
+    - { id: cart, kind: note, label: "POST /api/cart/items { offer_id, quantity: 1 }", at: [93, 65], in: more, tone: blue }
+    - { id: errors, kind: region, label: "Errors", at: [73, 84], size: [24, 10] }
+    - { id: err-400, kind: note, label: "400, drop the bad param, replace the URL", at: [74, 86], in: errors }
+    - { id: err-404, kind: note, label: "404, replace with the last page", at: [74, 87], in: errors }
+    - { id: err-410, kind: note, label: "410, retry without the snapshot", at: [74, 88], in: errors }
+    - { id: err-429, kind: note, label: "429, keep dimmed, wait retry_after_s", at: [74, 89], in: errors }
+    - { id: err-5xx, kind: note, label: "5xx, one retry after 1 s, then a banner", at: [74, 90], in: errors, tone: red }
+    - { id: err-net, kind: note, label: "timeout at 8 s or offline, the banner", at: [74, 91], in: errors, tone: red }
+    - { id: between, kind: region, label: "Between components", at: [98, 84], size: [22, 7] }
+    - { id: bc-never, kind: note, label: "components never call each other", at: [99, 86], in: between }
+    - { id: bc-events, kind: note, label: "url/changed, then search/requested", at: [99, 87], in: between }
+    - { id: bc-results, kind: note, label: "search/responded, aborted or failed", at: [99, 88], in: between }
+    - { id: props, kind: region, label: "Component props", at: [98, 93], size: [22, 8] }
+    - { id: bc-facets, kind: note, label: "FacetPanel: facets, selected, onChange, mode", at: [99, 95], in: props }
+    - { id: bc-range, kind: note, label: "PriceRange commits on release, Enter or Go", at: [99, 97], in: props }
+    - { id: bc-settle, kind: note, label: "or after a thumb is still for 400 ms", at: [99, 98], in: props }
+  arrows: []
+beats:
+  - point: "Searching is a read, so it is a GET with the canonical query string: safe, idempotent and cacheable by URL; GraphQL over POST would miss the HTTP cache, and streaming is not needed because results do not change meaningfully while viewed."
+    kind: decision
+    weight: core
+    teach:
+      - "Searching is a read. Use a GET with the canonical query string, the same as the page's own URL apart from the path. It is safe to repeat, and the browser and the edge can answer repeats from cache."
+      - "A GraphQL query over POST puts the query in the body, which a standard HTTP cache does not key on, so every repeat goes to the origin. Streaming, server-sent events or a WebSocket, is not needed: results do not change meaningfully while viewed, and price and stock are confirmed on the product page and at checkout."
+      - "One more endpoint is used, only by the phone sheet: counts for a draft, to label its Apply button."
+    draw: [api, t-get]
+    check: "The interviewer suggests sending the filters as a JSON body in a POST. What does a GET with the query string give you that the POST does not?"
+    answer: "Caching by URL: the URL is the cache key, so the browser or the edge can answer an identical search without the origin."
+    misconceptions:
+      - "A GraphQL query over POST caches like a GET -> the POST body is not part of a standard HTTP cache key, so every repeat reaches the origin."
+  - point: "The request is GET /api/search with the params in canonical order, no defaults, plus zone, a coarse delivery zone and the only input not in the page's URL; a snapshot from page 1 keeps later pages on the same ranking for 10 minutes, and no cookies are sent."
+    kind: component
+    weight: core
+    teach:
+      - "Write the request: GET slash api slash search, with brand brightwell, delivery tomorrow, q gooseneck kettle and rating 4, in canonical order, without defaults."
+      - "zone, a coarse delivery zone, is the only input not in the page's URL. Later pages add the snapshot token from page 1, which keeps them on the same ranking for 10 minutes. No cookies go with it: nothing in the response is personal."
+    draw: [req-1, req-2]
+    check: Which input of the search request is not in the page's URL?
+    answer: "zone, a coarse delivery zone for the delivery promise; no cookies go with it, because nothing in the response is personal."
+  - point: "One page of the response holds its key, the total, page and page count, the snapshot token, the product summaries with image sizes and the price in minor units, and the facets with options or bounds; it is sent public, max-age 60, stale-while-revalidate 300."
+    kind: component
+    weight: core
+    teach:
+      - "Write one page as JSON, a key at a time: the key, echoed for matching; a total of 3; page 1 of 1; the snapshot token."
+      - "Then items, each product summary: id, title and brand; an image with src, srcset, width, height and alt; a price of 4400 minor units in US dollars; the rating, badges, delivery promise, and the offer id Add to cart sends."
+      - "Then facets, each with a key, label and kind, options with their counts, or bounds for price. It goes out with Cache-Control public, max-age 60, stale-while-revalidate 300."
+    draw: [response, r-open, r-items, r-image, r-price, r-rest, r-facets, r-cache]
+    check: What in the response tells caches how long they may reuse it?
+    answer: "Its Cache-Control header: public, max-age 60, stale-while-revalidate 300."
+  - point: "Three more answers: an empty result has a total of 0 and relaxations, each a link to the URL without one param; the phone sheet's GET /api/search/count returns a draft's total and facet counts, no products; and Add to cart is POST /api/cart/items with the offer id and quantity 1."
+    kind: component
+    weight: core
+    teach:
+      - "Beside the page, write the empty answer: total 0, no items, and relaxations, such as remove brand brightwell for 6 results. Each becomes a link to the URL without that param; a misspelt query, gosneck, would carry a spelling suggestion instead."
+      - "Under it, the count request for the sheet's draft, with delivery tomorrow. It answers the total, 212, and the facet counts, but no products; it is cached the same way and called at most once per 300 millisecond pause, and SearchService then prefetches that key's first page at low priority."
+      - "Last, Add to cart: a POST with the offer id and quantity 1, a CSRF token and same-origin cookies. Everything after that is the cart's own design."
+    draw: [more, e-open, e-relax, c-req, c-res, cart]
+    check: Why does the phone sheet need a separate count endpoint?
+    answer: "To label the Apply button with the total for a draft without fetching products; only the sheet uses it."
+  - point: "Errors share one shape, a code, a message and the param at fault: a bad param is dropped and the URL replaced, a page out of range is replaced with the last page, and an expired snapshot is dropped and the page asked for again."
+    kind: failure
+    weight: core
+    teach:
+      - "Every error has one shape: a code, a message, and the param when one is to blame. An aborted request never shows up here; its AbortError is expected and swallowed."
+      - "400 invalid_param comes from a hand-edited or old link: UrlState drops that param, replaceState writes the cleaned URL, and the search runs again."
+      - "404 page_out_of_range carries page_count: replaceState to the last page and show it. 410 snapshot_expired: ask for the same page again without the snapshot."
+    draw: [errors, err-400, err-404, err-410]
+    check: "An old bookmark asks for page 30, but the query now has only 21 pages. How does the client recover?"
+    answer: "The 404 comes with page_count; the client uses replaceState to move to the last page and shows it, so no broken entry is left in history."
+    misconceptions:
+      - "An aborted request should show the error banner -> its AbortError is expected and swallowed; only real failures reach the banner."
+  - point: "A rate limit keeps the dimmed results and waits retry_after_s; a 5xx is retried once after 1 s, then the old results stay under a banner with Retry; a timeout at 8 s or going offline shows the same banner and refetches when the browser is back online."
+    kind: failure
+    weight: core
+    teach:
+      - "429 rate_limited: keep the dimmed results, wait retry_after_s, then fetch the current key."
+      - "A 5xx: one retry after 1 second, then the old results, no longer dimmed, under a banner saying the results could not update, with Retry."
+      - "A timeout at 8 seconds or going offline: the same banner, and the current key is fetched again when the browser fires online."
+    draw: [err-429, err-5xx, err-net]
+    check: "The search server answers with a 5xx twice in a row. What does the shopper end up seeing?"
+    answer: "The old results, no longer dimmed, under a banner that says the results could not update, with Retry; one retry after 1 s came first."
+  - point: "Components never call each other's methods: FacetPanel and page links write the URL; UrlState announces url/changed; the store raises search/requested on a miss; SearchService answers with search/aborted, search/responded or search/failed; the store decides what goes on screen."
+    kind: flow
+    weight: supporting
+    teach:
+      - "Inside the browser, components never call each other's methods. FacetPanel and page links write the URL; UrlState announces url/changed with the key, the params, and whether it came from a push or a pop."
+      - "On a miss the store raises search/requested. SearchService reports search/aborted when a newer key comes, search/responded with the response, or search/failed after one retry."
+      - "On Back, url/changed comes from a pop. A cached entry is applied in the same frame and the checkboxes follow the URL; an entry over 60 seconds old is revalidated in the background, without dimming."
+    draw: [between, bc-never, bc-events, bc-results]
+    check: The shopper presses Back to a state the store already holds. What happens?
+    answer: "UrlState reports url/changed from a pop; the cached entry is applied in the same frame and the checkboxes follow the URL; if it is over 60 s old it is revalidated in the background."
+  - point: "FacetPanel knows nothing about fetching: it takes the applied response's facets and the URL's selection and reports a whole next selection; its PriceRange commits on thumb release, Enter or Go, or after a thumb is still for 400 ms."
+    kind: rule
+    weight: core
+    teach:
+      - "FacetPanel's props: facets, from the applied entry, so option counts match the grid; selected, from the URL, so boxes tick before any response; onChange with the whole next selection, which goes to setParams; and mode, live or draft."
+      - "PriceRange takes its bounds from the applied response and its value from the price param. onCommit fires on thumb release, Enter in a field, or Go, never on every pixel of a drag; a thumb held still for 400 milliseconds also commits, and one commit pushes one history entry."
+    draw: [props, bc-facets, bc-range, bc-settle]
+    check: "The shopper drags a price thumb slowly along the track. At which moments does the range actually commit?"
+    answer: "When the thumb is released, or once it has stayed still for 400 ms; never on each movement."
+    misconceptions:
+      - "Commit the price on every pointer move -> that would push dozens of history entries and requests."
+asks:
+  - ids: [req-1, req-2, r-open, r-items, r-image, r-price, r-rest, r-facets]
+    frame: [response]
+    beats: [2, 3]
+    question: "What would the search request look like, and what would one page of its response hold? I'll write it down as you go."
+    hints:
+      - The request is the page's own query string on another path. What else does it need?
+      - The response fills one entry of the store. What does the page read from it?
+task:
+  prompt: "Write the search request with its params, one page of its response as JSON, and the count request the phone sheet uses."
+  expects: [2, 3, 5]
