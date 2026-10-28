@@ -101,6 +101,8 @@ COPY --from=build /src/lego-ai/app/dist ./dist
 # report, and the edge router (docker compose).
 COPY --from=build /src/lego-ai/app/scripts ./scripts
 COPY --from=build /src/lego-ai/app/routes.mjs ./routes.mjs
+# The content snapshot the server reads on first use (src/lib/content-snapshot.ts).
+COPY --from=build /src/lego-ai/app/.content/snapshot.json ./.content/snapshot.json
 ARG PUBLIC_RELEASE=
 ENV RELEASE=${PUBLIC_RELEASE}
 USER node

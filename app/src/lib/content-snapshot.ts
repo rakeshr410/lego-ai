@@ -1,7 +1,6 @@
 import type { AGENT_PATTERNS, AgentProfile, CmsBlock, CmsCoachTip, CmsTopicComponent, CmsTopicTool, DIFFICULTIES, TEMPLATE_NAMES, TOPIC_KINDS, DerivedPlan, SlugAliases, PROVENANCES, REVIEW_STATUSES, SYSTEM_ICONS, WIREFRAMES } from '@arrowbox/content-kit';
 import type { PricingFile } from '@arrowbox/content-kit/pricing';
 import type { Review } from '@arrowbox/content-kit/reviews';
-import raw from '../../.content/snapshot.json?raw';
 
 // The catalog the site is built from and Ask grounds on: content/ validated by content-kit and
 // written to web/.content/snapshot.json (content-snapshot.node.ts) whenever `astro build` or
@@ -231,9 +230,17 @@ export type ContentSnapshot = {
 
 let parsed: ContentSnapshot | undefined;
 
-/** The snapshot this build was made from. */
+/**
+ * The snapshot this build was made from, read from .content/snapshot.json beside the app (the image
+ * copies it there) on first use. Not imported with ?raw: that inlines the whole file (70+ MB) as one
+ * string literal in a server chunk, and V8 took several GB to compile it (the ai task OOM-killed at
+ * 1 GiB, 2026-10-28). fs comes from getBuiltinModule so no client bundle imports node:fs.
+ */
 export function getSnapshot(): ContentSnapshot {
-  parsed ??= JSON.parse(raw) as ContentSnapshot;
+  if (!parsed) {
+    const { readFileSync } = process.getBuiltinModule('node:fs');
+    parsed = JSON.parse(readFileSync(`${process.cwd()}/.content/snapshot.json`, 'utf8')) as ContentSnapshot;
+  }
   return parsed;
 }
 
